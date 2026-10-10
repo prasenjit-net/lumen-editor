@@ -1,0 +1,17 @@
+[package]
+name = "lumen-editor"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["xtask"]
+default-members = ["."]
+resolver = "3"
+
+[dependencies]
+eframe = "0.33"
+rfd = "0.15"
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+muda = { version = "0.21", default-features = false }
+raw-window-handle = "0.6"
