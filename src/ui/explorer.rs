@@ -1,6 +1,6 @@
 use super::Workbench;
-use super::theme::{MUTED, PANEL, TEXT};
-use super::widgets::{self, canvas, explorer_row, surface};
+use super::theme::{MUTED, PANEL};
+use super::widgets::{self, HeaderAction, canvas, explorer_row, panel_header, surface};
 use crate::app::command::Command;
 use crate::app::view_state::Activity;
 use crate::icon;
@@ -89,40 +89,31 @@ impl Workbench<'_> {
             .show(ctx, |ui| {
                 surface(PANEL).show(ui, |ui| {
                     ui.set_min_size(ui.available_size());
-                    ui.horizontal(|ui| {
-                        ui.add_space(20.0);
-                        ui.add_sized(
-                            [(ui.available_width() - 114.0).max(0.0), 35.0],
-                            egui::Label::new(
-                                RichText::new(self.view.activity.title())
-                                    .size(11.0)
-                                    .color(TEXT),
-                            ),
-                        );
-                        if self.view.activity == Activity::Explorer {
-                            if ui
-                                .button(icon::FILE_PLUS)
-                                .on_hover_text("New file")
-                                .clicked()
-                            {
-                                self.command(Command::NewFile);
-                            }
-                            if ui
-                                .button(icon::FILE_ARROW_UP)
-                                .on_hover_text("Open file")
-                                .clicked()
-                            {
-                                self.command(Command::OpenFile);
-                            }
-                            if ui
-                                .button(icon::FOLDER_OPEN)
-                                .on_hover_text("Open folder")
-                                .clicked()
-                            {
-                                self.command(Command::OpenFolder);
-                            }
-                        }
-                    });
+                    let explorer_actions = [
+                        HeaderAction {
+                            glyph: icon::FILE_PLUS,
+                            tooltip: "New file",
+                            command: Command::NewFile,
+                        },
+                        HeaderAction {
+                            glyph: icon::FILE_ARROW_UP,
+                            tooltip: "Open file",
+                            command: Command::OpenFile,
+                        },
+                        HeaderAction {
+                            glyph: icon::FOLDER_OPEN,
+                            tooltip: "Open folder",
+                            command: Command::OpenFolder,
+                        },
+                    ];
+                    let actions = if self.view.activity == Activity::Explorer {
+                        &explorer_actions[..]
+                    } else {
+                        &[]
+                    };
+                    if let Some(command) = panel_header(ui, self.view.activity.title(), actions) {
+                        self.command(command);
+                    }
                     match self.view.activity {
                         Activity::Explorer => {
                             ScrollArea::vertical()
