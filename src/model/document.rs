@@ -1,0 +1,66 @@
+use std::path::{Path, PathBuf};
+pub(crate) struct Document {
+    pub(crate) path: Option<PathBuf>,
+    pub(crate) name: String,
+    pub(crate) language: String,
+    pub(crate) text: String,
+    pub(crate) dirty: bool,
+}
+
+impl Document {
+    pub(crate) fn from_path(path: PathBuf, text: String) -> Self {
+        Self {
+            name: display_name(&path),
+            language: language_for(&path),
+            path: Some(path),
+            text,
+            dirty: false,
+        }
+    }
+
+    pub(crate) fn mark_saved(&mut self, path: PathBuf) {
+        self.name = display_name(&path);
+        self.language = language_for(&path);
+        self.path = Some(path);
+        self.dirty = false;
+    }
+    pub(crate) fn untitled(number: usize) -> Self {
+        Self {
+            path: None,
+            name: format!("untitled-{number}.txt"),
+            language: "Plain Text".into(),
+            text: String::new(),
+            dirty: false,
+        }
+    }
+}
+
+fn language_for(path: &Path) -> String {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+    {
+        "rs" => "Rust",
+        "toml" => "TOML",
+        "md" => "Markdown",
+        "json" => "JSON",
+        "yaml" | "yml" => "YAML",
+        "js" | "ts" | "tsx" | "jsx" => "JavaScript",
+        "html" => "HTML",
+        "css" => "CSS",
+        "py" => "Python",
+        "go" => "Go",
+        "c" | "h" | "cpp" | "hpp" => "C/C++",
+        "sh" => "Shell Script",
+        _ => "Plain Text",
+    }
+    .into()
+}
+
+pub(crate) fn display_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Untitled")
+        .into()
+}

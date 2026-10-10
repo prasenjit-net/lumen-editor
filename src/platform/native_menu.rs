@@ -1,3 +1,4 @@
+use crate::app::command::Command;
 use std::sync::mpsc::{self, Receiver};
 
 use eframe::egui;
@@ -37,16 +38,16 @@ impl NativeMenu {
             &PredefinedMenuItem::hide_others(None),
             &PredefinedMenuItem::show_all(None),
             &PredefinedMenuItem::separator(),
-            &item("quit", "Quit Lumen", Code::KeyQ, false),
+            &item(Command::Quit, "Quit Lumen", Code::KeyQ, false),
         ])?;
         let file = Submenu::new("File", true);
-        let save = item("save", "Save", Code::KeyS, false);
-        let save_as = item("save_as", "Save As…", Code::KeyS, true);
-        let close = item("close", "Close Editor", Code::KeyW, false);
+        let save = item(Command::Save, "Save", Code::KeyS, false);
+        let save_as = item(Command::SaveAs, "Save As…", Code::KeyS, true);
+        let close = item(Command::CloseEditor, "Close Editor", Code::KeyW, false);
         file.append_items(&[
-            &item("new", "New Text File", Code::KeyN, false),
-            &item("open", "Open File…", Code::KeyO, false),
-            &item("folder", "Open Folder…", Code::KeyO, true),
+            &item(Command::NewFile, "New Text File", Code::KeyN, false),
+            &item(Command::OpenFile, "Open File…", Code::KeyO, false),
+            &item(Command::OpenFolder, "Open Folder…", Code::KeyO, true),
             &PredefinedMenuItem::separator(),
             &save,
             &save_as,
@@ -56,16 +57,21 @@ impl NativeMenu {
         #[cfg(target_os = "windows")]
         file.append_items(&[
             &PredefinedMenuItem::separator(),
-            &MenuItem::with_id("quit", "Exit", true, None),
+            &MenuItem::with_id(
+                Command::Quit.menu_id().expect("native command"),
+                "Exit",
+                true,
+                None,
+            ),
         ])?;
         let edit = Submenu::new("Edit", true);
         let edits = vec![
-            item("undo", "Undo", Code::KeyZ, false),
-            item("redo", "Redo", Code::KeyZ, true),
-            item("cut", "Cut", Code::KeyX, false),
-            item("copy", "Copy", Code::KeyC, false),
-            item("paste", "Paste", Code::KeyV, false),
-            item("select_all", "Select All", Code::KeyA, false),
+            item(Command::Undo, "Undo", Code::KeyZ, false),
+            item(Command::Redo, "Redo", Code::KeyZ, true),
+            item(Command::Cut, "Cut", Code::KeyX, false),
+            item(Command::Copy, "Copy", Code::KeyC, false),
+            item(Command::Paste, "Paste", Code::KeyV, false),
+            item(Command::SelectAll, "Select All", Code::KeyA, false),
         ];
         edit.append_items(&[
             &edits[0],
@@ -79,8 +85,8 @@ impl NativeMenu {
         ])?;
         let view = Submenu::new("View", true);
         view.append_items(&[
-            &item("palette", "Command Palette…", Code::KeyP, true),
-            &item("sidebar", "Toggle Sidebar", Code::KeyB, false),
+            &item(Command::Palette, "Command Palette…", Code::KeyP, true),
+            &item(Command::ToggleSidebar, "Toggle Sidebar", Code::KeyB, false),
         ])?;
         let window = Submenu::new("Window", true);
         #[cfg(target_os = "macos")]
@@ -97,7 +103,7 @@ impl NativeMenu {
         ])?;
         let help = Submenu::new("Help", true);
         help.append(&MenuItem::with_id(
-            "welcome",
+            Command::Welcome.menu_id().expect("native command"),
             "Welcome to Lumen",
             true,
             None,
@@ -154,8 +160,11 @@ impl NativeMenu {
         Ok(())
     }
 
-    pub fn actions(&self) -> Vec<String> {
-        self.events.try_iter().map(|event| event.id.0).collect()
+    pub fn actions(&self) -> Vec<Command> {
+        self.events
+            .try_iter()
+            .filter_map(|event| Command::from_menu_id(&event.id.0))
+            .collect()
     }
 
     pub fn set_document_open(&self, open: bool) {
@@ -168,7 +177,7 @@ impl NativeMenu {
     }
 }
 
-fn item(id: &str, title: &str, code: Code, shift: bool) -> MenuItem {
+fn item(command: Command, title: &str, code: Code, shift: bool) -> MenuItem {
     let primary = if cfg!(target_os = "macos") {
         Modifiers::META
     } else {
@@ -179,5 +188,10 @@ fn item(id: &str, title: &str, code: Code, shift: bool) -> MenuItem {
     } else {
         primary
     };
-    MenuItem::with_id(id, title, true, Some(Accelerator::new(modifiers, code)))
+    MenuItem::with_id(
+        command.menu_id().expect("native command"),
+        title,
+        true,
+        Some(Accelerator::new(modifiers, code)),
+    )
 }
