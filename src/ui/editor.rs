@@ -86,6 +86,7 @@ impl Workbench<'_> {
             });
         if let Some(index) = select {
             self.editor.active_file = Some(index);
+            self.view.focus_editor = true;
         }
         if let Some(index) = close {
             self.command(Command::RequestClose(index));
@@ -144,6 +145,8 @@ impl Workbench<'_> {
                     });
                     ui.add_space(2.0);
                     let line_count = self.editor.files[index].text.split('\n').count();
+                    let document_id = self.editor.files[index].id;
+                    crate::app::editor_action::prepare_action(self.view, document_id, ctx);
                     let content_height = ui.available_height();
                     Frame::default()
                         .fill(BG)
@@ -157,7 +160,7 @@ impl Workbench<'_> {
                                     egui::Layout::top_down(egui::Align::Max),
                                     |ui| {
                                         ScrollArea::vertical()
-                                            .id_salt("line_numbers")
+                                            .id_salt(("line_numbers", document_id))
                                             .max_height(content_height)
                                             .show(ui, |ui| {
                                                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -177,26 +180,35 @@ impl Workbench<'_> {
                                     egui::Layout::top_down(egui::Align::Min),
                                     |ui| {
                                         ScrollArea::vertical()
-                                            .id_salt("code_editor")
+                                            .id_salt(("code_editor", document_id))
                                             .max_height(content_height)
                                             .show(ui, |ui| {
-                                                let response = ui.add(
-                                                    TextEdit::multiline(
-                                                        &mut self.editor.files[index].text,
-                                                    )
-                                                    .font(FontId::monospace(14.0))
-                                                    .text_color(TEXT)
-                                                    .desired_width(f32::INFINITY)
-                                                    .frame(false)
-                                                    .code_editor(),
+                                                let text_id =
+                                                    crate::app::editor_action::text_widget_id(
+                                                        document_id,
+                                                    );
+                                                let edit = TextEdit::multiline(
+                                                    &mut self.editor.files[index].text,
+                                                )
+                                                .id(text_id)
+                                                .font(FontId::monospace(14.0))
+                                                .text_color(TEXT)
+                                                .desired_width(f32::INFINITY)
+                                                .min_size(Vec2::new(0.0, content_height))
+                                                .frame(false)
+                                                .code_editor();
+                                                let output = super::editor_menu::show_editor_text(
+                                                    ui, edit, text_id,
                                                 );
+                                                let response = &output.response;
                                                 if self.view.focus_editor {
                                                     response.request_focus();
                                                     self.view.focus_editor = false;
                                                 }
                                                 if response.changed() {
-                                                    self.editor.files[index].dirty = true;
+                                                    self.editor.files[index].record_text_change();
                                                 }
+                                                self.editor_context_menu(&output, document_id);
                                             });
                                     },
                                 );

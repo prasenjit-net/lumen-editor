@@ -3,6 +3,7 @@ mod activity_bar;
 mod chrome;
 mod dialogs;
 mod editor;
+mod editor_menu;
 mod explorer;
 mod explorer_actions;
 mod explorer_edit;

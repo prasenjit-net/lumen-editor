@@ -1,10 +1,12 @@
+use super::editor_action::EditorAction;
 use super::view_state::{ExplorerEdit, ViewState};
-use crate::model::EditorState;
+use crate::model::{DocumentId, EditorState};
 use std::path::PathBuf;
 
 /// Shared actions from native menus, shortcuts and workbench components.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
+    EditorAction(DocumentId, EditorAction),
     NewFile,
     NewUntitled,
     NewFolder,

@@ -9,6 +9,13 @@ impl LumenApp {
             && !self.view.command_palette
             && !ctx.wants_keyboard_input();
         match command {
+            Command::EditorAction(document, action) => {
+                if self.editor.active().is_some_and(|file| file.id == document) {
+                    self.view.pending_editor_action =
+                        Some(super::editor_action::PendingEditorAction { document, action });
+                    ctx.request_repaint();
+                }
+            }
             Command::NewFile => self.new_file(),
             Command::NewUntitled | Command::CollapseFolders | Command::RefreshExplorer => {
                 command.apply_local(&mut self.editor, &mut self.view);
@@ -61,28 +68,12 @@ impl LumenApp {
                 }
             }
             Command::Paste if explorer_clipboard => self.explorer_paste(),
-            Command::Copy => ctx.input_mut(|input| input.events.push(egui::Event::Copy)),
-            Command::Cut => ctx.input_mut(|input| input.events.push(egui::Event::Cut)),
-            Command::Paste => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
-            Command::Undo | Command::Redo | Command::SelectAll => ctx.input_mut(|input| {
-                input.events.push(egui::Event::Key {
-                    key: if command == Command::SelectAll {
-                        egui::Key::A
-                    } else {
-                        egui::Key::Z
-                    },
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers {
-                        command: true,
-                        mac_cmd: cfg!(target_os = "macos"),
-                        ctrl: cfg!(target_os = "windows"),
-                        shift: command == Command::Redo,
-                        ..Default::default()
-                    },
-                });
-            }),
+            Command::Copy => super::editor_action::EditorAction::Copy.send(ctx),
+            Command::Cut => super::editor_action::EditorAction::Cut.send(ctx),
+            Command::Paste => super::editor_action::EditorAction::Paste.send(ctx),
+            Command::Undo => super::editor_action::EditorAction::Undo.send(ctx),
+            Command::Redo => super::editor_action::EditorAction::Redo.send(ctx),
+            Command::SelectAll => super::editor_action::EditorAction::SelectAll.send(ctx),
             Command::SaveAndClose(index) => {
                 // Preserve the current dialog's active-buffer save semantics.
                 self.save_active();

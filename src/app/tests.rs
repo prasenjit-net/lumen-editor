@@ -13,6 +13,7 @@ use std::{
     rc::Rc,
 };
 
+mod editor;
 mod explorer;
 
 #[derive(Default)]

@@ -2,6 +2,7 @@
 pub(crate) mod command;
 mod dispatch;
 mod documents;
+pub(crate) mod editor_action;
 mod events;
 mod explorer_ops;
 #[cfg(test)]

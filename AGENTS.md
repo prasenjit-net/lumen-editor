@@ -88,6 +88,12 @@ behavior. Preserve existing functionality unless a task explicitly changes it.
   Explorer shortcuts must not intercept typing or clipboard actions in editors
   and inline inputs. Keep limitations documented rather than implying VS Code
   feature parity (bulk selection, drag/drop and operation undo are not yet built).
+- Editor popup commands must carry a stable document ID, not a tab index. Apply
+  them before widget input and reject stale targets or blocking dialogs. Validate
+  delayed popup paste before any other input consumes it. While using TextEdit,
+  keep it as the sole mutation/history owner; do not add a parallel undo stack.
+  Reuse `app/editor_action.rs` for native/popup editing events and derive widget
+  IDs from document identity. Never clear selection just to open a popup.
 
 ## Verification and handoff
 

@@ -4,6 +4,11 @@ use super::command::Command;
 use eframe::egui;
 impl LumenApp {
     pub(crate) fn handle_events(&mut self, ctx: &egui::Context) {
+        super::editor_action::validate_paste(
+            &mut self.view,
+            self.editor.active().map(|file| file.id),
+            ctx,
+        );
         if ctx.input(|input| input.viewport().close_requested())
             && !self.view.allow_quit
             && self.editor.has_unsaved_changes()
