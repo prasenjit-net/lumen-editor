@@ -6,6 +6,7 @@ pub(crate) struct HeaderAction {
     pub(crate) glyph: &'static str,
     pub(crate) tooltip: &'static str,
     pub(crate) command: Command,
+    pub(crate) enabled: bool,
 }
 
 /// Compact workbench header: title stays left; actions stay at the right edge.
@@ -69,7 +70,10 @@ pub(crate) fn panel_header(
             Vec2::splat(BUTTON_SIZE),
         );
         if header_ui
-            .put(button_rect, egui::Button::new(action.glyph).frame(false))
+            .add_enabled_ui(action.enabled, |ui| {
+                ui.put(button_rect, egui::Button::new(action.glyph).frame(false))
+            })
+            .inner
             .on_hover_text(action.tooltip)
             .clicked()
         {
@@ -152,16 +156,19 @@ mod tests {
                 glyph: "N",
                 tooltip: "New file",
                 command: Command::NewFile,
+                enabled: true,
             },
             HeaderAction {
                 glyph: "O",
                 tooltip: "Open file",
                 command: Command::OpenFile,
+                enabled: true,
             },
             HeaderAction {
                 glyph: "F",
                 tooltip: "Open folder",
                 command: Command::OpenFolder,
+                enabled: true,
             },
         ]
     }

@@ -11,7 +11,7 @@ impl Workbench<'_> {
                 .button(format!("{}  New Text File     ⌘N", icon::FILE_PLUS))
                 .clicked()
             {
-                self.command(Command::NewFile);
+                self.command(Command::NewUntitled);
                 ui.close();
             }
             if ui
@@ -77,7 +77,15 @@ impl Workbench<'_> {
                 for (label, action) in [
                     (
                         format!("{}  File: New Text File", icon::FILE_PLUS),
+                        Command::NewUntitled,
+                    ),
+                    (
+                        format!("{}  Explorer: New File", icon::FILE_PLUS),
                         Command::NewFile,
+                    ),
+                    (
+                        format!("{}  Explorer: New Folder", icon::NEW_FOLDER),
+                        Command::NewFolder,
                     ),
                     (
                         format!("{}  File: Open File", icon::FILE_ARROW_UP),

@@ -1,4 +1,4 @@
-use super::view_state::{NewFilePrompt, ViewState};
+use super::view_state::{ExplorerEdit, ViewState};
 use crate::model::EditorState;
 use std::path::PathBuf;
 
@@ -6,7 +6,19 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
     NewFile,
-    CreateFile,
+    NewUntitled,
+    NewFolder,
+    RenamePath(PathBuf),
+    DeletePath(PathBuf),
+    ConfirmDelete,
+    ExplorerCopy(PathBuf),
+    ExplorerCut(PathBuf),
+    ExplorerPaste,
+    CopyPath(PathBuf, bool),
+    RevealPath(PathBuf),
+    CollapseFolders,
+    RefreshExplorer,
+    CommitExplorerEdit,
     OpenFile,
     OpenFolder,
     Save,
@@ -36,9 +48,16 @@ impl Command {
     /// access to dialogs or filesystem writes. Other actions go to the controller.
     pub(crate) fn apply_local(&self, editor: &mut EditorState, view: &mut ViewState) -> bool {
         match *self {
+            Self::NewUntitled => {
+                editor.new_file();
+                view.focus_editor = true;
+                view.status = "New untitled file".into();
+            }
+            Self::CollapseFolders => view.expanded_dirs.clear(),
+            Self::RefreshExplorer => view.status = "Explorer refreshed".into(),
             Self::NewFile => {
                 if let Some(root) = &editor.workspace {
-                    if view.new_file_prompt.is_none() {
+                    if view.explorer_edit.is_none() {
                         let directory = view
                             .explorer_selection
                             .as_ref()
@@ -46,10 +65,12 @@ impl Command {
                             .filter(|directory| directory.starts_with(root))
                             .unwrap_or(root)
                             .to_path_buf();
-                        view.new_file_prompt = Some(NewFilePrompt::new(directory));
+                        view.explorer_edit = Some(ExplorerEdit::new(directory));
+                        view.reveal_edit_directory(editor);
                     }
                 } else {
                     editor.new_file();
+                    view.focus_editor = true;
                     view.status = "New untitled file".into();
                 }
             }
@@ -74,7 +95,7 @@ impl Command {
     /// Stable native menu identifiers; data-carrying UI actions have no menu ID.
     pub(crate) fn menu_id(&self) -> Option<&'static str> {
         match self {
-            Self::NewFile => Some("new"),
+            Self::NewUntitled => Some("new"),
             Self::OpenFile => Some("open"),
             Self::OpenFolder => Some("folder"),
             Self::Save => Some("save"),
@@ -96,7 +117,7 @@ impl Command {
 
     pub(crate) fn from_menu_id(id: &str) -> Option<Self> {
         Some(match id {
-            "new" => Self::NewFile,
+            "new" => Self::NewUntitled,
             "open" => Self::OpenFile,
             "folder" => Self::OpenFolder,
             "save" => Self::Save,

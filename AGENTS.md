@@ -72,12 +72,22 @@ behavior. Preserve existing functionality unless a task explicitly changes it.
 - Preserve document content, dirty flags, open/save/save-as behavior, duplicate
   tab handling, close/quit prompts, cancellation and error feedback. Do not
   silently bundle unrelated behavioral fixes into layout or refactor work.
-- New File is workspace-aware across all command entry points: prompt for a
-  name in the selected explorer directory (a selected file uses its parent),
-  falling back to the workspace root. Without a workspace, keep untitled tabs.
+- Explorer New File/New Folder/Rename use inline tree inputs, Enter to commit
+  and Escape to cancel. Use the selected directory (a file uses its parent),
+  falling back to the workspace root. New File accepts safe nested relative
+  paths and trailing slash folders. Cmd/Ctrl+N and the editor plus button create
+  untitled buffers regardless of workspace; don't conflate these actions.
   Use atomic create-new filesystem semantics, never a truncating save operation.
   Cancellation/validation/failure must not create a buffer or overwrite data;
   retain the prompt on errors, then reveal and open the file on success.
+- Explorer filesystem workflows belong in `app/explorer_ops.rs`, not UI code.
+  Rename/move must update descendant editor paths without clearing dirty flags.
+  Delete requires explicit confirmation, moves to Trash/Recycle Bin, protects
+  the workspace root, and preserves dirty buffers as untitled. Never fall back
+  to permanent deletion. Cut/copy/paste must reject overwrite/self-recursion.
+  Explorer shortcuts must not intercept typing or clipboard actions in editors
+  and inline inputs. Keep limitations documented rather than implying VS Code
+  feature parity (bulk selection, drag/drop and operation undo are not yet built).
 
 ## Verification and handoff
 

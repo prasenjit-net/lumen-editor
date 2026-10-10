@@ -7,15 +7,18 @@ use crate::services::{FileDialogs, FileSystem};
 use eframe::egui::{self, Vec2};
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io,
     path::{Path, PathBuf},
     rc::Rc,
 };
 
+mod explorer;
+
 #[derive(Default)]
 struct TestStorage {
     files: HashMap<PathBuf, String>,
+    directories: HashSet<PathBuf>,
     reads: usize,
     writes: Vec<(PathBuf, String)>,
     fail_writes: bool,
@@ -46,6 +49,9 @@ impl FileSystem for MemoryFileSystem {
     }
 
     fn create_file(&self, path: &Path) -> io::Result<()> {
+        if self.entry_exists(path) {
+            return Err(io::ErrorKind::AlreadyExists.into());
+        }
         let mut storage = self.0.borrow_mut();
         if storage.fail_writes {
             return Err(io::ErrorKind::PermissionDenied.into());
@@ -61,11 +67,82 @@ impl FileSystem for MemoryFileSystem {
         }
     }
 
-    fn children(&self, _: &Path) -> Vec<PathBuf> {
-        Vec::new()
+    fn create_directory(&self, path: &Path) -> io::Result<()> {
+        if self.entry_exists(path) {
+            return Err(io::ErrorKind::AlreadyExists.into());
+        }
+        let mut storage = self.0.borrow_mut();
+        if storage.fail_writes {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        storage.directories.insert(path.into());
+        Ok(())
     }
-    fn is_directory(&self, _: &Path) -> bool {
-        false
+    fn rename_entry(&self, from: &Path, to: &Path) -> io::Result<()> {
+        self.copy_entry(from, to)?;
+        self.trash_entry(from)
+    }
+    fn copy_entry(&self, from: &Path, to: &Path) -> io::Result<()> {
+        if self.entry_exists(to) {
+            return Err(io::ErrorKind::AlreadyExists.into());
+        }
+        if !self.entry_exists(from) {
+            return Err(io::ErrorKind::NotFound.into());
+        }
+        let mut storage = self.0.borrow_mut();
+        if storage.fail_writes {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        let files: Vec<_> = storage
+            .files
+            .iter()
+            .filter_map(|(path, text)| {
+                path.strip_prefix(from)
+                    .ok()
+                    .map(|suffix| (to.join(suffix), text.clone()))
+            })
+            .collect();
+        let directories: Vec<_> = storage
+            .directories
+            .iter()
+            .filter_map(|path| path.strip_prefix(from).ok().map(|suffix| to.join(suffix)))
+            .collect();
+        storage.files.extend(files);
+        storage.directories.extend(directories);
+        Ok(())
+    }
+    fn trash_entry(&self, path: &Path) -> io::Result<()> {
+        if !self.entry_exists(path) {
+            return Err(io::ErrorKind::NotFound.into());
+        }
+        let mut storage = self.0.borrow_mut();
+        if storage.fail_writes {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        storage.files.retain(|file, _| !file.starts_with(path));
+        storage
+            .directories
+            .retain(|directory| !directory.starts_with(path));
+        Ok(())
+    }
+    fn entry_exists(&self, path: &Path) -> bool {
+        let storage = self.0.borrow();
+        storage.files.contains_key(path) || storage.directories.contains(path)
+    }
+    fn children(&self, parent: &Path) -> Vec<PathBuf> {
+        let storage = self.0.borrow();
+        let mut children: Vec<_> = storage
+            .files
+            .keys()
+            .chain(storage.directories.iter())
+            .filter(|path| path.parent() == Some(parent))
+            .cloned()
+            .collect();
+        children.sort();
+        children
+    }
+    fn is_directory(&self, path: &Path) -> bool {
+        self.0.borrow().directories.contains(path)
     }
 }
 
@@ -105,12 +182,12 @@ fn edit_active(app: &mut LumenApp, text: &str) {
 }
 
 #[test]
-fn workspace_new_file_prompts_at_root_without_creating_a_buffer_or_file() {
+fn workspace_explorer_edits_at_root_without_creating_a_buffer_or_file() {
     let (mut app, storage) = test_app(TestDialogs::default());
     app.editor.workspace = Some("project".into());
     app.execute(Command::NewFile, &egui::Context::default());
     assert_eq!(
-        app.view.new_file_prompt.as_ref().unwrap().directory,
+        app.view.explorer_edit.as_ref().unwrap().directory,
         PathBuf::from("project")
     );
     assert!(app.editor.files.is_empty());
@@ -129,10 +206,10 @@ fn new_file_targets_selected_directory_or_selected_files_parent() {
         app.view.explorer_selection = Some(selection);
         app.new_file();
         assert_eq!(
-            app.view.new_file_prompt.as_ref().unwrap().directory,
+            app.view.explorer_edit.as_ref().unwrap().directory,
             PathBuf::from("project/src")
         );
-        app.view.new_file_prompt = None;
+        app.view.explorer_edit = None;
     }
 }
 
@@ -143,7 +220,7 @@ fn stale_selection_outside_workspace_falls_back_to_root() {
     app.view.explorer_selection = Some(ExplorerSelection::Directory("other-project".into()));
     app.new_file();
     assert_eq!(
-        app.view.new_file_prompt.as_ref().unwrap().directory,
+        app.view.explorer_edit.as_ref().unwrap().directory,
         PathBuf::from("project")
     );
 }
@@ -154,15 +231,15 @@ fn confirming_new_file_creates_opens_and_reveals_a_named_empty_file() {
     app.editor.workspace = Some("project".into());
     app.view.explorer_selection = Some(ExplorerSelection::Directory("project/src/nested".into()));
     app.new_file();
-    app.view.new_file_prompt.as_mut().unwrap().name = "module.rs".into();
-    app.execute(Command::CreateFile, &egui::Context::default());
+    app.view.explorer_edit.as_mut().unwrap().name = "module.rs".into();
+    app.execute(Command::CommitExplorerEdit, &egui::Context::default());
     let path = PathBuf::from("project/src/nested/module.rs");
     assert_eq!(storage.0.borrow().files[&path], "");
     let file = app.editor.active().unwrap();
     assert_eq!(file.path.as_ref(), Some(&path));
     assert_eq!(file.language, "Rust");
     assert!(!file.dirty);
-    assert!(app.view.new_file_prompt.is_none());
+    assert!(app.view.explorer_edit.is_none());
     for directory in ["project", "project/src", "project/src/nested"] {
         assert!(app.view.expanded_dirs.contains(Path::new(directory)));
     }
@@ -182,15 +259,15 @@ fn duplicate_new_file_never_overwrites_disk_or_existing_edits() {
     edit_active(&mut app, "unsaved edits");
     app.editor.workspace = Some("project".into());
     app.new_file();
-    app.view.new_file_prompt.as_mut().unwrap().name = "main.rs".into();
-    app.create_file();
+    app.view.explorer_edit.as_mut().unwrap().name = "main.rs".into();
+    app.commit_explorer_edit();
     assert_eq!(storage.0.borrow().files[&path], "original");
     assert_eq!(app.editor.active().unwrap().text, "unsaved edits");
     assert!(app.editor.active().unwrap().dirty);
     assert_eq!(app.editor.files.len(), 1);
     assert!(
         app.view
-            .new_file_prompt
+            .explorer_edit
             .as_ref()
             .unwrap()
             .error
@@ -210,12 +287,12 @@ fn invalid_new_file_names_cannot_escape_the_selected_directory() {
         "..",
         "../outside.txt",
         "/absolute.txt",
-        "folder/file.txt",
-        "folder\\file.txt",
+        "folder/../file.txt",
+        "folder\\..\\file.txt",
     ] {
-        app.view.new_file_prompt.as_mut().unwrap().name = name.into();
-        app.create_file();
-        assert!(app.view.new_file_prompt.as_ref().unwrap().error.is_some());
+        app.view.explorer_edit.as_mut().unwrap().name = name.into();
+        app.commit_explorer_edit();
+        assert!(app.view.explorer_edit.as_ref().unwrap().error.is_some());
         assert!(storage.0.borrow().files.is_empty());
         assert!(app.editor.files.is_empty());
     }
@@ -226,10 +303,10 @@ fn create_failure_keeps_name_and_directory_for_retry() {
     let (mut app, storage) = test_app(TestDialogs::default());
     app.editor.workspace = Some("project".into());
     app.new_file();
-    app.view.new_file_prompt.as_mut().unwrap().name = "retry.txt".into();
+    app.view.explorer_edit.as_mut().unwrap().name = "retry.txt".into();
     storage.0.borrow_mut().fail_writes = true;
-    app.create_file();
-    let prompt = app.view.new_file_prompt.as_ref().unwrap();
+    app.commit_explorer_edit();
+    let prompt = app.view.explorer_edit.as_ref().unwrap();
     assert_eq!(prompt.name, "retry.txt");
     assert_eq!(prompt.directory, PathBuf::from("project"));
     assert!(
@@ -237,12 +314,12 @@ fn create_failure_keeps_name_and_directory_for_retry() {
             .error
             .as_ref()
             .unwrap()
-            .starts_with("Could not create file:")
+            .starts_with("Could not complete operation:")
     );
     assert!(app.editor.files.is_empty());
     storage.0.borrow_mut().fail_writes = false;
-    app.create_file();
-    assert!(app.view.new_file_prompt.is_none());
+    app.commit_explorer_edit();
+    assert!(app.view.explorer_edit.is_none());
     assert_eq!(app.editor.active().unwrap().name, "retry.txt");
 }
 
@@ -256,7 +333,13 @@ fn new_file_dialog_frame(app: &mut LumenApp, ctx: &egui::Context, events: Vec<eg
             events,
             ..Default::default()
         },
-        |ctx| app.render_component(ctx, |workbench| workbench.new_file_dialog(ctx)),
+        |ctx| {
+            egui::CentralPanel::default()
+                .show(ctx, |ui| {
+                    app.render_component(ctx, |workbench| workbench.explorer_edit_row(ui, 0))
+                })
+                .inner
+        },
     );
 }
 
@@ -283,12 +366,9 @@ fn name_prompt_focuses_input_and_enter_creates_the_file() {
         &ctx,
         vec![egui::Event::Text("keyboard.rs".into())],
     );
-    assert_eq!(
-        app.view.new_file_prompt.as_ref().unwrap().name,
-        "keyboard.rs"
-    );
+    assert_eq!(app.view.explorer_edit.as_ref().unwrap().name, "keyboard.rs");
     new_file_dialog_frame(&mut app, &ctx, vec![key_event(egui::Key::Enter)]);
-    assert!(app.view.new_file_prompt.is_none());
+    assert!(app.view.explorer_edit.is_none());
     assert!(
         storage
             .0
@@ -309,7 +389,7 @@ fn escape_cancels_creation_without_touching_files_or_buffers() {
     app.new_file();
     new_file_dialog_frame(&mut app, &ctx, vec![]);
     new_file_dialog_frame(&mut app, &ctx, vec![key_event(egui::Key::Escape)]);
-    assert!(app.view.new_file_prompt.is_none());
+    assert!(app.view.explorer_edit.is_none());
     assert!(storage.0.borrow().files.is_empty());
     assert_eq!(app.editor.files.len(), 1);
     assert_eq!(app.editor.active().unwrap().text, "existing edits");

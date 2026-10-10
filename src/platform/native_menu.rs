@@ -45,7 +45,7 @@ impl NativeMenu {
         let save_as = item(Command::SaveAs, "Save As…", Code::KeyS, true);
         let close = item(Command::CloseEditor, "Close Editor", Code::KeyW, false);
         file.append_items(&[
-            &item(Command::NewFile, "New Text File", Code::KeyN, false),
+            &item(Command::NewUntitled, "New Text File", Code::KeyN, false),
             &item(Command::OpenFile, "Open File…", Code::KeyO, false),
             &item(Command::OpenFolder, "Open Folder…", Code::KeyO, true),
             &PredefinedMenuItem::separator(),
@@ -167,12 +167,16 @@ impl NativeMenu {
             .collect()
     }
 
-    pub fn set_document_open(&self, open: bool) {
+    pub fn set_context(&self, open: bool, text_input: bool, explorer: bool) {
         for item in [&self.save, &self.save_as, &self.close] {
             item.set_enabled(open);
         }
         for item in &self.edits {
-            item.set_enabled(open);
+            let clipboard = matches!(
+                Command::from_menu_id(&item.id().0),
+                Some(Command::Copy | Command::Cut | Command::Paste)
+            );
+            item.set_enabled(text_input || (clipboard && explorer));
         }
     }
 }

@@ -22,7 +22,16 @@ impl LumenApp {
                 self.execute(action, ctx);
             }
             if let Some(menu) = &self.native_menu {
-                menu.set_document_open(self.editor.active_file.is_some());
+                let open = self.editor.active_file.is_some();
+                let text_input =
+                    ctx.wants_keyboard_input() || (open && !self.view.explorer_focused);
+                let explorer = self.view.explorer_focused
+                    && self.view.explorer_selection.is_some()
+                    && self.view.explorer_edit.is_none()
+                    && self.view.delete_prompt.is_none()
+                    && !self.view.command_palette
+                    && !ctx.wants_keyboard_input();
+                menu.set_context(open, text_input, explorer);
             }
         }
         #[cfg(not(target_os = "macos"))]
@@ -34,7 +43,7 @@ impl LumenApp {
                 self.execute(Command::ToggleSidebar, ctx);
             }
             if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::N)) {
-                self.execute(Command::NewFile, ctx);
+                self.execute(Command::NewUntitled, ctx);
             }
             if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::O)) {
                 if ctx.input(|i| i.modifiers.shift) {

@@ -26,6 +26,16 @@ pub(crate) fn validate_file_name(input: &str) -> Result<&str, &'static str> {
     Ok(name)
 }
 
+pub(crate) fn validate_relative_name(input: &str) -> Result<std::path::PathBuf, &'static str> {
+    let normalized = input.trim().replace('\\', "/");
+    let normalized = normalized.strip_suffix('/').unwrap_or(&normalized);
+    let mut path = std::path::PathBuf::new();
+    for component in normalized.split('/') {
+        path.push(validate_file_name(component)?);
+    }
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::validate_file_name;

@@ -36,7 +36,11 @@ pub(crate) fn run() -> eframe::Result<()> {
                 let menu = platform::native_menu::NativeMenu::new(&cc.egui_ctx)?;
                 #[cfg(target_os = "windows")]
                 menu.attach(cc)?;
-                menu.set_document_open(app.editor.active_file.is_some());
+                menu.set_context(
+                    app.editor.active_file.is_some(),
+                    app.editor.active_file.is_some(),
+                    false,
+                );
                 app.native_menu = Some(menu);
             }
             Ok(Box::new(app))

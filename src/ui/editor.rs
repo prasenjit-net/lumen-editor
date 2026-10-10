@@ -79,7 +79,7 @@ impl Workbench<'_> {
                             .on_hover_text("New file")
                             .clicked()
                         {
-                            self.command(Command::NewFile);
+                            self.command(Command::NewUntitled);
                         }
                     });
                 });
@@ -96,6 +96,11 @@ impl Workbench<'_> {
         egui::CentralPanel::default()
             .frame(canvas())
             .show(ctx, |ui| {
+                if ui.rect_contains_pointer(ui.max_rect())
+                    && ui.input(|input| input.pointer.any_pressed())
+                {
+                    self.view.explorer_focused = false;
+                }
                 surface(BG).show(ui, |ui| {
                     ui.set_min_size(ui.available_size());
                     self.editor_tabs(ui);
@@ -175,19 +180,21 @@ impl Workbench<'_> {
                                             .id_salt("code_editor")
                                             .max_height(content_height)
                                             .show(ui, |ui| {
-                                                if ui
-                                                    .add(
-                                                        TextEdit::multiline(
-                                                            &mut self.editor.files[index].text,
-                                                        )
-                                                        .font(FontId::monospace(14.0))
-                                                        .text_color(TEXT)
-                                                        .desired_width(f32::INFINITY)
-                                                        .frame(false)
-                                                        .code_editor(),
+                                                let response = ui.add(
+                                                    TextEdit::multiline(
+                                                        &mut self.editor.files[index].text,
                                                     )
-                                                    .changed()
-                                                {
+                                                    .font(FontId::monospace(14.0))
+                                                    .text_color(TEXT)
+                                                    .desired_width(f32::INFINITY)
+                                                    .frame(false)
+                                                    .code_editor(),
+                                                );
+                                                if self.view.focus_editor {
+                                                    response.request_focus();
+                                                    self.view.focus_editor = false;
+                                                }
+                                                if response.changed() {
                                                     self.editor.files[index].dirty = true;
                                                 }
                                             });

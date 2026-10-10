@@ -8,6 +8,11 @@ pub(crate) trait FileSystem {
     fn write_text(&self, path: &Path, text: &str) -> io::Result<()>;
     /// Atomically create an empty file; never replace an existing entry.
     fn create_file(&self, path: &Path) -> io::Result<()>;
+    fn create_directory(&self, path: &Path) -> io::Result<()>;
+    fn rename_entry(&self, from: &Path, to: &Path) -> io::Result<()>;
+    fn copy_entry(&self, from: &Path, to: &Path) -> io::Result<()>;
+    fn trash_entry(&self, path: &Path) -> io::Result<()>;
+    fn entry_exists(&self, path: &Path) -> bool;
     fn children(&self, path: &Path) -> Vec<PathBuf>;
     fn is_directory(&self, path: &Path) -> bool;
 }
@@ -31,6 +36,21 @@ impl FileSystem for LocalFileSystem {
     }
     fn is_directory(&self, path: &Path) -> bool {
         path.is_dir()
+    }
+    fn create_directory(&self, path: &Path) -> io::Result<()> {
+        fs::create_dir(path)
+    }
+    fn rename_entry(&self, from: &Path, to: &Path) -> io::Result<()> {
+        super::file_operations::rename_no_replace(from, to)
+    }
+    fn copy_entry(&self, from: &Path, to: &Path) -> io::Result<()> {
+        super::file_operations::copy_no_replace(from, to)
+    }
+    fn trash_entry(&self, path: &Path) -> io::Result<()> {
+        trash::delete(path).map_err(io::Error::other)
+    }
+    fn entry_exists(&self, path: &Path) -> bool {
+        fs::symlink_metadata(path).is_ok()
     }
 }
 fn sorted_children(path: &Path) -> Vec<PathBuf> {

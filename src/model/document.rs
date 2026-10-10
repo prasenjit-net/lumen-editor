@@ -19,10 +19,14 @@ impl Document {
     }
 
     pub(crate) fn mark_saved(&mut self, path: PathBuf) {
+        self.relocate(path);
+        self.dirty = false;
+    }
+
+    pub(crate) fn relocate(&mut self, path: PathBuf) {
         self.name = display_name(&path);
         self.language = language_for(&path);
         self.path = Some(path);
-        self.dirty = false;
     }
     pub(crate) fn untitled(number: usize) -> Self {
         Self {

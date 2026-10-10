@@ -2,6 +2,7 @@ use super::Workbench;
 use super::theme::{MUTED, PANEL};
 use super::widgets::{self, HeaderAction, canvas, explorer_row, panel_header, surface};
 use crate::app::command::Command;
+use crate::app::view_state::ExplorerEditKind;
 use crate::app::view_state::{Activity, ExplorerSelection};
 use crate::icon;
 use crate::model::display_name;
@@ -23,9 +24,22 @@ impl Workbench<'_> {
             return;
         };
         self.explorer_entry(ui, &root, 0);
+        self.explorer_keyboard(ui, &root);
     }
 
     pub(crate) fn explorer_entry(&mut self, ui: &mut egui::Ui, path: &Path, depth: usize) {
+        let renaming = self.view.explorer_edit.as_ref().is_some_and(
+            |edit| matches!(&edit.kind, ExplorerEditKind::Rename(source) if source == path),
+        );
+        if renaming {
+            self.explorer_edit_row(ui, depth);
+            if self.file_system.is_directory(path) && self.view.expanded_dirs.contains(path) {
+                for child in self.file_system.children(path) {
+                    self.explorer_entry(ui, &child, depth + 1);
+                }
+            }
+            return;
+        }
         if self.file_system.is_directory(path) {
             let expanded = self.view.expanded_dirs.contains(path);
             let response = explorer_row(
@@ -50,6 +64,7 @@ impl Workbench<'_> {
                     .as_ref()
                     .is_some_and(|selection| selection.path() == path),
             );
+            self.explorer_row_actions(&response, path, true);
             if response.clicked() {
                 self.view.explorer_selection =
                     Some(ExplorerSelection::Directory(path.to_path_buf()));
@@ -59,7 +74,12 @@ impl Workbench<'_> {
                     self.view.expanded_dirs.insert(path.to_path_buf());
                 }
             }
-            if expanded {
+            if self.view.expanded_dirs.contains(path) {
+                if self.view.explorer_edit.as_ref().is_some_and(|edit| {
+                    edit.directory == path && !matches!(edit.kind, ExplorerEditKind::Rename(_))
+                }) {
+                    self.explorer_edit_row(ui, depth + 1);
+                }
                 for child in self.file_system.children(path) {
                     self.explorer_entry(ui, &child, depth + 1);
                 }
@@ -78,6 +98,7 @@ impl Workbench<'_> {
                 depth * 14 + 20,
                 open,
             );
+            self.explorer_row_actions(&response, path, false);
             if response.clicked() {
                 self.view.explorer_selection = Some(ExplorerSelection::File(path.to_path_buf()));
                 self.command(Command::OpenPath(path.to_path_buf()));
@@ -103,16 +124,25 @@ impl Workbench<'_> {
                             glyph: icon::FILE_PLUS,
                             tooltip: "New file",
                             command: Command::NewFile,
+                            enabled: true,
                         },
                         HeaderAction {
-                            glyph: icon::FILE_ARROW_UP,
-                            tooltip: "Open file",
-                            command: Command::OpenFile,
+                            glyph: icon::NEW_FOLDER,
+                            tooltip: "New folder",
+                            command: Command::NewFolder,
+                            enabled: self.editor.workspace.is_some(),
                         },
                         HeaderAction {
-                            glyph: icon::FOLDER_OPEN,
-                            tooltip: "Open folder",
-                            command: Command::OpenFolder,
+                            glyph: icon::REFRESH,
+                            tooltip: "Refresh explorer",
+                            command: Command::RefreshExplorer,
+                            enabled: self.editor.workspace.is_some(),
+                        },
+                        HeaderAction {
+                            glyph: icon::COLLAPSE_ALL,
+                            tooltip: "Collapse folders",
+                            command: Command::CollapseFolders,
+                            enabled: self.editor.workspace.is_some(),
                         },
                     ];
                     let actions = if self.view.activity == Activity::Explorer {

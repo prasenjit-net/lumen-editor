@@ -8,13 +8,31 @@ uses a native Win32 menu and the native Windows title bar and caption buttons.
 File, Edit and View actions share the editor's commands; shortcuts use
 Command on macOS and Ctrl on Windows.
 
-New File is workspace-aware. With a folder open, it asks for a file name and
-creates an empty file in the selected explorer directory (or a selected file's
-parent directory). With no selection, it uses the workspace root. The new file
-is revealed in the explorer and opened in the editor. Enter confirms; Escape
-or Cancel makes no changes. Existing files are never overwritten by creation,
-and errors stay in the prompt so you can correct the name or retry.
-Without an open folder, New File creates an untitled editor tab as before.
+The explorer follows [VS Code's workbench conventions](https://code.visualstudio.com/docs/editing/getting-started/userinterface):
+New File, New Folder and Rename use an inline tree input. Enter confirms;
+Escape cancels. Creation uses the selected folder, a selected file's parent,
+or the workspace root. Nested names (`src/components/button.rs`) create parent
+folders; a trailing slash creates a folder. Errors remain inline for correction.
+Cmd/Ctrl+N and the editor's plus button create an untitled tab, independently
+of the workspace, matching VS Code's New Text File action.
+
+Right-click a file/folder for open, new file/folder, cut/copy/paste, copy path,
+copy relative path, reveal in the system file manager, rename and delete.
+The header offers New File, New Folder, Refresh and Collapse All. Tree arrows
+navigate/expand/collapse; F2 renames; Delete requests deletion. On macOS, Return
+renames, Cmd+Down opens and Cmd+Backspace requests deletion. Text-editor
+shortcuts remain separate from explorer operations.
+
+Deletion requires confirmation and moves items to Trash/Recycle Bin, never
+silently falling back to permanent deletion. Clean affected tabs close; dirty
+buffers stay open without their old disk paths and use Save As next time.
+Rename/move updates descendant tabs and preserves unsaved text. Creation,
+rename and paste never overwrite an existing destination; copying into an
+occupied folder generates a unique copy name. A failed recursive copy can
+leave a partial destination, reported in the status bar for inspection.
+
+Current limits: single-selection operations, in-app file clipboard, no drag
+and drop or explorer operation undo. Symlink copying is rejected explicitly.
 
 Run from source:
 
@@ -66,7 +84,8 @@ palette share the same command dispatcher.
 
 To add an action, define a `Command` and handle it in `app/dispatch.rs` (or
 `apply_local` for buffer-only changes), then connect its menu or component.
-Keep file workflows in `app/documents.rs`, document rules in `model/`, and
+Keep editor workflows in `app/documents.rs`, explorer workflows in
+`app/explorer_ops.rs`, document rules in `model/`, and
 reusable drawing helpers in `ui/widgets.rs`. Preserve widget IDs and render
 order when moving components so focus, scroll and resize state stay stable.
 
