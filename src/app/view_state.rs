@@ -1,4 +1,45 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
+
+pub(crate) enum ExplorerSelection {
+    Directory(PathBuf),
+    File(PathBuf),
+}
+
+impl ExplorerSelection {
+    pub(crate) fn path(&self) -> &Path {
+        match self {
+            Self::Directory(path) | Self::File(path) => path,
+        }
+    }
+
+    pub(crate) fn directory(&self) -> Option<&Path> {
+        match self {
+            Self::Directory(path) => Some(path),
+            Self::File(path) => path.parent(),
+        }
+    }
+}
+
+pub(crate) struct NewFilePrompt {
+    pub(crate) directory: PathBuf,
+    pub(crate) name: String,
+    pub(crate) error: Option<String>,
+    pub(crate) focus_name: bool,
+}
+
+impl NewFilePrompt {
+    pub(crate) fn new(directory: PathBuf) -> Self {
+        Self {
+            directory,
+            name: String::new(),
+            error: None,
+            focus_name: true,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum Activity {
@@ -25,6 +66,8 @@ impl Activity {
 pub(crate) struct ViewState {
     pub(crate) activity: Activity,
     pub(crate) expanded_dirs: HashSet<PathBuf>,
+    pub(crate) explorer_selection: Option<ExplorerSelection>,
+    pub(crate) new_file_prompt: Option<NewFilePrompt>,
     pub(crate) command_palette: bool,
     pub(crate) search: String,
     pub(crate) sidebar_visible: bool,
@@ -39,6 +82,8 @@ impl Default for ViewState {
         Self {
             activity: Activity::Explorer,
             expanded_dirs: HashSet::new(),
+            explorer_selection: None,
+            new_file_prompt: None,
             command_palette: false,
             search: String::new(),
             sidebar_visible: true,

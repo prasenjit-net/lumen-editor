@@ -72,6 +72,12 @@ behavior. Preserve existing functionality unless a task explicitly changes it.
 - Preserve document content, dirty flags, open/save/save-as behavior, duplicate
   tab handling, close/quit prompts, cancellation and error feedback. Do not
   silently bundle unrelated behavioral fixes into layout or refactor work.
+- New File is workspace-aware across all command entry points: prompt for a
+  name in the selected explorer directory (a selected file uses its parent),
+  falling back to the workspace root. Without a workspace, keep untitled tabs.
+  Use atomic create-new filesystem semantics, never a truncating save operation.
+  Cancellation/validation/failure must not create a buffer or overwrite data;
+  retain the prompt on errors, then reveal and open the file on success.
 
 ## Verification and handoff
 

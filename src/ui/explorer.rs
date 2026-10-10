@@ -2,7 +2,7 @@ use super::Workbench;
 use super::theme::{MUTED, PANEL};
 use super::widgets::{self, HeaderAction, canvas, explorer_row, panel_header, surface};
 use crate::app::command::Command;
-use crate::app::view_state::Activity;
+use crate::app::view_state::{Activity, ExplorerSelection};
 use crate::icon;
 use crate::model::display_name;
 use eframe::egui::{self, RichText, ScrollArea, TextEdit};
@@ -45,9 +45,14 @@ impl Workbench<'_> {
                     display_name(path)
                 ),
                 depth * 14 + 4,
-                false,
+                self.view
+                    .explorer_selection
+                    .as_ref()
+                    .is_some_and(|selection| selection.path() == path),
             );
             if response.clicked() {
+                self.view.explorer_selection =
+                    Some(ExplorerSelection::Directory(path.to_path_buf()));
                 if expanded {
                     self.view.expanded_dirs.remove(path);
                 } else {
@@ -60,10 +65,13 @@ impl Workbench<'_> {
                 }
             }
         } else {
-            let open = self
-                .active()
-                .and_then(|file| file.path.as_deref())
-                .is_some_and(|open_path| open_path == path);
+            let open = if let Some(selection) = &self.view.explorer_selection {
+                selection.path() == path
+            } else {
+                self.active()
+                    .and_then(|file| file.path.as_deref())
+                    .is_some_and(|open_path| open_path == path)
+            };
             let response = explorer_row(
                 ui,
                 format!("{}  {}", widgets::file_icon(path), display_name(path)),
@@ -71,6 +79,7 @@ impl Workbench<'_> {
                 open,
             );
             if response.clicked() {
+                self.view.explorer_selection = Some(ExplorerSelection::File(path.to_path_buf()));
                 self.command(Command::OpenPath(path.to_path_buf()));
             }
         }

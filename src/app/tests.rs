@@ -2,7 +2,7 @@ use crate::ui::theme::configure_ui;
 
 use super::LumenApp;
 use super::command::Command;
-use super::view_state::Activity;
+use super::view_state::{Activity, ExplorerSelection};
 use crate::services::{FileDialogs, FileSystem};
 use eframe::egui::{self, Vec2};
 use std::{
@@ -43,6 +43,22 @@ impl FileSystem for MemoryFileSystem {
         storage.writes.push((path.into(), text.into()));
         storage.files.insert(path.into(), text.into());
         Ok(())
+    }
+
+    fn create_file(&self, path: &Path) -> io::Result<()> {
+        let mut storage = self.0.borrow_mut();
+        if storage.fail_writes {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        match storage.files.entry(path.into()) {
+            std::collections::hash_map::Entry::Occupied(_) => {
+                Err(io::ErrorKind::AlreadyExists.into())
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(String::new());
+                Ok(())
+            }
+        }
     }
 
     fn children(&self, _: &Path) -> Vec<PathBuf> {
@@ -86,6 +102,218 @@ fn edit_active(app: &mut LumenApp, text: &str) {
     let file = &mut app.editor.files[app.editor.active_file.unwrap()];
     file.text = text.into();
     file.dirty = true;
+}
+
+#[test]
+fn workspace_new_file_prompts_at_root_without_creating_a_buffer_or_file() {
+    let (mut app, storage) = test_app(TestDialogs::default());
+    app.editor.workspace = Some("project".into());
+    app.execute(Command::NewFile, &egui::Context::default());
+    assert_eq!(
+        app.view.new_file_prompt.as_ref().unwrap().directory,
+        PathBuf::from("project")
+    );
+    assert!(app.editor.files.is_empty());
+    assert!(storage.0.borrow().files.is_empty());
+    assert_eq!(app.editor.next_untitled, 1);
+}
+
+#[test]
+fn new_file_targets_selected_directory_or_selected_files_parent() {
+    let (mut app, _) = test_app(TestDialogs::default());
+    app.editor.workspace = Some("project".into());
+    for selection in [
+        ExplorerSelection::Directory("project/src".into()),
+        ExplorerSelection::File("project/src/main.rs".into()),
+    ] {
+        app.view.explorer_selection = Some(selection);
+        app.new_file();
+        assert_eq!(
+            app.view.new_file_prompt.as_ref().unwrap().directory,
+            PathBuf::from("project/src")
+        );
+        app.view.new_file_prompt = None;
+    }
+}
+
+#[test]
+fn stale_selection_outside_workspace_falls_back_to_root() {
+    let (mut app, _) = test_app(TestDialogs::default());
+    app.editor.workspace = Some("project".into());
+    app.view.explorer_selection = Some(ExplorerSelection::Directory("other-project".into()));
+    app.new_file();
+    assert_eq!(
+        app.view.new_file_prompt.as_ref().unwrap().directory,
+        PathBuf::from("project")
+    );
+}
+
+#[test]
+fn confirming_new_file_creates_opens_and_reveals_a_named_empty_file() {
+    let (mut app, storage) = test_app(TestDialogs::default());
+    app.editor.workspace = Some("project".into());
+    app.view.explorer_selection = Some(ExplorerSelection::Directory("project/src/nested".into()));
+    app.new_file();
+    app.view.new_file_prompt.as_mut().unwrap().name = "module.rs".into();
+    app.execute(Command::CreateFile, &egui::Context::default());
+    let path = PathBuf::from("project/src/nested/module.rs");
+    assert_eq!(storage.0.borrow().files[&path], "");
+    let file = app.editor.active().unwrap();
+    assert_eq!(file.path.as_ref(), Some(&path));
+    assert_eq!(file.language, "Rust");
+    assert!(!file.dirty);
+    assert!(app.view.new_file_prompt.is_none());
+    for directory in ["project", "project/src", "project/src/nested"] {
+        assert!(app.view.expanded_dirs.contains(Path::new(directory)));
+    }
+    assert_eq!(app.view.explorer_selection.as_ref().unwrap().path(), path);
+}
+
+#[test]
+fn duplicate_new_file_never_overwrites_disk_or_existing_edits() {
+    let (mut app, storage) = test_app(TestDialogs::default());
+    let path = PathBuf::from("project/main.rs");
+    storage
+        .0
+        .borrow_mut()
+        .files
+        .insert(path.clone(), "original".into());
+    app.open_file(path.clone());
+    edit_active(&mut app, "unsaved edits");
+    app.editor.workspace = Some("project".into());
+    app.new_file();
+    app.view.new_file_prompt.as_mut().unwrap().name = "main.rs".into();
+    app.create_file();
+    assert_eq!(storage.0.borrow().files[&path], "original");
+    assert_eq!(app.editor.active().unwrap().text, "unsaved edits");
+    assert!(app.editor.active().unwrap().dirty);
+    assert_eq!(app.editor.files.len(), 1);
+    assert!(
+        app.view
+            .new_file_prompt
+            .as_ref()
+            .unwrap()
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("already exists")
+    );
+}
+
+#[test]
+fn invalid_new_file_names_cannot_escape_the_selected_directory() {
+    let (mut app, storage) = test_app(TestDialogs::default());
+    app.editor.workspace = Some("project".into());
+    app.new_file();
+    for name in [
+        "",
+        "..",
+        "../outside.txt",
+        "/absolute.txt",
+        "folder/file.txt",
+        "folder\\file.txt",
+    ] {
+        app.view.new_file_prompt.as_mut().unwrap().name = name.into();
+        app.create_file();
+        assert!(app.view.new_file_prompt.as_ref().unwrap().error.is_some());
+        assert!(storage.0.borrow().files.is_empty());
+        assert!(app.editor.files.is_empty());
+    }
+}
+
+#[test]
+fn create_failure_keeps_name_and_directory_for_retry() {
+    let (mut app, storage) = test_app(TestDialogs::default());
+    app.editor.workspace = Some("project".into());
+    app.new_file();
+    app.view.new_file_prompt.as_mut().unwrap().name = "retry.txt".into();
+    storage.0.borrow_mut().fail_writes = true;
+    app.create_file();
+    let prompt = app.view.new_file_prompt.as_ref().unwrap();
+    assert_eq!(prompt.name, "retry.txt");
+    assert_eq!(prompt.directory, PathBuf::from("project"));
+    assert!(
+        prompt
+            .error
+            .as_ref()
+            .unwrap()
+            .starts_with("Could not create file:")
+    );
+    assert!(app.editor.files.is_empty());
+    storage.0.borrow_mut().fail_writes = false;
+    app.create_file();
+    assert!(app.view.new_file_prompt.is_none());
+    assert_eq!(app.editor.active().unwrap().name, "retry.txt");
+}
+
+fn new_file_dialog_frame(app: &mut LumenApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+    let _ = ctx.run(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                Vec2::new(1000.0, 600.0),
+            )),
+            events,
+            ..Default::default()
+        },
+        |ctx| app.render_component(ctx, |workbench| workbench.new_file_dialog(ctx)),
+    );
+}
+
+fn key_event(key: egui::Key) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+#[test]
+fn name_prompt_focuses_input_and_enter_creates_the_file() {
+    let (mut app, storage) = test_app(TestDialogs::default());
+    let ctx = egui::Context::default();
+    configure_ui(&ctx);
+    app.editor.workspace = Some("project".into());
+    app.new_file();
+    new_file_dialog_frame(&mut app, &ctx, vec![]);
+    new_file_dialog_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::Text("keyboard.rs".into())],
+    );
+    assert_eq!(
+        app.view.new_file_prompt.as_ref().unwrap().name,
+        "keyboard.rs"
+    );
+    new_file_dialog_frame(&mut app, &ctx, vec![key_event(egui::Key::Enter)]);
+    assert!(app.view.new_file_prompt.is_none());
+    assert!(
+        storage
+            .0
+            .borrow()
+            .files
+            .contains_key(Path::new("project/keyboard.rs"))
+    );
+}
+
+#[test]
+fn escape_cancels_creation_without_touching_files_or_buffers() {
+    let (mut app, storage) = test_app(TestDialogs::default());
+    let ctx = egui::Context::default();
+    configure_ui(&ctx);
+    app.new_file();
+    edit_active(&mut app, "existing edits");
+    app.editor.workspace = Some("project".into());
+    app.new_file();
+    new_file_dialog_frame(&mut app, &ctx, vec![]);
+    new_file_dialog_frame(&mut app, &ctx, vec![key_event(egui::Key::Escape)]);
+    assert!(app.view.new_file_prompt.is_none());
+    assert!(storage.0.borrow().files.is_empty());
+    assert_eq!(app.editor.files.len(), 1);
+    assert_eq!(app.editor.active().unwrap().text, "existing edits");
+    assert!(app.editor.active().unwrap().dirty);
 }
 
 #[test]

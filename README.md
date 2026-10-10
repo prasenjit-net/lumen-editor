@@ -8,6 +8,14 @@ uses a native Win32 menu and the native Windows title bar and caption buttons.
 File, Edit and View actions share the editor's commands; shortcuts use
 Command on macOS and Ctrl on Windows.
 
+New File is workspace-aware. With a folder open, it asks for a file name and
+creates an empty file in the selected explorer directory (or a selected file's
+parent directory). With no selection, it uses the workspace root. The new file
+is revealed in the explorer and opened in the editor. Enter confirms; Escape
+or Cancel makes no changes. Existing files are never overwritten by creation,
+and errors stay in the prompt so you can correct the name or retry.
+Without an open folder, New File creates an untitled editor tab as before.
+
 Run from source:
 
 ```sh

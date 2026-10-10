@@ -5,6 +5,7 @@ impl LumenApp {
     pub(crate) fn execute(&mut self, command: Command, ctx: &egui::Context) {
         match command {
             Command::NewFile => self.new_file(),
+            Command::CreateFile => self.create_file(),
             Command::OpenFile => self.choose_file(),
             Command::OpenFolder => self.choose_folder(),
             Command::OpenPath(path) => self.open_file(path),

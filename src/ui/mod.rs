@@ -4,6 +4,7 @@ mod chrome;
 mod dialogs;
 mod editor;
 mod explorer;
+mod new_file;
 mod palette;
 pub(crate) mod theme;
 mod widgets;

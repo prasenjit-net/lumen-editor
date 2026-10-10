@@ -1,4 +1,4 @@
-use super::view_state::ViewState;
+use super::view_state::{NewFilePrompt, ViewState};
 use crate::model::EditorState;
 use std::path::PathBuf;
 
@@ -6,6 +6,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
     NewFile,
+    CreateFile,
     OpenFile,
     OpenFolder,
     Save,
@@ -36,8 +37,21 @@ impl Command {
     pub(crate) fn apply_local(&self, editor: &mut EditorState, view: &mut ViewState) -> bool {
         match *self {
             Self::NewFile => {
-                editor.new_file();
-                view.status = "New untitled file".into();
+                if let Some(root) = &editor.workspace {
+                    if view.new_file_prompt.is_none() {
+                        let directory = view
+                            .explorer_selection
+                            .as_ref()
+                            .and_then(|selection| selection.directory())
+                            .filter(|directory| directory.starts_with(root))
+                            .unwrap_or(root)
+                            .to_path_buf();
+                        view.new_file_prompt = Some(NewFilePrompt::new(directory));
+                    }
+                } else {
+                    editor.new_file();
+                    view.status = "New untitled file".into();
+                }
             }
             Self::RequestClose(index) => {
                 if editor.files.get(index).is_some_and(|file| file.dirty) {

@@ -45,6 +45,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.palette(ctx));
         self.render_component(ctx, |workbench| workbench.unsaved_changes_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.quit_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.new_file_dialog(ctx));
     }
 }
 
