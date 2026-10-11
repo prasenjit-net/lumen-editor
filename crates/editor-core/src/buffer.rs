@@ -23,7 +23,16 @@ pub struct EditorBuffer {
     revision: u64,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
+    typing: Option<TypingGroup>,
 }
+
+struct TypingGroup {
+    revision: u64,
+    selections: SelectionSet,
+    time: f64,
+}
+
+const TYPING_PAUSE_SECONDS: f64 = 1.0;
 
 impl EditorBuffer {
     pub fn new(text: String) -> Self {
@@ -34,6 +43,7 @@ impl EditorBuffer {
             revision: 0,
             undo: Vec::new(),
             redo: Vec::new(),
+            typing: None,
         }
     }
 
@@ -53,6 +63,16 @@ impl EditorBuffer {
         !self.redo.is_empty()
     }
 
+    /// Retained undo/redo text payload, not total allocator or process memory.
+    /// Excludes current/saved text, selection vectors and allocation capacity.
+    pub fn history_text_bytes(&self) -> usize {
+        self.undo
+            .iter()
+            .chain(&self.redo)
+            .map(|snapshot| snapshot.text.len())
+            .sum()
+    }
+
     /// Replace validated ranges without changing the original undo selection.
     pub fn replace_ranges(
         &mut self,
@@ -69,6 +89,7 @@ impl EditorBuffer {
 
     /// Call only after a successful save, never on a failed/cancelled write.
     pub fn mark_saved(&mut self) {
+        self.break_undo_group();
         self.saved_text.clone_from(&self.current.text);
     }
 
@@ -77,7 +98,9 @@ impl EditorBuffer {
         selections: Vec<Selection>,
         primary: usize,
     ) -> Result<(), EditError> {
-        self.current.selections = SelectionSet::new(self.text(), selections, primary)?;
+        let selections = SelectionSet::new(self.text(), selections, primary)?;
+        self.break_undo_group();
+        self.current.selections = selections;
         Ok(())
     }
 
@@ -86,6 +109,36 @@ impl EditorBuffer {
     /// no-ops preserve text, selections, revision and both history branches.
     pub fn replace_selections(&mut self, fragments: &[&str]) -> Result<bool, EditError> {
         self.replace_set(&self.selections().clone(), fragments)
+    }
+
+    /// Consecutive single-line typing shares one undo snapshot. Time is supplied
+    /// by the input adapter, keeping clocks and UI dependencies out of the core.
+    /// Paste, IME and commands use ordinary atomic replacement, never this API.
+    pub fn type_text(&mut self, text: &str, time: f64) -> Result<bool, EditError> {
+        if text.is_empty() {
+            return Ok(false);
+        }
+        let eligible = time.is_finite() && !text.contains(['\r', '\n']);
+        let join = eligible
+            && self.typing.as_ref().is_some_and(|group| {
+                group.revision == self.revision
+                    && group.selections == *self.selections()
+                    && time >= group.time
+                    && time - group.time <= TYPING_PAUSE_SECONDS
+            });
+        let changed = self.replace_set_with_history(&self.selections().clone(), &[text], join)?;
+        if changed && eligible {
+            self.typing = Some(TypingGroup {
+                revision: self.revision,
+                selections: self.selections().clone(),
+                time,
+            });
+        }
+        Ok(changed)
+    }
+
+    pub fn break_undo_group(&mut self) {
+        self.typing = None;
     }
 
     pub fn replace_document(&mut self, text: &str) -> Result<bool, EditError> {
@@ -153,6 +206,15 @@ impl EditorBuffer {
         selections: &SelectionSet,
         fragments: &[&str],
     ) -> Result<bool, EditError> {
+        self.replace_set_with_history(selections, fragments, false)
+    }
+
+    fn replace_set_with_history(
+        &mut self,
+        selections: &SelectionSet,
+        fragments: &[&str],
+        join: bool,
+    ) -> Result<bool, EditError> {
         if fragments.len() != 1 && fragments.len() != selections.selections().len() {
             return Err(EditError::FragmentCount);
         }
@@ -178,17 +240,29 @@ impl EditorBuffer {
             *caret = Selection::caret(boundaries[index]);
         }
         let selections = SelectionSet::new(&text, carets, selections.primary_index())?;
-        Ok(self.commit_snapshot(text, selections))
+        Ok(self.commit_snapshot_with_history(text, selections, join))
     }
 
     pub(crate) fn commit_snapshot(&mut self, text: String, selections: SelectionSet) -> bool {
+        self.commit_snapshot_with_history(text, selections, false)
+    }
+
+    fn commit_snapshot_with_history(
+        &mut self,
+        text: String,
+        selections: SelectionSet,
+        join: bool,
+    ) -> bool {
         if text == self.text() {
             return false;
         }
         let previous = std::mem::replace(&mut self.current, Snapshot { text, selections });
-        self.undo.push(previous);
-        if self.undo.len() > HISTORY_LIMIT {
-            self.undo.remove(0);
+        self.break_undo_group();
+        if !join {
+            self.undo.push(previous);
+            if self.undo.len() > HISTORY_LIMIT {
+                self.undo.remove(0);
+            }
         }
         self.redo.clear();
         self.revision = self.revision.wrapping_add(1);
@@ -196,6 +270,7 @@ impl EditorBuffer {
     }
 
     pub fn undo(&mut self) -> bool {
+        self.break_undo_group();
         let Some(previous) = self.undo.pop() else {
             return false;
         };
@@ -206,6 +281,7 @@ impl EditorBuffer {
     }
 
     pub fn redo(&mut self) -> bool {
+        self.break_undo_group();
         let Some(next) = self.redo.pop() else {
             return false;
         };

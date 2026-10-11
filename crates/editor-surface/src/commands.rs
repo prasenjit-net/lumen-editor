@@ -1,6 +1,14 @@
 use crate::{EditorSurface, TextGeometry};
 use egui::{Key, Modifiers, Pos2, Ui};
-use lumen_editor_core::{Direction, EditorBuffer, Selection};
+use lumen_editor_core::{Direction, EditorBuffer, Selection, SelectionSet};
+
+/// Preferred visual columns belong to a complete, unchanged selection snapshot.
+/// Revision validation prevents reusing byte positions after an external edit.
+pub(crate) struct VerticalGoals {
+    revision: u64,
+    selections: SelectionSet,
+    columns: Vec<f32>,
+}
 
 impl EditorSurface {
     pub(crate) fn selection_command(
@@ -11,8 +19,11 @@ impl EditorSurface {
         origin: Pos2,
         buffer: &mut EditorBuffer,
     ) -> bool {
-        if !matches!(key, Key::ArrowUp | Key::ArrowDown) {
-            self.vertical_goal = None;
+        if !matches!(
+            key,
+            Key::ArrowUp | Key::ArrowDown | Key::PageUp | Key::PageDown
+        ) {
+            self.vertical_goals = None;
         }
         match key {
             Key::Backspace | Key::Delete
@@ -132,40 +143,29 @@ impl EditorSurface {
                 let geometry = self.geometry(ui, buffer.text(), origin, None);
                 let set = buffer.selections();
                 let head = set.selections()[set.primary_index()].head;
-                let x = self
-                    .vertical_goal
-                    .filter(|(previous, _)| *previous == head)
-                    .map_or_else(|| geometry.caret_rect(head).left() - origin.x, |(_, x)| x);
+                let mut columns = self.preferred_columns(buffer, &geometry);
+                let x = columns[set.primary_index()];
                 if let Some(byte) = adjacent_row(&geometry, head, key == Key::ArrowDown, x) {
                     let mut selections = set.selections().to_vec();
                     let primary = selections.len();
                     selections.push(Selection::caret(byte));
-                    buffer.set_selections(selections, primary).unwrap();
-                    let set = buffer.selections();
-                    self.vertical_goal = Some((set.selections()[set.primary_index()].head, x));
+                    columns.push(x);
+                    buffer.set_selections(selections.clone(), primary).unwrap();
+                    // Normalization can merge a newly added cursor with an
+                    // existing selection. Start a fresh sequence in that case.
+                    self.remember_columns(buffer, &selections, columns);
                 }
             }
             Key::ArrowUp | Key::ArrowDown if !modifiers.alt && !modifiers.ctrl => {
                 let geometry = self.geometry(ui, buffer.text(), origin, None);
                 let set = buffer.selections();
-                let primary_head = set.selections()[set.primary_index()].head;
-                let x = self
-                    .vertical_goal
-                    .filter(|(previous, _)| *previous == primary_head)
-                    .map_or_else(
-                        || geometry.caret_rect(primary_head).left() - origin.x,
-                        |(_, x)| x,
-                    );
-                let selections = set
+                let columns = self.preferred_columns(buffer, &geometry);
+                let selections: Vec<_> = set
                     .selections()
                     .iter()
                     .enumerate()
                     .map(|(index, selection)| {
-                        let column = if index == set.primary_index() {
-                            x
-                        } else {
-                            geometry.caret_rect(selection.head).left() - origin.x
-                        };
+                        let column = columns[index];
                         let head = if modifiers.command && cfg!(target_os = "macos") {
                             if key == Key::ArrowDown {
                                 buffer.text().len()
@@ -187,31 +187,30 @@ impl EditorSurface {
                     })
                     .collect();
                 buffer
-                    .set_selections(selections, set.primary_index())
+                    .set_selections(selections.clone(), set.primary_index())
                     .unwrap();
-                let set = buffer.selections();
-                self.vertical_goal = Some((set.selections()[set.primary_index()].head, x));
+                self.remember_columns(buffer, &selections, columns);
             }
             Key::PageUp | Key::PageDown => {
                 let geometry = self.geometry(ui, buffer.text(), origin, None);
+                let columns = self.preferred_columns(buffer, &geometry);
                 let distance = ui.clip_rect().height().max(18.0) - 18.0;
-                let selections = buffer
+                let selections: Vec<_> = buffer
                     .selections()
                     .selections()
                     .iter()
-                    .map(|selection| {
+                    .enumerate()
+                    .map(|(index, selection)| {
                         let caret = geometry.caret_rect(selection.head);
-                        let head = geometry.hit_test(
-                            caret.center()
-                                + egui::vec2(
-                                    0.0,
-                                    if key == Key::PageDown {
-                                        distance
-                                    } else {
-                                        -distance
-                                    },
-                                ),
-                        );
+                        let head = geometry.hit_test(Pos2::new(
+                            origin.x + columns[index],
+                            caret.center().y
+                                + if key == Key::PageDown {
+                                    distance
+                                } else {
+                                    -distance
+                                },
+                        ));
                         Selection {
                             anchor: if modifiers.shift {
                                 selection.anchor
@@ -223,12 +222,54 @@ impl EditorSurface {
                     })
                     .collect();
                 buffer
-                    .set_selections(selections, buffer.selections().primary_index())
+                    .set_selections(selections.clone(), buffer.selections().primary_index())
                     .unwrap();
+                self.remember_columns(buffer, &selections, columns);
             }
             _ => return false,
         }
         true
+    }
+
+    fn preferred_columns(&self, buffer: &EditorBuffer, geometry: &TextGeometry) -> Vec<f32> {
+        if let Some(goals) = &self.vertical_goals
+            && goals.revision == buffer.revision()
+            && &goals.selections == buffer.selections()
+        {
+            return goals.columns.clone();
+        }
+        buffer
+            .selections()
+            .selections()
+            .iter()
+            .map(|selection| geometry.caret_rect(selection.head).left() - geometry.origin.x)
+            .collect()
+    }
+
+    fn remember_columns(
+        &mut self,
+        buffer: &EditorBuffer,
+        requested: &[Selection],
+        columns: Vec<f32>,
+    ) {
+        // SelectionSet orders new cursors by document position, not insertion
+        // order. Remap columns before caching; merges deliberately reset goals.
+        self.vertical_goals =
+            (columns.len() == buffer.selections().selections().len()).then(|| VerticalGoals {
+                revision: buffer.revision(),
+                selections: buffer.selections().clone(),
+                columns: buffer
+                    .selections()
+                    .selections()
+                    .iter()
+                    .map(|selection| {
+                        columns[requested
+                            .iter()
+                            .position(|candidate| candidate == selection)
+                            .unwrap()]
+                    })
+                    .collect(),
+            });
     }
 }
 

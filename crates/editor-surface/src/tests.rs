@@ -7,6 +7,7 @@ mod commands;
 mod ime;
 #[cfg(feature = "shaped")]
 mod shaped;
+mod typing;
 
 fn frame(
     surface: &mut EditorSurface,

@@ -14,3 +14,5 @@ pub use selection::{EditError, Selection, SelectionSet};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod typing_tests;

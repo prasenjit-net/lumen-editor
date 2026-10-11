@@ -59,7 +59,9 @@ fn publish_shaped(ui: &Ui, response: &Response, geometry: &TextGeometry, buffer:
                 .count(),
         }
     };
+    let mut enabled = false;
     ui.ctx().accesskit_node_builder(response.id, |node| {
+        enabled = true;
         node.set_role(Role::MultilineTextInput);
         node.set_label("Lumen editor");
         node.set_description(format!("{} cursors; accessible selection changes collapse secondary cursors. Composition is transient.",buffer.selections().selections().len()));
@@ -68,6 +70,11 @@ fn publish_shaped(ui: &Ui, response: &Response, geometry: &TextGeometry, buffer:
         node.add_action(Action::SetTextSelection);
         node.add_action(Action::SetValue);
     });
+    // egui invokes the builder only while AccessKit is enabled. Avoid computing
+    // character geometry for the entire document when no tree is requested.
+    if !enabled {
+        return;
+    }
     let transform = ui
         .ctx()
         .layer_transform_to_global(ui.layer_id())

@@ -48,6 +48,44 @@ fn edit_command(app: &mut LumenApp, ctx: &egui::Context, action: EditorAction) {
 }
 
 #[test]
+fn shaped_workbench_retains_all_cursor_columns_without_creating_history() {
+    let (mut app, _, ctx) = fixture("abcdef\nx\nabcdef\nabcdef\nx\nabcdef");
+    select(&mut app, vec![Selection::caret(3), Selection::caret(19)], 1);
+    editor_frame(
+        &mut app,
+        &ctx,
+        vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+    );
+    assert_eq!(
+        buffer(&app).selections().selections(),
+        &[Selection::caret(8), Selection::caret(24)]
+    );
+    editor_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::Key {
+            key: egui::Key::ArrowDown,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    editor_frame(
+        &mut app,
+        &ctx,
+        vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+    );
+    assert_eq!(
+        buffer(&app).selections().selections(),
+        &[Selection::caret(12), Selection::caret(28)]
+    );
+    assert_eq!(buffer(&app).selections().primary_index(), 1);
+    assert!(!app.editor.active().unwrap().dirty);
+    assert!(!buffer(&app).can_undo());
+}
+
+#[test]
 fn workbench_multi_cursor_history_is_core_owned_and_save_checkpoint_survives_undo() {
     let (mut app, storage, ctx) = fixture("one two");
     let id = app.editor.active().unwrap().id;
@@ -130,9 +168,77 @@ fn tabs_have_independent_shared_history_and_stable_document_identity() {
     editor_frame(&mut app, &ctx, vec![]);
     assert_eq!(app.editor.active().unwrap().id, first);
     assert_eq!(buffer(&app).text(), "Afirst");
+    editor_frame(&mut app, &ctx, vec![egui::Event::Text("C".into())]);
+    edit_command(&mut app, &ctx, EditorAction::Undo);
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(buffer(&app).text(), "Afirst");
     edit_command(&mut app, &ctx, EditorAction::Undo);
     editor_frame(&mut app, &ctx, vec![]);
     assert_eq!(buffer(&app).text(), "first");
+}
+
+#[test]
+fn shaped_tabs_restore_two_axis_scroll_selection_and_focus() {
+    let text = "long code ".repeat(160) + &"\nmore rows".repeat(100);
+    let (mut app, _, ctx) = fixture(&text);
+    let first = app.editor.active().unwrap().id;
+    select(&mut app, vec![Selection::caret(3), Selection::caret(10)], 1);
+    editor_frame(&mut app, &ctx, vec![]);
+    let before = app.view.shared_output.as_ref().unwrap().geometry.origin;
+    let pointer = app.view.shared_output.as_ref().unwrap().text_clip.center();
+    editor_frame(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(pointer),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(-90.0, -70.0),
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    for _ in 0..4 {
+        editor_frame(&mut app, &ctx, vec![]);
+    }
+    let scrolled = app.view.shared_output.as_ref().unwrap().geometry.origin;
+    assert!(scrolled.x < before.x && scrolled.y < before.y);
+    let selection = buffer(&app).selections().clone();
+    app.new_file();
+    editor_frame(&mut app, &ctx, vec![]);
+    app.close_file(1);
+    app.view.focus_editor = true;
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(app.editor.active().unwrap().id, first);
+    assert_eq!(buffer(&app).selections(), &selection);
+    let restored = app.view.shared_output.as_ref().unwrap().geometry.origin;
+    assert!((restored - scrolled).length() < 0.01);
+    assert!(ctx.memory(|memory| memory.has_focus(text_widget_id(first))));
+    assert!(!buffer(&app).can_undo());
+}
+
+#[test]
+fn shaped_typing_coalesces_but_save_is_a_separate_step() {
+    let (mut app, _, ctx) = fixture("x");
+    editor_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::Text("a".into()), egui::Event::Text("b".into())],
+    );
+    app.save_active();
+    editor_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::Text("c".into()), egui::Event::Text("d".into())],
+    );
+    edit_command(&mut app, &ctx, EditorAction::Undo);
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(buffer(&app).text(), "abx");
+    assert!(!app.editor.active().unwrap().dirty);
+    edit_command(&mut app, &ctx, EditorAction::Undo);
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(buffer(&app).text(), "x");
+    assert!(app.editor.active().unwrap().dirty);
 }
 
 #[test]
@@ -243,6 +349,12 @@ fn shaped_ime_commit_and_clipboard_failures_are_non_duplicating() {
 fn native_accelerator_and_existing_undo_key_do_not_undo_twice() {
     let (mut app, _, ctx) = fixture("text");
     editor_frame(&mut app, &ctx, vec![egui::Event::Text("A".into())]);
+    // This test needs two undo groups to detect a duplicated accelerator.
+    app.editor.files[0]
+        .editing
+        .as_mut()
+        .unwrap()
+        .break_undo_group();
     editor_frame(&mut app, &ctx, vec![egui::Event::Text("B".into())]);
     let _ = ctx.run(
         egui::RawInput {

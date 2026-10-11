@@ -13,7 +13,9 @@ impl EditorSurface {
     ) -> bool {
         let before = buffer.revision();
         if !ui.is_enabled() || !ui.input(|input| input.focused) {
+            buffer.break_undo_group();
             self.drag_anchor = None;
+            self.vertical_goals = None;
             self.cancel_composition();
             return false;
         }
@@ -30,15 +32,22 @@ impl EditorSurface {
             self.notice = Some("Composition cancelled: editor target changed".into());
         }
         for event in events {
-            if !matches!(
+            // Passive pointer motion and key releases must not erase preferred
+            // columns between consecutive vertical moves. Actual edits and
+            // selection changes are also validated against the saved snapshot.
+            if matches!(
                 event,
-                Event::Key {
-                    key: Key::ArrowUp | Key::ArrowDown,
-                    pressed: true,
-                    ..
-                }
-            ) {
-                self.vertical_goal = None;
+                Event::Text(_) | Event::Paste(_) | Event::Cut | Event::Ime(_)
+            ) || matches!(event, Event::PointerButton { pressed: true, .. })
+            {
+                self.vertical_goals = None;
+            }
+            if matches!(
+                event,
+                Event::Copy | Event::Cut | Event::Paste(_) | Event::Ime(_)
+            ) || matches!(event, Event::PointerButton { pressed: true, .. })
+            {
+                buffer.break_undo_group();
             }
             if let Event::PointerButton {
                 pos,
@@ -205,7 +214,9 @@ impl EditorSurface {
                 }
                 Event::Text(text) if self.composition.is_none() => {
                     self.drag_anchor = None;
-                    buffer.replace_selections(&[&text]).unwrap();
+                    buffer
+                        .type_text(&text, ui.input(|input| input.time))
+                        .unwrap();
                 }
                 Event::Key {
                     key,
@@ -214,6 +225,26 @@ impl EditorSurface {
                     ..
                 } if self.composition.is_none() => {
                     self.drag_anchor = None;
+                    if modifiers.command
+                        || matches!(
+                            key,
+                            Key::ArrowLeft
+                                | Key::ArrowRight
+                                | Key::ArrowUp
+                                | Key::ArrowDown
+                                | Key::Home
+                                | Key::End
+                                | Key::PageUp
+                                | Key::PageDown
+                                | Key::Backspace
+                                | Key::Delete
+                                | Key::Enter
+                                | Key::Tab
+                                | Key::Escape
+                        )
+                    {
+                        buffer.break_undo_group();
+                    }
                     if self.selection_command(ui, key, modifiers, origin, buffer) {
                         continue;
                     }
@@ -284,7 +315,9 @@ impl EditorSurface {
         }
         // A lost native focus/release cannot leave a drag or composition alive.
         if !ui.input(|input| input.focused) || !ui.memory(|memory| memory.has_focus(response.id)) {
+            buffer.break_undo_group();
             self.drag_anchor = None;
+            self.vertical_goals = None;
             self.cancel_composition();
         }
         if !ui.input(|input| input.pointer.primary_down()) {

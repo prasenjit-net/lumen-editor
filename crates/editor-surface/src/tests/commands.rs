@@ -1,6 +1,239 @@
 use super::*;
 
 #[test]
+fn every_cursor_retains_column_through_short_lines_and_passive_events() {
+    let (mut surface, mut buffer, ctx) = fixture("abcdef\nx\nabcdef\nabcdef\nx\nabcdef");
+    buffer
+        .set_selections(vec![Selection::caret(3), Selection::caret(19)], 1)
+        .unwrap();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::ArrowDown, Modifiers::NONE)],
+        500.0,
+    );
+    assert_eq!(
+        buffer.selections().selections(),
+        &[Selection::caret(8), Selection::caret(24)]
+    );
+    let release = Event::Key {
+        key: Key::ArrowDown,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    };
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![release, Event::PointerMoved(pos2(490.0, 240.0))],
+        500.0,
+    );
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::ArrowDown, Modifiers::NONE)],
+        500.0,
+    );
+    assert_eq!(
+        buffer.selections().selections(),
+        &[Selection::caret(12), Selection::caret(28)]
+    );
+    assert_eq!(buffer.selections().primary_index(), 1);
+    assert!(!buffer.is_dirty());
+    assert!(!buffer.can_undo());
+}
+
+#[test]
+fn vertical_selection_extension_preserves_each_anchor_and_column() {
+    let (mut surface, mut buffer, ctx) = fixture("abcdef\nx\nabcdef\nabcdef\nx\nabcdef");
+    buffer
+        .set_selections(vec![Selection::caret(3), Selection::caret(19)], 0)
+        .unwrap();
+    for _ in 0..2 {
+        frame(
+            &mut surface,
+            &mut buffer,
+            &ctx,
+            vec![key(Key::ArrowDown, Modifiers::SHIFT)],
+            500.0,
+        );
+    }
+    assert_eq!(
+        buffer.selections().selections(),
+        &[
+            Selection {
+                anchor: 3,
+                head: 12
+            },
+            Selection {
+                anchor: 19,
+                head: 28
+            }
+        ]
+    );
+    for _ in 0..2 {
+        frame(
+            &mut surface,
+            &mut buffer,
+            &ctx,
+            vec![key(Key::ArrowUp, Modifiers::SHIFT)],
+            500.0,
+        );
+    }
+    assert_eq!(
+        buffer.selections().selections(),
+        &[Selection::caret(3), Selection::caret(19)]
+    );
+}
+
+#[test]
+fn external_selection_and_revision_changes_invalidate_columns() {
+    let (mut surface, mut buffer, ctx) = fixture("abcdef\nx\nabcdef");
+    buffer.set_selections(vec![Selection::caret(3)], 0).unwrap();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::ArrowDown, Modifiers::NONE)],
+        500.0,
+    );
+    buffer.set_selections(vec![Selection::caret(7)], 0).unwrap();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::ArrowDown, Modifiers::NONE)],
+        500.0,
+    );
+    assert_eq!(buffer.selections().selections(), &[Selection::caret(9)]);
+
+    buffer.set_selections(vec![Selection::caret(3)], 0).unwrap();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::ArrowDown, Modifiers::NONE)],
+        500.0,
+    );
+    buffer.replace_document("abcdef\ny\nabcdef").unwrap();
+    buffer.set_selections(vec![Selection::caret(8)], 0).unwrap();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::ArrowDown, Modifiers::NONE)],
+        500.0,
+    );
+    assert_eq!(buffer.selections().selections(), &[Selection::caret(10)]);
+}
+
+#[test]
+fn adding_cursor_above_remaps_columns_after_document_order_normalization() {
+    let (mut surface, mut buffer, ctx) = fixture("abcdef\nx\nabcdef");
+    buffer
+        .set_selections(vec![Selection::caret(12)], 0)
+        .unwrap();
+    let modifiers = cursor_modifiers();
+    for _ in 0..2 {
+        frame(
+            &mut surface,
+            &mut buffer,
+            &ctx,
+            vec![key(Key::ArrowUp, modifiers)],
+            500.0,
+        );
+    }
+    assert_eq!(
+        buffer.selections().selections(),
+        &[
+            Selection::caret(3),
+            Selection::caret(8),
+            Selection::caret(12)
+        ]
+    );
+    assert_eq!(buffer.selections().primary_index(), 0);
+}
+
+fn cursor_modifiers() -> Modifiers {
+    if cfg!(target_os = "macos") {
+        Modifiers {
+            alt: true,
+            mac_cmd: true,
+            ..Modifiers::COMMAND
+        }
+    } else if cfg!(target_os = "windows") {
+        Modifiers {
+            alt: true,
+            ctrl: true,
+            ..Modifiers::NONE
+        }
+    } else {
+        Modifiers {
+            alt: true,
+            shift: true,
+            ..Modifiers::NONE
+        }
+    }
+}
+
+#[test]
+fn merged_cursors_reset_columns_without_reusing_stale_indices() {
+    let (mut surface, mut buffer, ctx) = fixture("abcdef\nx\nabcdef");
+    buffer
+        .set_selections(vec![Selection::caret(2), Selection::caret(4)], 1)
+        .unwrap();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::ArrowDown, Modifiers::NONE)],
+        500.0,
+    );
+    assert_eq!(buffer.selections().selections(), &[Selection::caret(8)]);
+    assert!(surface.vertical_goals.is_none());
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::ArrowDown, Modifiers::NONE)],
+        500.0,
+    );
+    assert_eq!(buffer.selections().selections(), &[Selection::caret(10)]);
+}
+
+#[test]
+fn horizontal_movement_starts_a_new_preferred_column_sequence() {
+    let (mut surface, mut buffer, ctx) = fixture("abcdef\nx\nabcdef");
+    buffer.set_selections(vec![Selection::caret(3)], 0).unwrap();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::ArrowDown, Modifiers::NONE)],
+        500.0,
+    );
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::ArrowLeft, Modifiers::NONE)],
+        500.0,
+    );
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::ArrowDown, Modifiers::NONE)],
+        500.0,
+    );
+    assert_eq!(buffer.selections().selections(), &[Selection::caret(9)]);
+}
+
+#[test]
 fn occurrence_shortcuts_edit_all_locations_and_restore_set_on_undo() {
     let (mut surface, mut buffer, ctx) = fixture("name name name");
     frame(
@@ -45,25 +278,7 @@ fn occurrence_shortcuts_edit_all_locations_and_restore_set_on_undo() {
 fn native_cursor_shortcut_uses_adjacent_row_geometry_and_stops_at_edges() {
     let (mut surface, mut buffer, ctx) = fixture("abcd\nx\n漢xyz");
     buffer.set_selections(vec![Selection::caret(3)], 0).unwrap();
-    let modifiers = if cfg!(target_os = "macos") {
-        Modifiers {
-            alt: true,
-            mac_cmd: true,
-            ..Modifiers::COMMAND
-        }
-    } else if cfg!(target_os = "windows") {
-        Modifiers {
-            alt: true,
-            ctrl: true,
-            ..Modifiers::NONE
-        }
-    } else {
-        Modifiers {
-            alt: true,
-            shift: true,
-            ..Modifiers::NONE
-        }
-    };
+    let modifiers = cursor_modifiers();
     let first = frame(
         &mut surface,
         &mut buffer,

@@ -37,6 +37,52 @@ snapshot race and session-only metadata limitations are not claimed resolved.
 
 ## Checks and evidence
 
+### Typing/history and tab parity follow-up
+
+The core now groups consecutive single-line text events within a one-second
+pause into a single undo snapshot, restoring the original complete selection set.
+The input adapter supplies time; the core has no clock/UI dependency. Every edit
+still advances revision. Save checkpoints, navigation/selection changes, focus
+or tab changes, clipboard commands and IME boundaries split groups. Paste,
+Find/Replace, indentation, deletion and IME commits remain separate atomic edits.
+Newlines and invalid/backwards clock readings do not join a typing group.
+Deletion coalescing and finer word/punctuation grouping are not implemented.
+
+Regression tests cover multi-cursor combining characters, redo branching, the
+100-group cap, save checkpoints, raw key releases, clipboard order and focus
+loss. Shaped workbench tests confirm document-ID-based two-axis scroll and
+selection restoration on tab return; the existing native Undo deduplication
+test now explicitly separates its two edit groups.
+
+Repeatable probes and measured limits are in
+[the performance baseline](editor-performance-baseline.md). Disabled AccessKit
+no longer builds per-character shaped geometry; enabling it later still publishes
+complete rows. Enabled accessibility and large-file layout remain promotion gates.
+Sizing and painting reuse one geometry when input has not changed source or
+preedit; a changed text/IME pass relayouts before publishing carets or highlights.
+
+Current local verification: 216 default / 244 all-feature workspace tests,
+formatting, strict default/all-feature Clippy, Windows cross-compilation and both
+macOS bundles. No new native runtime IME or screen-reader validation is claimed.
+
+### Vertical navigation follow-up
+
+Every cursor now keeps an independent preferred visual column across Up/Down,
+selection extension and page navigation. Key releases and passive pointer motion
+do not reset it. Cached goals require matching revision and full selection set;
+edits, selection changes, focus loss and document switches invalidate them.
+Adding cursors remaps goals into document order. Cursor merges deliberately start
+a fresh column sequence rather than assigning an ambiguous merged goal.
+Six surface regressions and one shaped-workbench regression cover short lines,
+anchors, reverse travel, passive events, stale revision/selection, cursor ordering,
+merges and horizontal resets. This is not mixed-bidi visual navigation parity.
+
+Follow-up verification: 207 default and 232 all-feature workspace tests pass,
+along with formatting, strict default/all-feature Clippy, Windows compilation
+and both macOS bundles. These are automated checks, not new native runtime
+IME/accessibility validation. The evidence below describes the original
+integration checkpoint.
+
 - 201 default and 225 all-feature workspace tests on macOS (including one bundler
   test). 11 app integration tests explicitly select the shaped workbench; 131
   legacy app tests are a separate comparator, not exhaustive shared-mode parity.
@@ -57,11 +103,13 @@ snapshot race and session-only metadata limitations are not claimed resolved.
    workbench using [the checklist](native-editor-validation.md). Keep Windows
    runtime explicitly pending until a host is available.
 3. Port more legacy interaction regressions to shared mode; review partial-
-   grapheme Find semantics, typing undo grouping, scroll identity, multi-cursor
-   vertical goals and word/line-edge details. A rejected range must stay
+   grapheme Find semantics and word/line-edge details. Typing grouping, scroll
+   identity and multi-cursor vertical goals have local regression coverage above;
+   further native/parity validation is still required.
+   A rejected range must stay
    non-mutating and report feedback, not silently expand to unrelated text.
 4. Measure large-file input/layout/accessibility costs and history storage. Current
-   full snapshots are capped at 100 edits; layout is still per-event. Glyph
+   full snapshots are capped at 100 undo groups; layout is still per-event. Glyph
    textures/raster entries use a bounded cache with visible-run culling, not a
    production atlas/performance claim. The source character map is indexed once.
 5. Only after those gates, promote the core build and remove document TextEdit

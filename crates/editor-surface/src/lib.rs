@@ -22,7 +22,7 @@ pub struct EditorSurface {
     composition: Option<Composition>,
     composition_cancelled: bool,
     clipboard: Option<SelectionClipboard>,
-    vertical_goal: Option<(usize, f32)>,
+    vertical_goals: Option<commands::VerticalGoals>,
     reveal: Option<usize>,
     gutter_id: Option<Id>,
     gutter_drag: Option<(std::ops::Range<usize>, u64)>,
@@ -81,10 +81,11 @@ impl EditorSurface {
     }
     pub fn show(&mut self, ui: &mut Ui, id: Id, buffer: &mut EditorBuffer) -> SurfaceOutput {
         if self.widget.is_some_and(|widget| widget != id) {
+            buffer.break_undo_group();
             self.composition = None;
             self.composition_cancelled = true;
             self.drag_anchor = None;
-            self.vertical_goal = None;
+            self.vertical_goals = None;
             self.gutter_drag = None;
             self.notice = Some("Composition cancelled: editor identity changed".into());
         }
@@ -132,11 +133,24 @@ impl EditorSurface {
                     .composition
                     .as_ref()
                     .map(|composition| composition.preedit().to_owned());
-                if self.handle_input(ui, &response, text_clip, origin, buffer) {
+                let text_changed = self.handle_input(ui, &response, text_clip, origin, buffer);
+                if text_changed {
                     response.mark_changed();
                     ui.ctx().request_repaint();
                 }
-                let geometry = self.geometry(ui, buffer.text(), origin, self.composition.as_ref());
+                let geometry = if !text_changed
+                    && before_preedit.as_deref()
+                        == self.composition.as_ref().map(Composition::preedit)
+                {
+                    // The sizing pass already laid out this exact source and
+                    // preedit. Reuse it for painting and pointer authority;
+                    // translation changes no byte/character mapping.
+                    let mut geometry = initial;
+                    geometry.origin = origin;
+                    geometry
+                } else {
+                    self.geometry(ui, buffer.text(), origin, self.composition.as_ref())
+                };
                 let painter = ui.painter().with_clip_rect(text_clip);
                 for (index, selection) in buffer.selections().selections().iter().enumerate() {
                     if geometry.preedit_rects().is_some()

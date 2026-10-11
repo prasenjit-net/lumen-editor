@@ -11,6 +11,32 @@ fn shaped_fixture(text: &str) -> (EditorSurface, EditorBuffer, Context) {
 }
 
 #[test]
+fn enabling_accessibility_after_idle_frames_still_publishes_complete_rows() {
+    let (mut surface, mut buffer, ctx) = shaped_fixture("one\ntwo");
+    ctx.enable_accesskit();
+    let output = ctx.run(RawInput::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            surface.show(ui, Id::new("test_surface"), &mut buffer);
+        });
+    });
+    let tree = output.platform_output.accesskit_update.unwrap();
+    for (line, expected) in [(0, "one\n"), (1, "two")] {
+        let id = egui::accesskit::NodeId(Id::new("test_surface").with(line).value());
+        let (_, node) = tree
+            .nodes
+            .iter()
+            .find(|(candidate, _)| *candidate == id)
+            .unwrap();
+        assert_eq!(node.value(), Some(expected));
+        assert_eq!(
+            node.character_positions().unwrap().len(),
+            expected.chars().count()
+        );
+    }
+    assert_eq!(buffer.revision(), 0);
+}
+
+#[test]
 fn shaped_geometry_maps_source_crlf_and_extended_graphemes() {
     let text = "office ffi é\r\n👩‍💻 漢";
     let (mut surface, mut buffer, ctx) = shaped_fixture(text);
