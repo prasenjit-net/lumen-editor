@@ -16,6 +16,7 @@ use std::{
 mod editor;
 mod explorer;
 mod find;
+mod viewport;
 
 #[derive(Default)]
 struct TestStorage {

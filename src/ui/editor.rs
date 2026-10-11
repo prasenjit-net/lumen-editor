@@ -4,9 +4,7 @@ use super::widgets::{self, canvas, surface};
 use crate::app::command::Command;
 use crate::icon;
 use crate::model::display_name;
-use eframe::egui::{
-    self, CornerRadius, FontId, Frame, Margin, RichText, ScrollArea, Stroke, TextEdit, Vec2,
-};
+use eframe::egui::{self, CornerRadius, Frame, Margin, RichText, ScrollArea, Stroke};
 use std::path::Path;
 impl Workbench<'_> {
     pub(crate) fn editor_tabs(&mut self, ui: &mut egui::Ui) {
@@ -144,112 +142,9 @@ impl Workbench<'_> {
                         );
                     });
                     ui.add_space(2.0);
-                    let line_count = self.editor.files[index].text.split('\n').count();
                     let document_id = self.editor.files[index].id;
                     self.editor_find_bar(ui, document_id);
-                    crate::app::editor_action::prepare_action(self.view, document_id, ctx);
-                    let reveal_find = self
-                        .view
-                        .find
-                        .get(&document_id)
-                        .is_some_and(|find| find.reveal);
-                    let blocked = crate::app::editor_action::blocked(self.view);
-                    let replacing = self.view.find.get_mut(&document_id).is_some_and(|find| {
-                        crate::app::find::prepare_find(
-                            find,
-                            &self.editor.files[index],
-                            ctx,
-                            blocked,
-                        )
-                    });
-                    let content_height = ui.available_height();
-                    Frame::default()
-                        .fill(BG)
-                        .corner_radius(CornerRadius::same(4))
-                        .inner_margin(Margin::ZERO)
-                        .show(ui, |ui| {
-                            ui.set_min_width(ui.available_width());
-                            ui.horizontal_top(|ui| {
-                                ui.allocate_ui_with_layout(
-                                    Vec2::new(48.0, content_height),
-                                    egui::Layout::top_down(egui::Align::Max),
-                                    |ui| {
-                                        ScrollArea::vertical()
-                                            .id_salt(("line_numbers", document_id))
-                                            .max_height(content_height)
-                                            .show(ui, |ui| {
-                                                ui.spacing_mut().item_spacing.y = 0.0;
-                                                for number in 1..=line_count {
-                                                    ui.label(
-                                                        RichText::new(format!("{number}"))
-                                                            .font(FontId::monospace(14.0))
-                                                            .color(MUTED),
-                                                    );
-                                                }
-                                            });
-                                    },
-                                );
-                                let width = ui.available_width();
-                                ui.allocate_ui_with_layout(
-                                    Vec2::new(width, content_height),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| {
-                                        ScrollArea::vertical()
-                                            .id_salt(("code_editor", document_id))
-                                            .max_height(content_height)
-                                            .show(ui, |ui| {
-                                                let text_id =
-                                                    crate::app::editor_action::text_widget_id(
-                                                        document_id,
-                                                    );
-                                                let edit = TextEdit::multiline(
-                                                    &mut self.editor.files[index].text,
-                                                )
-                                                .id(text_id)
-                                                .font(FontId::monospace(14.0))
-                                                .text_color(TEXT)
-                                                .desired_width(f32::INFINITY)
-                                                .min_size(Vec2::new(0.0, content_height))
-                                                .frame(false)
-                                                .code_editor();
-                                                let output = super::editor_menu::show_editor_text(
-                                                    ui, edit, text_id,
-                                                );
-                                                let response = &output.response;
-                                                if self.view.focus_editor {
-                                                    response.request_focus();
-                                                    self.view.focus_editor = false;
-                                                }
-                                                if response.changed() {
-                                                    self.editor.files[index].record_text_change();
-                                                }
-                                                if replacing {
-                                                    crate::app::find::finish_replace(
-                                                        &output,
-                                                        &self.editor.files[index],
-                                                        ctx,
-                                                    );
-                                                }
-                                                if let Some(find) = self
-                                                    .view
-                                                    .find
-                                                    .get_mut(&document_id)
-                                                    .filter(|find| find.open)
-                                                {
-                                                    find.refresh(&self.editor.files[index]);
-                                                    super::editor_find::paint_find(
-                                                        ui,
-                                                        &output,
-                                                        find,
-                                                        reveal_find,
-                                                    );
-                                                }
-                                                self.editor_context_menu(&output, document_id);
-                                            });
-                                    },
-                                );
-                            });
-                        });
+                    self.editor_viewport(ui, index);
                 });
             });
     }

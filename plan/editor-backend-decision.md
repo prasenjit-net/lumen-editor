@@ -49,10 +49,12 @@ a parallel edit history.
 
 ## Known limits of this milestone
 
-The gutter and editor still scroll independently. General input focus still uses
+The gutter and editor now share one two-axis viewport. General input focus still uses
 the existing flags; popup commands additionally validate a document target.
 The editor now has a context menu and accepts clicks below EOF. There is no
-gutter selection, application selection set, or multi-cursor support yet.
+application selection set or multi-cursor support yet. Gutter click/Shift-click
+and drag select logical lines using the same galley geometry and stored widget
+selection. Gutter drag edge auto-scroll remains outstanding.
 Literal Find/Replace now uses the widget's existing undoer and synthetic input,
 not an independent history. Search highlights are previews while the find input
 owns focus; closing Find adopts the current result as the editor selection.

@@ -94,6 +94,11 @@ behavior. Preserve existing functionality unless a task explicitly changes it.
   keep it as the sole mutation/history owner; do not add a parallel undo stack.
   Reuse `app/editor_action.rs` for native/popup editing events and derive widget
   IDs from document identity. Never clear selection just to open a popup.
+- Keep text, gutter, match highlights and pointer mapping on one viewport/layout
+  authority. Derive line positions from the text galley, not independently sized
+  labels or a second scroll area. Long code lines scroll horizontally; the gutter
+  stays fixed. Reserve scrollbar hit regions so they cannot reposition the caret.
+  Gutter selection updates the widget's existing selection, never a second model.
 
 ## Verification and handoff
 

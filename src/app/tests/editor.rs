@@ -32,9 +32,20 @@ pub(super) fn editor_frame_at_width(
         1.0
     };
     let time = ctx.input(|input| input.time) + elapsed;
+    let modifiers = events
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            egui::Event::Key { modifiers, .. } | egui::Event::PointerButton { modifiers, .. } => {
+                Some(*modifiers)
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
     ctx.run(
         egui::RawInput {
             time: Some(time),
+            modifiers,
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
                 egui::vec2(width, 600.0),

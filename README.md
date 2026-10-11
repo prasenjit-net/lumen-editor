@@ -53,8 +53,12 @@ This milestone supports literal search, not regex, selection-scoped search,
 preserve-case replacement, or multiline input controls. Case-insensitive matching
 uses Unicode lowercasing with original-byte boundary mapping, not full Unicode
 case folding. Replace All searches one snapshot and is one undoable widget edit.
-The gutter and text still scroll independently; multi-cursor editing and
-empty-selection line copy/cut remain planned. See
+The gutter and text share vertical scrolling; long lines scroll horizontally
+without wrapping, while line numbers stay fixed at the left. Click a line number
+to select its whole line; Shift-click extends by lines, and dragging selects a
+line range. Unicode and existing line endings are preserved. Multi-cursor editing,
+automatic edge scrolling during gutter drags, and empty-selection line copy/cut
+remain planned. See
 [the editor plan](plan/text-editor-improvement-plan.md) for the remaining work.
 
 Run from source:
