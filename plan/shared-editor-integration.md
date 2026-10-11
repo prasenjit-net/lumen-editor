@@ -37,6 +37,16 @@ snapshot race and session-only metadata limitations are not claimed resolved.
 
 ## Checks and evidence
 
+### Accessibility row-index follow-up
+
+Shaped accessibility character geometry uses one per-frame run index and the
+renderer backend's unchanged cursor-position policy instead of repeatedly
+scanning all rows. Full rows/tree semantics remain intact. Two additional
+regressions compare bulk coordinates with renderer coordinates and published
+tree positions, including CRLF and preedit. Release probe results are recorded
+in [the baseline](editor-performance-baseline.md); native VoiceOver validation
+and mixed-bidi editing remain separate gates.
+
 ### Typing/history and tab parity follow-up
 
 The core now groups consecutive single-line text events within a one-second

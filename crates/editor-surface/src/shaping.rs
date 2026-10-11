@@ -106,6 +106,32 @@ impl ShapedLayout {
         Rect::from_min_size(origin + vec2(x, y), vec2(1.0, 18.0))
     }
 
+    /// Bulk character geometry for accessibility. Index runs once instead of
+    /// asking Buffer::cursor_position to rescan all document rows per character.
+    /// Run::cursor_position retains cosmic-text's glyph/bidi/cluster policy.
+    pub(crate) fn character_carets(&self, text: &str) -> Vec<Pos2> {
+        let mut lines: Vec<Vec<_>> = (0..self.starts.len()).map(|_| Vec::new()).collect();
+        for run in self.buffer.layout_runs() {
+            if let Some(line) = lines.get_mut(run.line_i) {
+                line.push(run);
+            }
+        }
+        text.char_indices()
+            .map(|(byte, _)| byte)
+            .chain([text.len()])
+            .map(|byte| {
+                let cursor = self.cursor(byte);
+                let position = lines.get(cursor.line).and_then(|runs| {
+                    runs.iter().find_map(|run| {
+                        run.cursor_position(&cursor)
+                            .map(|x| Pos2::new(x, run.line_top))
+                    })
+                });
+                position.unwrap_or(Pos2::new(0.0, cursor.line as f32 * 18.0))
+            })
+            .collect()
+    }
+
     pub(crate) fn hit(&self, point: Vec2) -> usize {
         let Some(cursor) = self.buffer.hit(point.x, point.y) else {
             return 0;
@@ -264,6 +290,34 @@ impl Default for Shaper {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bulk_character_geometry_matches_renderer_at_every_boundary() {
+        for text in [
+            "",
+            "\n\n",
+            "one\ntwo\n",
+            "office ffi é\t👩‍💻\n漢字",
+            "abc العربية xyz\nالعربية\n123",
+            "a\u{2028}b\nend",
+        ] {
+            let layout = Shaper::default().layout(text);
+            let positions = layout.character_carets(text);
+            let boundaries: Vec<_> = text
+                .char_indices()
+                .map(|(byte, _)| byte)
+                .chain([text.len()])
+                .collect();
+            assert_eq!(positions.len(), boundaries.len());
+            for (position, byte) in positions.iter().zip(boundaries) {
+                assert_eq!(
+                    *position,
+                    layout.caret(byte, Pos2::ZERO).min,
+                    "{text:?}, byte {byte}"
+                );
+            }
+        }
+    }
     #[test]
     fn retina_glyph_baselines_match_logical_layout_rows() {
         let layout = Shaper::default().layout("one\ntwo\nthree");

@@ -81,6 +81,7 @@ fn publish_shaped(ui: &Ui, response: &Response, geometry: &TextGeometry, buffer:
         .unwrap_or_default();
     let rows = geometry.row_rects();
     let text = geometry.galley.text();
+    let character_carets = shaped.character_carets(text);
     let mut character = 0;
     for (line, start) in shaped.starts.iter().copied().enumerate() {
         let end = shaped.starts.get(line + 1).copied().unwrap_or(text.len());
@@ -91,9 +92,9 @@ fn publish_shaped(ui: &Ui, response: &Response, geometry: &TextGeometry, buffer:
             .chars()
             .enumerate()
             .map(|(offset, _)| {
-                let left = geometry.visual_caret(character + offset).left();
-                let right = geometry.visual_caret(character + offset + 1).left();
-                (left.min(right) - geometry.origin.x, (right - left).abs())
+                let left = character_carets[character + offset].x;
+                let right = character_carets[character + offset + 1].x;
+                (left.min(right), (right - left).abs())
             })
             .collect();
         ui.ctx().accesskit_node_builder(id, |node| {

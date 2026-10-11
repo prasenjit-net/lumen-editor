@@ -37,6 +37,65 @@ fn enabling_accessibility_after_idle_frames_still_publishes_complete_rows() {
 }
 
 #[test]
+fn bulk_accessible_positions_match_painted_geometry_including_preedit_and_crlf() {
+    for preedit in [false, true] {
+        let (mut surface, mut buffer, ctx) = shaped_fixture("office é\r\nabc العربية 👩‍💻\n\nend");
+        ctx.enable_accesskit();
+        let mut geometry = None;
+        let output = ctx.run(
+            RawInput {
+                events: if preedit {
+                    vec![
+                        Event::Ime(egui::ImeEvent::Enabled),
+                        Event::Ime(egui::ImeEvent::Preedit("漢".into())),
+                    ]
+                } else {
+                    vec![]
+                },
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    geometry = Some(
+                        surface
+                            .show(ui, Id::new("test_surface"), &mut buffer)
+                            .geometry,
+                    );
+                });
+            },
+        );
+        let geometry = geometry.unwrap();
+        let shaped = geometry.shaped.as_ref().unwrap();
+        let text = geometry.galley.text();
+        let tree = output.platform_output.accesskit_update.unwrap();
+        let mut character = 0;
+        for (line, start) in shaped.starts.iter().copied().enumerate() {
+            let end = shaped.starts.get(line + 1).copied().unwrap_or(text.len());
+            let value = &text[start..end];
+            let id = egui::accesskit::NodeId(Id::new("test_surface").with(line).value());
+            let node = &tree
+                .nodes
+                .iter()
+                .find(|(candidate, _)| *candidate == id)
+                .unwrap()
+                .1;
+            assert_eq!(node.value(), Some(value));
+            let positions = node.character_positions().unwrap();
+            let widths = node.character_widths().unwrap();
+            assert_eq!(positions.len(), value.chars().count());
+            for offset in 0..positions.len() {
+                let left = geometry.visual_caret(character + offset).left();
+                let right = geometry.visual_caret(character + offset + 1).left();
+                assert!((positions[offset] - (left.min(right) - geometry.origin.x)).abs() < 0.0001);
+                assert!((widths[offset] - (right - left).abs()).abs() < 0.0001);
+            }
+            character += value.chars().count();
+        }
+        assert_eq!(buffer.revision(), 0);
+    }
+}
+
+#[test]
 fn shaped_geometry_maps_source_crlf_and_extended_graphemes() {
     let text = "office ffi é\r\n👩‍💻 漢";
     let (mut surface, mut buffer, ctx) = shaped_fixture(text);

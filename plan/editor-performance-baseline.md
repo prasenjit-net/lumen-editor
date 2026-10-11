@@ -52,6 +52,30 @@ The intermediate release sample, before sizing-layout reuse, was 15.031 ms for
 system load affect timings. The reuse is limited to one unchanged frame's sizing
 and painting passes, not a persistent cross-frame layout cache.
 
+### Accessibility row-index follow-up
+
+The previous enabled path called the buffer-wide cursor lookup for both ends of
+every character. Each lookup scanned the document's layout runs. The publisher
+now indexes those runs once, then uses the same public run cursor-position method
+to build character coordinates. It publishes every row as before, including
+offscreen rows, and preserves node IDs, values, bounds and primary selection.
+
+The subsequent release sample was:
+
+| Rows | AccessKit | Cold frame ms | Mean idle frame ms |
+| --- | --- | ---: | ---: |
+| 100 | Disabled | 6.081 | 1.360 |
+| 100 | Enabled | 3.576 | 1.941 |
+| 1,000 | Disabled | 15.114 | 8.854 |
+| 1,000 | Enabled | 11.787 | 8.588 |
+
+Enabled idle time in this fixture fell from about 154 ms to 8.6 ms. Small
+differences between enabled/disabled samples are run noise, not evidence that
+accessibility makes rendering faster. Coordinate equivalence tests cover empty
+lines, newline boundaries, ligatures, combining marks, tabs, mixed-direction text,
+CRLF projection and transient preedit. This does not add bidi caret affinity or
+prove native VoiceOver behavior. Long-line glyph scans remain a potential cost.
+
 ## Remaining performance work
 
 - Cache/reuse unchanged shaping/layout across idle frames. Sizing/painting now
