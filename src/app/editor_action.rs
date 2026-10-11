@@ -21,6 +21,7 @@ pub(crate) struct PendingEditorAction {
 
 #[derive(Clone, Copy)]
 pub(crate) struct PasteTarget {
+    pub(crate) request: crate::services::ClipboardRequestId,
     document: DocumentId,
     revision: u64,
     selection: egui::text::CCursorRange,
@@ -46,13 +47,15 @@ pub(crate) fn request_paste(view: &mut ViewState, document: &Document, ctx: &egu
         view.status = "Paste cancelled: finish the current editor input first".into();
         return;
     }
+    let request = crate::services::ClipboardRequestId::allocate();
     view.editor_paste_target = Some(PasteTarget {
+        request,
         document: document.id,
         revision: document.revision,
         selection,
         cancelled: false,
     });
-    EditorAction::Paste.send(ctx);
+    view.clipboard_read = Some(request);
 }
 
 pub(crate) fn text_widget_id(document: DocumentId) -> egui::Id {

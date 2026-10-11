@@ -89,6 +89,17 @@ Prepared: 2026-10-10. Applies to the Rust/egui Lumen editor and `AGENTS.md`.
   before emitting Paste in both glow/wgpu integrations. Direct-event CRLF tests
   verify the adapter, not native round trips; exact-text line metadata may miss
   normalized native payloads. Transport preservation remains unresolved.
+- Added an injected clipboard service for requested editor pastes, with request
+  IDs and explicit text/empty/error responses. A lazy serial worker reads through
+  arboard without normalizing line endings; controllers schedule/poll it outside
+  UI components and deliver valid results through existing TextEdit input/history.
+  Superseded, duplicate and out-of-order completions cannot impersonate a newer
+  request; empty/errors and worker disconnection finish without document edits.
+  Tests use a memory clipboard and cover tagged CRLF/Unicode reads, line metadata,
+  overlaps, cancellation, retries and duplicates. Direct keyboard Paste events
+  and non-editor fields remain on eframe's untagged normalized transport, so that
+  boundary is only partially migrated. No live OS clipboard round-trip verification
+  is claimed; native service read checks still need runtime validation.
 
 ## Objective
 

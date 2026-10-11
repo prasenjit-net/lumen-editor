@@ -3,7 +3,9 @@ use crate::ui::theme::configure_ui;
 use super::LumenApp;
 use super::command::Command;
 use super::view_state::{Activity, ExplorerSelection};
-use crate::services::{FileDialogs, FileSystem};
+use crate::services::{
+    ClipboardRead, ClipboardRequestId, ClipboardService, FileDialogs, FileSystem,
+};
 use eframe::egui::{self, Vec2};
 use std::{
     cell::RefCell,
@@ -175,9 +177,38 @@ fn test_app(dialogs: TestDialogs) -> (LumenApp, MemoryFileSystem) {
     let app = LumenApp {
         file_system: Box::new(storage.clone()),
         dialogs: Box::new(dialogs),
+        clipboard: Box::<TestClipboard>::default(),
         ..Default::default()
     };
     (app, storage)
+}
+
+#[derive(Default)]
+struct ClipboardStorage {
+    requests: Vec<ClipboardRequestId>,
+    results: Vec<ClipboardRead>,
+}
+
+#[derive(Clone, Default)]
+struct TestClipboard(Rc<RefCell<ClipboardStorage>>);
+
+impl TestClipboard {
+    fn complete(&self, request: ClipboardRequestId, result: Result<Option<String>, String>) {
+        self.0
+            .borrow_mut()
+            .results
+            .push(ClipboardRead { request, result });
+    }
+}
+
+impl ClipboardService for TestClipboard {
+    fn request_text(&mut self, request: ClipboardRequestId) {
+        self.0.borrow_mut().requests.push(request);
+    }
+
+    fn poll(&mut self) -> Vec<ClipboardRead> {
+        std::mem::take(&mut self.0.borrow_mut().results)
+    }
 }
 
 fn edit_active(app: &mut LumenApp, text: &str) {

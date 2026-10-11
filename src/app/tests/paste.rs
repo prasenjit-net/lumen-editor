@@ -219,3 +219,143 @@ fn generic_find_field_native_paste_does_not_capture_an_editor_target() {
     assert_eq!(app.view.find[&app.editor.files[0].id].query, "query");
     assert_eq!(app.editor.files[0].text, "é 🌍 original");
 }
+
+fn service_fixture() -> (LumenApp, egui::Context, super::TestClipboard) {
+    let (mut app, ctx) = fixture();
+    let clipboard = super::TestClipboard::default();
+    app.clipboard = Box::new(clipboard.clone());
+    (app, ctx, clipboard)
+}
+
+#[test]
+fn tagged_read_preserves_unicode_crlf_and_selected_text_undo() {
+    let (mut app, ctx, clipboard) = service_fixture();
+    request(&mut app, &ctx, false);
+    let id = app.view.editor_paste_target.unwrap().request;
+    assert_eq!(clipboard.0.borrow().requests, [id]);
+    clipboard.complete(id, Ok(Some("尾🌍\r\nnext".into())));
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(app.editor.files[0].text, "é 🌍 尾🌍\r\nnext");
+    assert!(app.view.editor_paste_target.is_none());
+    app.execute(
+        Command::EditorAction(app.editor.files[0].id, EditorAction::Undo),
+        &ctx,
+    );
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(app.editor.files[0].text, "é 🌍 original");
+    assert!(!app.editor.files[0].dirty);
+}
+
+#[test]
+fn stale_overlapping_read_cannot_impersonate_a_newer_clipboard_request() {
+    for old_first in [false, true] {
+        let (mut app, ctx, clipboard) = service_fixture();
+        request(&mut app, &ctx, false);
+        let old = app.view.editor_paste_target.unwrap().request;
+        request(&mut app, &ctx, false);
+        let new = app.view.editor_paste_target.unwrap().request;
+        assert_ne!(old, new);
+        if old_first {
+            clipboard.complete(old, Ok(Some("old".into())));
+        }
+        clipboard.complete(new, Ok(Some("new".into())));
+        if !old_first {
+            clipboard.complete(old, Ok(Some("old".into())));
+        }
+        editor_frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.editor.files[0].text, "é 🌍 new");
+        assert!(app.view.editor_paste_target.is_none());
+    }
+}
+
+#[test]
+fn empty_and_error_service_results_finish_the_request_without_edits() {
+    for result in [Ok(None), Err("clipboard busy".into())] {
+        let (mut app, ctx, clipboard) = service_fixture();
+        request(&mut app, &ctx, false);
+        let id = app.view.editor_paste_target.unwrap().request;
+        clipboard.complete(id, result);
+        editor_frame(&mut app, &ctx, vec![]);
+        assert!(app.view.editor_paste_target.is_none());
+        assert_eq!(app.editor.files[0].text, "é 🌍 original");
+        assert!(!app.editor.files[0].dirty);
+        assert!(app.view.status.contains("Clipboard") || app.view.status.contains("clipboard"));
+        request(&mut app, &ctx, false);
+        let retry = app.view.editor_paste_target.unwrap().request;
+        clipboard.complete(retry, Ok(Some("retry".into())));
+        editor_frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.editor.files[0].text, "é 🌍 retry");
+    }
+}
+
+#[test]
+fn tagged_response_after_focus_or_revision_change_is_not_delivered() {
+    for find in [false, true] {
+        let (mut app, ctx, clipboard) = service_fixture();
+        request(&mut app, &ctx, false);
+        let id = app.view.editor_paste_target.unwrap().request;
+        if find {
+            app.execute(Command::Find, &ctx);
+        } else {
+            app.editor.files[0].record_text_change();
+        }
+        clipboard.complete(id, Ok(Some("wrong".into())));
+        editor_frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.editor.files[0].text, "é 🌍 original");
+        if find {
+            assert_eq!(app.view.find[&app.editor.files[0].id].query, "original");
+        }
+        assert!(app.view.editor_paste_target.is_none());
+    }
+}
+
+#[test]
+fn duplicate_result_and_platform_event_do_not_double_apply_a_tagged_paste() {
+    let (mut app, ctx, clipboard) = service_fixture();
+    request(&mut app, &ctx, false);
+    let id = app.view.editor_paste_target.unwrap().request;
+    clipboard.complete(id, Ok(Some("new".into())));
+    clipboard.complete(id, Ok(Some("duplicate".into())));
+    editor_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::Paste("platform copy".into())],
+    );
+    assert_eq!(app.editor.files[0].text, "é 🌍 new");
+    assert!(app.view.pending_text_input.is_none());
+}
+
+#[test]
+fn stale_empty_or_error_result_does_not_clear_the_current_request() {
+    for result in [Ok(None), Err("old error".into())] {
+        let (mut app, ctx, clipboard) = service_fixture();
+        request(&mut app, &ctx, false);
+        let old = app.view.editor_paste_target.unwrap().request;
+        request(&mut app, &ctx, false);
+        let current = app.view.editor_paste_target.unwrap().request;
+        clipboard.complete(old, result);
+        editor_frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.view.editor_paste_target.unwrap().request, current);
+        assert_eq!(app.editor.files[0].text, "é 🌍 original");
+    }
+}
+
+#[test]
+fn service_line_paste_matches_crlf_provenance_and_restores_column() {
+    let (mut app, ctx, clipboard) = service_fixture();
+    app.editor.files[0].text = "é 🌍\r\nnext".into();
+    app.editor.files[0].record_text_change();
+    select(&app, &ctx, 2, 2);
+    editor_frame(&mut app, &ctx, vec![egui::Event::Copy]);
+    select(&app, &ctx, 7, 7);
+    request(&mut app, &ctx, false);
+    clipboard.complete(
+        app.view.editor_paste_target.unwrap().request,
+        Ok(Some("é 🌍\r\n".into())),
+    );
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(app.editor.files[0].text, "é 🌍\r\né 🌍\r\nnext");
+    let state =
+        egui::text_edit::TextEditState::load(&ctx, text_widget_id(app.editor.files[0].id)).unwrap();
+    assert_eq!(state.cursor.char_range().unwrap().primary.index, 12);
+}

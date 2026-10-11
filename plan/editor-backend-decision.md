@@ -91,10 +91,18 @@ Requested popup/native-editor paste now captures document ID, revision and widge
 selection. A cancelled snapshot stays cancelled until delivery, even across
 caret/focus round trips. Validation runs before and after command dispatch so
 Find or another native command cannot redirect the response into a different field.
-Rename/save without text changes remain compatible. The snapshot represents the
-latest request: egui exposes neither a response request ID nor an explicit empty/
-failure result, so overlapping-request correlation still requires a clipboard
-service boundary. These checks are not a claim of complete async clipboard parity.
+Rename/save without text changes remain compatible. The native service boundary
+now supplies request IDs and explicit text/empty/error results for requested editor
+pastes. Reads run serially on a lazy background worker using arboard (already
+present transitively); results enter the same validation and TextEdit mutation
+path. Superseded/duplicate results are discarded, and errors or worker disconnection
+finish requests without edits. Service reads perform no newline conversion. Tests
+use an injected clipboard, never the user's clipboard.
+Direct keyboard/platform Paste events and other fields still use eframe's untagged,
+normalized transport. When a platform event accompanies a service result, the
+tagged payload is preferred once; when the event already exists at command dispatch,
+no duplicate read is issued. Live native round trips and migration of keyboard
+paste to the service remain outstanding; this is not complete clipboard parity.
 The temporary
 save checkpoint retains one extra text snapshot; large-file memory behavior
 must be reviewed with the future buffer/history implementation.

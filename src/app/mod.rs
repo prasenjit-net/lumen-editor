@@ -1,4 +1,5 @@
 //! Application orchestration: shared commands, workflows and frame ordering.
+mod clipboard;
 pub(crate) mod command;
 mod dispatch;
 mod documents;
@@ -13,7 +14,9 @@ mod tests;
 pub(crate) mod view_state;
 use crate::{
     model::EditorState,
-    services::{FileDialogs, FileSystem, LocalFileSystem, NativeDialogs},
+    services::{
+        ClipboardService, FileDialogs, FileSystem, LocalFileSystem, NativeClipboard, NativeDialogs,
+    },
 };
 use eframe::egui;
 use view_state::ViewState;
@@ -22,6 +25,7 @@ pub(crate) struct LumenApp {
     pub(crate) view: ViewState,
     pub(crate) file_system: Box<dyn FileSystem>,
     pub(crate) dialogs: Box<dyn FileDialogs>,
+    pub(crate) clipboard: Box<dyn ClipboardService>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
 }
@@ -32,6 +36,7 @@ impl Default for LumenApp {
             view: ViewState::default(),
             file_system: Box::new(LocalFileSystem),
             dialogs: Box::new(NativeDialogs),
+            clipboard: Box::<NativeClipboard>::default(),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
         }
@@ -66,5 +71,6 @@ impl LumenApp {
         for command in workbench.take_commands() {
             self.execute(command, ctx);
         }
+        self.start_clipboard_read(ctx);
     }
 }

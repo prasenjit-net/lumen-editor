@@ -98,6 +98,11 @@ behavior. Preserve existing functionality unless a task explicitly changes it.
   Keep invalidation sticky until delivery; revalidate after native commands before
   any input widget receives the response. Do not claim request-ID correlation or
   native newline preservation from egui's untagged events or headless direct inputs.
+  Clipboard service reads carry explicit request IDs and text/empty/error outcomes.
+  Schedule and poll them in app controllers, not UI components; inject the service
+  in tests instead of touching the OS clipboard. Discard superseded/duplicate
+  completions, keep failures non-mutating, and distinguish tagged service reads
+  from remaining untagged platform events in documentation and runtime claims.
 - Keep logical-line clipboard rules in the UI-independent model. Empty-selection
   Copy must not move the caret or dirty the buffer. Cut's clipboard text can differ
   from its deletion range at EOF; preserve line endings and delegate deletion and

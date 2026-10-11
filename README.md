@@ -53,16 +53,20 @@ text and cleared on other copies or mismatched pastes. egui supplies no custom
 clipboard metadata: identical text copied in another app is indistinguishable,
 and line provenance does not survive restarting Lumen. The editor adapter retains
 received line endings without converting them to the destination convention.
-The current eframe native clipboard transport normalizes CRLF to LF before delivery;
-this can invalidate CRLF line metadata and fall back to ordinary text insertion.
-Direct-event CRLF tests do not establish native clipboard round-trip preservation.
+Requested editor pastes now read through a background native clipboard service,
+which does not normalize text and returns a request ID with text, empty, or error
+results. Superseded/duplicate service results are ignored; failures finish the
+request and report status without editing the document. This preserves CRLF line
+metadata through that read path. Live native clipboard round trips still need
+verification. Direct keyboard paste events and non-editor fields continue using
+eframe's transport, which normalizes CRLF to LF and can invalidate line metadata.
 Requested editor paste captures document ID, revision and selection. Changed text,
 caret, focus, modal or input mode cancels delivery before other inputs can consume
 it; returning to the original caret/focus does not reactivate a cancelled request.
 Native Edit-menu paste shares this validation; other text fields remain ordinary
-inputs. egui provides no clipboard request IDs or explicit read-failure response:
-the snapshot guards the latest request, not independently correlated overlapping
-reads. A dedicated clipboard service remains necessary for that guarantee.
+inputs. Service reads are independently correlated; untagged keyboard/platform
+events are not service completions and retain the existing guarded input path.
+If an accelerator already delivered a paste event, no second read is requested.
 Keyboard batches split at clipboard boundaries and continue in repaint frames:
 Copy/Cut see preceding typing/navigation, and later typing follows restored paste
 selection. New keyboard input stays behind an older deferred batch. Deferred input
