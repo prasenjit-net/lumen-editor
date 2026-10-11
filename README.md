@@ -175,9 +175,37 @@ cancellation, failure and dirty-buffer workflows, plus an egui pointer test
 for the explorer resize handle. Windows compilation can also be checked with
 `cargo check --target x86_64-pc-windows-gnu` after installing that target.
 
-### Multi-cursor backend prototype
+### Experimental shared editor
 
-The live editor remains single-selection. A separate in-memory prototype now
+The feature-gated workbench uses the shared core for typing, clipboard, IME,
+Find/Replace and complete-selection undo/redo, with a cosmic-text/Swash renderer:
+
+```sh
+cargo run --features shared-editor
+```
+
+Option/Alt-click adds a cursor; Cmd/Ctrl+D selects the next occurrence and
+Shift+Cmd/Ctrl+L selects all. Cursor-above/below uses Option+Cmd+Up/Down on macOS,
+Ctrl+Alt+Up/Down on Windows, and Shift+Alt+Up/Down on Linux. Tab/Shift+Tab
+indent/outdent touched lines once. Logical-line copy/cut, session fragment
+distribution, native/popup commands, save checkpoints and stable tab IDs share
+the same editing owner. The editor never instantiates TextEdit document history
+in this mode; generic fields such as Find remain ordinary text widgets.
+
+Build `cargo xtask bundle --offline --shared-editor` on macOS to produce the
+separate `target/Lumen Experimental.app`, leaving `target/Lumen.app` unchanged.
+
+Default promotion is still gated: mixed-bidi caret affinity/visual arrow behavior,
+large-file/history performance and native IME/AT validation of the **new shaped
+workbench** remain open. The user's passing manual checks apply to the earlier
+prototype. Clipboard metadata is session-only; the service reread still has its
+documented latency/snapshot race. A current-match replacement inside a grapheme
+is rejected with feedback; full Find parity needs review. Windows is compilation-
+checked, not runtime-tested. See [native validation](plan/native-editor-validation.md).
+
+### Standalone multi-cursor fixture
+
+The default editor remains single-selection. A separate in-memory prototype now
 exercises real multi-location input/history and shared text/selection geometry:
 
 ```sh
@@ -185,5 +213,6 @@ cargo run -p lumen-editor-surface --example spike
 ```
 
 It reuses Lumen's theme/fonts but does not open files or alter workbench buffers.
-IME, accessibility, shaping and native clipboard gates remain pending. See
+Add `--features shaped` to exercise the new renderer. Native validation and
+default-adoption gates remain open. See
 [the spike evaluation](plan/multi-cursor-backend-spike.md) before backend migration.

@@ -34,6 +34,10 @@ impl Composition {
             .start
     }
 
+    pub fn replacement_range(&self) -> std::ops::Range<usize> {
+        self.selections.selections()[self.selections.primary_index()].range()
+    }
+
     pub fn commit(self, buffer: &mut EditorBuffer, text: &str) -> Result<bool, EditError> {
         if !self.is_current(buffer) {
             return Err(EditError::StaleComposition);

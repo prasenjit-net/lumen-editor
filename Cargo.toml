@@ -8,11 +8,16 @@ members = ["xtask", "crates/editor-core", "crates/editor-surface"]
 default-members = ["."]
 resolver = "3"
 
+[features]
+shared-editor = ["dep:lumen-editor-surface", "lumen-editor-surface/shaped"]
+
 [dependencies]
 eframe = "0.33"
 rfd = "0.15"
 trash = "5.2"
 arboard = { version = "3.6", default-features = false }
+lumen-editor-core = { path = "crates/editor-core" }
+lumen-editor-surface = { path = "crates/editor-surface", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

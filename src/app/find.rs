@@ -29,6 +29,60 @@ struct FindEdit {
 }
 
 impl FindState {
+    #[cfg(feature = "shared-editor")]
+    pub(crate) fn prepare_shared(
+        &mut self,
+        document: &mut Document,
+        ctx: &egui::Context,
+        blocked: bool,
+    ) -> Option<String> {
+        if blocked {
+            self.pending = None;
+            return None;
+        }
+        if ctx.input(|input| input.pointer.any_pressed() || input.pointer.any_released()) {
+            if self.pending.is_some() {
+                ctx.request_repaint();
+            }
+            return None;
+        }
+        if let Some(edit) = self.pending.take() {
+            if edit.revision != document.revision {
+                return Some("Replace cancelled: document changed".into());
+            }
+            if let Some(buffer) = document.editing.as_mut() {
+                if buffer
+                    .replace_ranges(
+                        vec![lumen_editor_core::Selection {
+                            anchor: edit.range.start,
+                            head: edit.range.end,
+                        }],
+                        0,
+                        &[&edit.replacement],
+                    )
+                    .is_err()
+                {
+                    return Some("Replace cancelled: range splits a grapheme".into());
+                }
+                document.sync_shared_editing();
+                ctx.memory_mut(|memory| memory.request_focus(find_input_id(document.id)));
+            }
+        }
+        if self.reveal
+            && !self.open
+            && let Some(range) = self.matches.get(self.current)
+            && let Some(buffer) = document.editing.as_mut()
+        {
+            let _ = buffer.set_selections(
+                vec![lumen_editor_core::Selection {
+                    anchor: range.start,
+                    head: range.end,
+                }],
+                0,
+            );
+        }
+        None
+    }
     pub(crate) fn refresh(&mut self, document: &Document) {
         let key = (document.revision, self.query.clone(), self.options);
         if self.searched.as_ref() != Some(&key) {
@@ -183,8 +237,7 @@ impl LumenApp {
             return;
         };
         let state = self.view.find.entry(document.id).or_default();
-        let selection = egui::text_edit::TextEditState::load(ctx, text_widget_id(document.id))
-            .and_then(|widget| widget.cursor.char_range());
+        let selection = super::editor_action::current_selection(document, ctx);
         if let Some(selection) = selection.filter(|selection| !selection.is_empty()) {
             let [start, end] = selection.sorted_cursors();
             state.query = document

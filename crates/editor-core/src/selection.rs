@@ -32,6 +32,7 @@ pub enum EditError {
     InvalidBoundary(usize),
     FragmentCount,
     StaleComposition,
+    InvalidIndentation,
 }
 
 /// Document-ordered, non-overlapping selections and a stable primary member.

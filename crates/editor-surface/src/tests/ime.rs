@@ -5,6 +5,107 @@ fn ime(event: egui::ImeEvent) -> Event {
 }
 
 #[test]
+fn accessibility_mapping_rejects_preedit_interior_and_maps_following_source() {
+    let (mut surface, mut buffer, ctx) = fixture("abcd");
+    buffer
+        .set_selections(vec![Selection { anchor: 1, head: 2 }], 0)
+        .unwrap();
+    let output = frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![
+            ime(egui::ImeEvent::Enabled),
+            ime(egui::ImeEvent::Preedit("compose".into())),
+        ],
+        500.0,
+    );
+    let widget = Id::new("test_surface");
+    let position = |column| egui::accesskit::TextPosition {
+        node: egui::accesskit::NodeId(widget.with(0usize).value()),
+        character_index: column,
+    };
+    assert_eq!(
+        output.geometry.accessibility_byte(widget, &position(2)),
+        None
+    );
+    assert_eq!(
+        output.geometry.accessibility_byte(widget, &position(9)),
+        Some(3)
+    );
+}
+
+#[test]
+fn inline_preedit_replaces_primary_only_and_moves_neighbors_in_shared_geometry() {
+    let (mut surface, mut buffer, ctx) = fixture("abc\r\ndef");
+    buffer
+        .set_selections(
+            vec![Selection { anchor: 1, head: 2 }, Selection::caret(6)],
+            0,
+        )
+        .unwrap();
+    let before = buffer.selections().clone();
+    let output = frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![
+            ime(egui::ImeEvent::Enabled),
+            ime(egui::ImeEvent::Preedit("compose".into())),
+        ],
+        300.0,
+    );
+    assert_eq!(output.geometry.galley.text(), "acomposec\ndef");
+    assert_eq!(buffer.text(), "abc\r\ndef");
+    assert_eq!(buffer.selections(), &before);
+    let (_, end) = output.geometry.preedit_rects().unwrap();
+    assert_eq!(output.geometry.caret_rect(2), end);
+    assert_eq!(
+        output
+            .geometry
+            .hit_test(output.geometry.caret_rect(6).center()),
+        6
+    );
+    assert!(!buffer.is_dirty());
+    assert!(!buffer.undo());
+    let restored = frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::Escape, Modifiers::NONE)],
+        300.0,
+    );
+    assert_eq!(restored.geometry.galley.text(), "abc\ndef");
+}
+
+#[test]
+fn clicking_after_inline_preedit_maps_to_original_source_before_cancellation() {
+    let (mut surface, mut buffer, ctx) = fixture("abcd");
+    buffer.set_selections(vec![Selection::caret(1)], 0).unwrap();
+    let output = frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![
+            ime(egui::ImeEvent::Enabled),
+            ime(egui::ImeEvent::Preedit("composition".into())),
+        ],
+        500.0,
+    );
+    let pos = output.geometry.caret_rect(3).center();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        click(pos, Modifiers::NONE),
+        500.0,
+    );
+    assert_eq!(buffer.selections().selections(), &[Selection::caret(3)]);
+    assert!(surface.composition.is_none());
+    assert_eq!(buffer.text(), "abcd");
+}
+
+#[test]
 fn repeated_preedit_and_empty_commit_leave_history_and_saved_checkpoint_untouched() {
     let (mut surface, mut buffer, ctx) = fixture("selected");
     buffer

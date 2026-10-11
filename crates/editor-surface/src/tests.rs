@@ -3,7 +3,10 @@ use egui::{Context, Event, Id, Key, Modifiers, PointerButton, Pos2, RawInput, Re
 use lumen_editor_core::{EditorBuffer, Selection};
 
 mod accessibility;
+mod commands;
 mod ime;
+#[cfg(feature = "shaped")]
+mod shaped;
 
 fn frame(
     surface: &mut EditorSurface,
@@ -152,24 +155,43 @@ fn ordinary_click_collapses_cursors_and_blank_space_maps_to_eof() {
 }
 
 #[test]
-fn gutter_and_scrollbar_hit_regions_do_not_move_the_caret() {
+fn scrollbar_hit_regions_do_not_move_the_caret() {
     let text = "long line ".repeat(80) + &"\nrow".repeat(80);
     let (mut surface, mut buffer, ctx) = fixture(&text);
     buffer.set_selections(vec![Selection::caret(4)], 0).unwrap();
     let output = frame(&mut surface, &mut buffer, &ctx, vec![], 300.0);
-    for point in [
-        output.gutter.center(),
-        pos2(output.text_clip.right() + 3.0, output.text_clip.center().y),
-    ] {
-        frame(
-            &mut surface,
-            &mut buffer,
-            &ctx,
-            click(point, Modifiers::NONE),
-            300.0,
-        );
-        assert_eq!(buffer.selections().selections(), [Selection::caret(4)]);
-    }
+    let point = pos2(output.text_clip.right() + 3.0, output.text_clip.center().y);
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        click(point, Modifiers::NONE),
+        300.0,
+    );
+    assert_eq!(buffer.selections().selections(), [Selection::caret(4)]);
+}
+
+#[test]
+fn gutter_line_selection_uses_source_crlf_ranges_without_editing() {
+    let (mut surface, mut buffer, ctx) = fixture("a\r\nb\r\nc");
+    let output = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    let pos = pos2(
+        output.gutter.center().x,
+        output.geometry.caret_rect(3).center().y,
+    );
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        click(pos, Modifiers::NONE),
+        500.0,
+    );
+    assert_eq!(
+        buffer.selections().selections(),
+        &[Selection { anchor: 3, head: 6 }]
+    );
+    assert_eq!(buffer.revision(), 0);
+    assert!(!buffer.is_dirty());
 }
 
 #[test]

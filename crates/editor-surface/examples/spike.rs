@@ -8,6 +8,9 @@ use lumen_editor_surface::EditorSurface;
 #[path = "../../../src/ui/theme.rs"]
 mod theme;
 
+#[cfg(feature = "shaped")]
+#[path = "../../../src/platform/editor_fonts.rs"]
+mod editor_fonts;
 #[path = "../../../src/platform/fonts.rs"]
 mod fonts;
 
@@ -36,7 +39,7 @@ impl eframe::App for Spike {
         }
         egui::TopBottomPanel::top("spike_help").exact_height(38.0).show(ctx, |ui| {
             ui.add(egui::Label::new("Multi-cursor prototype · Option/Alt-click adds a cursor").truncate())
-                .on_hover_text("Type/paste at every cursor. Left/Right and Shift extend by grapheme. Backspace/Delete edit atomically. Cmd/Ctrl+Z undoes; Escape removes secondary cursors.");
+                .on_hover_text("Cmd/Ctrl+D selects next occurrence; Shift+Cmd/Ctrl+L selects all. Option+Cmd+Up/Down (macOS), Ctrl+Alt+Up/Down (Windows), Shift+Alt+Up/Down (Linux) adds a cursor. Tab/Shift+Tab indent/outdent. Copy/Cut selected ranges; matching session paste distributes them. Cmd/Ctrl+Z undoes; Escape removes secondary cursors.");
             ui.add(egui::Label::new("Not production · clipboard, IME and accessibility gates pending").truncate())
                 .on_hover_text("This isolated in-memory fixture cannot change production documents. Native clipboard transport, IME composition, accessibility and shaping are not approved.");
         });
@@ -91,7 +94,7 @@ fn main() -> eframe::Result {
             ..Default::default()
         },
         Box::new(|creation| {
-            fonts::configure(&creation.egui_ctx);
+            let _fonts = fonts::configure(&creation.egui_ctx);
             theme::configure_ui(&creation.egui_ctx);
             let text = "let first = 1;\r\nlet second = 2;\r\n// Unicode: e\u{301} 🌍 👩‍💻\r\n\r\n"
                 .to_owned()
@@ -109,8 +112,14 @@ fn main() -> eframe::Result {
                     0,
                 )
                 .unwrap();
+            #[cfg(not(feature = "shaped"))]
+            let surface = EditorSurface::default();
+            #[cfg(feature = "shaped")]
+            let surface = EditorSurface::with_shaper(lumen_editor_surface::Shaper::new(
+                &editor_fonts::definitions(_fonts),
+            ));
             Ok(Box::new(Spike {
-                surface: EditorSurface::default(),
+                surface,
                 buffer,
                 diagnostic_preedit: std::env::args().any(|argument| argument == "--ime-preview"),
                 preedit_started: false,

@@ -8,6 +8,10 @@ impl LumenApp {
             Command::Copy | Command::Cut | Command::CopyPath(_, _)
         ) {
             self.view.text_clipboard.clear();
+            #[cfg(feature = "shared-editor")]
+            if let Some(surface) = &mut self.view.shared_surface {
+                surface.clear_clipboard();
+            }
         }
         let explorer_clipboard = self.view.explorer_focused
             && self.view.explorer_edit.is_none()

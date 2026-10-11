@@ -1,68 +1,70 @@
-# Multi-cursor text-surface spike
+# Shared editor surface
 
-Run from the repository root:
+The default example is the original egui-only geometry fixture:
 
 ```sh
 cargo run -p lumen-editor-surface --example spike
 ```
 
-This is a separate in-memory fixture, **not the Lumen workbench**. It does not
-open/save files or attach a second history to production documents. The example
-reuses the existing workbench theme and platform font setup.
-
-Implemented in the prototype:
-
-- Alt/Option-click adds a cursor; ordinary click collapses the set. Shift-click
-  extends the primary anchor; drag/release updates the same selection set.
-- Typing and platform Paste events replace every selection atomically.
-- Left/Right (with optional Shift) move by extended grapheme; Backspace/Delete
-  delete graphemes or selections. Enter inserts LF. Escape removes secondaries.
-- Cmd/Ctrl+A selects all; Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z undo/redo complete sets.
-- One no-wrap galley maps stored UTF-8 byte offsets to rendered character
-  positions for all selections, carets and pointer hits. CRLF projects to one
-  newline without rewriting source text. The gutter uses the same row geometry.
-- Both scroll axes share a viewport; gutter x stays fixed. Reserved scrollbar
-  regions and gutter clicks do not reposition carets. Only the primary caret is
-  revealed after selection/edit changes. Right-click preserves selection.
-
-Composition and accessibility now have headless prototype support:
-
-- Preedit is a transient underlined overlay at the primary selection, not a
-  document edit. Secondary carets dim; the visible notice explains that one
-  commit broadcasts to the captured set. Undo restores the full original set.
-- Focus, widget identity, pointer, revision or selection changes cancel the
-  session. Empty/duplicate/late commits cannot delete or double-insert text.
-  Candidate rectangles follow the primary preview and shared scroll geometry.
-- AccessKit exposes editable text rows and the primary selection. Setting an
-  accessible selection validates row/character/grapheme boundaries and collapses
-  secondary selections. SetValue uses one core transaction, not another history.
-
-Synthetic screenshot fixture (forces diagnostic focus; **not native IME testing**):
+To use the new cosmic-text/Swash renderer:
 
 ```sh
-cargo run -p lumen-editor-surface --example spike -- 900 --ime-preview
+cargo run -p lumen-editor-surface --example spike --features shaped -- 900
 ```
 
-Not implemented/approved: native clipboard service routing and multi-fragment
-metadata, vertical/word/column movement, occurrence commands, indentation,
-context menus, gutter line selection, robust drag auto-scroll, native IME/AT
-runtime validation, inline composition reflow, shaping/bidi, layout caching and
-live app migration. The preedit overlay may obscure following source text; it
-does not yet reflow an inline composition projection. Accessibility represents
-one primary selection, not multiple native selections, and full screen-reader
-navigation/action coverage remains unverified.
-Default eframe clipboard normalization still applies to this prototype's native
-Paste events. Input tests inject text, not the user's clipboard.
+Both examples edit memory only. The full feature-gated workbench is available
+with `cargo run --features shared-editor` from the project root. It supports real
+open/save operations; use disposable buffers for experimental testing. Default
+Lumen continues to use TextEdit until promotion gates pass.
 
-egui's per-character glyph layout can paint a ZWJ emoji as separate glyphs;
-grapheme-safe source mutation does not imply faithful complex-script rendering.
-An opt-in egui 0.36.2 probe verifies a Latin ligature, but rejects the bundled-font
-Arabic fixture's inconsistent source character count. Neither the application
-nor the active prototype renderer has been upgraded. Run the probe with:
+Implemented:
+
+- Multi-location typing, selection-only and logical-line copy/cut/paste, explicit
+  session fragment distribution, full-set undo/redo and saved checkpoints.
+- Option/Alt-click, primary/Shift-click/drag and right-click selection preservation.
+- Next/all occurrence shortcuts; native cursor-above/below; grapheme, word,
+  vertical, page and line navigation; Tab/Shift+Tab indentation.
+- One two-axis viewport with fixed gutter, reserved scrollbars, line selection
+  and bounded gutter edge scrolling. No implicit code wrapping.
+- Inline transient primary preedit; one atomic broadcast commit; sticky cancellation
+  on document, revision, selection, focus, modal or pointer changes. Candidate
+  positioning and reveal use the same layout as rendered text.
+- Accessible editable rows, validated primary selection/value actions and unique
+  parent ownership. Preedit-interior accessible positions cannot become source
+  selections. Setting an accessible selection collapses secondaries.
+- The shaped path derives painting, disjoint selection spans, hit testing, carets,
+  IME, gutter and Find geometry from cosmic-text. Fonts are supplied by platform
+  startup. Swash glyph textures honor DPI and have bounded cache/visible culling.
+  An egui galley remains for source bookkeeping, not shaped coordinates.
+
+The standalone example uses eframe's clipboard transport, including its CRLF
+normalization. The workbench retains injected tagged clipboard services and their
+documented synchronous-reread latency/snapshot race. Internal metadata is session-
+only; identical externally copied payloads cannot be distinguished.
+
+Synthetic screenshot mode (not native IME proof):
+
+```sh
+cargo run -p lumen-editor-surface --example spike --features shaped -- 900 --ime-preview
+```
+
+Optional isolated probes:
 
 ```sh
 cargo test -p lumen-editor-surface --features shaping-probe
+cargo test -p lumen-editor-surface --features cosmic-probe
 ```
 
-The backend decision gate remains open. See
-[the evaluation](../../plan/multi-cursor-backend-spike.md).
+The pinned newer-egui Arabic source-index defect still rejects that candidate.
+The cosmic probe passes bounded source/Arabic caret checks; font coverage and
+visual correctness are separate checks. The user reported passing native macOS
+checks for the earlier egui-only prototype; new shaped IME/AT checks remain open.
+
+Not production-approved: full mixed-bidi affinity/visual arrow semantics, measured
+large-file layout/accessibility behavior, history/typing coalescing, complete
+platform font coverage and exhaustive workbench parity. Secondary vertical goals
+and word/line-edge details need more parity coverage. Windows has compilation
+checks, not native runtime validation.
+
+See [the integration report](../../plan/shared-editor-integration.md) and
+[the backend evaluation](../../plan/multi-cursor-backend-spike.md).

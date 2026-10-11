@@ -85,6 +85,14 @@ impl Activity {
 }
 
 pub(crate) struct ViewState {
+    #[cfg(feature = "shared-editor")]
+    pub(crate) shared_editor: bool,
+    #[cfg(feature = "shared-editor")]
+    pub(crate) shared_surface: Option<lumen_editor_surface::EditorSurface>,
+    #[cfg(feature = "shared-editor")]
+    pub(crate) shared_output: Option<lumen_editor_surface::SurfaceOutput>,
+    #[cfg(feature = "shared-editor")]
+    pub(crate) shared_paste_selection: Option<lumen_editor_core::SelectionSet>,
     pub(crate) pending_text_input: Option<super::editor_input::PendingTextInput>,
     pub(crate) text_clipboard: super::editor_clipboard::TextClipboard,
     pub(crate) find: std::collections::HashMap<crate::model::DocumentId, super::find::FindState>,
@@ -127,6 +135,14 @@ impl ViewState {
 impl Default for ViewState {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "shared-editor")]
+            shared_editor: true,
+            #[cfg(feature = "shared-editor")]
+            shared_surface: None,
+            #[cfg(feature = "shared-editor")]
+            shared_output: None,
+            #[cfg(feature = "shared-editor")]
+            shared_paste_selection: None,
             pending_text_input: None,
             text_clipboard: Default::default(),
             find: Default::default(),

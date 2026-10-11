@@ -5,6 +5,18 @@ Prepared: 2026-10-10. Applies to the Rust/egui Lumen editor and `AGENTS.md`.
 
 ## Implementation progress
 
+Current combined milestone (2026-10-11): the `shared-editor` feature integrates
+the core and cosmic-text/Swash renderer into the full workbench. Typing, ordered
+clipboard, Find/Replace, native/popup actions, IME, saved checkpoints and complete
+selection undo use one document-owned core; no document TextEdit history is
+instantiated in that mode. Native screenshots corrected Retina baseline and
+selection-range rendering bugs. Core clipboard now shares the original logical-
+line rules with the default editor. The user's five manual macOS checks passed
+for the preceding prototype, not this new renderer. Default promotion still
+requires bidi affinity, new native checks and broader parity/performance review.
+See [integration status](shared-editor-integration.md). Historical notes below
+describe earlier checkpoints and are not the current feature-build status.
+
 - Added stable document IDs, document-scoped text/scroll widget IDs, revision
   tracking, and a last-successful-save content checkpoint.
 - Added headless egui regressions for independent tab cursor/undo state,
@@ -138,6 +150,24 @@ validates selection/value actions through the same core. Native IME/AT checks an
 inline preedit reflow remain pending. The separate egui 0.36.2 shaping probe
 rejects an Arabic source-index inconsistency despite passing Latin ligatures.
 Phase 0/5/6 gates remain open; the live editor is unchanged.
+
+Combined continuation (2026-10-11): inline preedit now replaces only the primary
+range in a transient shared galley, reflows neighbors, maps following source
+positions and rejects accessible preedit-interior positions. No preedit enters
+document history. The isolated prototype now supports platform cursor-above/below
+shortcuts, next/all literal occurrences, grapheme-aware word seeding, deduplicated
+line indent/outdent and selection-only copy/cut with explicitly recorded fragment
+distribution. Matching session metadata is invalidated by a different paste;
+unknown external text broadcasts. Empty-selection line clipboard is still a live
+TextEdit feature, not implemented in this prototype.
+
+An optional cosmic-text 0.19 layout probe passes Arabic source-byte/caret round
+trips with macOS Arial coverage, and bounded mixed-script cluster checks. It does
+not replace the renderer or approve full bidi/emoji coverage. The egui candidate
+remains rejected. Native clipboard automation was retried and still timed out;
+the user agreed to manual checks in [the native checklist](native-editor-validation.md).
+Final backend selection and live migration remain gated; no production mutation
+or history path has changed. All five tracks were advanced, not declared complete.
 
 ## Objective
 

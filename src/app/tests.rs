@@ -20,6 +20,8 @@ mod editor;
 mod explorer;
 mod find;
 mod paste;
+#[cfg(feature = "shared-editor")]
+mod shared;
 mod viewport;
 
 #[derive(Default)]
@@ -179,6 +181,12 @@ fn test_app(dialogs: TestDialogs) -> (LumenApp, MemoryFileSystem) {
         dialogs: Box::new(dialogs),
         clipboard: Box::<TestClipboard>::default(),
         ..Default::default()
+    };
+    #[cfg(feature = "shared-editor")]
+    let app = {
+        let mut app = app;
+        app.view.shared_editor = false;
+        app
     };
     (app, storage)
 }

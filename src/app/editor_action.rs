@@ -38,9 +38,7 @@ pub(crate) fn request_paste(view: &mut ViewState, document: &Document, ctx: &egu
     }) {
         return;
     }
-    let Some(selection) = egui::text_edit::TextEditState::load(ctx, text_widget_id(document.id))
-        .and_then(|widget| widget.cursor.char_range())
-    else {
+    let Some(selection) = current_selection(document, ctx) else {
         return;
     };
     if blocked(view) || view.pending_text_input.is_some() {
@@ -56,6 +54,30 @@ pub(crate) fn request_paste(view: &mut ViewState, document: &Document, ctx: &egu
         cancelled: false,
     });
     view.clipboard_read = Some(request);
+    #[cfg(feature = "shared-editor")]
+    {
+        view.shared_paste_selection = document
+            .editing
+            .as_ref()
+            .map(|buffer| buffer.selections().clone());
+    }
+}
+
+pub(crate) fn current_selection(
+    document: &Document,
+    ctx: &egui::Context,
+) -> Option<egui::text::CCursorRange> {
+    #[cfg(feature = "shared-editor")]
+    if let Some(buffer) = &document.editing {
+        let set = buffer.selections();
+        let selection = set.selections()[set.primary_index()];
+        return Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(buffer.text()[..selection.anchor].chars().count()),
+            egui::text::CCursor::new(buffer.text()[..selection.head].chars().count()),
+        ));
+    }
+    egui::text_edit::TextEditState::load(ctx, text_widget_id(document.id))
+        .and_then(|widget| widget.cursor.char_range())
 }
 
 pub(crate) fn text_widget_id(document: DocumentId) -> egui::Id {
@@ -74,8 +96,20 @@ pub(crate) fn blocked(view: &ViewState) -> bool {
 pub(crate) fn validate_paste(view: &mut ViewState, active: Option<&Document>, ctx: &egui::Context) {
     if let Some(mut target) = view.editor_paste_target {
         let id = text_widget_id(target.document);
-        let selection = egui::text_edit::TextEditState::load(ctx, id)
-            .and_then(|widget| widget.cursor.char_range());
+        let selection = active
+            .filter(|document| document.id == target.document)
+            .and_then(|document| current_selection(document, ctx));
+        #[cfg(feature = "shared-editor")]
+        {
+            target.cancelled |= view
+                .shared_paste_selection
+                .as_ref()
+                .is_some_and(|snapshot| {
+                    !active
+                        .and_then(|document| document.editing.as_ref())
+                        .is_some_and(|buffer| buffer.selections() == snapshot)
+                });
+        }
         let (delivered, interrupted) = ctx.input(|input| {
             let delivered = input
                 .events
@@ -181,6 +215,17 @@ impl EditorAction {
             }),
             Self::Paste => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
             Self::Undo | Self::Redo | Self::SelectAll => ctx.input_mut(|input| {
+                let key = if self == Self::SelectAll {
+                    egui::Key::A
+                } else {
+                    egui::Key::Z
+                };
+                if input.events.iter().any(|event| {
+                    matches!(event,egui::Event::Key {key:existing,pressed:true,modifiers,..}
+                    if *existing==key && modifiers.command && modifiers.shift==(self==Self::Redo))
+                }) {
+                    return;
+                }
                 input.events.push(egui::Event::Key {
                     key: if self == Self::SelectAll {
                         egui::Key::A

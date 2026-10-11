@@ -13,6 +13,11 @@ use eframe::egui::{self, FontId, Frame, Margin, ScrollArea, TextEdit};
 
 impl Workbench<'_> {
     pub(super) fn editor_viewport(&mut self, ui: &mut egui::Ui, index: usize) {
+        #[cfg(feature = "shared-editor")]
+        if self.view.shared_editor || self.editor.files[index].editing.is_some() {
+            self.editor_shared(ui, index);
+            return;
+        }
         let ctx = ui.ctx().clone();
         let document = self.editor.files[index].id;
         prepare_action(self.view, &self.editor.files[index], &ctx);

@@ -44,20 +44,33 @@ impl Workbench<'_> {
         output: &egui::text_edit::TextEditOutput,
         document: DocumentId,
     ) {
-        output.response.context_menu(|ui| {
-            // TextEditOutput's range is absent when the popup owns focus;
-            // the document's stored selection must still enable Cut/Copy.
-            let cursor = output
-                .state
-                .cursor
-                .range(&output.galley)
-                .unwrap_or_default();
-            let text = self
-                .editor
-                .active()
-                .map(|file| file.text.clone())
-                .unwrap_or_default();
-            let history = output.state.undoer();
+        let cursor = output
+            .state
+            .cursor
+            .range(&output.galley)
+            .unwrap_or_default();
+        let text = self
+            .editor
+            .active()
+            .map(|file| file.text.clone())
+            .unwrap_or_default();
+        let history = output.state.undoer();
+        self.editor_popup(
+            &output.response,
+            document,
+            history.has_undo(&(cursor, text.clone())),
+            history.has_redo(&(cursor, text)),
+        );
+    }
+
+    pub(super) fn editor_popup(
+        &mut self,
+        response: &egui::Response,
+        document: DocumentId,
+        can_undo: bool,
+        can_redo: bool,
+    ) {
+        response.context_menu(|ui| {
             let command_key = if cfg!(target_os = "macos") {
                 "⌘"
             } else {
@@ -68,7 +81,7 @@ impl Workbench<'_> {
                     EditorAction::Undo,
                     "Undo",
                     format!("{command_key}Z"),
-                    history.has_undo(&(cursor, text.clone())),
+                    can_undo,
                 ),
                 (
                     EditorAction::Redo,
@@ -78,7 +91,7 @@ impl Workbench<'_> {
                     } else {
                         "Ctrl+Shift+Z".into()
                     },
-                    history.has_redo(&(cursor, text)),
+                    can_redo,
                 ),
                 (EditorAction::Cut, "Cut", format!("{command_key}X"), true),
                 (EditorAction::Copy, "Copy", format!("{command_key}C"), true),

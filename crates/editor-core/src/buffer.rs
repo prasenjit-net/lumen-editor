@@ -16,7 +16,7 @@ struct Snapshot {
     selections: SelectionSet,
 }
 
-/// Candidate editing authority. The application does not instantiate this yet.
+/// Shared editing/history authority in the feature-gated workbench and prototype.
 pub struct EditorBuffer {
     current: Snapshot,
     saved_text: String,
@@ -45,6 +45,23 @@ impl EditorBuffer {
     }
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
+    /// Replace validated ranges without changing the original undo selection.
+    pub fn replace_ranges(
+        &mut self,
+        selections: Vec<Selection>,
+        primary: usize,
+        fragments: &[&str],
+    ) -> Result<bool, EditError> {
+        let set = SelectionSet::new(self.text(), selections, primary)?;
+        self.replace_set(&set, fragments)
     }
     pub fn is_dirty(&self) -> bool {
         self.current.text != self.saved_text
@@ -161,6 +178,13 @@ impl EditorBuffer {
             *caret = Selection::caret(boundaries[index]);
         }
         let selections = SelectionSet::new(&text, carets, selections.primary_index())?;
+        Ok(self.commit_snapshot(text, selections))
+    }
+
+    pub(crate) fn commit_snapshot(&mut self, text: String, selections: SelectionSet) -> bool {
+        if text == self.text() {
+            return false;
+        }
         let previous = std::mem::replace(&mut self.current, Snapshot { text, selections });
         self.undo.push(previous);
         if self.undo.len() > HISTORY_LIMIT {
@@ -168,7 +192,7 @@ impl EditorBuffer {
         }
         self.redo.clear();
         self.revision = self.revision.wrapping_add(1);
-        Ok(true)
+        true
     }
 
     pub fn undo(&mut self) -> bool {

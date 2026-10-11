@@ -1,4 +1,4 @@
-use crate::{DragSelection, EditorSurface, TextGeometry};
+use crate::{DragSelection, EditorSurface};
 use egui::{Event, ImeEvent, Key, PointerButton, Pos2, Rect, Response, Ui};
 use lumen_editor_core::{Composition, Direction, EditorBuffer, Selection};
 
@@ -30,6 +30,16 @@ impl EditorSurface {
             self.notice = Some("Composition cancelled: editor target changed".into());
         }
         for event in events {
+            if !matches!(
+                event,
+                Event::Key {
+                    key: Key::ArrowUp | Key::ArrowDown,
+                    pressed: true,
+                    ..
+                }
+            ) {
+                self.vertical_goal = None;
+            }
             if let Event::PointerButton {
                 pos,
                 button: PointerButton::Primary,
@@ -38,10 +48,12 @@ impl EditorSurface {
             } = event
             {
                 if pressed {
+                    let geometry =
+                        self.geometry(ui, buffer.text(), origin, self.composition.as_ref());
                     self.cancel_composition();
                     if clip.contains(pos) {
                         response.request_focus();
-                        let byte = TextGeometry::layout(ui, buffer.text(), origin).hit_test(pos);
+                        let byte = geometry.hit_test(pos);
                         let set = buffer.selections();
                         let anchor = if modifiers.shift {
                             set.selections()[set.primary_index()].anchor
@@ -70,6 +82,28 @@ impl EditorSurface {
                     }
                 } else {
                     self.drag_anchor = None;
+                    if clip.contains(pos) && response.double_clicked_by(PointerButton::Primary) {
+                        buffer.select_next_occurrence();
+                    }
+                    if clip.contains(pos) && response.triple_clicked_by(PointerButton::Primary) {
+                        let set = buffer.selections();
+                        let head = set.selections()[set.primary_index()].head;
+                        let start = buffer.text()[..head]
+                            .rfind('\n')
+                            .map_or(0, |newline| newline + 1);
+                        let end = buffer.text()[head..]
+                            .find('\n')
+                            .map_or(buffer.text().len(), |offset| head + offset + 1);
+                        buffer
+                            .set_selections(
+                                vec![Selection {
+                                    anchor: start,
+                                    head: end,
+                                }],
+                                0,
+                            )
+                            .unwrap();
+                    }
                 }
                 continue;
             }
@@ -79,7 +113,7 @@ impl EditorSurface {
                         self.drag_anchor = None;
                         continue;
                     }
-                    let byte = TextGeometry::layout(ui, buffer.text(), origin).hit_test(pos);
+                    let byte = self.geometry(ui, buffer.text(), origin, None).hit_test(pos);
                     if buffer
                         .set_selections(
                             vec![Selection {
@@ -96,7 +130,8 @@ impl EditorSurface {
                 continue;
             }
             if let Event::AccessKitActionRequest(ref request) = event {
-                if crate::accessibility::apply_action(ui, response, request, origin, buffer) {
+                let geometry = self.geometry(ui, buffer.text(), origin, self.composition.as_ref());
+                if crate::accessibility::apply_action(ui, response, request, &geometry, buffer) {
                     self.cancel_composition();
                 }
                 continue;
@@ -146,7 +181,29 @@ impl EditorSurface {
                     self.cancel_composition();
                     self.notice = Some("Composition cancelled".into());
                 }
-                Event::Text(text) | Event::Paste(text) if self.composition.is_none() => {
+                Event::Copy | Event::Cut if self.composition.is_none() => {
+                    let clipboard = if matches!(event, Event::Cut) {
+                        buffer.cut_selections().unwrap()
+                    } else {
+                        buffer.copy_selections()
+                    };
+                    if let Some(clipboard) = clipboard {
+                        ui.ctx().copy_text(clipboard.text().to_owned());
+                        self.clipboard = Some(clipboard);
+                    }
+                }
+                Event::Paste(text) if self.composition.is_none() => {
+                    self.drag_anchor = None;
+                    if self
+                        .clipboard
+                        .as_ref()
+                        .is_some_and(|clipboard| clipboard.text() != text)
+                    {
+                        self.clipboard = None;
+                    }
+                    buffer.paste(&text, self.clipboard.as_ref()).unwrap();
+                }
+                Event::Text(text) if self.composition.is_none() => {
                     self.drag_anchor = None;
                     buffer.replace_selections(&[&text]).unwrap();
                 }
@@ -157,6 +214,9 @@ impl EditorSurface {
                     ..
                 } if self.composition.is_none() => {
                     self.drag_anchor = None;
+                    if self.selection_command(ui, key, modifiers, origin, buffer) {
+                        continue;
+                    }
                     match key {
                         Key::Z if modifiers.command => {
                             if modifiers.shift {
@@ -203,7 +263,12 @@ impl EditorSurface {
                                 .unwrap();
                         }
                         Key::Enter => {
-                            buffer.replace_selections(&["\n"]).unwrap();
+                            let newline = if buffer.text().contains("\r\n") {
+                                "\r\n"
+                            } else {
+                                "\n"
+                            };
+                            buffer.replace_selections(&[newline]).unwrap();
                         }
                         Key::Escape => {
                             let set = buffer.selections();
@@ -228,7 +293,7 @@ impl EditorSurface {
         before != buffer.revision()
     }
 
-    fn cancel_composition(&mut self) {
+    pub(crate) fn cancel_composition(&mut self) {
         if self.composition.take().is_some() {
             self.notice = Some("Composition cancelled".into());
         }

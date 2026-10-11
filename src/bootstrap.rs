@@ -19,9 +19,15 @@ pub(crate) fn run() -> eframe::Result<()> {
         "Lumen",
         options,
         Box::new(|cc| {
-            platform::fonts::configure(&cc.egui_ctx);
+            let _fonts = platform::fonts::configure(&cc.egui_ctx);
             configure_ui(&cc.egui_ctx);
             let mut app = LumenApp::default();
+            #[cfg(feature = "shared-editor")]
+            {
+                app.view.shared_surface = Some(lumen_editor_surface::EditorSurface::with_shaper(
+                    lumen_editor_surface::Shaper::new(&platform::editor_fonts::definitions(_fonts)),
+                ));
+            }
             for argument in std::env::args_os().skip(1) {
                 let path = PathBuf::from(argument);
                 if path.is_dir() {

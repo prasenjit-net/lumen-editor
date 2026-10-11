@@ -1,6 +1,6 @@
 use eframe::egui;
 use std::fs;
-pub(crate) fn configure(ctx: &egui::Context) {
+pub(crate) fn configure(ctx: &egui::Context) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "codicon".into(),
@@ -50,5 +50,6 @@ pub(crate) fn configure(ctx: &egui::Context) {
                 .insert(0, name.into());
         }
     }
-    ctx.set_fonts(fonts);
+    ctx.set_fonts(fonts.clone());
+    fonts
 }

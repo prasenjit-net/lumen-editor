@@ -6,10 +6,13 @@ publish = false
 
 [features]
 shaping-probe = ["dep:egui-shaping"]
+cosmic-probe = ["dep:cosmic-text"]
+shaped = ["dep:cosmic-text", "cosmic-text/swash"]
 
 [dependencies]
 egui = { version = "0.33", features = ["accesskit"] }
 egui-shaping = { package = "egui", version = "=0.36.2", optional = true }
+cosmic-text = { version = "=0.19.0", optional = true, default-features = false, features = ["std"] }
 lumen-editor-core = { path = "../editor-core" }
 unicode-segmentation = "1.13"
 

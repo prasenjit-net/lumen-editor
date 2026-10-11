@@ -1,12 +1,19 @@
 //! Runnable backend spike, intentionally not linked into the Lumen workbench.
 mod accessibility;
+mod commands;
 mod composition_ui;
 mod geometry;
+mod gutter;
 mod input;
+#[cfg(feature = "shaped")]
+mod shaping;
 
 use egui::{Align2, FontId, Id, Pos2, Rect, Response, ScrollArea, Sense, Stroke, Ui, vec2};
 pub use geometry::TextGeometry;
-use lumen_editor_core::{Composition, EditorBuffer};
+use lumen_editor_core::{Composition, EditorBuffer, SelectionClipboard};
+#[cfg(feature = "shaped")]
+pub use shaping::Shaper;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Default)]
 pub struct EditorSurface {
@@ -14,7 +21,14 @@ pub struct EditorSurface {
     drag_anchor: Option<DragSelection>,
     composition: Option<Composition>,
     composition_cancelled: bool,
+    clipboard: Option<SelectionClipboard>,
+    vertical_goal: Option<(usize, f32)>,
+    reveal: Option<usize>,
+    gutter_id: Option<Id>,
+    gutter_drag: Option<(std::ops::Range<usize>, u64)>,
     pub notice: Option<String>,
+    #[cfg(feature = "shaped")]
+    shaper: Option<Shaper>,
 }
 
 #[derive(Clone, Copy)]
@@ -33,11 +47,45 @@ pub struct SurfaceOutput {
 }
 
 impl EditorSurface {
+    pub fn clear_clipboard(&mut self) {
+        self.clipboard = None;
+    }
+    pub fn reveal(&mut self, byte: usize) {
+        self.reveal = Some(byte);
+    }
+    #[cfg(feature = "shaped")]
+    pub fn with_shaper(shaper: Shaper) -> Self {
+        Self {
+            shaper: Some(shaper),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn geometry(
+        &self,
+        ui: &Ui,
+        text: &str,
+        origin: Pos2,
+        composition: Option<&Composition>,
+    ) -> TextGeometry {
+        let geometry = TextGeometry::layout_composition(ui, text, origin, composition);
+        #[cfg(feature = "shaped")]
+        let geometry = {
+            let mut geometry = geometry;
+            if let Some(shaper) = &self.shaper {
+                geometry.shape(shaper);
+            }
+            geometry
+        };
+        geometry
+    }
     pub fn show(&mut self, ui: &mut Ui, id: Id, buffer: &mut EditorBuffer) -> SurfaceOutput {
         if self.widget.is_some_and(|widget| widget != id) {
             self.composition = None;
             self.composition_cancelled = true;
             self.drag_anchor = None;
+            self.vertical_goal = None;
+            self.gutter_drag = None;
             self.notice = Some("Composition cancelled: editor identity changed".into());
         }
         self.widget = Some(id);
@@ -48,11 +96,18 @@ impl EditorSurface {
             .animated(false)
             .auto_shrink([false, false])
             .show_viewport(ui, |ui, viewport| {
-                let initial = TextGeometry::layout(ui, buffer.text(), Pos2::ZERO);
+                let initial = self.geometry(
+                    ui,
+                    buffer.text(),
+                    Pos2::ZERO,
+                    self.composition
+                        .as_ref()
+                        .filter(|composition| composition.is_current(buffer)),
+                );
                 let gutter_width =
                     ui.fonts_mut(|fonts| {
                         fonts.layout_no_wrap(
-                            initial.galley.rows.len().to_string(),
+                            initial.row_count().to_string(),
                             FontId::monospace(14.0),
                             ui.visuals().weak_text_color(),
                         )
@@ -73,25 +128,27 @@ impl EditorSurface {
                 let mut response =
                     ui.interact(content.intersect(text_clip), id, Sense::click_and_drag());
                 let before_selection = buffer.selections().clone();
+                let before_preedit = self
+                    .composition
+                    .as_ref()
+                    .map(|composition| composition.preedit().to_owned());
                 if self.handle_input(ui, &response, text_clip, origin, buffer) {
                     response.mark_changed();
                     ui.ctx().request_repaint();
                 }
-                let geometry = TextGeometry::layout(ui, buffer.text(), origin);
-                let mut galley = geometry.galley.clone();
-                for selection in buffer.selections().selections() {
-                    egui::text_selection::visuals::paint_text_selection(
-                        &mut galley,
-                        ui.visuals(),
-                        &egui::text::CCursorRange::two(
-                            geometry.cursor(selection.anchor),
-                            geometry.cursor(selection.head),
-                        ),
-                        None,
-                    );
-                }
+                let geometry = self.geometry(ui, buffer.text(), origin, self.composition.as_ref());
                 let painter = ui.painter().with_clip_rect(text_clip);
-                painter.galley(origin, galley, ui.visuals().text_color());
+                for (index, selection) in buffer.selections().selections().iter().enumerate() {
+                    if geometry.preedit_rects().is_some()
+                        && index == buffer.selections().primary_index()
+                    {
+                        continue;
+                    }
+                    for rect in geometry.selection_rects(selection.range()) {
+                        painter.rect_filled(rect, 0, ui.visuals().selection.bg_fill);
+                    }
+                }
+                geometry.paint(ui, &painter);
                 let carets: Vec<_> = buffer
                     .selections()
                     .selections()
@@ -99,10 +156,30 @@ impl EditorSurface {
                     .map(|selection| geometry.caret_rect(selection.head))
                     .collect();
                 accessibility::publish(ui, &response, &geometry, buffer);
+                if let Some(byte) = self.reveal.take().filter(|byte| {
+                    *byte <= buffer.text().len() && buffer.text().is_char_boundary(*byte)
+                }) {
+                    // Find can point inside a grapheme; reveal its nearest legal boundary.
+                    let byte = buffer
+                        .text()
+                        .grapheme_indices(true)
+                        .map(|(offset, _)| offset)
+                        .chain([buffer.text().len()])
+                        .rfind(|offset| *offset <= byte)
+                        .unwrap_or(0);
+                    ui.scroll_to_rect(geometry.caret_rect(byte), None);
+                }
                 let mut ime_cursor = None;
-                if response.changed() || before_selection != *buffer.selections() {
+                if response.changed()
+                    || before_selection != *buffer.selections()
+                    || before_preedit.as_deref()
+                        != self.composition.as_ref().map(Composition::preedit)
+                {
                     ui.scroll_to_rect(
-                        carets[buffer.selections().primary_index()].expand(2.0),
+                        geometry
+                            .preedit_rects()
+                            .map_or(carets[buffer.selections().primary_index()], |(_, end)| end)
+                            .expand(2.0),
                         None,
                     );
                 }
@@ -113,12 +190,13 @@ impl EditorSurface {
                             egui::EventFilter {
                                 escape: true,
                                 horizontal_arrows: true,
-                                ..Default::default()
+                                vertical_arrows: true,
+                                tab: true,
                             },
                         )
                     });
                     for (index, caret) in carets.iter().enumerate() {
-                        if self.composition.is_some()
+                        if geometry.preedit_rects().is_some()
                             && index == buffer.selections().primary_index()
                         {
                             continue;
@@ -163,15 +241,16 @@ impl EditorSurface {
                     .painter()
                     .with_clip_rect(gutter.intersect(ui.clip_rect()));
                 gutter_painter.rect_filled(gutter, 0, ui.visuals().panel_fill);
-                for (index, row) in geometry.galley.rows.iter().enumerate() {
+                for (index, row) in geometry.row_rects().iter().enumerate() {
                     gutter_painter.text(
-                        Pos2::new(gutter.right() - 8.0, origin.y + row.min_y()),
+                        Pos2::new(gutter.right() - 8.0, row.top()),
                         Align2::RIGHT_TOP,
                         (index + 1).to_string(),
                         FontId::monospace(14.0),
                         ui.visuals().weak_text_color(),
                     );
                 }
+                self.gutter_input(ui, id, gutter, &geometry, buffer);
                 SurfaceOutput {
                     response,
                     geometry,
@@ -190,3 +269,6 @@ mod tests;
 
 #[cfg(all(test, feature = "shaping-probe"))]
 mod shaping_probe;
+
+#[cfg(all(test, feature = "cosmic-probe"))]
+mod cosmic_probe;

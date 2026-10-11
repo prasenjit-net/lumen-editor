@@ -1,0 +1,103 @@
+# Native editor validation
+
+Updated 2026-10-11. The user reported **all five manual macOS checks passed** for
+the preceding default (egui-galley) prototype. Input-method/OS-version details
+were not supplied. This is user-reported validation, not an automated runtime
+result, and does not automatically validate the new cosmic shaped renderer.
+Windows runtime remains pending by user direction. Headless events, source probes and screenshots are not native
+IME, clipboard or VoiceOver validation. Automation can inspect the isolated app,
+but clipboard delivery still times out (-10005).
+
+## Safe fixture
+
+For the newly integrated shaped workbench, use a disposable file or new untitled
+buffer, not an existing unsaved document:
+
+```sh
+cargo run --features shared-editor
+```
+
+On macOS, a separate app bundle preserves the default app:
+
+```sh
+cargo xtask bundle --offline --shared-editor
+open "target/Lumen Experimental.app"
+```
+
+Repeat the checklist below for this new renderer/controller combination before
+default promotion. The experimental workbench supports real saves: write only
+your disposable test buffer. The shaping fixture remains memory-only:
+
+```sh
+cargo run -p lumen-editor-surface --example spike --features shaped -- 900
+```
+
+From the project root, run:
+
+```sh
+cargo run -p lumen-editor-surface --example spike -- 900
+```
+
+Do **not** add `--ime-preview`: that injects synthetic composition/focus. This
+example edits memory only, cannot save files, and is not the production editor.
+Close and relaunch to reset it. Test copying changes your clipboard; preserve any
+clipboard content you need first. Use an already enabled IME, or enable one
+yourself if desired; no system settings were changed by the agent.
+
+## macOS checklist
+
+1. **IME composition/undo.** The fixture starts with `first` and `second`
+   selected. Focus the editor without clicking away from those selections (Tab
+   to the editor if necessary). With a Japanese/Chinese input method, start a
+   composition. Only the primary preview should appear inline, push ` = 1;`
+   right, and leave revision/Modified unchanged. The candidate window should
+   follow the primary caret. Commit once: both names change once, revision rises
+   once; Cmd+Z restores both names and both selections; Shift+Cmd+Z restores the
+   commit. If clicking is needed to focus, add the other cursor with Option-click
+   and test insertion instead of replacement.
+2. **Cancellation/geometry.** Start preedit, then Escape, click after the preview,
+   or switch to another app. Uncommitted text must disappear without a text undo
+   entry or delayed insertion on return. Repeat after horizontal/vertical scroll
+   and at narrow/wide widths. Following text, gutter and candidate positioning
+   should stay aligned. Also test the macOS Option+E dead-key sequence then `e`:
+   it should insert `é` once, not its intermediate accent separately.
+3. **Clipboard/ordering.** Reset, focus the editor, Cmd+C the two selected names,
+   Cmd+X, then Cmd+V: names should return to their respective locations. Undo
+   paste and cut separately. Paste `漢字 👩‍💻` copied from another app into two
+   cursors: the entire external payload should be inserted at each cursor;
+   type immediately afterward and undo. Confirm no lost/repeated input. The
+   example still uses eframe's clipboard transport (which normalizes CRLF):
+   this test does **not** approve exact native CRLF transport. The live editor's
+   injected clipboard service requires a separate disposable-buffer round trip.
+4. **Accessibility.** If you use VoiceOver, enable it yourself and focus the
+   editor. Check its editable-text role, line reading, primary selected text and
+   caret navigation. An accessible selection action should collapse secondary
+   cursors without editing text. Check rows after CRLF, then during preedit.
+   Preedit-interior positions must not become stored source selections. Record
+   any missing role, incorrect speech, unsupported action or focus trap. AccessKit
+   tree tests alone do not prove these behaviors.
+5. **Commands.** Cmd+A, paste `name name\nname`, then click inside the first
+   `name`. Cmd+D seeds it; repeat to add the next occurrence. Shift+Cmd+L selects
+   all. Type once, then undo once to restore all selections. Option+Cmd+Down/Up
+   adds a cursor on the adjacent line (short lines clamp but retain the desired
+   horizontal position). Tab/Shift+Tab indent/outdent each touched line once.
+   Escape removes only secondary cursors. Also verify empty-selection logical-line
+   Copy/Cut and line paste at EOF/CRLF; they now share the original live rules.
+
+Report each item as **pass / fail / not tested**, with macOS version, input method,
+width and reproduction steps. A screenshot is helpful for candidate placement.
+Successful native checks will not by themselves approve migration: the final
+shaping renderer/accessibility adapter and regression matrix still need completion.
+
+## Migration order after the backend gates pass
+
+1. Supply a shaping-capable geometry/rendering adapter and platform font coverage;
+   test mixed-direction affinity, ligatures, emoji and selection rectangles.
+2. Move document text, saved checkpoint, revision, selections and history under
+   the shared core in one change. No simultaneous TextEdit history for a document.
+3. Route typing, native/popup commands, clipboard, Find/Replace, IME and accessible
+   edits through that owner; preserve typed targets and sticky paste cancellation.
+4. Keep stable document/scroll identities and file workflows (save failure,
+   rename/delete, duplicate tabs and dirty close/quit). Re-run all existing tests.
+5. Verify narrow/default/wide workbench layout, native focus/menu behavior,
+   Windows compilation and macOS packaging. Record platform runtime gaps honestly.

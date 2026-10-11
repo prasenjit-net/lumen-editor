@@ -1,4 +1,6 @@
 use egui::{FontId, Galley, Pos2, Rect, Ui, Vec2, text::CCursor};
+use lumen_editor_core::Composition;
+use std::ops::Range;
 use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -9,13 +11,40 @@ pub struct TextGeometry {
     pub origin: Pos2,
     byte_offsets: Vec<usize>,
     graphemes: Vec<usize>,
+    preedit: Option<(Range<usize>, usize)>,
+    #[cfg(feature = "shaped")]
+    pub(crate) shaped: Option<crate::shaping::ShapedLayout>,
+    #[cfg(feature = "shaped")]
+    visual_offsets: Vec<usize>,
 }
 
 impl TextGeometry {
     pub fn layout(ui: &Ui, text: &str, origin: Pos2) -> Self {
+        Self::layout_composition(ui, text, origin, None)
+    }
+
+    pub(crate) fn layout_composition(
+        ui: &Ui,
+        text: &str,
+        origin: Pos2,
+        composition: Option<&Composition>,
+    ) -> Self {
+        // One transient layout replaces the primary range. Stored source and
+        // history remain untouched; neighboring text participates in this galley.
+        let preedit = composition.filter(|composition| !composition.preedit().is_empty());
+        let projected = preedit.map(|composition| {
+            let range = composition.replacement_range();
+            format!(
+                "{}{}{}",
+                &text[..range.start],
+                composition.preedit(),
+                &text[range.end..]
+            )
+        });
+        let layout_text = projected.as_deref().unwrap_or(text);
         let mut visual = String::new();
         let mut byte_offsets = vec![0];
-        let mut characters = text.char_indices().peekable();
+        let mut characters = layout_text.char_indices().peekable();
         while let Some((offset, character)) = characters.next() {
             if character == '\r' && characters.peek().is_some_and(|(_, next)| *next == '\n') {
                 characters.next();
@@ -26,6 +55,12 @@ impl TextGeometry {
                 byte_offsets.push(offset + character.len_utf8());
             }
         }
+        #[cfg(feature = "shaped")]
+        let visual_offsets = visual
+            .char_indices()
+            .map(|(byte, _)| byte)
+            .chain([visual.len()])
+            .collect();
         let galley = ui.fonts_mut(|fonts| {
             fonts.layout_no_wrap(visual, FontId::monospace(14.0), ui.visuals().text_color())
         });
@@ -38,10 +73,30 @@ impl TextGeometry {
                 .map(|(offset, _)| offset)
                 .chain(std::iter::once(text.len()))
                 .collect(),
+            preedit: preedit
+                .map(|composition| (composition.replacement_range(), composition.preedit().len())),
+            #[cfg(feature = "shaped")]
+            shaped: None,
+            #[cfg(feature = "shaped")]
+            visual_offsets,
         }
     }
 
     pub fn cursor(&self, byte: usize) -> CCursor {
+        self.visual_cursor(self.project_byte(byte))
+    }
+
+    fn project_byte(&self, byte: usize) -> usize {
+        match &self.preedit {
+            Some((range, length)) if byte >= range.end && byte > range.start => {
+                byte - range.len() + length
+            }
+            Some((range, _)) if byte >= range.start => range.start,
+            _ => byte,
+        }
+    }
+
+    fn visual_cursor(&self, byte: usize) -> CCursor {
         CCursor::new(
             self.byte_offsets
                 .binary_search(&byte)
@@ -50,14 +105,37 @@ impl TextGeometry {
     }
 
     pub fn caret_rect(&self, byte: usize) -> Rect {
+        self.visual_caret(self.cursor(byte).index)
+    }
+
+    pub(crate) fn visual_caret(&self, index: usize) -> Rect {
+        #[cfg(feature = "shaped")]
+        if let Some(shaped) = &self.shaped {
+            return shaped.caret(self.visual_byte(index), self.origin);
+        }
         self.galley
-            .pos_from_cursor(self.cursor(byte))
+            .pos_from_cursor(CCursor::new(index))
             .translate(self.origin.to_vec2())
     }
 
     pub fn hit_test(&self, pointer: Pos2) -> usize {
-        let cursor = self.galley.cursor_from_pos(pointer - self.origin);
-        let byte = self.byte_offsets[cursor.index.min(self.byte_offsets.len() - 1)];
+        let index = self.hit_character(pointer);
+        let byte = self.byte_offsets[index.min(self.byte_offsets.len() - 1)];
+        let byte = self.source_byte(byte).unwrap_or_else(|| {
+            let (range, _) = self.preedit.as_ref().unwrap();
+            if self.caret_rect(range.start).center().distance_sq(pointer)
+                < self
+                    .preedit_rects()
+                    .unwrap()
+                    .1
+                    .center()
+                    .distance_sq(pointer)
+            {
+                range.start
+            } else {
+                range.end
+            }
+        });
         match self.graphemes.binary_search(&byte) {
             Ok(_) => byte,
             Err(index) => {
@@ -75,7 +153,116 @@ impl TextGeometry {
     }
 
     pub fn size(&self) -> Vec2 {
+        #[cfg(feature = "shaped")]
+        if self.shaped.is_some() {
+            return self.row_rects().iter().fold(Vec2::ZERO, |size, row| {
+                egui::vec2(
+                    size.x.max(row.width()),
+                    size.y.max(row.bottom() - self.origin.y),
+                )
+            });
+        }
         self.galley.size()
+    }
+
+    pub fn row_count(&self) -> usize {
+        self.row_rects().len()
+    }
+
+    pub fn row_rects(&self) -> Vec<Rect> {
+        #[cfg(feature = "shaped")]
+        if let Some(shaped) = &self.shaped {
+            return shaped.rows(self.origin);
+        }
+        self.galley
+            .rows
+            .iter()
+            .map(|row| {
+                Rect::from_min_max(
+                    self.origin + egui::vec2(0.0, row.min_y()),
+                    self.origin + egui::vec2(row.size.x, row.max_y()),
+                )
+            })
+            .collect()
+    }
+
+    pub fn selection_rects(&self, range: Range<usize>) -> Vec<Rect> {
+        let index = |byte| {
+            self.byte_offsets
+                .partition_point(|offset| *offset <= self.project_byte(byte))
+                .saturating_sub(1)
+        };
+        let start = index(range.start);
+        let end = index(range.end);
+        #[cfg(feature = "shaped")]
+        if let Some(shaped) = &self.shaped {
+            return shaped.selection(self.visual_byte(start)..self.visual_byte(end), self.origin);
+        }
+        let mut offset = 0;
+        self.galley
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let left = start.max(offset);
+                let right = end.min(offset + row.char_count_excluding_newline());
+                let rect = (left < right).then(|| {
+                    Rect::from_min_max(
+                        self.origin + egui::vec2(row.x_offset(left - offset), row.min_y()),
+                        self.origin + egui::vec2(row.x_offset(right - offset), row.max_y()),
+                    )
+                });
+                offset += row.char_count_including_newline();
+                rect
+            })
+            .collect()
+    }
+
+    pub(crate) fn paint(&self, ui: &Ui, painter: &egui::Painter) {
+        #[cfg(feature = "shaped")]
+        if let Some(shaped) = &self.shaped {
+            shaped.paint(ui, painter, self.origin);
+            return;
+        }
+        painter.galley(self.origin, self.galley.clone(), ui.visuals().text_color());
+    }
+
+    fn hit_character(&self, pointer: Pos2) -> usize {
+        #[cfg(feature = "shaped")]
+        if let Some(shaped) = &self.shaped {
+            let byte = shaped.hit(pointer - self.origin);
+            return self
+                .visual_offsets
+                .binary_search(&byte)
+                .expect("shaped source character");
+        }
+        self.galley.cursor_from_pos(pointer - self.origin).index
+    }
+
+    #[cfg(feature = "shaped")]
+    pub(crate) fn visual_byte(&self, character: usize) -> usize {
+        self.visual_offsets[character]
+    }
+
+    #[cfg(feature = "shaped")]
+    pub(crate) fn shape(&mut self, shaper: &crate::Shaper) {
+        self.shaped = Some(shaper.layout(self.galley.text()));
+    }
+
+    fn source_byte(&self, byte: usize) -> Option<usize> {
+        match &self.preedit {
+            Some((range, length)) if byte > range.start && byte < range.start + length => None,
+            Some((range, length)) if byte >= range.start + length => {
+                Some(byte - length + range.len())
+            }
+            _ => Some(byte),
+        }
+    }
+
+    pub(crate) fn preedit_rects(&self) -> Option<(Rect, Rect)> {
+        let (range, length) = self.preedit.as_ref()?;
+        let start = self.visual_caret(self.visual_cursor(range.start).index);
+        let end = self.visual_caret(self.visual_cursor(range.start + length).index);
+        Some((start, end))
     }
 
     pub(crate) fn accessibility_byte(
@@ -90,7 +277,8 @@ impl TextGeometry {
                 if position.character_index > count {
                     return None;
                 }
-                let byte = *self.byte_offsets.get(index + position.character_index)?;
+                let byte =
+                    self.source_byte(*self.byte_offsets.get(index + position.character_index)?)?;
                 return self.graphemes.binary_search(&byte).is_ok().then_some(byte);
             }
             index += count;

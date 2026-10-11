@@ -4,6 +4,15 @@ Date: 2026-10-10. Status: interim migration decision; full backend spike pending
 
 ## Decision
 
+Current experimental decision (2026-10-11): `--features shared-editor` selects
+the core-owned document editor and cosmic-text/Swash surface for the workbench.
+Every document mutation/history route in that build uses the core; generic
+inputs still use TextEdit. Native screenshots and headless integration tests
+validate this path, but do not approve default promotion. The default decision
+below remains in force until bidi affinity, native validation of the new surface
+and broader parity/performance gates pass. See
+[the integration report](shared-editor-integration.md).
+
 Retain egui `TextEdit` as the only editing and history authority while fixing
 document ownership. Assign stable IDs to documents and derive text/scroll widget
 IDs from them. Observe completed widget edits to update revisions and compare
@@ -83,6 +92,14 @@ IME/AT validation and inline composition reflow remain pending. An opt-in egui
 0.36.2 shaping probe passes Latin ligatures and rejects a bundled-font Arabic
 source-index mismatch; neither the production renderer nor its dependencies have
 been upgraded to this candidate. See the spike evaluation for exact gate evidence.
+
+Combined continuation: inline composition and more editing commands now operate
+in the isolated core/surface. cosmic-text 0.19 is an optional **layout probe**, not
+a live dependency or final backend decision. Its Arabic source mapping passes
+with a macOS font; production adoption still needs the shaping renderer, bidi
+affinity/selection geometry, native clipboard/IME/AT checks and full migration
+regressions. TextEdit remains the only live owner. See
+[the manual checks and migration sequence](native-editor-validation.md).
 
 The gutter and editor now share one two-axis viewport. General input focus still uses
 the existing flags; popup commands additionally validate a document target.
