@@ -37,9 +37,26 @@ and drop or explorer operation undo. Symlink copying is rejected explicitly.
 ## Text editing
 
 Each tab owns its cursor, undo history and scroll state. Right-click in the
-editor for Undo/Redo, selected-text Cut/Copy, Paste, Select All, Find and Replace.
+editor for Undo/Redo, Cut/Copy, Paste, Select All, Find and Replace.
 Right-click preserves the selection. Undoing to saved content clears the dirty
 marker; edits and replacements do not save automatically.
+
+With no selection, Copy copies the current logical line without moving the
+caret, and Cut removes that line in one undoable edit. Copied lines include a
+newline, including the final or empty line. Existing LF/CRLF endings are retained;
+cutting the last line removes its preceding terminator. Search inputs and Explorer
+clipboard commands remain separate. Pasting a line copied/cut in this Lumen
+session with no selection inserts above the current line and preserves the
+caret's original column, in one undo/redo step. Selected-text and external pastes
+remain ordinary text insertion. Session metadata is matched against exact pasted
+text and cleared on other copies or mismatched pastes. egui supplies no custom
+clipboard metadata: identical text copied in another app is indistinguishable,
+and line provenance does not survive restarting Lumen. Pasted LF/CRLF is retained
+verbatim, without converting it to the destination's line-ending convention.
+A clipboard event batched after
+typing/navigation or with a pointer gesture falls back to TextEdit's selected-text
+behavior rather than guessing a stale caret; full event-order routing is pending.
+Line paste also falls back when later input would invalidate its caret restoration.
 
 Find uses Cmd+F on macOS or Ctrl+F on Windows/Linux. Replace uses Cmd+Alt+F
 on macOS or Ctrl+H on Windows/Linux. The native Edit menu, command palette and
@@ -56,9 +73,8 @@ case folding. Replace All searches one snapshot and is one undoable widget edit.
 The gutter and text share vertical scrolling; long lines scroll horizontally
 without wrapping, while line numbers stay fixed at the left. Click a line number
 to select its whole line; Shift-click extends by lines, and dragging selects a
-line range. Unicode and existing line endings are preserved. Multi-cursor editing,
-automatic edge scrolling during gutter drags, and empty-selection line copy/cut
-remain planned. See
+line range. Unicode and existing line endings are preserved. Multi-cursor editing
+and automatic edge scrolling during gutter drags remain planned. See
 [the editor plan](plan/text-editor-improvement-plan.md) for the remaining work.
 
 Run from source:

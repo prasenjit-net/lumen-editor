@@ -94,6 +94,14 @@ behavior. Preserve existing functionality unless a task explicitly changes it.
   keep it as the sole mutation/history owner; do not add a parallel undo stack.
   Reuse `app/editor_action.rs` for native/popup editing events and derive widget
   IDs from document identity. Never clear selection just to open a popup.
+- Keep logical-line clipboard rules in the UI-independent model. Empty-selection
+  Copy must not move the caret or dirty the buffer. Cut's clipboard text can differ
+  from its deletion range at EOF; preserve line endings and delegate deletion and
+  undo to the existing widget. Do not apply pre-widget caret calculations after
+  earlier events have changed it, or invent whole-line paste metadata implicitly.
+  Session-only line metadata must require an exact pasted-text match, clear on
+  other clipboard writes/mismatches, and never affect selected-text replacements
+  or other input fields. Keep its native-metadata limitations documented.
 - Keep text, gutter, match highlights and pointer mapping on one viewport/layout
   authority. Derive line positions from the text galley, not independently sized
   labels or a second scroll area. Long code lines scroll horizontally; the gutter

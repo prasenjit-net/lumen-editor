@@ -4,6 +4,7 @@ mod document_id;
 mod editor;
 mod file_name;
 pub(crate) mod search;
+pub(crate) mod text_line;
 pub(crate) use document::{Document, display_name};
 pub(crate) use document_id::DocumentId;
 pub(crate) use editor::EditorState;

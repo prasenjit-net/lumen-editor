@@ -3,6 +3,7 @@ pub(crate) mod command;
 mod dispatch;
 mod documents;
 pub(crate) mod editor_action;
+pub(crate) mod editor_clipboard;
 mod events;
 mod explorer_ops;
 pub(crate) mod find;

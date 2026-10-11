@@ -13,6 +13,7 @@ use std::{
     rc::Rc,
 };
 
+mod clipboard;
 mod editor;
 mod explorer;
 mod find;

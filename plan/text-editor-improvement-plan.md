@@ -33,10 +33,29 @@ Prepared: 2026-10-10. Applies to the Rust/egui Lumen editor and `AGENTS.md`.
   Unicode/CRLF line copying, and find reveal. Screenshot mode verified native
   rendering; live desktop capture stalled, so live pointer interaction was not
   verified on this milestone.
+- Added empty-selection logical-line Copy/Cut for native commands, clipboard
+  events and the document-targeted popup. Pure model rules cover Unicode, blank
+  lines, LF/CRLF and EOF. Copy preserves caret/revision/dirty state; Cut delegates
+  deletion to TextEdit with one undo/redo transaction and restores the saved
+  checkpoint on undo. Popup items are enabled without a selection. Headless
+  tests exercise actual popup clicks, native command dispatch and find-field
+  isolation. Mixed input frames that
+  could invalidate the pre-widget caret keep ordinary selected-text behavior;
+  proper event-order routing belongs to the future backend/input migration.
+- Added whole-line paste with explicit session clipboard metadata and exact-text
+  matching, using VS Code's in-memory fallback as the reference. With no selection,
+  matching line paste inserts at the logical line start and restores the caret to
+  its original column on the original text. TextEdit remains the mutation/history
+  owner, with one undo/redo transaction. Tests cover cross-document and repeated
+  paste, empty/EOF lines, Unicode/CRLF, selected-text replacement, metadata
+  invalidation, find inputs and delayed popup target validation. Native MIME
+  metadata is unavailable through egui: identical external copies cannot be
+  distinguished and metadata is session-only. Pasted line endings are retained
+  verbatim; mixed-input routing and destination-EOL normalization remain pending.
 - Phases 0 and 1 are **not complete**: typed focus routing, shared edit
   transactions, and the multi-cursor backend remain outstanding. Regex, selection
   scope, multiline input controls, gutter drag edge auto-scroll,
-  empty-selection line clipboard behavior, and multi-cursor editing remain
+  native clipboard metadata, full clipboard event-order routing and multi-cursor editing remain
   unimplemented. Phases 3 and 4 are only partially done.
 
 ## Objective

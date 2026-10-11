@@ -58,7 +58,6 @@ impl Workbench<'_> {
                 .map(|file| file.text.clone())
                 .unwrap_or_default();
             let history = output.state.undoer();
-            let selected = !cursor.is_empty();
             let command_key = if cfg!(target_os = "macos") {
                 "⌘"
             } else {
@@ -81,18 +80,8 @@ impl Workbench<'_> {
                     },
                     history.has_redo(&(cursor, text)),
                 ),
-                (
-                    EditorAction::Cut,
-                    "Cut",
-                    format!("{command_key}X"),
-                    selected,
-                ),
-                (
-                    EditorAction::Copy,
-                    "Copy",
-                    format!("{command_key}C"),
-                    selected,
-                ),
+                (EditorAction::Cut, "Cut", format!("{command_key}X"), true),
+                (EditorAction::Copy, "Copy", format!("{command_key}C"), true),
                 (
                     EditorAction::Paste,
                     "Paste",

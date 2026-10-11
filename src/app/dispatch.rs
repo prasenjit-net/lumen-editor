@@ -3,6 +3,12 @@ use eframe::egui;
 
 impl LumenApp {
     pub(crate) fn execute(&mut self, command: Command, ctx: &egui::Context) {
+        if matches!(
+            command,
+            Command::Copy | Command::Cut | Command::CopyPath(_, _)
+        ) {
+            self.view.text_clipboard.clear();
+        }
         let explorer_clipboard = self.view.explorer_focused
             && self.view.explorer_edit.is_none()
             && self.view.delete_prompt.is_none()

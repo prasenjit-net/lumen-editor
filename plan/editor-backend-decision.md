@@ -58,6 +58,19 @@ selection. Gutter drag edge auto-scroll remains outstanding.
 Literal Find/Replace now uses the widget's existing undoer and synthetic input,
 not an independent history. Search highlights are previews while the find input
 owns focus; closing Find adopts the current result as the editor selection.
-Regex and selection-scoped search are not implemented. Cut/Copy require selected text. The temporary
+Regex and selection-scoped search are not implemented. Empty-selection Copy/Cut
+now use pure logical-line rules and the same widget event adapter. Copy leaves
+the caret alone; Cut has explicit widget undo boundaries and delegates deletion
+to TextEdit. Final-line clipboard text and the deletion range intentionally differ.
+Whole-line paste uses explicit session metadata with exact-text matching, following
+[VS Code's memory fallback](https://github.com/microsoft/vscode/blob/main/src/vs/editor/browser/controller/editContext/clipboardUtils.ts).
+The widget inserts at the logical line start, then its existing selection/history
+records a caret restored to the original column on the original text. Selected
+pastes remain normal replacements. Native MIME metadata is not exposed by egui;
+identical text copied by another app is indistinguishable and metadata does not
+survive process restart. Pasted endings are retained verbatim. Ordered routing of
+mixed pointer/navigation/clipboard frames remains outstanding; those frames keep
+ordinary selected-text semantics instead of applying stale cursor calculations.
+The temporary
 save checkpoint retains one extra text snapshot; large-file memory behavior
 must be reviewed with the future buffer/history implementation.

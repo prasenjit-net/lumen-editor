@@ -5,6 +5,7 @@ use super::{
 };
 use crate::app::{
     editor_action::{blocked, prepare_action, text_widget_id},
+    editor_clipboard::{finish_clipboard, prepare_clipboard},
     find::{finish_replace, prepare_find},
 };
 use eframe::egui::{self, FontId, Frame, Margin, ScrollArea, TextEdit};
@@ -25,6 +26,11 @@ impl Workbench<'_> {
             .find
             .get_mut(&document)
             .is_some_and(|find| prepare_find(find, &self.editor.files[index], &ctx, blocked));
+        let clipboard_edit = if replacing {
+            None
+        } else {
+            prepare_clipboard(self.view, &self.editor.files[index], &ctx)
+        };
         let height = ui.available_height();
         ui.push_id(("editor_viewport", document), |ui| {
             Frame::new()
@@ -86,7 +92,8 @@ impl Workbench<'_> {
                                             .frame(false)
                                             .code_editor()
                                             .layouter(&mut layouter);
-                                    let output = super::editor_menu::show_editor_text(ui, edit, id);
+                                    let mut output =
+                                        super::editor_menu::show_editor_text(ui, edit, id);
                                     if self.view.focus_editor {
                                         output.response.request_focus();
                                         self.view.focus_editor = false;
@@ -96,6 +103,14 @@ impl Workbench<'_> {
                                     }
                                     if replacing {
                                         finish_replace(&output, &self.editor.files[index], &ctx);
+                                    }
+                                    if let Some(edit) = &clipboard_edit {
+                                        finish_clipboard(
+                                            &mut output,
+                                            &self.editor.files[index],
+                                            &ctx,
+                                            edit,
+                                        );
                                     }
                                     if let Some(find) =
                                         self.view.find.get_mut(&document).filter(|find| find.open)

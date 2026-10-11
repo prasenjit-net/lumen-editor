@@ -85,6 +85,7 @@ impl Activity {
 }
 
 pub(crate) struct ViewState {
+    pub(crate) text_clipboard: super::editor_clipboard::TextClipboard,
     pub(crate) find: std::collections::HashMap<crate::model::DocumentId, super::find::FindState>,
     pub(crate) pending_editor_action: Option<super::editor_action::PendingEditorAction>,
     pub(crate) editor_paste_target: Option<crate::model::DocumentId>,
@@ -124,6 +125,7 @@ impl ViewState {
 impl Default for ViewState {
     fn default() -> Self {
         Self {
+            text_clipboard: Default::default(),
             find: Default::default(),
             pending_editor_action: None,
             editor_paste_target: None,

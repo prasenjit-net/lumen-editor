@@ -63,6 +63,9 @@ pub(crate) fn prepare_action(view: &mut ViewState, document: DocumentId, ctx: &e
         && !blocked(view)
     {
         view.explorer_focused = false;
+        if matches!(pending.action, EditorAction::Copy | EditorAction::Cut) {
+            view.text_clipboard.clear();
+        }
         ctx.memory_mut(|memory| memory.request_focus(text_widget_id(document)));
         if pending.action == EditorAction::Paste {
             view.editor_paste_target = Some(document);

@@ -3,6 +3,7 @@ use super::command::Command;
 use eframe::egui;
 impl LumenApp {
     pub(crate) fn handle_events(&mut self, ctx: &egui::Context) {
+        self.view.text_clipboard.observe_input(ctx);
         super::editor_action::validate_paste(
             &mut self.view,
             self.editor.active().map(|file| file.id),
