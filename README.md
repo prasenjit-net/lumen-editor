@@ -34,6 +34,29 @@ leave a partial destination, reported in the status bar for inspection.
 Current limits: single-selection operations, in-app file clipboard, no drag
 and drop or explorer operation undo. Symlink copying is rejected explicitly.
 
+## Text editing
+
+Each tab owns its cursor, undo history and scroll state. Right-click in the
+editor for Undo/Redo, selected-text Cut/Copy, Paste, Select All, Find and Replace.
+Right-click preserves the selection. Undoing to saved content clears the dirty
+marker; edits and replacements do not save automatically.
+
+Find uses Cmd+F on macOS or Ctrl+F on Windows/Linux. Replace uses Cmd+Alt+F
+on macOS or Ctrl+H on Windows/Linux. The native Edit menu, command palette and
+editor context menu expose the same actions. Find seeds from selected text or
+the word at the caret and selects the query for easy overwriting. Enter and
+Shift+Enter navigate results, and Escape closes Find and returns editor focus.
+Use Match Case (`Aa`) or Match Whole Word (`ab`), Replace, or All (Replace All).
+Queries and options stay separate for each open document.
+
+This milestone supports literal search, not regex, selection-scoped search,
+preserve-case replacement, or multiline input controls. Case-insensitive matching
+uses Unicode lowercasing with original-byte boundary mapping, not full Unicode
+case folding. Replace All searches one snapshot and is one undoable widget edit.
+The gutter and text still scroll independently; multi-cursor editing and
+empty-selection line copy/cut remain planned. See
+[the editor plan](plan/text-editor-improvement-plan.md) for the remaining work.
+
 Run from source:
 
 ```sh

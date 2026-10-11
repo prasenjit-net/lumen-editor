@@ -23,7 +23,7 @@ pub(crate) fn text_widget_id(document: DocumentId) -> egui::Id {
     egui::Id::new(("editor_text", document))
 }
 
-fn blocked(view: &ViewState) -> bool {
+pub(crate) fn blocked(view: &ViewState) -> bool {
     view.command_palette
         || view.pending_close.is_some()
         || view.pending_quit

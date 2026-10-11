@@ -52,7 +52,10 @@ a parallel edit history.
 The gutter and editor still scroll independently. General input focus still uses
 the existing flags; popup commands additionally validate a document target.
 The editor now has a context menu and accepts clicks below EOF. There is no
-find/replace UI, gutter selection, application selection set, or multi-cursor
-support yet. Cut/Copy require selected text. The temporary
+gutter selection, application selection set, or multi-cursor support yet.
+Literal Find/Replace now uses the widget's existing undoer and synthetic input,
+not an independent history. Search highlights are previews while the find input
+owns focus; closing Find adopts the current result as the editor selection.
+Regex and selection-scoped search are not implemented. Cut/Copy require selected text. The temporary
 save checkpoint retains one extra text snapshot; large-file memory behavior
 must be reviewed with the future buffer/history implementation.

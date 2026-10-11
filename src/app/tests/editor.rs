@@ -7,10 +7,19 @@ fn text_id(document: DocumentId) -> egui::Id {
     egui::Id::new(("editor_text", document))
 }
 
-fn editor_frame(
+pub(super) fn editor_frame(
     app: &mut LumenApp,
     ctx: &egui::Context,
     events: Vec<egui::Event>,
+) -> egui::FullOutput {
+    editor_frame_at_width(app, ctx, events, 1000.0)
+}
+
+pub(super) fn editor_frame_at_width(
+    app: &mut LumenApp,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    width: f32,
 ) -> egui::FullOutput {
     // Let undo groups settle between text frames, but keep pointer gestures
     // within egui's click-duration threshold.
@@ -28,7 +37,7 @@ fn editor_frame(
             time: Some(time),
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
-                egui::vec2(1000.0, 600.0),
+                egui::vec2(width, 600.0),
             )),
             events,
             ..Default::default()
@@ -175,7 +184,7 @@ fn clicking_a_tab_transfers_keyboard_input_to_its_document() {
     assert_eq!(app.editor.files[1].text, "");
 }
 
-fn select(app: &LumenApp, ctx: &egui::Context, start: usize, end: usize) {
+pub(super) fn select(app: &LumenApp, ctx: &egui::Context, start: usize, end: usize) {
     let id = text_id(app.editor.active().unwrap().id);
     let mut state = egui::text_edit::TextEditState::load(ctx, id).unwrap();
     state
@@ -275,7 +284,7 @@ fn popup_paste_is_delivered_only_to_its_original_focused_document() {
     }));
 }
 
-fn text_position(output: &egui::FullOutput, title: &str) -> egui::Pos2 {
+pub(super) fn text_position(output: &egui::FullOutput, title: &str) -> egui::Pos2 {
     output
         .shapes
         .iter()
@@ -288,7 +297,11 @@ fn text_position(output: &egui::FullOutput, title: &str) -> egui::Pos2 {
         .expect("requested text is rendered")
 }
 
-fn pointer(position: egui::Pos2, button: egui::PointerButton, pressed: bool) -> Vec<egui::Event> {
+pub(super) fn pointer(
+    position: egui::Pos2,
+    button: egui::PointerButton,
+    pressed: bool,
+) -> Vec<egui::Event> {
     vec![
         egui::Event::PointerMoved(position),
         egui::Event::PointerButton {

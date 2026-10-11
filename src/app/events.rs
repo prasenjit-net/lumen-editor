@@ -1,5 +1,4 @@
 use super::LumenApp;
-#[cfg(not(target_os = "macos"))]
 use super::command::Command;
 use eframe::egui;
 impl LumenApp {
@@ -9,6 +8,24 @@ impl LumenApp {
             self.editor.active().map(|file| file.id),
             ctx,
         );
+        let find = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::F);
+        let replace = egui::KeyboardShortcut::new(
+            if cfg!(target_os = "macos") {
+                egui::Modifiers::COMMAND | egui::Modifiers::ALT
+            } else {
+                egui::Modifiers::COMMAND
+            },
+            if cfg!(target_os = "macos") {
+                egui::Key::F
+            } else {
+                egui::Key::H
+            },
+        );
+        if ctx.input_mut(|input| input.consume_shortcut(&replace)) {
+            self.execute(Command::Replace, ctx);
+        } else if ctx.input_mut(|input| input.consume_shortcut(&find)) {
+            self.execute(Command::Find, ctx);
+        }
         if ctx.input(|input| input.viewport().close_requested())
             && !self.view.allow_quit
             && self.editor.has_unsaved_changes()

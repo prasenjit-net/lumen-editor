@@ -96,6 +96,11 @@ impl Workbench<'_> {
                         Command::OpenFolder,
                     ),
                     (format!("{}  File: Save", icon::FLOPPY_DISK), Command::Save),
+                    (
+                        format!("{}  Editor: Find", icon::MAGNIFYING_GLASS),
+                        Command::Find,
+                    ),
+                    ("Editor: Replace".into(), Command::Replace),
                 ] {
                     if ui.selectable_label(false, label).clicked() {
                         self.command(action);

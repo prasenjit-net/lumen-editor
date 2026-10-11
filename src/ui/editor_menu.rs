@@ -117,6 +117,27 @@ impl Workbench<'_> {
                     ui.close();
                 }
             }
+            ui.separator();
+            for (command, title, shortcut) in [
+                (Command::Find, "Find", format!("{command_key}F")),
+                (
+                    Command::Replace,
+                    "Replace",
+                    if cfg!(target_os = "macos") {
+                        "Alt+⌘F".into()
+                    } else {
+                        "Ctrl+H".into()
+                    },
+                ),
+            ] {
+                if ui
+                    .add(egui::Button::new(title).shortcut_text(shortcut))
+                    .clicked()
+                {
+                    self.command(command);
+                    ui.close();
+                }
+            }
         });
     }
 }

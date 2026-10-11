@@ -6,6 +6,8 @@ use std::path::PathBuf;
 /// Shared actions from native menus, shortcuts and workbench components.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
+    Find,
+    Replace,
     EditorAction(DocumentId, EditorAction),
     NewFile,
     NewUntitled,
@@ -85,6 +87,7 @@ impl Command {
             }
             Self::CloseFile(index) => {
                 if index < editor.files.len() {
+                    view.find.remove(&editor.files[index].id);
                     editor.close_file(index);
                     view.status = "Closed file".into();
                 }
@@ -97,6 +100,8 @@ impl Command {
     /// Stable native menu identifiers; data-carrying UI actions have no menu ID.
     pub(crate) fn menu_id(&self) -> Option<&'static str> {
         match self {
+            Self::Find => Some("find"),
+            Self::Replace => Some("replace"),
             Self::NewUntitled => Some("new"),
             Self::OpenFile => Some("open"),
             Self::OpenFolder => Some("folder"),
@@ -119,6 +124,8 @@ impl Command {
 
     pub(crate) fn from_menu_id(id: &str) -> Option<Self> {
         Some(match id {
+            "find" => Self::Find,
+            "replace" => Self::Replace,
             "new" => Self::NewUntitled,
             "open" => Self::OpenFile,
             "folder" => Self::OpenFolder,

@@ -9,6 +9,8 @@ impl LumenApp {
             && !self.view.command_palette
             && !ctx.wants_keyboard_input();
         match command {
+            Command::Find => self.open_find(false, ctx),
+            Command::Replace => self.open_find(true, ctx),
             Command::EditorAction(document, action) => {
                 if self.editor.active().is_some_and(|file| file.id == document) {
                     self.view.pending_editor_action =

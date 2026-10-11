@@ -14,6 +14,7 @@ pub struct NativeMenu {
     save_as: MenuItem,
     close: MenuItem,
     edits: Vec<MenuItem>,
+    find: Vec<MenuItem>,
 }
 
 impl NativeMenu {
@@ -83,6 +84,23 @@ impl NativeMenu {
             &PredefinedMenuItem::separator(),
             &edits[5],
         ])?;
+        let find = vec![
+            item(Command::Find, "Find…", Code::KeyF, false),
+            if cfg!(target_os = "macos") {
+                MenuItem::with_id(
+                    Command::Replace.menu_id().expect("native command"),
+                    "Replace…",
+                    true,
+                    Some(Accelerator::new(
+                        Modifiers::META | Modifiers::ALT,
+                        Code::KeyF,
+                    )),
+                )
+            } else {
+                item(Command::Replace, "Replace…", Code::KeyH, false)
+            },
+        ];
+        edit.append_items(&[&PredefinedMenuItem::separator(), &find[0], &find[1]])?;
         let view = Submenu::new("View", true);
         view.append_items(&[
             &item(Command::Palette, "Command Palette…", Code::KeyP, true),
@@ -141,6 +159,7 @@ impl NativeMenu {
             save_as,
             close,
             edits,
+            find,
         })
     }
 
@@ -168,6 +187,9 @@ impl NativeMenu {
     }
 
     pub fn set_context(&self, open: bool, text_input: bool, explorer: bool) {
+        for item in &self.find {
+            item.set_enabled(open);
+        }
         for item in [&self.save, &self.save_as, &self.close] {
             item.set_enabled(open);
         }

@@ -85,6 +85,7 @@ impl Activity {
 }
 
 pub(crate) struct ViewState {
+    pub(crate) find: std::collections::HashMap<crate::model::DocumentId, super::find::FindState>,
     pub(crate) pending_editor_action: Option<super::editor_action::PendingEditorAction>,
     pub(crate) editor_paste_target: Option<crate::model::DocumentId>,
     pub(crate) activity: Activity,
@@ -123,6 +124,7 @@ impl ViewState {
 impl Default for ViewState {
     fn default() -> Self {
         Self {
+            find: Default::default(),
             pending_editor_action: None,
             editor_paste_target: None,
             activity: Activity::Explorer,

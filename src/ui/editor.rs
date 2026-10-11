@@ -146,7 +146,22 @@ impl Workbench<'_> {
                     ui.add_space(2.0);
                     let line_count = self.editor.files[index].text.split('\n').count();
                     let document_id = self.editor.files[index].id;
+                    self.editor_find_bar(ui, document_id);
                     crate::app::editor_action::prepare_action(self.view, document_id, ctx);
+                    let reveal_find = self
+                        .view
+                        .find
+                        .get(&document_id)
+                        .is_some_and(|find| find.reveal);
+                    let blocked = crate::app::editor_action::blocked(self.view);
+                    let replacing = self.view.find.get_mut(&document_id).is_some_and(|find| {
+                        crate::app::find::prepare_find(
+                            find,
+                            &self.editor.files[index],
+                            ctx,
+                            blocked,
+                        )
+                    });
                     let content_height = ui.available_height();
                     Frame::default()
                         .fill(BG)
@@ -207,6 +222,27 @@ impl Workbench<'_> {
                                                 }
                                                 if response.changed() {
                                                     self.editor.files[index].record_text_change();
+                                                }
+                                                if replacing {
+                                                    crate::app::find::finish_replace(
+                                                        &output,
+                                                        &self.editor.files[index],
+                                                        ctx,
+                                                    );
+                                                }
+                                                if let Some(find) = self
+                                                    .view
+                                                    .find
+                                                    .get_mut(&document_id)
+                                                    .filter(|find| find.open)
+                                                {
+                                                    find.refresh(&self.editor.files[index]);
+                                                    super::editor_find::paint_find(
+                                                        ui,
+                                                        &output,
+                                                        find,
+                                                        reveal_find,
+                                                    );
                                                 }
                                                 self.editor_context_menu(&output, document_id);
                                             });

@@ -5,6 +5,7 @@ mod documents;
 pub(crate) mod editor_action;
 mod events;
 mod explorer_ops;
+pub(crate) mod find;
 #[cfg(test)]
 mod tests;
 pub(crate) mod view_state;

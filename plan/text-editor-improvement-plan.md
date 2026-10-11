@@ -17,10 +17,20 @@ Prepared: 2026-10-10. Applies to the Rust/egui Lumen editor and `AGENTS.md`.
   popup paste are rejected when the document/input focus or modal state changes.
 - Expanded the text widget to cover the editor viewport, including blank space
   below EOF; click-to-EOF and context-menu interaction have regression coverage.
+- Added per-document literal Find/Replace: seed from selection/word, selected
+  query on open, match count, Enter/Shift+Enter navigation, match outlines and
+  reveal, case/whole-word options, current/all replacement, and Escape to return
+  focus. Native menus, shortcuts, palette, and editor context menu share commands.
+- Replacement uses the existing TextEdit history via one synthetic selection
+  replacement, with explicit before/after undo boundaries. Replace All is built
+  from one text snapshot and does not search its inserted replacement again.
+  Tests cover undo/redo, dirty checkpoint, Unicode/CRLF, stale revisions, blocked
+  dialogs, another open buffer, and narrow/default/wide control layouts.
 - Phases 0 and 1 are **not complete**: typed focus routing, shared edit
-  transactions, and the multi-cursor backend remain outstanding. Find/replace,
-  gutter selection/unified scrolling, empty-selection line clipboard behavior,
-  and multi-cursor editing remain unimplemented. Phase 3 is only partially done.
+  transactions, and the multi-cursor backend remain outstanding. Regex, selection
+  scope, multiline input controls, gutter selection/unified scrolling,
+  empty-selection line clipboard behavior, and multi-cursor editing remain
+  unimplemented. Phases 3 and 4 are only partially done.
 
 ## Objective
 
