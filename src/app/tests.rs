@@ -17,6 +17,7 @@ mod clipboard;
 mod editor;
 mod explorer;
 mod find;
+mod paste;
 mod viewport;
 
 #[derive(Default)]

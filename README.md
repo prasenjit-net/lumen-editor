@@ -51,12 +51,26 @@ caret's original column, in one undo/redo step. Selected-text and external paste
 remain ordinary text insertion. Session metadata is matched against exact pasted
 text and cleared on other copies or mismatched pastes. egui supplies no custom
 clipboard metadata: identical text copied in another app is indistinguishable,
-and line provenance does not survive restarting Lumen. Pasted LF/CRLF is retained
-verbatim, without converting it to the destination's line-ending convention.
-A clipboard event batched after
-typing/navigation or with a pointer gesture falls back to TextEdit's selected-text
-behavior rather than guessing a stale caret; full event-order routing is pending.
-Line paste also falls back when later input would invalidate its caret restoration.
+and line provenance does not survive restarting Lumen. The editor adapter retains
+received line endings without converting them to the destination convention.
+The current eframe native clipboard transport normalizes CRLF to LF before delivery;
+this can invalidate CRLF line metadata and fall back to ordinary text insertion.
+Direct-event CRLF tests do not establish native clipboard round-trip preservation.
+Requested editor paste captures document ID, revision and selection. Changed text,
+caret, focus, modal or input mode cancels delivery before other inputs can consume
+it; returning to the original caret/focus does not reactivate a cancelled request.
+Native Edit-menu paste shares this validation; other text fields remain ordinary
+inputs. egui provides no clipboard request IDs or explicit read-failure response:
+the snapshot guards the latest request, not independently correlated overlapping
+reads. A dedicated clipboard service remains necessary for that guarantee.
+Keyboard batches split at clipboard boundaries and continue in repaint frames:
+Copy/Cut see preceding typing/navigation, and later typing follows restored paste
+selection. New keyboard input stays behind an older deferred batch. Deferred input
+is cancelled, with status feedback, if its document revision, caret, focus, or input
+mode changes. This is a temporary TextEdit adapter, not a new editing/undo backend.
+Pointer gestures and IME remain on the widget's existing path; mixed clipboard
+gestures keep ordinary selected-text behavior. App-wide shortcuts still dispatch
+before widget input, rather than participating in this document keyboard queue.
 
 Find uses Cmd+F on macOS or Ctrl+F on Windows/Linux. Replace uses Cmd+Alt+F
 on macOS or Ctrl+H on Windows/Linux. The native Edit menu, command palette and
@@ -73,8 +87,11 @@ case folding. Replace All searches one snapshot and is one undoable widget edit.
 The gutter and text share vertical scrolling; long lines scroll horizontally
 without wrapping, while line numbers stay fixed at the left. Click a line number
 to select its whole line; Shift-click extends by lines, and dragging selects a
-line range. Unicode and existing line endings are preserved. Multi-cursor editing
-and automatic edge scrolling during gutter drags remain planned. See
+line range. Holding a gutter drag above/below the viewport scrolls vertically
+and extends selection at the visible edge. Speed increases with distance from
+the edge; release or a blocking dialog stops the drag. Document bounds clamp
+scrolling, and reversing direction responds immediately. Unicode and existing
+line endings are preserved. Multi-cursor editing remains planned. See
 [the editor plan](plan/text-editor-improvement-plan.md) for the remaining work.
 
 Run from source:

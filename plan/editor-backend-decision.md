@@ -54,7 +54,12 @@ the existing flags; popup commands additionally validate a document target.
 The editor now has a context menu and accepts clicks below EOF. There is no
 application selection set or multi-cursor support yet. Gutter click/Shift-click
 and drag select logical lines using the same galley geometry and stored widget
-selection. Gutter drag edge auto-scroll remains outstanding.
+selection. Gutter drag edge auto-scroll now uses the same viewport's vertical
+scroll delta and clamps pointer-to-line mapping to its visible edge. Drag deltas
+are time-based and unanimated to avoid accumulating targets beyond document
+bounds; normal reveal scrolling retains animation. Release and blocking dialogs
+stop the drag. Headless regressions cover stationary-pointer scrolling, reversal,
+EOF/BOF clamping, unchanged buffers, and dialog cancellation.
 Literal Find/Replace now uses the widget's existing undoer and synthetic input,
 not an independent history. Search highlights are previews while the find input
 owns focus; closing Find adopts the current result as the editor selection.
@@ -68,9 +73,28 @@ The widget inserts at the logical line start, then its existing selection/histor
 records a caret restored to the original column on the original text. Selected
 pastes remain normal replacements. Native MIME metadata is not exposed by egui;
 identical text copied by another app is indistinguishable and metadata does not
-survive process restart. Pasted endings are retained verbatim. Ordered routing of
-mixed pointer/navigation/clipboard frames remains outstanding; those frames keep
-ordinary selected-text semantics instead of applying stale cursor calculations.
+survive process restart. The model/adapter retain delivered line endings, but
+eframe 0.33.3's native glow/wgpu integrations normalize clipboard CRLF to LF before
+emitting Paste. Exact-text line metadata can therefore miss a native CRLF round
+trip; direct-event CRLF tests are not native clipboard verification. This transport
+boundary and destination-EOL policy remain outstanding. Document keyboard
+batches now split at clipboard boundaries and continue across requested repaint
+frames, letting TextEdit finish preceding typing/navigation before computing line
+clipboard rules. Deferred input captures document ID/revision/caret and is cancelled
+with status feedback on invalidation. New keyboard input stays behind older events;
+clipboard metadata follows delivered segments instead of raw input batches.
+This preserves one widget render and one mutation/history owner per pass. Pointer
+gestures and IME use the existing widget path and cancel any deferred keyboard
+batch. App-wide shortcuts retain their pre-widget dispatch order; universal event
+ordering still needs the future backend/input migration.
+Requested popup/native-editor paste now captures document ID, revision and widget
+selection. A cancelled snapshot stays cancelled until delivery, even across
+caret/focus round trips. Validation runs before and after command dispatch so
+Find or another native command cannot redirect the response into a different field.
+Rename/save without text changes remain compatible. The snapshot represents the
+latest request: egui exposes neither a response request ID nor an explicit empty/
+failure result, so overlapping-request correlation still requires a clipboard
+service boundary. These checks are not a claim of complete async clipboard parity.
 The temporary
 save checkpoint retains one extra text snapshot; large-file memory behavior
 must be reviewed with the future buffer/history implementation.

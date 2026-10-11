@@ -40,6 +40,168 @@ fn wheel(position: egui::Pos2, delta: egui::Vec2) -> Vec<egui::Event> {
     ]
 }
 
+fn editor_clip(output: &egui::FullOutput, text: &str) -> egui::Rect {
+    output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(rendered) if rendered.galley.text() == text => {
+                Some(shape.clip_rect)
+            }
+            _ => None,
+        })
+        .unwrap()
+}
+
+fn selection(app: &LumenApp, ctx: &egui::Context) -> egui::text::CCursorRange {
+    egui::text_edit::TextEditState::load(ctx, text_widget_id(app.editor.active().unwrap().id))
+        .unwrap()
+        .cursor
+        .char_range()
+        .unwrap()
+}
+
+#[test]
+fn gutter_drag_scrolls_with_stationary_pointer_and_stops_on_release() {
+    let text = (1..=120)
+        .map(|row| format!("row {row:03}\n"))
+        .collect::<String>();
+    let (mut app, ctx) = fixture(&text);
+    let output = editor_frame(&mut app, &ctx, vec![]);
+    let origin = text_shape(&output, &text).pos;
+    let first = super::editor::text_position(&output, "1");
+    let outside = egui::pos2(first.x, editor_clip(&output, &text).bottom() + 80.0);
+    editor_frame(
+        &mut app,
+        &ctx,
+        pointer(first, egui::PointerButton::Primary, true),
+    );
+    editor_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(outside)]);
+    let initial = selection(&app, &ctx).primary.index;
+    let mut output = editor_frame(&mut app, &ctx, vec![]);
+    for _ in 0..20 {
+        output = editor_frame(&mut app, &ctx, vec![]);
+    }
+    let current = text_shape(&output, &text).pos;
+    assert!(current.y < origin.y - 100.0);
+    assert_eq!(current.x, origin.x);
+    let range = selection(&app, &ctx);
+    assert_eq!(range.secondary.index, 0);
+    assert!(range.primary.index > initial);
+    assert!(range.primary.index <= text.chars().count());
+    editor_frame(
+        &mut app,
+        &ctx,
+        pointer(outside, egui::PointerButton::Primary, false),
+    );
+    let stopped = editor_frame(&mut app, &ctx, vec![]);
+    let after = editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(
+        text_shape(&stopped, &text).pos,
+        text_shape(&after, &text).pos
+    );
+    assert_eq!(selection(&app, &ctx), range);
+    assert_eq!(app.editor.files[0].text, text);
+    assert!(!app.editor.files[0].dirty);
+    assert_eq!(app.editor.files[0].revision, 0);
+}
+
+#[test]
+fn gutter_drag_reverses_scroll_and_clamps_at_both_document_edges() {
+    let text = (1..=90)
+        .map(|row| format!("é 🌍 {row:03}\r\n"))
+        .collect::<String>();
+    let (mut app, ctx) = fixture(&text);
+    let output = editor_frame(&mut app, &ctx, vec![]);
+    let first = super::editor::text_position(&output, "1");
+    let top_y = text_shape(&output, &text).pos.y;
+    let bounds = editor_clip(&output, &text);
+    let below = egui::pos2(first.x, bounds.bottom() + 200.0);
+    let above = egui::pos2(first.x, bounds.top() - 200.0);
+    editor_frame(
+        &mut app,
+        &ctx,
+        pointer(first, egui::PointerButton::Primary, true),
+    );
+    editor_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(below)]);
+    for _ in 0..180 {
+        editor_frame(&mut app, &ctx, vec![]);
+    }
+    assert_eq!(selection(&app, &ctx).primary.index, text.chars().count());
+    let bottom = editor_frame(&mut app, &ctx, vec![]);
+    let still_bottom = editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(
+        text_shape(&bottom, &text).pos,
+        text_shape(&still_bottom, &text).pos
+    );
+    editor_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(above)]);
+    let reversing = editor_frame(&mut app, &ctx, vec![]);
+    assert!(text_shape(&reversing, &text).pos.y > text_shape(&bottom, &text).pos.y);
+    for _ in 0..180 {
+        editor_frame(&mut app, &ctx, vec![]);
+    }
+    let top = editor_frame(&mut app, &ctx, vec![]);
+    assert!(
+        (text_shape(&top, &text).pos.y - top_y).abs() < 0.1,
+        "top={} expected={top_y} selection={:?} pointer={:?} blocked={}",
+        text_shape(&top, &text).pos.y,
+        selection(&app, &ctx),
+        ctx.input(|input| (input.pointer.primary_down(), input.pointer.interact_pos())),
+        crate::app::editor_action::blocked(&app.view)
+    );
+    assert_eq!(selection(&app, &ctx).primary.index, 9);
+    assert_eq!(selection(&app, &ctx).secondary.index, 0);
+    assert_eq!(app.editor.files[0].text, text);
+    assert!(!app.editor.files[0].dirty);
+}
+
+#[test]
+fn pointer_outside_viewport_without_a_gutter_drag_does_not_scroll() {
+    let text = "row\n".repeat(100);
+    let (mut app, ctx) = fixture(&text);
+    let output = editor_frame(&mut app, &ctx, vec![]);
+    let origin = text_shape(&output, &text).pos;
+    editor_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(egui::pos2(25.0, 700.0))],
+    );
+    for _ in 0..10 {
+        let output = editor_frame(&mut app, &ctx, vec![]);
+        assert_eq!(text_shape(&output, &text).pos, origin);
+    }
+}
+
+#[test]
+fn blocking_dialog_cancels_gutter_auto_scroll_without_hiding_line_numbers() {
+    let text = "row\n".repeat(100);
+    let (mut app, ctx) = fixture(&text);
+    let output = editor_frame(&mut app, &ctx, vec![]);
+    let first = super::editor::text_position(&output, "1");
+    let outside = egui::pos2(first.x, editor_clip(&output, &text).bottom() + 80.0);
+    editor_frame(
+        &mut app,
+        &ctx,
+        pointer(first, egui::PointerButton::Primary, true),
+    );
+    editor_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(outside)]);
+    editor_frame(&mut app, &ctx, vec![]);
+    let range = selection(&app, &ctx);
+    app.view.pending_quit = true;
+    let blocked = editor_frame(&mut app, &ctx, vec![]);
+    let position = text_shape(&blocked, &text).pos;
+    assert!(blocked.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::epaint::Shape::Text(text) if text.galley.text().parse::<usize>().is_ok())));
+    assert!(ctx.dragged_id().is_none());
+    app.view.pending_quit = false;
+    for _ in 0..5 {
+        let output = editor_frame(&mut app, &ctx, vec![]);
+        assert_eq!(text_shape(&output, &text).pos, position);
+        assert_eq!(selection(&app, &ctx), range);
+    }
+    assert!(!app.editor.files[0].dirty);
+}
+
 #[test]
 fn gutter_and_text_share_vertical_geometry_and_scroll_from_either_region() {
     let text = (1..=120)

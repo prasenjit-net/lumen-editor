@@ -39,9 +39,8 @@ Prepared: 2026-10-10. Applies to the Rust/egui Lumen editor and `AGENTS.md`.
   deletion to TextEdit with one undo/redo transaction and restores the saved
   checkpoint on undo. Popup items are enabled without a selection. Headless
   tests exercise actual popup clicks, native command dispatch and find-field
-  isolation. Mixed input frames that
-  could invalidate the pre-widget caret keep ordinary selected-text behavior;
-  proper event-order routing belongs to the future backend/input migration.
+  isolation. Mixed pointer/IME input still uses ordinary widget behavior;
+  universal event-order routing belongs to the future backend/input migration.
 - Added whole-line paste with explicit session clipboard metadata and exact-text
   matching, using VS Code's in-memory fallback as the reference. With no selection,
   matching line paste inserts at the logical line start and restores the caret to
@@ -51,12 +50,45 @@ Prepared: 2026-10-10. Applies to the Rust/egui Lumen editor and `AGENTS.md`.
   invalidation, find inputs and delayed popup target validation. Native MIME
   metadata is unavailable through egui: identical external copies cannot be
   distinguished and metadata is session-only. Pasted line endings are retained
-  verbatim; mixed-input routing and destination-EOL normalization remain pending.
+  verbatim; universal input routing and destination-EOL normalization remain pending.
 - Phases 0 and 1 are **not complete**: typed focus routing, shared edit
   transactions, and the multi-cursor backend remain outstanding. Regex, selection
-  scope, multiline input controls, gutter drag edge auto-scroll,
+  scope, multiline input controls,
   native clipboard metadata, full clipboard event-order routing and multi-cursor editing remain
   unimplemented. Phases 3 and 4 are only partially done.
+- Added gutter drag edge auto-scroll on the shared viewport. Selection extends
+  at the visible edge while a stationary pointer stays above/below it. Bounded,
+  time-based speed grows with distance; direct drag scrolling avoids accumulating
+  animation targets beyond EOF, so reversal responds immediately. Release and
+  blocking dialogs cancel scrolling without changing text or dirty state.
+  Headless tests cover both edges, reversal, idle pointers, horizontal stability,
+  and modal cancellation. Native screenshots inspect layout only, not live drag
+  behavior; interactive macOS/Windows drag verification remains outstanding.
+- Added a temporary document-targeted keyboard batch adapter while retaining
+  TextEdit as the sole mutation/history owner. Batches split at clipboard events
+  and continue in repaint frames: earlier edits/navigation update line clipboard
+  rules, and later typing follows paste's restored caret. New keyboard events are
+  appended after older deferred input. Clipboard metadata observes delivered
+  segments, not a whole batch in advance. Deferred batches validate document ID,
+  revision and actual widget caret, and cancel with status feedback on changed
+  targets, focus, modal, pointer or IME input. Tests cover copy after Unicode typing,
+  cut after navigation, copy/paste metadata order, arriving input, independent undo,
+  and cancellation. Pointer/IME gestures and app-wide shortcut dispatch are not
+  serialized by this adapter; this is not completion of universal input routing.
+- Strengthened requested popup/native-editor paste with document ID, revision and
+  selection snapshots, sticky cancellation while awaiting delivery, and checks
+  both before and after command dispatch. Same-frame prefix typing/navigation,
+  pointer/IME changes, modals, Find focus, and deferred keyboard input cannot
+  redirect a stale response. Tests cover valid selected-text paste/undo, revision
+  change despite identical content, caret/focus round trips, Find-field isolation,
+  save/rename compatibility, empty delivered text and duplicate native read
+  avoidance. This guards the latest request only: egui has no response request IDs
+  or explicit empty/read-failure result, so independently correlated overlapping
+  clipboard reads remain outstanding.
+- Native transport inspection found eframe 0.33.3 normalizes clipboard CRLF to LF
+  before emitting Paste in both glow/wgpu integrations. Direct-event CRLF tests
+  verify the adapter, not native round trips; exact-text line metadata may miss
+  normalized native payloads. Transport preservation remains unresolved.
 
 ## Objective
 

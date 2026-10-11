@@ -78,7 +78,17 @@ impl LumenApp {
             Command::Paste if explorer_clipboard => self.explorer_paste(),
             Command::Copy => super::editor_action::EditorAction::Copy.send(ctx),
             Command::Cut => super::editor_action::EditorAction::Cut.send(ctx),
-            Command::Paste => super::editor_action::EditorAction::Paste.send(ctx),
+            Command::Paste => {
+                if let Some(document) = self.editor.active().filter(|document| {
+                    ctx.memory(|memory| {
+                        memory.has_focus(super::editor_action::text_widget_id(document.id))
+                    })
+                }) {
+                    super::editor_action::request_paste(&mut self.view, document, ctx);
+                } else {
+                    super::editor_action::EditorAction::Paste.send(ctx);
+                }
+            }
             Command::Undo => super::editor_action::EditorAction::Undo.send(ctx),
             Command::Redo => super::editor_action::EditorAction::Redo.send(ctx),
             Command::SelectAll => super::editor_action::EditorAction::SelectAll.send(ctx),

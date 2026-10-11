@@ -3,12 +3,16 @@ use super::command::Command;
 use eframe::egui;
 impl LumenApp {
     pub(crate) fn handle_events(&mut self, ctx: &egui::Context) {
-        self.view.text_clipboard.observe_input(ctx);
-        super::editor_action::validate_paste(
-            &mut self.view,
-            self.editor.active().map(|file| file.id),
-            ctx,
-        );
+        super::editor_action::validate_paste(&mut self.view, self.editor.active(), ctx);
+        // Editor metadata follows the delivered keyboard segment, not the whole
+        // raw batch. Other text fields keep ordinary clipboard handling.
+        let editor_focused = self.editor.active().is_some_and(|file| {
+            ctx.memory(|memory| memory.has_focus(super::editor_action::text_widget_id(file.id)))
+        });
+        if !editor_focused {
+            self.view.text_clipboard.observe_input(ctx);
+            super::editor_input::cancel_input(&mut self.view);
+        }
         let find = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::F);
         let replace = egui::KeyboardShortcut::new(
             if cfg!(target_os = "macos") {
@@ -88,5 +92,6 @@ impl LumenApp {
                 }
             }
         }
+        super::editor_action::finish_paste_validation(&mut self.view, self.editor.active(), ctx);
     }
 }

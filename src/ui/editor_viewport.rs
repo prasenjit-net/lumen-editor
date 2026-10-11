@@ -6,6 +6,7 @@ use super::{
 use crate::app::{
     editor_action::{blocked, prepare_action, text_widget_id},
     editor_clipboard::{finish_clipboard, prepare_clipboard},
+    editor_input::{cancel_input, finish_input, prepare_input},
     find::{finish_replace, prepare_find},
 };
 use eframe::egui::{self, FontId, Frame, Margin, ScrollArea, TextEdit};
@@ -14,7 +15,7 @@ impl Workbench<'_> {
     pub(super) fn editor_viewport(&mut self, ui: &mut egui::Ui, index: usize) {
         let ctx = ui.ctx().clone();
         let document = self.editor.files[index].id;
-        prepare_action(self.view, document, &ctx);
+        prepare_action(self.view, &self.editor.files[index], &ctx);
         let reveal_find = self
             .view
             .find
@@ -27,8 +28,11 @@ impl Workbench<'_> {
             .get_mut(&document)
             .is_some_and(|find| prepare_find(find, &self.editor.files[index], &ctx, blocked));
         let clipboard_edit = if replacing {
+            cancel_input(self.view);
             None
         } else {
+            prepare_input(self.view, &self.editor.files[index], &ctx);
+            self.view.text_clipboard.observe_input(&ctx);
             prepare_clipboard(self.view, &self.editor.files[index], &ctx)
         };
         let height = ui.available_height();
@@ -52,6 +56,10 @@ impl Workbench<'_> {
                     let viewport_origin = ui.cursor().min;
                     ScrollArea::both()
                         .id_salt(("code_editor", document))
+                        // Drag scrolling is already time-based. Animating its
+                        // per-frame deltas accumulates targets beyond EOF and
+                        // delays reversal; keep normal reveal animation otherwise.
+                        .animated(!ctx.is_being_dragged(super::editor_gutter::gutter_id(document)))
                         .auto_shrink([false, false])
                         .max_height(height)
                         .show_viewport(ui, |ui, viewport| {
@@ -112,6 +120,7 @@ impl Workbench<'_> {
                                             edit,
                                         );
                                     }
+                                    finish_input(self.view, &self.editor.files[index], &ctx);
                                     if let Some(find) =
                                         self.view.find.get_mut(&document).filter(|find| find.open)
                                     {
@@ -128,7 +137,9 @@ impl Workbench<'_> {
                                 })
                                 .inner;
                             ui.set_clip_rect(clip);
-                            super::editor_gutter::show_gutter(ui, &output, gutter, &font, document);
+                            super::editor_gutter::show_gutter(
+                                ui, &output, gutter, &font, document, !blocked,
+                            );
                         });
                 })
         });

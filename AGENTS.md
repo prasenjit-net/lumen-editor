@@ -94,6 +94,10 @@ behavior. Preserve existing functionality unless a task explicitly changes it.
   keep it as the sole mutation/history owner; do not add a parallel undo stack.
   Reuse `app/editor_action.rs` for native/popup editing events and derive widget
   IDs from document identity. Never clear selection just to open a popup.
+  Requested editor paste captures revision and selection as well as document ID.
+  Keep invalidation sticky until delivery; revalidate after native commands before
+  any input widget receives the response. Do not claim request-ID correlation or
+  native newline preservation from egui's untagged events or headless direct inputs.
 - Keep logical-line clipboard rules in the UI-independent model. Empty-selection
   Copy must not move the caret or dirty the buffer. Cut's clipboard text can differ
   from its deletion range at EOF; preserve line endings and delegate deletion and
@@ -102,11 +106,20 @@ behavior. Preserve existing functionality unless a task explicitly changes it.
   Session-only line metadata must require an exact pasted-text match, clear on
   other clipboard writes/mismatches, and never affect selected-text replacements
   or other input fields. Keep its native-metadata limitations documented.
+  Temporary keyboard batches must preserve event order across clipboard boundaries,
+  validate document ID/revision/caret before replay, and cancel safely on focus or
+  input-mode changes. Observe clipboard metadata only for delivered segments.
+  Keep one TextEdit render and one mutation/history owner per pass; do not replay
+  private pointer/IME state or claim universal ordering from a keyboard-only queue.
 - Keep text, gutter, match highlights and pointer mapping on one viewport/layout
   authority. Derive line positions from the text galley, not independently sized
   labels or a second scroll area. Long code lines scroll horizontally; the gutter
   stays fixed. Reserve scrollbar hit regions so they cannot reposition the caret.
   Gutter selection updates the widget's existing selection, never a second model.
+  Gutter drag auto-scroll must use the shared viewport, map offscreen pointers to
+  visible edge rows, bound speed/frame intervals, clamp at document bounds, and
+  stop on release or blocking dialogs. Avoid animated per-frame drag deltas that
+  accumulate targets past EOF and delay direction changes.
 
 ## Verification and handoff
 

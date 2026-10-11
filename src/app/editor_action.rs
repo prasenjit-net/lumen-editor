@@ -1,6 +1,6 @@
 //! Document-targeted actions for editor popups, processed before TextEdit input.
 use super::view_state::ViewState;
-use crate::model::DocumentId;
+use crate::model::{Document, DocumentId};
 use eframe::egui;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +19,42 @@ pub(crate) struct PendingEditorAction {
     pub(crate) action: EditorAction,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct PasteTarget {
+    document: DocumentId,
+    revision: u64,
+    selection: egui::text::CCursorRange,
+    cancelled: bool,
+}
+
+pub(crate) fn request_paste(view: &mut ViewState, document: &Document, ctx: &egui::Context) {
+    // An accelerator may already have delivered its platform paste event.
+    if ctx.input(|input| {
+        input
+            .events
+            .iter()
+            .any(|event| matches!(event, egui::Event::Paste(_)))
+    }) {
+        return;
+    }
+    let Some(selection) = egui::text_edit::TextEditState::load(ctx, text_widget_id(document.id))
+        .and_then(|widget| widget.cursor.char_range())
+    else {
+        return;
+    };
+    if blocked(view) || view.pending_text_input.is_some() {
+        view.status = "Paste cancelled: finish the current editor input first".into();
+        return;
+    }
+    view.editor_paste_target = Some(PasteTarget {
+        document: document.id,
+        revision: document.revision,
+        selection,
+        cancelled: false,
+    });
+    EditorAction::Paste.send(ctx);
+}
+
 pub(crate) fn text_widget_id(document: DocumentId) -> egui::Id {
     egui::Id::new(("editor_text", document))
 }
@@ -32,45 +68,95 @@ pub(crate) fn blocked(view: &ViewState) -> bool {
 }
 
 /// Reject delayed popup paste before any other input widget can consume it.
-pub(crate) fn validate_paste(
-    view: &mut ViewState,
-    active: Option<DocumentId>,
-    ctx: &egui::Context,
-) {
-    if let Some(target) = view.editor_paste_target
-        && ctx.input(|input| {
-            input
+pub(crate) fn validate_paste(view: &mut ViewState, active: Option<&Document>, ctx: &egui::Context) {
+    if let Some(mut target) = view.editor_paste_target {
+        let id = text_widget_id(target.document);
+        let selection = egui::text_edit::TextEditState::load(ctx, id)
+            .and_then(|widget| widget.cursor.char_range());
+        let (delivered, interrupted) = ctx.input(|input| {
+            let delivered = input
                 .events
                 .iter()
-                .any(|event| matches!(event, egui::Event::Paste(_)))
-        })
-    {
-        let focused = ctx.memory(|memory| memory.has_focus(text_widget_id(target)));
-        if active != Some(target) || blocked(view) || !focused {
+                .any(|event| matches!(event, egui::Event::Paste(_)));
+            let interrupted = input.pointer.any_pressed()
+                || input.pointer.any_released()
+                || input.pointer.any_down()
+                || !input.focused
+                || input
+                    .events
+                    .iter()
+                    .take_while(|event| !matches!(event, egui::Event::Paste(_)))
+                    .any(|event| match event {
+                        egui::Event::Text(text) => !text.is_empty(),
+                        egui::Event::Cut | egui::Event::Ime(_) => true,
+                        egui::Event::Key {
+                            key,
+                            pressed: true,
+                            modifiers,
+                            ..
+                        } => !(*key == egui::Key::V && modifiers.command),
+                        _ => false,
+                    });
+            (delivered, interrupted)
+        });
+        target.cancelled |= !active.is_some_and(|document| {
+            document.id == target.document && document.revision == target.revision
+        }) || selection != Some(target.selection)
+            || blocked(view)
+            || view.explorer_focused
+            || view
+                .find
+                .get(&target.document)
+                .is_some_and(|find| find.focus)
+            || !ctx.memory(|memory| memory.has_focus(id))
+            || interrupted
+            || view.pending_text_input.is_some();
+        if delivered && target.cancelled {
             ctx.input_mut(|input| {
                 input
                     .events
                     .retain(|event| !matches!(event, egui::Event::Paste(_)))
             });
+            view.status = "Paste cancelled: editor target changed while reading clipboard".into();
         }
+        // Keep cancellation until delivery, even if focus/caret later returns.
+        // A valid delivery remains guarded through native command dispatch.
+        view.editor_paste_target = (!(delivered && target.cancelled)).then_some(target);
+    }
+}
+
+/// Final check after commands may have changed the active document or focus.
+pub(crate) fn finish_paste_validation(
+    view: &mut ViewState,
+    active: Option<&Document>,
+    ctx: &egui::Context,
+) {
+    validate_paste(view, active, ctx);
+    if ctx.input(|input| {
+        input
+            .events
+            .iter()
+            .any(|event| matches!(event, egui::Event::Paste(_)))
+    }) {
         view.editor_paste_target = None;
     }
 }
 
-pub(crate) fn prepare_action(view: &mut ViewState, document: DocumentId, ctx: &egui::Context) {
+pub(crate) fn prepare_action(view: &mut ViewState, document: &Document, ctx: &egui::Context) {
     if let Some(pending) = view.pending_editor_action.take()
-        && pending.document == document
+        && pending.document == document.id
         && !blocked(view)
     {
         view.explorer_focused = false;
         if matches!(pending.action, EditorAction::Copy | EditorAction::Cut) {
             view.text_clipboard.clear();
         }
-        ctx.memory_mut(|memory| memory.request_focus(text_widget_id(document)));
+        ctx.memory_mut(|memory| memory.request_focus(text_widget_id(document.id)));
         if pending.action == EditorAction::Paste {
-            view.editor_paste_target = Some(document);
+            request_paste(view, document, ctx);
+        } else {
+            pending.action.send(ctx);
         }
-        pending.action.send(ctx);
     }
 }
 
@@ -78,8 +164,18 @@ impl EditorAction {
     /// The widget remains the sole mutation/history owner during migration.
     pub(crate) fn send(self, ctx: &egui::Context) {
         match self {
-            Self::Copy => ctx.input_mut(|input| input.events.push(egui::Event::Copy)),
-            Self::Cut => ctx.input_mut(|input| input.events.push(egui::Event::Cut)),
+            Self::Copy | Self::Cut => ctx.input_mut(|input| {
+                let event = if self == Self::Copy {
+                    egui::Event::Copy
+                } else {
+                    egui::Event::Cut
+                };
+                // Native accelerators can accompany the window's clipboard
+                // event. Inject once; do not turn one Cut into two queued cuts.
+                if !input.events.contains(&event) {
+                    input.events.push(event);
+                }
+            }),
             Self::Paste => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
             Self::Undo | Self::Redo | Self::SelectAll => ctx.input_mut(|input| {
                 input.events.push(egui::Event::Key {

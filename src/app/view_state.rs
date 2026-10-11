@@ -85,10 +85,11 @@ impl Activity {
 }
 
 pub(crate) struct ViewState {
+    pub(crate) pending_text_input: Option<super::editor_input::PendingTextInput>,
     pub(crate) text_clipboard: super::editor_clipboard::TextClipboard,
     pub(crate) find: std::collections::HashMap<crate::model::DocumentId, super::find::FindState>,
     pub(crate) pending_editor_action: Option<super::editor_action::PendingEditorAction>,
-    pub(crate) editor_paste_target: Option<crate::model::DocumentId>,
+    pub(crate) editor_paste_target: Option<super::editor_action::PasteTarget>,
     pub(crate) activity: Activity,
     pub(crate) expanded_dirs: HashSet<PathBuf>,
     pub(crate) explorer_selection: Option<ExplorerSelection>,
@@ -125,6 +126,7 @@ impl ViewState {
 impl Default for ViewState {
     fn default() -> Self {
         Self {
+            pending_text_input: None,
             text_clipboard: Default::default(),
             find: Default::default(),
             pending_editor_action: None,
