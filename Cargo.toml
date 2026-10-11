@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["xtask"]
+members = ["xtask", "crates/editor-core", "crates/editor-surface"]
 default-members = ["."]
 resolver = "3"
 

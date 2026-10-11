@@ -49,6 +49,41 @@ a parallel edit history.
 
 ## Known limits of this milestone
 
+### Multi-cursor core spike (2026-10-11)
+
+`crates/editor-core` is an isolated pure-Rust candidate core, not linked into the
+application. It normalizes document-ordered byte selections, merges overlaps and
+duplicates while preserving the primary member, rejects non-grapheme boundaries,
+and broadcasts/distributes replacement fragments atomically. Complete text and
+selection sets round-trip through bounded undo/redo snapshots; saved checkpoints
+are independent. Tests include CRLF, combining marks, emoji ZWJ sequences,
+overlapping/reversed ranges, invalid operations, no-ops and generated combinations.
+
+This proves only the selection/transaction/history part of the backend spike.
+It does not approve custom rendering or ship multi-cursor UI. TextEdit is still
+the live editor's sole owner; never instantiate both histories for one document.
+The next gate is a standalone text-surface prototype plus existing-component
+evaluation against galley hit testing, scrolling, IME, clipboard and accessibility.
+Only after that gate should all live mutations migrate together. Full snapshots,
+linear grapheme scans and a 100-edit cap are explicit prototype limitations,
+not the final performance/history policy.
+
+### Current live editor
+
+Continuation: [the text-surface spike](multi-cursor-backend-spike.md) now runs as
+an isolated example with real multi-cursor input/history and shared galley
+geometry. Existing-component evaluation confirms `egui_code_editor` still uses
+single-selection TextEdit. Native screenshots expose unproved shaping, and IME/
+accessibility/clipboard gates remain open. No live-backend migration is approved.
+
+Latest continuation adds transient composition/atomic broadcast commits, primary
+candidate geometry and AccessKit text/selection/value actions to the isolated
+prototype. Headless tests and synthetic preview screenshots pass, but native
+IME/AT validation and inline composition reflow remain pending. An opt-in egui
+0.36.2 shaping probe passes Latin ligatures and rejects a bundled-font Arabic
+source-index mismatch; neither the production renderer nor its dependencies have
+been upgraded to this candidate. See the spike evaluation for exact gate evidence.
+
 The gutter and editor now share one two-axis viewport. General input focus still uses
 the existing flags; popup commands additionally validate a document target.
 The editor now has a context menu and accepts clicks below EOF. There is no

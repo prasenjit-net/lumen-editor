@@ -1,0 +1,17 @@
+[package]
+name = "lumen-editor-surface"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+shaping-probe = ["dep:egui-shaping"]
+
+[dependencies]
+egui = { version = "0.33", features = ["accesskit"] }
+egui-shaping = { package = "egui", version = "=0.36.2", optional = true }
+lumen-editor-core = { path = "../editor-core" }
+unicode-segmentation = "1.13"
+
+[dev-dependencies]
+eframe = "0.33"

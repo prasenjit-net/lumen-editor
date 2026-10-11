@@ -174,3 +174,16 @@ Application tests use in-memory storage and dialog doubles for open/save,
 cancellation, failure and dirty-buffer workflows, plus an egui pointer test
 for the explorer resize handle. Windows compilation can also be checked with
 `cargo check --target x86_64-pc-windows-gnu` after installing that target.
+
+### Multi-cursor backend prototype
+
+The live editor remains single-selection. A separate in-memory prototype now
+exercises real multi-location input/history and shared text/selection geometry:
+
+```sh
+cargo run -p lumen-editor-surface --example spike
+```
+
+It reuses Lumen's theme/fonts but does not open files or alter workbench buffers.
+IME, accessibility, shaping and native clipboard gates remain pending. See
+[the spike evaluation](plan/multi-cursor-backend-spike.md) before backend migration.

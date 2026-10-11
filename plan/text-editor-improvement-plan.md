@@ -101,8 +101,6 @@ Prepared: 2026-10-10. Applies to the Rust/egui Lumen editor and `AGENTS.md`.
   boundary is only partially migrated. No live OS clipboard round-trip verification
   is claimed; native service read checks still need runtime validation.
 
-## Objective
-
 Latest clipboard milestone (2026-10-11): focused-editor keyboard paste resolves
 through the injected service before widget batching, at the original event
 position, preserving service-delivered Unicode/CRLF. Generic fields and pointer
@@ -115,6 +113,33 @@ unverified. Windows runtime remains pending; the user explicitly removed that
 commit gate. The synchronous reread is an interim solution, not complete native
 transport ownership: latency and clipboard changes between delivery/reread remain
 limitations. Historical progress notes above describe earlier milestones.
+
+Multi-cursor continuation (2026-10-11): added an isolated `crates/editor-core`
+workspace member. The prototype implements grapheme-safe normalized selections,
+atomic broadcast/distributed replacements, complete-selection undo/redo and
+independent saved checkpoints. It is deliberately not linked to the application:
+live TextEdit input/history is unchanged. Backend rendering, input migration,
+IME and accessibility gates remain open; Phase 5 is not complete. See the backend
+decision and the core's README for normalization/clipboard-order policies and
+snapshot/history limits.
+
+Text-surface continuation: the standalone `editor-surface` example exercises real
+multi-location typing/paste, movement/deletion and undo/redo, with one galley for
+painting and pointer mapping, CRLF display projection, fixed gutter/two-axis
+scrolling and safe hit regions. Existing-component evaluation and native width
+screenshots are recorded in [the spike evaluation](multi-cursor-backend-spike.md).
+This is not a workbench feature yet: IME, accessibility, native clipboard ownership
+and shaping gates remain open, and TextEdit remains the production owner.
+
+Composition/accessibility continuation: transient preedit and one atomic commit
+over captured cursors, sticky cancellation and primary candidate positioning are
+implemented in the prototype. AccessKit emits text rows/primary selection and
+validates selection/value actions through the same core. Native IME/AT checks and
+inline preedit reflow remain pending. The separate egui 0.36.2 shaping probe
+rejects an Arabic source-index inconsistency despite passing Latin ligatures.
+Phase 0/5/6 gates remain open; the live editor is unchanged.
+
+## Objective
 
 Build a reliable, VS Code-inspired editing experience with an editor context
 menu, find and replace, correct cut/copy/paste, safe pointer handling throughout
