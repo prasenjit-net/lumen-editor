@@ -103,6 +103,11 @@ behavior. Preserve existing functionality unless a task explicitly changes it.
   in tests instead of touching the OS clipboard. Discard superseded/duplicate
   completions, keep failures non-mutating, and distinguish tagged service reads
   from remaining untagged platform events in documentation and runtime claims.
+  Focused-editor platform paste uses a synchronous service reread at its original
+  event position; do not reorder it behind later input or route generic fields
+  through editor clipboard rules. Pointer-transition batches stay on ordinary
+  widget transport. Document this temporary reread's latency/snapshot race rather
+  than claiming direct ownership of winit clipboard transport.
 - Keep logical-line clipboard rules in the UI-independent model. Empty-selection
   Copy must not move the caret or dirty the buffer. Cut's clipboard text can differ
   from its deletion range at EOF; preserve line endings and delegate deletion and

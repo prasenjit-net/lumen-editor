@@ -92,6 +92,7 @@ impl LumenApp {
                 }
             }
         }
+        self.route_platform_paste(ctx);
         self.start_clipboard_read(ctx);
         self.poll_clipboard(ctx);
         super::editor_action::finish_paste_validation(&mut self.view, self.editor.active(), ctx);

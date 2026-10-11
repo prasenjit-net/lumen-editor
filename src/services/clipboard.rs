@@ -23,6 +23,10 @@ pub(crate) struct ClipboardRead {
 }
 
 pub(crate) trait ClipboardService {
+    /// Resolve a platform paste before widget input, preserving event order.
+    /// The native adapter rereads text because winit normalizes CRLF. The hint
+    /// lets injected adapters replay platform events without touching the OS.
+    fn platform_text(&mut self, hint: &str) -> Result<Option<String>, String>;
     fn request_text(&mut self, request: ClipboardRequestId);
     fn poll(&mut self) -> Vec<ClipboardRead>;
 }
@@ -73,6 +77,10 @@ fn text_result(result: Result<String, arboard::Error>) -> Result<Option<String>,
 }
 
 impl ClipboardService for NativeClipboard {
+    fn platform_text(&mut self, _hint: &str) -> Result<Option<String>, String> {
+        read_native_text()
+    }
+
     fn request_text(&mut self, request: ClipboardRequestId) {
         let result = self.start().and_then(|()| {
             self.requests

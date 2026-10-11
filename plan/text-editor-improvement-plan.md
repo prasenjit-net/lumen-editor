@@ -103,6 +103,19 @@ Prepared: 2026-10-10. Applies to the Rust/egui Lumen editor and `AGENTS.md`.
 
 ## Objective
 
+Latest clipboard milestone (2026-10-11): focused-editor keyboard paste resolves
+through the injected service before widget batching, at the original event
+position, preserving service-delivered Unicode/CRLF. Generic fields and pointer
+focus transitions retain normal transport. Regressions cover empty/errors,
+selection preservation, rapid input ordering, Find focus and native-menu dedup.
+All 135 tests, formatting, strict Clippy, Windows compilation and macOS bundling
+pass. macOS automation captured the isolated fixture's window/layout, but input
+failed with clipboard timeout / noWindowsAvailable; native round trips are still
+unverified. Windows runtime remains pending; the user explicitly removed that
+commit gate. The synchronous reread is an interim solution, not complete native
+transport ownership: latency and clipboard changes between delivery/reread remain
+limitations. Historical progress notes above describe earlier milestones.
+
 Build a reliable, VS Code-inspired editing experience with an editor context
 menu, find and replace, correct cut/copy/paste, safe pointer handling throughout
 the editor, and genuine multi-cursor editing. Preserve file operations, native

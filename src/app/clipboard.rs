@@ -5,6 +5,50 @@ use eframe::egui;
 use std::time::Duration;
 
 impl LumenApp {
+    pub(crate) fn route_platform_paste(&mut self, ctx: &egui::Context) {
+        let Some(document) = self.editor.active() else {
+            return;
+        };
+        if self.view.editor_paste_target.is_some()
+            || super::editor_action::blocked(&self.view)
+            || self.view.explorer_focused
+            || ctx.input(|input| input.pointer.any_pressed() || input.pointer.any_released())
+            || self
+                .view
+                .find
+                .get(&document.id)
+                .is_some_and(|find| find.focus)
+            || !ctx.memory(|memory| {
+                memory.has_focus(super::editor_action::text_widget_id(document.id))
+            })
+            || !ctx.input(|input| {
+                input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Paste(_)))
+            })
+        {
+            return;
+        }
+        // Keep the payload at its original position. An asynchronous replacement
+        // here would let later typing/navigation overtake the keyboard paste.
+        // Do not perform native I/O while holding egui's input lock.
+        let events = ctx.input_mut(|input| std::mem::take(&mut input.events));
+        let mut routed = Vec::with_capacity(events.len());
+        for event in events {
+            if let egui::Event::Paste(hint) = event {
+                match self.clipboard.platform_text(&hint) {
+                    Ok(Some(text)) if !text.is_empty() => routed.push(egui::Event::Paste(text)),
+                    Ok(_) => self.view.status = "Clipboard contains no text".into(),
+                    Err(error) => self.view.status = format!("Could not read clipboard: {error}"),
+                }
+            } else {
+                routed.push(event);
+            }
+        }
+        ctx.input_mut(|input| input.events = routed);
+    }
+
     pub(crate) fn start_clipboard_read(&mut self, ctx: &egui::Context) {
         if let Some(request) = self.view.clipboard_read.take() {
             self.clipboard.request_text(request);

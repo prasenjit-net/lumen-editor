@@ -185,6 +185,8 @@ fn test_app(dialogs: TestDialogs) -> (LumenApp, MemoryFileSystem) {
 
 #[derive(Default)]
 struct ClipboardStorage {
+    platform_reads: usize,
+    platform_results: std::collections::VecDeque<Result<Option<String>, String>>,
     requests: Vec<ClipboardRequestId>,
     results: Vec<ClipboardRead>,
 }
@@ -202,6 +204,15 @@ impl TestClipboard {
 }
 
 impl ClipboardService for TestClipboard {
+    fn platform_text(&mut self, hint: &str) -> Result<Option<String>, String> {
+        let mut storage = self.0.borrow_mut();
+        storage.platform_reads += 1;
+        storage
+            .platform_results
+            .pop_front()
+            .unwrap_or_else(|| Ok(Some(hint.into())))
+    }
+
     fn request_text(&mut self, request: ClipboardRequestId) {
         self.0.borrow_mut().requests.push(request);
     }

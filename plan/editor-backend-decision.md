@@ -98,11 +98,17 @@ present transitively); results enter the same validation and TextEdit mutation
 path. Superseded/duplicate results are discarded, and errors or worker disconnection
 finish requests without edits. Service reads perform no newline conversion. Tests
 use an injected clipboard, never the user's clipboard.
-Direct keyboard/platform Paste events and other fields still use eframe's untagged,
-normalized transport. When a platform event accompanies a service result, the
+Focused-editor keyboard/platform Paste events now synchronously reread service
+text at the original event position before input batching. Other fields and
+pointer-transition batches retain eframe's untagged, normalized transport. The
+interim reread can block and cannot recover an older clipboard snapshot if the
+clipboard changes after platform delivery; direct transport ownership remains a
+future backend gate. When a platform event accompanies a service result, the
 tagged payload is preferred once; when the event already exists at command dispatch,
-no duplicate read is issued. Live native round trips and migration of keyboard
-paste to the service remain outstanding; this is not complete clipboard parity.
+no duplicate asynchronous read is issued. Live native round trips remain
+outstanding; macOS automation captured the window but could not deliver input.
+Windows compiles, with runtime validation pending by user direction. This is not
+complete clipboard parity.
 The temporary
 save checkpoint retains one extra text snapshot; large-file memory behavior
 must be reviewed with the future buffer/history implementation.

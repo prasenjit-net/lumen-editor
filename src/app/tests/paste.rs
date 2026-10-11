@@ -24,6 +24,111 @@ fn fixture() -> (LumenApp, egui::Context) {
     (app, ctx)
 }
 
+#[test]
+fn keyboard_paste_uses_service_text_without_normalizing_unicode_or_crlf() {
+    let (mut app, ctx, clipboard) = service_fixture();
+    clipboard
+        .0
+        .borrow_mut()
+        .platform_results
+        .push_back(Ok(Some("漢字 🌍\r\nnext".into())));
+    editor_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::Paste("normalized\n".into())],
+    );
+    assert_eq!(app.editor.files[0].text, "é 🌍 漢字 🌍\r\nnext");
+    assert_eq!(clipboard.0.borrow().platform_reads, 1);
+    assert!(clipboard.0.borrow().requests.is_empty());
+    app.execute(
+        Command::EditorAction(app.editor.files[0].id, EditorAction::Undo),
+        &ctx,
+    );
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(app.editor.files[0].text, "é 🌍 original");
+    assert!(!app.editor.files[0].dirty);
+}
+
+#[test]
+fn keyboard_paste_empty_or_failed_read_leaves_selection_and_content_untouched() {
+    for result in [Ok(None), Ok(Some(String::new())), Err("busy".into())] {
+        let (mut app, ctx, clipboard) = service_fixture();
+        clipboard.0.borrow_mut().platform_results.push_back(result);
+        editor_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Paste("must not insert".into())],
+        );
+        assert_eq!(app.editor.files[0].text, "é 🌍 original");
+        assert!(!app.editor.files[0].dirty);
+        let selection =
+            egui::text_edit::TextEditState::load(&ctx, text_widget_id(app.editor.files[0].id))
+                .unwrap()
+                .cursor
+                .char_range()
+                .unwrap();
+        assert_eq!(selection.sorted_cursors()[0].index, 4);
+        assert_eq!(selection.sorted_cursors()[1].index, 12);
+        assert!(app.view.status.contains("Clipboard") || app.view.status.contains("clipboard"));
+    }
+}
+
+#[test]
+fn rapid_keyboard_pastes_stay_ordered_with_interleaved_typing() {
+    let (mut app, ctx, clipboard) = service_fixture();
+    clipboard
+        .0
+        .borrow_mut()
+        .platform_results
+        .extend([Ok(Some("first".into())), Ok(Some("second".into()))]);
+    editor_frame(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::Paste("old first".into()),
+            egui::Event::Text(" + ".into()),
+            egui::Event::Paste("old second".into()),
+            egui::Event::Text("!".into()),
+        ],
+    );
+    for _ in 0..6 {
+        editor_frame(&mut app, &ctx, vec![]);
+    }
+    assert_eq!(app.editor.files[0].text, "é 🌍 first + second!");
+    assert_eq!(clipboard.0.borrow().platform_reads, 2);
+}
+
+#[test]
+fn generic_field_paste_is_not_reread_by_editor_service() {
+    for field in ["find", "replace", "palette", "explorer_inline"] {
+        let (mut app, ctx, clipboard) = service_fixture();
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(field)));
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![egui::Event::Paste("field text\n".into())],
+                ..Default::default()
+            },
+            |ctx| {
+                app.handle_events(ctx);
+                assert!(ctx.input(|input| input.events.iter().any(
+                    |event| matches!(event, egui::Event::Paste(text) if text == "field text\n")
+                )));
+            },
+        );
+        assert_eq!(clipboard.0.borrow().platform_reads, 0, "{field}");
+        assert_eq!(app.editor.files[0].text, "é 🌍 original");
+    }
+}
+
+#[test]
+fn pending_find_focus_keeps_platform_paste_out_of_editor_service() {
+    let (mut app, ctx, clipboard) = service_fixture();
+    app.execute(Command::Find, &ctx);
+    editor_frame(&mut app, &ctx, vec![egui::Event::Paste("query".into())]);
+    assert_eq!(clipboard.0.borrow().platform_reads, 0);
+    assert_eq!(app.editor.files[0].text, "é 🌍 original");
+}
+
 fn request(app: &mut LumenApp, ctx: &egui::Context, native: bool) {
     if native {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
@@ -158,7 +263,7 @@ fn empty_clipboard_response_is_a_safe_noop_and_consumes_the_request() {
 
 #[test]
 fn existing_platform_paste_event_does_not_request_a_second_clipboard_read() {
-    let (mut app, ctx) = fixture();
+    let (mut app, ctx, clipboard) = service_fixture();
     let output = ctx.run(
         egui::RawInput {
             events: vec![egui::Event::Paste("new".into())],
@@ -171,6 +276,8 @@ fn existing_platform_paste_event_does_not_request_a_second_clipboard_read() {
         },
     );
     assert_eq!(app.editor.files[0].text, "é 🌍 new");
+    assert_eq!(clipboard.0.borrow().platform_reads, 1);
+    assert!(clipboard.0.borrow().requests.is_empty());
     assert!(app.view.editor_paste_target.is_none());
     assert!(!output.viewport_output.values().any(|viewport| {
         viewport

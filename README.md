@@ -57,16 +57,25 @@ Requested editor pastes now read through a background native clipboard service,
 which does not normalize text and returns a request ID with text, empty, or error
 results. Superseded/duplicate service results are ignored; failures finish the
 request and report status without editing the document. This preserves CRLF line
-metadata through that read path. Live native clipboard round trips still need
-verification. Direct keyboard paste events and non-editor fields continue using
-eframe's transport, which normalizes CRLF to LF and can invalidate line metadata.
+metadata through that read path. Focused-editor keyboard paste now rereads text
+through the same service, synchronously, keeping the event's position relative
+to typing/navigation. This bypasses winit's CRLF normalization. Non-editor fields
+and pointer-transition batches retain eframe's ordinary transport. The interim
+reread cannot recover an earlier clipboard snapshot if another application changes
+the clipboard between platform delivery and routing, and can block on the native
+read; a future input backend should own transport directly. Live native clipboard
+round trips still need verification: macOS automation captured the test app but
+could not deliver input (clipboard timeout / noWindowsAvailable). Windows
+compilation passes; Windows runtime testing remains pending, not a release gate
+for this milestone by user direction.
 Requested editor paste captures document ID, revision and selection. Changed text,
 caret, focus, modal or input mode cancels delivery before other inputs can consume
 it; returning to the original caret/focus does not reactivate a cancelled request.
 Native Edit-menu paste shares this validation; other text fields remain ordinary
 inputs. Service reads are independently correlated; untagged keyboard/platform
 events are not service completions and retain the existing guarded input path.
-If an accelerator already delivered a paste event, no second read is requested.
+If an accelerator already delivered a paste event, no additional asynchronous
+request is made; editor routing resolves its payload once through the service.
 Keyboard batches split at clipboard boundaries and continue in repaint frames:
 Copy/Cut see preceding typing/navigation, and later typing follows restored paste
 selection. New keyboard input stays behind an older deferred batch. Deferred input
