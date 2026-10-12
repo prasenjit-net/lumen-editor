@@ -6,6 +6,16 @@ use std::{
 pub(crate) trait FileSystem {
     fn read_text(&self, path: &Path) -> io::Result<String>;
     fn write_text(&self, path: &Path, text: &str) -> io::Result<()>;
+    /// Refuse to replace a file whose contents changed since it was opened/saved.
+    fn write_text_if_unchanged(&self, path: &Path, expected: &str, text: &str) -> io::Result<()> {
+        if self.read_text(path)? != expected {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "File changed on disk",
+            ));
+        }
+        self.write_text(path, text)
+    }
     /// Atomically create an empty file; never replace an existing entry.
     fn create_file(&self, path: &Path) -> io::Result<()>;
     fn create_directory(&self, path: &Path) -> io::Result<()>;
@@ -22,7 +32,10 @@ impl FileSystem for LocalFileSystem {
         fs::read_to_string(path)
     }
     fn write_text(&self, path: &Path, text: &str) -> io::Result<()> {
-        fs::write(path, text)
+        atomic_replace(path, text, None)
+    }
+    fn write_text_if_unchanged(&self, path: &Path, expected: &str, text: &str) -> io::Result<()> {
+        atomic_replace(path, text, Some(expected))
     }
     fn create_file(&self, path: &Path) -> io::Result<()> {
         fs::OpenOptions::new()
@@ -52,6 +65,40 @@ impl FileSystem for LocalFileSystem {
     fn entry_exists(&self, path: &Path) -> bool {
         fs::symlink_metadata(path).is_ok()
     }
+}
+
+fn atomic_replace(path: &Path, text: &str, expected: Option<&str>) -> io::Result<()> {
+    if let Some(expected) = expected
+        && fs::read_to_string(path)? != expected
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "File changed on disk",
+        ));
+    }
+    // Follow an opened symlink rather than replacing the link itself.
+    let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let parent = target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut staging = tempfile::NamedTempFile::new_in(parent)?;
+    use io::Write;
+    staging.write_all(text.as_bytes())?;
+    if let Ok(metadata) = fs::metadata(&target) {
+        staging.as_file().set_permissions(metadata.permissions())?;
+    }
+    staging.as_file().sync_all()?;
+    if let Some(expected) = expected
+        && fs::read_to_string(path)? != expected
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "File changed during save",
+        ));
+    }
+    staging.persist(&target).map_err(|error| error.error)?;
+    Ok(())
 }
 fn sorted_children(path: &Path) -> Vec<PathBuf> {
     let mut children: Vec<_> = fs::read_dir(path)
@@ -112,5 +159,21 @@ mod tests {
         assert!(directory.is_dir());
         fs::remove_file(path).unwrap();
         fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn guarded_save_preserves_external_edits() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("note.txt");
+        fs::write(&path, "external").unwrap();
+        let error = LocalFileSystem
+            .write_text_if_unchanged(&path, "original", "mine")
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "external");
+        LocalFileSystem
+            .write_text_if_unchanged(&path, "external", "mine")
+            .unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "mine");
     }
 }

@@ -20,6 +20,7 @@ mod editor;
 mod explorer;
 mod find;
 mod paste;
+mod safety;
 #[cfg(feature = "shared-editor")]
 mod shared;
 mod viewport;
@@ -180,6 +181,7 @@ fn test_app(dialogs: TestDialogs) -> (LumenApp, MemoryFileSystem) {
         file_system: Box::new(storage.clone()),
         dialogs: Box::new(dialogs),
         clipboard: Box::<TestClipboard>::default(),
+        recovery_store: Box::new(MemoryRecoveryStore::default()),
         ..Default::default()
     };
     #[cfg(feature = "shared-editor")]
@@ -189,6 +191,18 @@ fn test_app(dialogs: TestDialogs) -> (LumenApp, MemoryFileSystem) {
         app
     };
     (app, storage)
+}
+
+#[derive(Clone, Default)]
+struct MemoryRecoveryStore(Rc<RefCell<Vec<crate::services::recovery::RecoveryDocument>>>);
+impl crate::services::recovery::RecoveryStore for MemoryRecoveryStore {
+    fn load(&self) -> io::Result<Vec<crate::services::recovery::RecoveryDocument>> {
+        Ok(self.0.borrow().clone())
+    }
+    fn save(&self, documents: &[crate::services::recovery::RecoveryDocument]) -> io::Result<()> {
+        *self.0.borrow_mut() = documents.to_vec();
+        Ok(())
+    }
 }
 
 #[derive(Default)]

@@ -102,6 +102,9 @@ impl LumenApp {
             }
             Command::Save => self.save_active(),
             Command::SaveAs => self.save_as_active(),
+            Command::OverwriteConflict(document) => self.overwrite_conflict(document),
+            Command::ReloadConflict(document) => self.reload_conflict(document),
+            Command::DismissConflict => self.view.save_conflict = None,
             Command::RequestClose(index) => self.request_close(index),
             Command::CloseFile(index) => self.close_file(index),
             Command::CloseEditor => {
@@ -169,6 +172,9 @@ impl LumenApp {
     }
 
     fn finish_quit(&mut self, ctx: &egui::Context) {
+        if !self.clear_recovery_for_exit() {
+            return;
+        }
         self.view.allow_quit = true;
         self.view.pending_quit = false;
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);

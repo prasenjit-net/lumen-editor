@@ -9,6 +9,7 @@ pub(crate) struct Document {
     pub(crate) language: Language,
     pub(crate) text: String,
     pub(crate) dirty: bool,
+    pub(crate) disk_changed: bool,
     saved_text: String,
     #[cfg(feature = "shared-editor")]
     pub(crate) editing: Option<lumen_editor_core::EditorBuffer>,
@@ -25,6 +26,7 @@ impl Document {
             saved_text: text.clone(),
             text,
             dirty: false,
+            disk_changed: false,
             #[cfg(feature = "shared-editor")]
             editing: None,
         }
@@ -34,6 +36,7 @@ impl Document {
         self.relocate(path);
         self.saved_text.clone_from(&self.text);
         self.dirty = false;
+        self.disk_changed = false;
         #[cfg(feature = "shared-editor")]
         if let Some(buffer) = &mut self.editing {
             buffer.mark_saved();
@@ -57,6 +60,37 @@ impl Document {
         self.language = Language::from_path(&path);
         self.path = Some(path);
     }
+    pub(crate) fn saved_text(&self) -> &str {
+        &self.saved_text
+    }
+
+    pub(crate) fn restored(
+        path: Option<PathBuf>,
+        name: String,
+        text: String,
+        saved: String,
+    ) -> Self {
+        let mut document = match path {
+            Some(path) => Self::from_path(path, saved),
+            None => Self::untitled(0),
+        };
+        document.name = name;
+        document.text = text;
+        document.dirty = document.text != document.saved_text;
+        document
+    }
+
+    pub(crate) fn reload_from_disk(&mut self, text: String) {
+        self.text = text.clone();
+        self.saved_text = text;
+        self.dirty = false;
+        self.disk_changed = false;
+        self.revision = self.revision.wrapping_add(1);
+        #[cfg(feature = "shared-editor")]
+        {
+            self.editing = None;
+        }
+    }
     pub(crate) fn untitled(number: usize) -> Self {
         Self {
             id: DocumentId::allocate(),
@@ -66,6 +100,7 @@ impl Document {
             language: Language::Plain,
             text: String::new(),
             dirty: false,
+            disk_changed: false,
             saved_text: String::new(),
             #[cfg(feature = "shared-editor")]
             editing: None,

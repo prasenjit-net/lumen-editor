@@ -262,6 +262,31 @@ use the typography settings. Set line height at least as large as font size.
 Settings preserve document text and history. Outside-project files use user
 typography; untitled buffers inherit the current project.
 
+### Unsaved-work protection
+
+Explicit Save remains the default. The Files section in Settings offers
+`files.auto_save` (`off`, `afterDelay`, `onFocusChange`, `onWindowChange`) and
+`files.auto_save_delay` (100–60000 ms, default 1000). Project settings override
+user settings for files in the opened directory. Auto Save does not name or save
+untitled buffers, and it never resolves an external-change conflict on its own.
+
+Dirty buffers are backed up about once per second to the user-level
+`~/.lumen/recovery.bin` (`%USERPROFILE%\.lumen\recovery.bin` on Windows). Lumen
+restores them on its next start, including untitled text, then keeps them dirty
+until saved. The backup contains unencrypted document text in the user-level
+app directory; it is not version history or cloud sync. A crash can lose edits
+since the latest snapshot. The current recovery store is single-instance:
+avoid running two Lumen processes
+against the same user profile until per-instance recovery is implemented.
+
+Lumen checks the active file for external changes and compares disk contents
+again just before saving. A changed or removed disk file blocks Save and Auto
+Save; the conflict dialog offers Keep Editing, an explicit Overwrite, or Reload
+from Disk (which discards this tab's unsaved edits). Save/Save As stage writes in
+the target directory and replace the file only after the write succeeds. There
+is not yet a side-by-side diff or merge view for conflicts. The remaining work
+is tracked in the [core feature roadmap](plan/vscode-core-feature-roadmap.md).
+
 External changes currently require Reload (config files saved in Lumen reload
 automatically). Invalid files and disk conflicts are reported without replacing
 valid settings or drafts. Close an open config tab before applying its form draft,

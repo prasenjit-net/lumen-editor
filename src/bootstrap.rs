@@ -38,6 +38,7 @@ pub(crate) fn run() -> eframe::Result<()> {
                 }
             }
             app.initialize_settings(crate::services::settings::user_path());
+            app.restore_recovery();
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             {
                 let menu = platform::native_menu::NativeMenu::new(&cc.egui_ctx)?;

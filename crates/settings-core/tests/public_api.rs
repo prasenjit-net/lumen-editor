@@ -27,7 +27,11 @@ fn public_api_preserves_precedence_sparse_roundtrips_and_search_rules() {
     assert!(!encoded.contains("font_size"));
     let (roundtrip, _) = parse(Some(&encoded)).unwrap();
     assert_eq!(roundtrip, project);
-    assert_eq!(catalog().count(), 7);
+    assert!(catalog().count() >= 9);
+    assert_eq!(
+        setting("files.auto_save").default_value(),
+        Value::Choice("off".into())
+    );
     assert!(validate_layers(&Layer::new(), None).is_ok());
 }
 

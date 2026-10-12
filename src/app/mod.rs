@@ -9,6 +9,7 @@ pub(crate) mod editor_input;
 mod events;
 mod explorer_ops;
 pub(crate) mod find;
+mod safety;
 pub(crate) mod settings;
 #[cfg(test)]
 mod tests;
@@ -28,6 +29,8 @@ pub(crate) struct LumenApp {
     pub(crate) dialogs: Box<dyn FileDialogs>,
     pub(crate) clipboard: Box<dyn ClipboardService>,
     pub(crate) settings_store: Box<dyn crate::services::settings::SettingsStore>,
+    pub(crate) recovery_store: Box<dyn crate::services::recovery::RecoveryStore>,
+    pub(crate) safety: safety::SafetyState,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
 }
@@ -40,6 +43,8 @@ impl Default for LumenApp {
             dialogs: Box::new(NativeDialogs),
             clipboard: Box::<NativeClipboard>::default(),
             settings_store: Box::new(crate::services::settings::LocalSettingsStore),
+            recovery_store: Box::new(crate::services::recovery::LocalRecoveryStore::new()),
+            safety: safety::SafetyState::default(),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
         }
@@ -62,6 +67,8 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.quit_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.settings_quit_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.delete_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.save_conflict_dialog(ctx));
+        self.maintain_documents(ctx);
     }
 }
 

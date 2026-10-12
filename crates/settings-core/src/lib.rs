@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 mod appearance;
 mod editor;
 mod explorer;
+mod files;
 mod workbench;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -69,6 +70,7 @@ pub struct SectionSchema {
 
 pub const SECTIONS: &[SectionSchema] = &[
     editor::SCHEMA,
+    files::SCHEMA,
     appearance::SCHEMA,
     workbench::SCHEMA,
     explorer::SCHEMA,

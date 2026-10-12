@@ -50,6 +50,12 @@ pub(crate) struct DeletePrompt {
     pub(crate) error: Option<String>,
 }
 
+pub(crate) struct SaveConflict {
+    pub(crate) document: crate::model::DocumentId,
+    pub(crate) revision: u64,
+    pub(crate) path: PathBuf,
+}
+
 impl ExplorerEdit {
     pub(crate) fn new(directory: PathBuf) -> Self {
         Self {
@@ -115,6 +121,7 @@ pub(crate) struct ViewState {
     pub(crate) pending_close: Option<usize>,
     pub(crate) window_title: String,
     pub(crate) pending_quit: bool,
+    pub(crate) save_conflict: Option<SaveConflict>,
     pub(crate) allow_quit: bool,
 }
 impl ViewState {
@@ -166,6 +173,7 @@ impl Default for ViewState {
             pending_close: None,
             window_title: String::new(),
             pending_quit: false,
+            save_conflict: None,
             allow_quit: false,
         }
     }

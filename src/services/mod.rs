@@ -3,6 +3,7 @@ mod clipboard;
 mod dialogs;
 mod file_operations;
 mod filesystem;
+pub(crate) mod recovery;
 mod reveal;
 pub(crate) mod settings;
 pub(crate) use clipboard::{ClipboardRead, ClipboardRequestId, ClipboardService, NativeClipboard};

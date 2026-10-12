@@ -1,6 +1,6 @@
 use super::LumenApp;
 use super::command::Command;
-use super::view_state::{Activity, ExplorerSelection};
+use super::view_state::{Activity, ExplorerSelection, SaveConflict};
 use crate::model::{Document, display_name};
 use eframe::egui;
 use std::path::PathBuf;
@@ -11,7 +11,10 @@ impl LumenApp {
         } else if self.editor.has_unsaved_changes() {
             self.view.pending_quit = true;
         } else {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            if self.clear_recovery_for_exit() {
+                self.view.allow_quit = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
         }
     }
 
@@ -64,13 +67,106 @@ impl LumenApp {
         let Some(file) = self.editor.files.get_mut(index) else {
             return;
         };
-        match self.file_system.write_text(&path, &file.text) {
+        let same_path = file.path.as_deref() == Some(path.as_path());
+        let result = if same_path {
+            self.file_system
+                .write_text_if_unchanged(&path, file.saved_text(), &file.text)
+        } else {
+            self.file_system.write_text(&path, &file.text)
+        };
+        match result {
             Ok(()) => {
                 file.mark_saved(path.clone());
+                self.view.save_conflict = None;
                 self.view.status = "Saved".into();
                 self.settings_file_saved(&path);
             }
+            Err(error)
+                if same_path
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::NotFound
+                    ) =>
+            {
+                file.disk_changed = true;
+                self.view.save_conflict = Some(SaveConflict {
+                    document: file.id,
+                    revision: file.revision,
+                    path,
+                });
+                self.view.status =
+                    "File changed on disk. Save was blocked; your edits are intact.".into();
+            }
             Err(error) => self.view.status = format!("Could not save file: {error}"),
+        }
+    }
+
+    pub(crate) fn overwrite_conflict(&mut self, document: crate::model::DocumentId) {
+        let Some(conflict) = self.view.save_conflict.take() else {
+            return;
+        };
+        if conflict.document != document {
+            return;
+        }
+        let Some(file) = self
+            .editor
+            .files
+            .iter_mut()
+            .find(|file| file.id == document)
+        else {
+            return;
+        };
+        if file.revision != conflict.revision || file.path.as_ref() != Some(&conflict.path) {
+            self.view.status =
+                "Document changed since the warning. Save again to review the conflict.".into();
+            return;
+        }
+        match self.file_system.write_text(&conflict.path, &file.text) {
+            Ok(()) => {
+                file.mark_saved(conflict.path.clone());
+                self.view.status = "External version overwritten by explicit request".into();
+                self.settings_file_saved(&conflict.path);
+            }
+            Err(error) => {
+                self.view.save_conflict = Some(conflict);
+                self.view.status = format!("Could not overwrite file: {error}");
+            }
+        }
+    }
+
+    pub(crate) fn reload_conflict(&mut self, document: crate::model::DocumentId) {
+        let Some(conflict) = self.view.save_conflict.take() else {
+            return;
+        };
+        if conflict.document != document {
+            return;
+        }
+        let Some(file) = self
+            .editor
+            .files
+            .iter_mut()
+            .find(|file| file.id == document)
+        else {
+            return;
+        };
+        if file.revision != conflict.revision || file.path.as_ref() != Some(&conflict.path) {
+            self.view.status =
+                "Document changed since the warning. Save again to review the conflict.".into();
+            return;
+        }
+        match self.file_system.read_text(&conflict.path) {
+            Ok(text) => {
+                file.reload_from_disk(text);
+                self.view.pending_editor_action = None;
+                self.view.editor_paste_target = None;
+                super::editor_input::cancel_input(&mut self.view);
+                self.view.status =
+                    "Reloaded external file; unsaved edits in this tab were discarded".into();
+            }
+            Err(error) => {
+                self.view.save_conflict = Some(conflict);
+                self.view.status = format!("Could not reload file: {error}");
+            }
         }
     }
 
