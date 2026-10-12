@@ -33,16 +33,23 @@ pub(crate) enum Command {
     Save,
     SaveAs,
     CloseEditor,
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     Quit,
     Palette,
     ToggleSidebar,
     ActivateActivity(Activity),
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     Welcome,
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     Copy,
     Cut,
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     Paste,
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     Undo,
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     Redo,
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     SelectAll,
     OpenPath(PathBuf),
     RequestClose(usize),
@@ -112,6 +119,7 @@ impl Command {
     }
 
     /// Stable native menu identifiers; data-carrying UI actions have no menu ID.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) fn menu_id(&self) -> Option<&'static str> {
         match self {
             Self::Settings => Some("settings"),
@@ -137,6 +145,7 @@ impl Command {
         }
     }
 
+    #[cfg(any(target_os = "macos", target_os = "windows", test))]
     pub(crate) fn from_menu_id(id: &str) -> Option<Self> {
         Some(match id {
             "settings" => Self::Settings,

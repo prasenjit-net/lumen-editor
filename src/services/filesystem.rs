@@ -103,10 +103,13 @@ mod tests {
             fs::read_to_string(&path).unwrap(),
             "must not be overwritten"
         );
-        assert_eq!(
-            LocalFileSystem.create_file(&directory).unwrap_err().kind(),
-            io::ErrorKind::AlreadyExists
-        );
+        let directory_error = LocalFileSystem.create_file(&directory).unwrap_err();
+        // Windows reports access denied when create_new targets a directory.
+        assert!(matches!(
+            directory_error.kind(),
+            io::ErrorKind::AlreadyExists | io::ErrorKind::PermissionDenied
+        ));
+        assert!(directory.is_dir());
         fs::remove_file(path).unwrap();
         fs::remove_dir(directory).unwrap();
     }
