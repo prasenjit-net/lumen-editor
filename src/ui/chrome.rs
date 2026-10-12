@@ -68,6 +68,16 @@ impl Workbench<'_> {
                 Frame::default().fill(TITLE).show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
+                        if !self.view.safety_notices.is_empty() {
+                            let label = format!("Safety: {}", self.view.safety_notices.len());
+                            if ui
+                                .small_button(label)
+                                .on_hover_text("Show recovery and save warnings")
+                                .clicked()
+                            {
+                                self.view.safety_details_open = true;
+                            }
+                        }
                         ui.label(
                             RichText::new(format!("{}  LUMEN", icon::BRACKETS_CURLY))
                                 .strong()

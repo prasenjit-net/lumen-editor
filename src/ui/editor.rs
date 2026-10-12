@@ -62,6 +62,18 @@ impl Workbench<'_> {
                     });
                     ui.add_space(2.0);
                     let document_id = self.editor.files[index].id;
+                    if self.editor.files[index].disk_changed {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new("File changed on disk")
+                                    .size(11.0)
+                                    .color(MUTED),
+                            );
+                            if ui.small_button("Review Changes").clicked() {
+                                self.command(Command::ReviewDiskChange(document_id));
+                            }
+                        });
+                    }
                     self.editor_find_bar(ui, document_id);
                     self.editor_viewport(ui, index);
                 });

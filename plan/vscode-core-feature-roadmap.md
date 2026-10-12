@@ -5,30 +5,36 @@ official VS Code ranking. Preserve existing editor, Explorer, settings, native
 menu and file workflows while adding each feature. The broader native/editor
 acceptance backlog remains in [pending-activities.md](pending-activities.md).
 
-## 1. Protect unsaved work — initial implementation done; hardening pending
+## 1. Protect unsaved work — implemented; native acceptance pending
 
-Implemented: periodic recovery snapshots of dirty buffers, restore on startup,
+Implemented: periodic per-instance recovery snapshots of dirty buffers, restore on startup,
 opt-in Auto Save (`off`, `afterDelay`, `onFocusChange`, `onWindowChange`), disk-change
 warnings, guarded Save, explicit conflict Overwrite/Reload choices, and staged
-file writes. Explicit Save remains the default.
+file writes. Explicit Save remains the default. Recovery uses OS file locks to
+skip live sessions, imports the previous single-file format, preserves corrupt
+snapshots for inspection, and keeps divergent recovered copies separate. All
+open disk-backed tabs show external-change markers and can open a side-by-side
+comparison; explicit Overwrite rechecks the newest disk version. Save As keeps
+both versions. No automatic merge or hunk-level diff is provided.
 
-- [ ] Replace the single shared recovery snapshot with per-instance ownership.
+- [x] Replace the single shared recovery snapshot with per-instance ownership.
   Concurrent Lumen processes must not overwrite or clear each other's backups;
   migrate the existing snapshot format without losing recoverable text.
-- [ ] Add startup handling for divergent/corrupt/orphaned backups. Keep uncertain
+- [x] Add startup handling for divergent/corrupt/orphaned backups. Keep uncertain
   data available rather than silently deleting it; test forced termination and
   restart with both disk-backed and untitled buffers.
-- [ ] Add a side-by-side disk-versus-editor comparison, then a deliberate merge
+- [x] Add a side-by-side disk-versus-editor comparison, then a deliberate merge
   path or an explicit limitation. Detect changes across all open tabs, including
   deletion/rename, with a persistent indicator until resolved.
 - [ ] Validate Auto Save's focus/window policies and recovery lifecycle in live
   macOS and Windows builds. Test IME, dialogs, Save All, Save As, failed writes,
   large files, symlinks/permissions and two simultaneous processes.
 
-Exit gate: no ordinary Save/Auto Save overwrites external edits; each interrupted
-instance can recover its own latest durable snapshot; native results are
-recorded separately from compilation. Until then, retain the single-instance
-warning and note that backups contain unencrypted document text.
+Implementation gate: ordinary Save/Auto Save block on external edits; each
+interrupted instance can recover its own latest durable snapshot in automated
+tests. Native results must be recorded separately from compilation. Backups
+contain unencrypted document text. The remaining unchecked item is a native
+acceptance gate, not an invitation to claim Windows runtime validation.
 
 ## 2. Search and replace across the open folder
 

@@ -42,15 +42,29 @@ impl Default for SafetyState {
 impl LumenApp {
     pub(crate) fn restore_recovery(&mut self) {
         match self.recovery_store.load() {
-            Ok(snapshots) => {
+            Ok(loaded) => {
+                for warning in loaded.warnings {
+                    self.view.safety_notices.push(warning);
+                }
                 let mut restored = 0;
-                for snapshot in snapshots {
+                for snapshot in loaded.documents {
                     if snapshot.text == snapshot.saved_text {
                         continue;
                     }
+                    let duplicate = snapshot.path.as_ref().is_some_and(|path| {
+                        self.editor
+                            .files
+                            .iter()
+                            .any(|file| file.path.as_ref() == Some(path))
+                    });
+                    let name = if duplicate {
+                        format!("{} (Recovered)", snapshot.name)
+                    } else {
+                        snapshot.name
+                    };
                     let document = crate::model::Document::restored(
-                        snapshot.path.clone(),
-                        snapshot.name,
+                        if duplicate { None } else { snapshot.path },
+                        name,
                         snapshot.text,
                         snapshot.saved_text,
                     );
@@ -63,30 +77,28 @@ impl LumenApp {
                         self.editor.next_untitled =
                             self.editor.next_untitled.max(number.saturating_add(1));
                     }
-                    if let Some(index) = self
-                        .editor
-                        .files
-                        .iter()
-                        .position(|file| file.path.is_some() && file.path == document.path)
-                    {
-                        self.editor.files[index] = document;
-                        self.editor.active_file = Some(index);
-                    } else {
-                        self.editor.files.push(document);
-                        self.editor.active_file = Some(self.editor.files.len() - 1);
-                    }
+                    self.editor.files.push(document);
+                    self.editor.active_file = Some(self.editor.files.len() - 1);
                     restored += 1;
                 }
                 if restored > 0 {
                     self.view.status =
                         format!("Restored {restored} unsaved document(s) from recovery");
+                } else if !self.editor.has_unsaved_changes()
+                    && let Err(error) = self.recovery_store.save(&[])
+                {
+                    let notice = format!("Could not retire stale recovery data: {error}");
+                    self.view.status = notice.clone();
+                    self.view.safety_notices.push(notice);
                 }
             }
             Err(error) => {
                 self.safety.recovery_ready = false;
-                self.view.status = format!(
+                let notice = format!(
                     "Could not read recovery data: {error}. Existing backup was left untouched."
                 );
+                self.view.status = notice.clone();
+                self.view.safety_notices.push(notice);
             }
         }
     }
@@ -183,36 +195,37 @@ impl LumenApp {
             .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(2))
         {
             self.safety.disk_check_at = Some(now);
-            self.check_active_disk_change();
+            self.check_open_disk_changes();
         }
         self.write_recovery(now);
-        if self.editor.has_unsaved_changes() {
+        if self
+            .editor
+            .files
+            .iter()
+            .any(|file| file.path.is_some() || file.dirty)
+        {
             ctx.request_repaint_after(Duration::from_millis(500));
         }
     }
 
-    fn check_active_disk_change(&mut self) {
-        let Some(file) = self.editor.active().filter(|file| file.path.is_some()) else {
-            return;
-        };
-        let path = file.path.clone().unwrap();
-        let changed = match self.file_system.read_text(&path) {
-            Ok(text) => text != file.saved_text(),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-            Err(_) => return,
-        };
-        let file = self
-            .editor
-            .active_file
-            .and_then(|index| self.editor.files.get_mut(index))
-            .unwrap();
-        if changed && !file.disk_changed {
-            self.view.status = format!(
-                "{} changed on disk. Saving will require confirmation.",
-                file.name
-            );
+    pub(crate) fn check_open_disk_changes(&mut self) {
+        for file in &mut self.editor.files {
+            let Some(path) = &file.path else {
+                continue;
+            };
+            let changed = match self.file_system.read_text(path) {
+                Ok(text) => text != file.saved_text(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                Err(_) => continue,
+            };
+            if changed && !file.disk_changed {
+                self.view.status = format!(
+                    "{} changed on disk. Saving will require confirmation.",
+                    file.name
+                );
+            }
+            file.disk_changed = changed;
         }
-        file.disk_changed = changed;
     }
 
     fn write_recovery(&mut self, now: Instant) {
@@ -258,9 +271,21 @@ impl LumenApp {
             Ok(()) => {
                 self.safety.last_backup_keys = keys;
                 self.safety.backup_at = Some(now);
+                self.view
+                    .safety_notices
+                    .retain(|notice| !notice.starts_with("Could not back up unsaved edits:"));
             }
             Err(error) => {
-                self.view.status = format!("Could not back up unsaved edits: {error}");
+                let notice = format!("Could not back up unsaved edits: {error}");
+                self.view.status = notice.clone();
+                if !self
+                    .view
+                    .safety_notices
+                    .iter()
+                    .any(|existing| existing.starts_with("Could not back up unsaved edits:"))
+                {
+                    self.view.safety_notices.push(notice);
+                }
                 self.safety.backup_at = Some(now);
             }
         }
@@ -273,8 +298,9 @@ impl LumenApp {
         match self.recovery_store.save(&[]) {
             Ok(()) => true,
             Err(error) => {
-                self.view.status =
-                    format!("Could not clear recovery snapshot before quitting: {error}");
+                let notice = format!("Could not clear recovery snapshot before quitting: {error}");
+                self.view.status = notice.clone();
+                self.view.safety_notices.push(notice);
                 false
             }
         }

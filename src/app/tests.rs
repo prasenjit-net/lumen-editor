@@ -196,8 +196,11 @@ fn test_app(dialogs: TestDialogs) -> (LumenApp, MemoryFileSystem) {
 #[derive(Clone, Default)]
 struct MemoryRecoveryStore(Rc<RefCell<Vec<crate::services::recovery::RecoveryDocument>>>);
 impl crate::services::recovery::RecoveryStore for MemoryRecoveryStore {
-    fn load(&self) -> io::Result<Vec<crate::services::recovery::RecoveryDocument>> {
-        Ok(self.0.borrow().clone())
+    fn load(&self) -> io::Result<crate::services::recovery::RecoveryLoad> {
+        Ok(crate::services::recovery::RecoveryLoad {
+            documents: self.0.borrow().clone(),
+            warnings: Vec::new(),
+        })
     }
     fn save(&self, documents: &[crate::services::recovery::RecoveryDocument]) -> io::Result<()> {
         *self.0.borrow_mut() = documents.to_vec();

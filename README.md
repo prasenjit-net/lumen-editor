@@ -270,22 +270,26 @@ Explicit Save remains the default. The Files section in Settings offers
 user settings for files in the opened directory. Auto Save does not name or save
 untitled buffers, and it never resolves an external-change conflict on its own.
 
-Dirty buffers are backed up about once per second to the user-level
-`~/.lumen/recovery.bin` (`%USERPROFILE%\.lumen\recovery.bin` on Windows). Lumen
-restores them on its next start, including untitled text, then keeps them dirty
-until saved. The backup contains unencrypted document text in the user-level
-app directory; it is not version history or cloud sync. A crash can lose edits
-since the latest snapshot. The current recovery store is single-instance:
-avoid running two Lumen processes
-against the same user profile until per-instance recovery is implemented.
+Dirty buffers are backed up about once per second in per-instance files under
+`~/.lumen/recovery/` (`%USERPROFILE%\.lumen\recovery\` on Windows). Lumen
+skips backups owned by live processes and restores interrupted sessions on the
+next start, including untitled text. Divergent recovered copies of one path
+stay as distinct buffers; later copies require Save As. The old single-file
+`recovery.bin` is imported when present. Invalid backups are retained and
+reported in the status-bar Safety details. Backups contain unencrypted document
+text; they are not version history or cloud sync. A crash can lose edits since
+the latest snapshot.
 
-Lumen checks the active file for external changes and compares disk contents
-again just before saving. A changed or removed disk file blocks Save and Auto
-Save; the conflict dialog offers Keep Editing, an explicit Overwrite, or Reload
-from Disk (which discards this tab's unsaved edits). Save/Save As stage writes in
-the target directory and replace the file only after the write succeeds. There
-is not yet a side-by-side diff or merge view for conflicts. The remaining work
-is tracked in the [core feature roadmap](plan/vscode-core-feature-roadmap.md).
+Lumen checks every open disk-backed tab for external changes and compares disk
+contents again just before saving. A changed or removed disk file blocks Save
+and Auto Save. The tab marker and active-editor banner open a side-by-side
+comparison of disk and editor text (preview limited to 20,000 characters).
+Keep Editing, Save As, explicit Overwrite, and Reload from Disk are available;
+Reload discards that tab's unsaved edits. An explicit Overwrite rechecks the
+disk version before replacing it. Save/Save As stage writes in the target
+directory and replace the file only after the write succeeds. There is no
+automatic merge or hunk-level diff yet; the remaining work and native
+acceptance are tracked in the [core feature roadmap](plan/vscode-core-feature-roadmap.md).
 
 External changes currently require Reload (config files saved in Lumen reload
 automatically). Invalid files and disk conflicts are reported without replacing

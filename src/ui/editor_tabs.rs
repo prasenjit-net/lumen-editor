@@ -95,7 +95,12 @@ impl Workbench<'_> {
             .iter()
             .map(|file| {
                 let path = file.path.as_deref().unwrap_or(Path::new(&file.name));
-                format!("{} {}", widgets::file_icon(path), file.name)
+                format!(
+                    "{} {}{}",
+                    widgets::file_icon(path),
+                    file.name,
+                    if file.disk_changed { " !" } else { "" }
+                )
             })
             .chain(
                 self.view

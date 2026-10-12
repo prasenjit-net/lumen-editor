@@ -104,6 +104,8 @@ impl LumenApp {
             Command::SaveAs => self.save_as_active(),
             Command::OverwriteConflict(document) => self.overwrite_conflict(document),
             Command::ReloadConflict(document) => self.reload_conflict(document),
+            Command::SaveConflictAs(document) => self.save_conflict_as(document),
+            Command::ReviewDiskChange(document) => self.review_disk_change(document),
             Command::DismissConflict => self.view.save_conflict = None,
             Command::RequestClose(index) => self.request_close(index),
             Command::CloseFile(index) => self.close_file(index),

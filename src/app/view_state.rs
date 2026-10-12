@@ -54,6 +54,8 @@ pub(crate) struct SaveConflict {
     pub(crate) document: crate::model::DocumentId,
     pub(crate) revision: u64,
     pub(crate) path: PathBuf,
+    pub(crate) disk_text: Option<String>,
+    pub(crate) show_comparison: bool,
 }
 
 impl ExplorerEdit {
@@ -118,6 +120,8 @@ pub(crate) struct ViewState {
     pub(crate) search: String,
     pub(crate) sidebar_visible: bool,
     pub(crate) status: String,
+    pub(crate) safety_notices: Vec<String>,
+    pub(crate) safety_details_open: bool,
     pub(crate) pending_close: Option<usize>,
     pub(crate) window_title: String,
     pub(crate) pending_quit: bool,
@@ -170,6 +174,8 @@ impl Default for ViewState {
             search: String::new(),
             sidebar_visible: true,
             status: "Ready".into(),
+            safety_notices: Vec::new(),
+            safety_details_open: false,
             pending_close: None,
             window_title: String::new(),
             pending_quit: false,

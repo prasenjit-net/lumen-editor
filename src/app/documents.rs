@@ -89,10 +89,21 @@ impl LumenApp {
                     ) =>
             {
                 file.disk_changed = true;
+                let disk_text = match self.file_system.read_text(&path) {
+                    Ok(text) => Some(text),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => {
+                        self.view.status =
+                            format!("Save blocked; changed file could not be read: {error}");
+                        return;
+                    }
+                };
                 self.view.save_conflict = Some(SaveConflict {
                     document: file.id,
                     revision: file.revision,
+                    disk_text,
                     path,
+                    show_comparison: false,
                 });
                 self.view.status =
                     "File changed on disk. Save was blocked; your edits are intact.".into();
@@ -121,7 +132,35 @@ impl LumenApp {
                 "Document changed since the warning. Save again to review the conflict.".into();
             return;
         }
-        match self.file_system.write_text(&conflict.path, &file.text) {
+        let current = match self.file_system.read_text(&conflict.path) {
+            Ok(text) => Some(text),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                self.view.status = format!("Could not recheck disk file: {error}");
+                self.view.save_conflict = Some(conflict);
+                return;
+            }
+        };
+        if current != conflict.disk_text {
+            self.view.status =
+                "Disk changed again. Review the newest version before overwriting.".into();
+            self.view.save_conflict = Some(SaveConflict {
+                disk_text: current,
+                show_comparison: true,
+                ..conflict
+            });
+            return;
+        }
+        let result = match &conflict.disk_text {
+            Some(expected) => {
+                self.file_system
+                    .write_text_if_unchanged(&conflict.path, expected, &file.text)
+            }
+            None => self
+                .file_system
+                .write_text_if_missing(&conflict.path, &file.text),
+        };
+        match result {
             Ok(()) => {
                 file.mark_saved(conflict.path.clone());
                 self.view.status = "External version overwritten by explicit request".into();
@@ -168,6 +207,55 @@ impl LumenApp {
                 self.view.status = format!("Could not reload file: {error}");
             }
         }
+    }
+
+    pub(crate) fn save_conflict_as(&mut self, document: crate::model::DocumentId) {
+        let Some(index) = self
+            .editor
+            .files
+            .iter()
+            .position(|file| file.id == document)
+        else {
+            return;
+        };
+        let Some(path) = self.dialogs.save_as(&self.editor.files[index].name) else {
+            return;
+        };
+        if self.editor.files[index].path.as_ref() == Some(&path) {
+            self.view.status =
+                "Choose another path for Save As; the original still has a disk conflict.".into();
+            return;
+        }
+        self.save_file_at(index, path);
+    }
+
+    pub(crate) fn review_disk_change(&mut self, document: crate::model::DocumentId) {
+        let Some(file) = self
+            .editor
+            .files
+            .iter()
+            .find(|file| file.id == document && file.disk_changed)
+        else {
+            return;
+        };
+        let Some(path) = file.path.clone() else {
+            return;
+        };
+        let disk_text = match self.file_system.read_text(&path) {
+            Ok(text) => Some(text),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                self.view.status = format!("Could not read changed file: {error}");
+                return;
+            }
+        };
+        self.view.save_conflict = Some(SaveConflict {
+            document,
+            revision: file.revision,
+            disk_text,
+            path,
+            show_comparison: true,
+        });
     }
 
     pub(crate) fn save_active(&mut self) {

@@ -16,6 +16,15 @@ pub(crate) trait FileSystem {
         }
         self.write_text(path, text)
     }
+    fn write_text_if_missing(&self, path: &Path, text: &str) -> io::Result<()> {
+        if self.entry_exists(path) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "File appeared on disk",
+            ));
+        }
+        self.write_text(path, text)
+    }
     /// Atomically create an empty file; never replace an existing entry.
     fn create_file(&self, path: &Path) -> io::Result<()>;
     fn create_directory(&self, path: &Path) -> io::Result<()>;
@@ -36,6 +45,20 @@ impl FileSystem for LocalFileSystem {
     }
     fn write_text_if_unchanged(&self, path: &Path, expected: &str, text: &str) -> io::Result<()> {
         atomic_replace(path, text, Some(expected))
+    }
+    fn write_text_if_missing(&self, path: &Path, text: &str) -> io::Result<()> {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let mut staging = tempfile::NamedTempFile::new_in(parent)?;
+        use io::Write;
+        staging.write_all(text.as_bytes())?;
+        staging.as_file().sync_all()?;
+        staging
+            .persist_noclobber(path)
+            .map_err(|error| error.error)?;
+        Ok(())
     }
     fn create_file(&self, path: &Path) -> io::Result<()> {
         fs::OpenOptions::new()

@@ -34,6 +34,8 @@ pub(crate) enum Command {
     SaveAs,
     OverwriteConflict(DocumentId),
     ReloadConflict(DocumentId),
+    SaveConflictAs(DocumentId),
+    ReviewDiskChange(DocumentId),
     DismissConflict,
     CloseEditor,
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]

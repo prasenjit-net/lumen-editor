@@ -68,6 +68,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.settings_quit_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.delete_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.save_conflict_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.safety_details_dialog(ctx));
         self.maintain_documents(ctx);
     }
 }
