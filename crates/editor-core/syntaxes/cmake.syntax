@@ -1,0 +1,6 @@
+label=CMake
+filenames=CMakeLists.txt
+extensions=cmake
+lexer=code
+line_comment=#
+keywords=AND OR NOT TRUE FALSE ON OFF CACHE PARENT_SCOPE REQUIRED PRIVATE PUBLIC INTERFACE

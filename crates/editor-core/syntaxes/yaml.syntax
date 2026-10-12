@@ -1,0 +1,6 @@
+label=YAML
+filenames=.clang-format
+extensions=yaml yml
+lexer=code
+line_comment=#
+keywords=true false null

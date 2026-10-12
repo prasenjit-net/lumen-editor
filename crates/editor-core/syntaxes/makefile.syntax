@@ -1,0 +1,5 @@
+label=Makefile
+filenames=Makefile makefile GNUmakefile
+extensions=mk make
+lexer=makefile
+keywords=include -include sinclude ifeq ifneq ifdef ifndef else endif define endef export override

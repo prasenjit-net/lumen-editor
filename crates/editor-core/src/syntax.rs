@@ -1,8 +1,8 @@
 //! Display-only lexical highlighting. Ranges are UTF-8 byte offsets into the
 //! source; this module never changes document text or selection state.
-use std::{ops::Range, path::Path};
+use std::{collections::HashSet, ops::Range, path::Path, sync::OnceLock};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Language {
     Plain,
     Rust,
@@ -26,83 +26,182 @@ pub enum Language {
     Sql,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lexer {
+    Code,
+    Markdown,
+    Html,
+    Makefile,
+    Dockerfile,
+    Ignore,
+    KeyValue,
+}
+
+struct Definition {
+    language: Language,
+    label: &'static str,
+    filenames: Vec<&'static str>,
+    prefixes: Vec<&'static str>,
+    extensions: Vec<&'static str>,
+    keywords: Vec<&'static str>,
+    lexer: Lexer,
+    line_comment: &'static str,
+    block_comment: bool,
+    case_insensitive_keywords: bool,
+}
+
+// Each definition is embedded at compile time. Adding a format with an
+// existing lexer requires one data file and one registration here; a genuinely
+// new lexical grammar still needs a focused scanner.
+const SOURCES: &[(Language, &str)] = &[
+    (Language::Rust, include_str!("../syntaxes/rust.syntax")),
+    (Language::Toml, include_str!("../syntaxes/toml.syntax")),
+    (
+        Language::Markdown,
+        include_str!("../syntaxes/markdown.syntax"),
+    ),
+    (Language::Json, include_str!("../syntaxes/json.syntax")),
+    (Language::Yaml, include_str!("../syntaxes/yaml.syntax")),
+    (
+        Language::JavaScript,
+        include_str!("../syntaxes/javascript.syntax"),
+    ),
+    (Language::Html, include_str!("../syntaxes/html.syntax")),
+    (Language::Css, include_str!("../syntaxes/css.syntax")),
+    (Language::Python, include_str!("../syntaxes/python.syntax")),
+    (Language::Go, include_str!("../syntaxes/go.syntax")),
+    (Language::Cpp, include_str!("../syntaxes/cpp.syntax")),
+    (Language::Shell, include_str!("../syntaxes/shell.syntax")),
+    (Language::CMake, include_str!("../syntaxes/cmake.syntax")),
+    (
+        Language::Makefile,
+        include_str!("../syntaxes/makefile.syntax"),
+    ),
+    (
+        Language::Dockerfile,
+        include_str!("../syntaxes/dockerfile.syntax"),
+    ),
+    (Language::Ignore, include_str!("../syntaxes/ignore.syntax")),
+    (Language::Ini, include_str!("../syntaxes/ini.syntax")),
+    (Language::Env, include_str!("../syntaxes/env.syntax")),
+    (Language::Sql, include_str!("../syntaxes/sql.syntax")),
+];
+
+static DEFINITIONS: OnceLock<Vec<Definition>> = OnceLock::new();
+
+fn definitions() -> &'static [Definition] {
+    DEFINITIONS.get_or_init(|| {
+        SOURCES
+            .iter()
+            .map(|(language, source)| parse(*language, source))
+            .collect()
+    })
+}
+
+fn parse(language: Language, source: &'static str) -> Definition {
+    let mut definition = Definition {
+        language,
+        label: "",
+        filenames: Vec::new(),
+        prefixes: Vec::new(),
+        extensions: Vec::new(),
+        keywords: Vec::new(),
+        lexer: Lexer::Code,
+        line_comment: "",
+        block_comment: false,
+        case_insensitive_keywords: false,
+    };
+    let mut seen = HashSet::new();
+    for line in source
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    {
+        let (key, value) = line
+            .split_once('=')
+            .expect("syntax definition requires key=value");
+        let (key, value) = (key.trim(), value.trim());
+        assert!(seen.insert(key), "duplicate syntax definition field {key}");
+        match key {
+            "label" => definition.label = value,
+            "filenames" => definition.filenames = value.split_ascii_whitespace().collect(),
+            "prefixes" => definition.prefixes = value.split_ascii_whitespace().collect(),
+            "extensions" => definition.extensions = value.split_ascii_whitespace().collect(),
+            "keywords" => definition.keywords = value.split_ascii_whitespace().collect(),
+            "lexer" => {
+                definition.lexer = match value {
+                    "code" => Lexer::Code,
+                    "markdown" => Lexer::Markdown,
+                    "html" => Lexer::Html,
+                    "makefile" => Lexer::Makefile,
+                    "dockerfile" => Lexer::Dockerfile,
+                    "ignore" => Lexer::Ignore,
+                    "key_value" => Lexer::KeyValue,
+                    _ => panic!("unknown syntax lexer {value}"),
+                }
+            }
+            "line_comment" => definition.line_comment = value,
+            "block_comment" => {
+                definition.block_comment = value.parse().expect("invalid block_comment")
+            }
+            "case_insensitive_keywords" => {
+                definition.case_insensitive_keywords =
+                    value.parse().expect("invalid case_insensitive_keywords")
+            }
+            _ => panic!("unknown syntax definition field {key}"),
+        }
+    }
+    assert!(
+        !definition.label.is_empty(),
+        "syntax definition requires label"
+    );
+    assert!(seen.contains("lexer"), "syntax definition requires lexer");
+    definition
+}
+
 impl Language {
     pub fn from_path(path: &Path) -> Self {
-        // Exact and conventional basenames take precedence over extensions:
-        // CMakeLists.txt is CMake, not ordinary text; Dockerfile.dev has none.
-        if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-            match name {
-                "CMakeLists.txt" => return Self::CMake,
-                "Makefile" | "makefile" | "GNUmakefile" => return Self::Makefile,
-                "Dockerfile" | "Containerfile" => return Self::Dockerfile,
-                ".gitignore" | ".dockerignore" | ".ignore" | ".rgignore" => return Self::Ignore,
-                ".editorconfig" | ".gitconfig" | ".gitmodules" | ".npmrc" => return Self::Ini,
-                ".env" => return Self::Env,
-                ".bashrc" | ".zshrc" | ".profile" | "gradlew" => return Self::Shell,
-                "Cargo.lock" => return Self::Toml,
-                "README" | "CHANGELOG" => return Self::Markdown,
-                ".clang-format" => return Self::Yaml,
-                _ => {}
-            }
-            if name.starts_with("Dockerfile.") || name.starts_with("Containerfile.") {
-                return Self::Dockerfile;
-            }
-            if name.starts_with(".env.") {
-                return Self::Env;
-            }
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if let Some(definition) = definitions()
+            .iter()
+            .find(|definition| definition.filenames.contains(&name))
+        {
+            return definition.language;
         }
-        match path
+        if let Some(definition) = definitions().iter().find(|definition| {
+            definition
+                .prefixes
+                .iter()
+                .any(|prefix| name.starts_with(prefix))
+        }) {
+            return definition.language;
+        }
+        let extension = path
             .extension()
             .and_then(|extension| extension.to_str())
-            .unwrap_or_default()
-        {
-            "rs" => Self::Rust,
-            "toml" => Self::Toml,
-            "md" => Self::Markdown,
-            "json" => Self::Json,
-            "yaml" | "yml" => Self::Yaml,
-            "js" | "ts" | "tsx" | "jsx" => Self::JavaScript,
-            "html" => Self::Html,
-            "css" => Self::Css,
-            "py" => Self::Python,
-            "go" => Self::Go,
-            "c" | "h" | "cpp" | "hpp" => Self::Cpp,
-            "sh" => Self::Shell,
-            "bash" | "zsh" => Self::Shell,
-            "cmake" => Self::CMake,
-            "mk" | "make" => Self::Makefile,
-            "dockerfile" => Self::Dockerfile,
-            "ini" | "cfg" | "properties" => Self::Ini,
-            "env" => Self::Env,
-            "sql" => Self::Sql,
-            "xml" | "svg" => Self::Html,
-            _ => Self::Plain,
-        }
+            .unwrap_or_default();
+        definitions()
+            .iter()
+            .find(|definition| definition.extensions.contains(&extension))
+            .map_or(Self::Plain, |definition| definition.language)
     }
 
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Plain => "Plain Text",
-            Self::Rust => "Rust",
-            Self::Toml => "TOML",
-            Self::Markdown => "Markdown",
-            Self::Json => "JSON",
-            Self::Yaml => "YAML",
-            Self::JavaScript => "JavaScript",
-            Self::Html => "HTML",
-            Self::Css => "CSS",
-            Self::Python => "Python",
-            Self::Go => "Go",
-            Self::Cpp => "C/C++",
-            Self::Shell => "Shell Script",
-            Self::CMake => "CMake",
-            Self::Makefile => "Makefile",
-            Self::Dockerfile => "Dockerfile",
-            Self::Ignore => "Ignore",
-            Self::Ini => "INI",
-            Self::Env => "Dotenv",
-            Self::Sql => "SQL",
+        if self == Self::Plain {
+            "Plain Text"
+        } else {
+            self.definition().label
         }
+    }
+
+    fn definition(self) -> &'static Definition {
+        definitions()
+            .iter()
+            .find(|definition| definition.language == self)
+            .expect("every syntax language has one embedded definition")
     }
 }
 
@@ -128,14 +227,15 @@ pub fn highlight(text: &str, language: Language) -> Vec<Span> {
     if language == Language::Plain {
         return Vec::new();
     }
-    match language {
-        Language::Markdown => return markdown(text),
-        Language::Html => return html(text),
-        Language::Makefile => return makefile(text),
-        Language::Dockerfile => return dockerfile(text),
-        Language::Ignore => return ignore_file(text),
-        Language::Ini | Language::Env => return key_value_file(text, language),
-        _ => {}
+    let definition = language.definition();
+    match definition.lexer {
+        Lexer::Markdown => return markdown(text),
+        Lexer::Html => return html(text),
+        Lexer::Makefile => return makefile(text),
+        Lexer::Dockerfile => return dockerfile(text),
+        Lexer::Ignore => return ignore_file(text),
+        Lexer::KeyValue => return key_value_file(text, language),
+        Lexer::Code => {}
     }
     let bytes = text.as_bytes();
     let mut out = Vec::new();
@@ -153,16 +253,8 @@ pub fn highlight(text: &str, language: Language) -> Vec<Span> {
             i += 1;
             continue;
         }
-        let line_comment = match language {
-            Language::Python
-            | Language::Shell
-            | Language::Toml
-            | Language::Yaml
-            | Language::CMake => c == b'#',
-            Language::Sql => bytes[i..].starts_with(b"--"),
-            Language::Json => false,
-            _ => bytes[i..].starts_with(b"//"),
-        };
+        let line_comment = !definition.line_comment.is_empty()
+            && bytes[i..].starts_with(definition.line_comment.as_bytes());
         if language == Language::CMake
             && c == b'#'
             && let Some(end) = bracket_argument_end(bytes, i + 1)
@@ -178,16 +270,7 @@ pub fn highlight(text: &str, language: Language) -> Vec<Span> {
             at_line_start = false;
             continue;
         }
-        if matches!(
-            language,
-            Language::Rust
-                | Language::JavaScript
-                | Language::Go
-                | Language::Cpp
-                | Language::Css
-                | Language::Sql
-        ) && bytes[i..].starts_with(b"/*")
-        {
+        if definition.block_comment && bytes[i..].starts_with(b"/*") {
             i = bytes[i + 2..]
                 .windows(2)
                 .position(|w| w == b"*/")
@@ -282,7 +365,7 @@ pub fn highlight(text: &str, language: Language) -> Vec<Span> {
                 .iter()
                 .position(|b| !matches!(b, b' ' | b'\t'))
                 .map(|p| bytes[i + p]);
-            let kind = if keyword(language, word) {
+            let kind = if keyword(definition, word) {
                 Some(Kind::Keyword)
             } else if (matches!(
                 language,
@@ -375,44 +458,12 @@ fn bracket_argument_end(bytes: &[u8], start: usize) -> Option<usize> {
     Some(bytes.len())
 }
 
-fn keyword(language: Language, word: &str) -> bool {
-    let words = match language {
-        Language::Rust => {
-            "fn let mut pub use mod impl trait struct enum match if else while for in loop return async await move const static self Self super crate where type as ref unsafe dyn true false Some None Ok Err"
-        }
-        Language::JavaScript => {
-            "const let var function class extends import export default from if else for while return async await new this null undefined true false interface type enum public private"
-        }
-        Language::Python => {
-            "def class if elif else for while in return import from as with try except finally raise async await lambda yield pass None True False self"
-        }
-        Language::Go => {
-            "func package import type struct interface map chan go defer select case default if else for range return var const true false nil"
-        }
-        Language::Cpp => {
-            "int char float double void bool auto const static class struct enum namespace template typename public private protected virtual override if else for while return new delete true false nullptr include using"
-        }
-        Language::Json => "true false null",
-        Language::Toml | Language::Yaml => "true false null",
-        Language::Shell => {
-            "if then else elif fi for do done while case esac function in export local return"
-        }
-        Language::Css => {
-            "important inherit initial unset auto none block flex grid absolute relative fixed"
-        }
-        Language::CMake => {
-            "AND OR NOT TRUE FALSE ON OFF CACHE PARENT_SCOPE REQUIRED PRIVATE PUBLIC INTERFACE"
-        }
-        Language::Sql => {
-            "SELECT FROM WHERE JOIN LEFT RIGHT INNER OUTER ON AS INSERT INTO VALUES UPDATE SET DELETE CREATE TABLE ALTER DROP INDEX PRIMARY KEY FOREIGN NULL NOT AND OR ORDER BY GROUP HAVING LIMIT OFFSET DISTINCT UNION CASE WHEN THEN ELSE END TRUE FALSE"
-        }
-        _ => "",
-    };
-    words.split_ascii_whitespace().any(|candidate| {
-        if language == Language::Sql {
+fn keyword(definition: &Definition, word: &str) -> bool {
+    definition.keywords.iter().any(|candidate| {
+        if definition.case_insensitive_keywords {
             candidate.eq_ignore_ascii_case(word)
         } else {
-            candidate == word
+            *candidate == word
         }
     })
 }
@@ -482,6 +533,7 @@ fn html(text: &str) -> Vec<Span> {
 }
 
 fn makefile(text: &str) -> Vec<Span> {
+    let definition = Language::Makefile.definition();
     let mut out = Vec::new();
     let mut offset = 0;
     for line in text.split_inclusive('\n') {
@@ -495,22 +547,7 @@ fn makefile(text: &str) -> Vec<Span> {
                 .find(|c: char| c.is_whitespace())
                 .unwrap_or(trimmed.len());
             let first = &trimmed[..word_end];
-            if matches!(
-                first,
-                "include"
-                    | "-include"
-                    | "sinclude"
-                    | "ifeq"
-                    | "ifneq"
-                    | "ifdef"
-                    | "ifndef"
-                    | "else"
-                    | "endif"
-                    | "define"
-                    | "endef"
-                    | "export"
-                    | "override"
-            ) {
+            if keyword(definition, first) {
                 out.push(span(start, start + word_end, Kind::Keyword));
             } else if let Some(equals) = trimmed.find('=').filter(|equals| {
                 trimmed[..*equals]
@@ -533,7 +570,7 @@ fn makefile(text: &str) -> Vec<Span> {
 }
 
 fn dockerfile(text: &str) -> Vec<Span> {
-    const INSTRUCTIONS: &str = "FROM RUN CMD LABEL MAINTAINER EXPOSE ENV ADD COPY ENTRYPOINT VOLUME USER WORKDIR ARG ONBUILD STOPSIGNAL HEALTHCHECK SHELL";
+    let definition = Language::Dockerfile.definition();
     let mut out = Vec::new();
     let mut offset = 0;
     for line in text.split_inclusive('\n') {
@@ -546,10 +583,7 @@ fn dockerfile(text: &str) -> Vec<Span> {
             let end = trimmed
                 .find(|c: char| c.is_whitespace())
                 .unwrap_or(trimmed.len());
-            if INSTRUCTIONS
-                .split_ascii_whitespace()
-                .any(|word| word.eq_ignore_ascii_case(&trimmed[..end]))
-            {
+            if keyword(definition, &trimmed[..end]) {
                 out.push(span(start, start + end, Kind::Keyword));
             }
         }
@@ -623,6 +657,71 @@ fn key_value_file(text: &str, language: Language) -> Vec<Span> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn embedded_definitions_are_complete_and_unambiguous() {
+        assert_eq!(definitions().len(), 19);
+        let mut languages = HashSet::new();
+        let mut filenames = HashSet::new();
+        let mut extensions = HashSet::new();
+        let mut prefixes = HashSet::new();
+        for definition in definitions() {
+            assert!(languages.insert(definition.language));
+            assert!(!definition.label.is_empty());
+            for filename in &definition.filenames {
+                assert!(filenames.insert(filename), "duplicate filename {filename}");
+            }
+            for extension in &definition.extensions {
+                assert!(
+                    extensions.insert(extension),
+                    "duplicate extension {extension}"
+                );
+            }
+            for prefix in &definition.prefixes {
+                assert!(prefixes.insert(prefix), "duplicate prefix {prefix}");
+            }
+        }
+        assert!(!languages.contains(&Language::Plain));
+    }
+
+    #[test]
+    fn embedded_keywords_preserve_representative_language_spans() {
+        for (language, source, token) in [
+            (Language::Rust, "fn main() {}", "fn"),
+            (Language::Toml, "enabled = true", "true"),
+            (Language::Json, "{\"enabled\": true}", "true"),
+            (Language::Yaml, "enabled: true", "true"),
+            (Language::JavaScript, "const x = 1", "const"),
+            (Language::Css, "display: flex", "flex"),
+            (Language::Python, "def main(): pass", "def"),
+            (Language::Go, "func main() {}", "func"),
+            (Language::Cpp, "class Main {};", "class"),
+            (Language::Shell, "if true; then", "if"),
+            (Language::CMake, "set(X ON)", "ON"),
+            (Language::Sql, "select * FROM tab", "select"),
+        ] {
+            assert!(
+                highlight(source, language).iter().any(|span| {
+                    &source[span.range.clone()] == token && span.kind == Kind::Keyword
+                }),
+                "missing {token} in {language:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn definition_parser_rejects_unknown_and_duplicate_fields() {
+        assert!(
+            std::panic::catch_unwind(|| parse(Language::Rust, "label=Rust\nlexer=code\nunknown=x"))
+                .is_err()
+        );
+        assert!(
+            std::panic::catch_unwind(|| parse(
+                Language::Rust,
+                "label=Rust\nlabel=Again\nlexer=code"
+            ))
+            .is_err()
+        );
+    }
     #[test]
     fn file_language_is_typed_and_unknown_files_remain_plain() {
         assert_eq!(

@@ -1,0 +1,6 @@
+label=Rust
+extensions=rs
+lexer=code
+line_comment=//
+block_comment=true
+keywords=fn let mut pub use mod impl trait struct enum match if else while for in loop return async await move const static self Self super crate where type as ref unsafe dyn true false Some None Ok Err

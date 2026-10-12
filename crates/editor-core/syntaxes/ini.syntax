@@ -1,0 +1,4 @@
+label=INI
+filenames=.editorconfig .gitconfig .gitmodules .npmrc
+extensions=ini cfg properties
+lexer=key_value

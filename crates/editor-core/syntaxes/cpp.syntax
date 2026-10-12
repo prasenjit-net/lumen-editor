@@ -1,0 +1,6 @@
+label=C/C++
+extensions=c h cpp hpp
+lexer=code
+line_comment=//
+block_comment=true
+keywords=int char float double void bool auto const static class struct enum namespace template typename public private protected virtual override if else for while return new delete true false nullptr include using

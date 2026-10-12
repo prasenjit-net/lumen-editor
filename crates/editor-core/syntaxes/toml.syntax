@@ -1,0 +1,6 @@
+label=TOML
+filenames=Cargo.lock
+extensions=toml
+lexer=code
+line_comment=#
+keywords=true false null

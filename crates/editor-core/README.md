@@ -1,5 +1,9 @@
 # Multi-cursor backend spike
 
+Syntax metadata and keyword lists live in [`syntaxes/`](syntaxes/README.md),
+embedded in the binary at compile time. The scanner returns display-only UTF-8
+byte spans; it does not own document edits or history.
+
 Pure text/selection/transaction core; no UI or filesystem dependencies. It is a
 workspace member and shared logical-line policy dependency. The default application
 uses this core exclusively for document edits/history; no document TextEdit history

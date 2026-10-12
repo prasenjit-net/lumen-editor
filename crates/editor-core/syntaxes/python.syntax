@@ -1,0 +1,5 @@
+label=Python
+extensions=py
+lexer=code
+line_comment=#
+keywords=def class if elif else for while in return import from as with try except finally raise async await lambda yield pass None True False self

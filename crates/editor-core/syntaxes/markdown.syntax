@@ -1,0 +1,4 @@
+label=Markdown
+filenames=README CHANGELOG
+extensions=md
+lexer=markdown

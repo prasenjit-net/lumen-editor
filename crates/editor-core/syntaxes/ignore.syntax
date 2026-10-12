@@ -1,0 +1,3 @@
+label=Ignore
+filenames=.gitignore .dockerignore .ignore .rgignore
+lexer=ignore

@@ -1,0 +1,5 @@
+label=CSS
+extensions=css
+lexer=code
+block_comment=true
+keywords=important inherit initial unset auto none block flex grid absolute relative fixed

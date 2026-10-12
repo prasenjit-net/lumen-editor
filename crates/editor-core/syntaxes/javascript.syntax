@@ -1,0 +1,6 @@
+label=JavaScript
+extensions=js ts tsx jsx
+lexer=code
+line_comment=//
+block_comment=true
+keywords=const let var function class extends import export default from if else for while return async await new this null undefined true false interface type enum public private

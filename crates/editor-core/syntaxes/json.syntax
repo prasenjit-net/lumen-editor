@@ -1,0 +1,4 @@
+label=JSON
+extensions=json
+lexer=code
+keywords=true false null

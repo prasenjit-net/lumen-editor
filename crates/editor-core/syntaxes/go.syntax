@@ -1,0 +1,6 @@
+label=Go
+extensions=go
+lexer=code
+line_comment=//
+block_comment=true
+keywords=func package import type struct interface map chan go defer select case default if else for range return var const true false nil

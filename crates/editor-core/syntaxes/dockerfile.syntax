@@ -1,0 +1,7 @@
+label=Dockerfile
+filenames=Dockerfile Containerfile
+prefixes=Dockerfile. Containerfile.
+extensions=dockerfile
+lexer=dockerfile
+case_insensitive_keywords=true
+keywords=FROM RUN CMD LABEL MAINTAINER EXPOSE ENV ADD COPY ENTRYPOINT VOLUME USER WORKDIR ARG ONBUILD STOPSIGNAL HEALTHCHECK SHELL
