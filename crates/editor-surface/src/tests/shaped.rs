@@ -11,6 +11,36 @@ fn shaped_fixture(text: &str) -> (EditorSurface, EditorBuffer, Context) {
 }
 
 #[test]
+fn typography_invalidates_shape_cache_and_caret_rows_together() {
+    let (mut surface, mut buffer, ctx) = shaped_fixture("abc\r\ntwo e\u{301}");
+    let before = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    let shape = before.geometry.shaped.clone().unwrap();
+    assert!(surface.set_typography(crate::Typography {
+        font_size: 22.0,
+        line_height: 30.0,
+        bundled_font: false
+    }));
+    let after = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    assert!(!std::sync::Arc::ptr_eq(
+        &shape,
+        after.geometry.shaped.as_ref().unwrap()
+    ));
+    assert_eq!(after.geometry.caret_rect(5).height(), 30.0);
+    assert_eq!(
+        after.geometry.row_rects()[1].top() - after.geometry.row_rects()[0].top(),
+        30.0
+    );
+    assert_eq!(
+        after
+            .geometry
+            .hit_test(after.geometry.caret_rect(5).center()),
+        5
+    );
+    assert_eq!(buffer.text(), "abc\r\ntwo e\u{301}");
+    assert!(!buffer.is_dirty() && !buffer.can_undo());
+}
+
+#[test]
 fn pointer_shift_arrows_and_undo_keep_bidi_affinity_in_the_core() {
     use lumen_editor_core::{CaretAffinity, SelectionAffinity};
     let (mut surface, mut buffer, ctx) = shaped_fixture("abc אבג xyz");

@@ -85,7 +85,9 @@ pub(crate) fn text_widget_id(document: DocumentId) -> egui::Id {
 }
 
 pub(crate) fn blocked(view: &ViewState) -> bool {
-    view.command_palette
+    view.settings.open
+        || view.settings.pending_quit
+        || view.command_palette
         || view.pending_close.is_some()
         || view.pending_quit
         || view.delete_prompt.is_some()

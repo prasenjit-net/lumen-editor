@@ -20,6 +20,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Default)]
 pub struct EditorSurface {
+    typography: Typography,
     widget: Option<Id>,
     drag_anchor: Option<DragSelection>,
     composition: Option<Composition>,
@@ -34,6 +35,32 @@ pub struct EditorSurface {
     shaper: Option<Shaper>,
     #[cfg(feature = "shaped")]
     shape_cache: RefCell<Option<CachedShape>>,
+}
+
+/// Display-only configuration; never changes text, selections or history.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Typography {
+    pub font_size: f32,
+    pub line_height: f32,
+    pub bundled_font: bool,
+}
+impl Default for Typography {
+    fn default() -> Self {
+        Self {
+            font_size: 14.0,
+            line_height: 18.0,
+            bundled_font: false,
+        }
+    }
+}
+impl Typography {
+    pub fn font_id(self) -> FontId {
+        if self.bundled_font {
+            FontId::new(self.font_size, egui::FontFamily::Name("lumen-hack".into()))
+        } else {
+            FontId::monospace(self.font_size)
+        }
+    }
 }
 
 #[cfg(feature = "shaped")]
@@ -59,6 +86,26 @@ pub struct SurfaceOutput {
 }
 
 impl EditorSurface {
+    /// Defer relayout during composition/drag to preserve their layout authority.
+    pub fn set_typography(&mut self, typography: Typography) -> bool {
+        if !typography.font_size.is_finite()
+            || !typography.line_height.is_finite()
+            || !(8.0..=48.0).contains(&typography.font_size)
+            || !(typography.font_size..=80.0).contains(&typography.line_height)
+            || self.composition.is_some()
+            || self.drag_anchor.is_some()
+            || self.gutter_drag.is_some()
+        {
+            return false;
+        }
+        if self.typography != typography {
+            self.typography = typography;
+            self.vertical_goals = None;
+            #[cfg(feature = "shaped")]
+            self.shape_cache.borrow_mut().take();
+        }
+        true
+    }
     pub fn clear_clipboard(&mut self) {
         self.clipboard = None;
     }
@@ -80,7 +127,8 @@ impl EditorSurface {
         origin: Pos2,
         composition: Option<&Composition>,
     ) -> TextGeometry {
-        let geometry = TextGeometry::layout_composition(ui, text, origin, composition);
+        let geometry =
+            TextGeometry::layout_typography(ui, text, origin, composition, self.typography);
         #[cfg(feature = "shaped")]
         let geometry = {
             let mut geometry = geometry;
@@ -94,7 +142,7 @@ impl EditorSurface {
                 {
                     cached.layout.clone()
                 } else {
-                    let layout = Arc::new(shaper.layout(geometry.galley.text()));
+                    let layout = Arc::new(shaper.layout(geometry.galley.text(), self.typography));
                     *cache = Some(CachedShape {
                         galley: geometry.galley.clone(),
                         layout: layout.clone(),
@@ -139,7 +187,7 @@ impl EditorSurface {
                     ui.fonts_mut(|fonts| {
                         fonts.layout_no_wrap(
                             initial.row_count().to_string(),
-                            FontId::monospace(14.0),
+                            self.typography.font_id(),
                             ui.visuals().weak_text_color(),
                         )
                     })
@@ -302,7 +350,7 @@ impl EditorSurface {
                         Pos2::new(gutter.right() - 8.0, row.top()),
                         Align2::RIGHT_TOP,
                         (index + 1).to_string(),
-                        FontId::monospace(14.0),
+                        self.typography.font_id(),
                         ui.visuals().weak_text_color(),
                     );
                 }

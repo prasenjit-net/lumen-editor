@@ -19,10 +19,36 @@ impl LumenApp {
             && !self.view.command_palette
             && !ctx.wants_keyboard_input();
         match command {
-            Command::Find => self.open_find(false, ctx),
-            Command::Replace => self.open_find(true, ctx),
+            Command::Settings => {
+                self.view.settings.tab_open = true;
+                self.view.settings.open = true;
+                self.view.settings.focus_search = true;
+                self.view.explorer_focused = false;
+                super::editor_input::cancel_input(&mut self.view);
+                self.view.pending_editor_action = None;
+                if let Some(file) = self.editor.active() {
+                    let id = super::editor_action::text_widget_id(file.id);
+                    ctx.memory_mut(|memory| memory.surrender_focus(id));
+                }
+            }
+            Command::ApplySettings => self.apply_settings(),
+            Command::ReloadSettings => self.reload_settings(),
+            Command::DiscardSettingsAndQuit => {
+                self.view.settings.discard_drafts();
+                self.request_quit(ctx);
+            }
+            Command::OpenSettingsFile => {
+                if let Some(path) = self.view.settings.selected().path.clone() {
+                    self.open_file(path);
+                }
+            }
+            Command::Find if !self.view.settings.open => self.open_find(false, ctx),
+            Command::Replace if !self.view.settings.open => self.open_find(true, ctx),
+            Command::Find | Command::Replace => (),
             Command::EditorAction(document, action) => {
-                if self.editor.active().is_some_and(|file| file.id == document) {
+                if !self.view.settings.open
+                    && self.editor.active().is_some_and(|file| file.id == document)
+                {
                     self.view.pending_editor_action =
                         Some(super::editor_action::PendingEditorAction { document, action });
                     ctx.request_repaint();
@@ -61,11 +87,26 @@ impl LumenApp {
             Command::OpenFile => self.choose_file(),
             Command::OpenFolder => self.choose_folder(),
             Command::OpenPath(path) => self.open_file(path),
+            Command::Save if self.view.settings.open => {
+                if self.view.settings.selected().pending() > 0 {
+                    self.apply_settings();
+                }
+            }
+            Command::SaveAs if self.view.settings.open => {
+                self.view.status =
+                    "Settings use their selected User/Project config path; Save As is unavailable."
+                        .into();
+            }
             Command::Save => self.save_active(),
             Command::SaveAs => self.save_as_active(),
             Command::RequestClose(index) => self.request_close(index),
             Command::CloseFile(index) => self.close_file(index),
             Command::CloseEditor => {
+                if self.view.settings.open {
+                    self.view.settings.tab_open = false;
+                    self.view.settings.open = false;
+                    return;
+                }
                 if let Some(index) = self.editor.active_file {
                     self.request_close(index);
                 }

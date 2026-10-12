@@ -28,6 +28,14 @@ impl Workbench<'_> {
     }
 
     pub(crate) fn explorer_entry(&mut self, ui: &mut egui::Ui, path: &Path, depth: usize) {
+        if depth > 0
+            && !self.view.settings.boolean("explorer.show_hidden")
+            && path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+        {
+            return;
+        }
         let renaming = self.view.explorer_edit.as_ref().is_some_and(
             |edit| matches!(&edit.kind, ExplorerEditKind::Rename(source) if source == path),
         );

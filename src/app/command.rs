@@ -6,6 +6,11 @@ use std::path::PathBuf;
 /// Shared actions from native menus, shortcuts and workbench components.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
+    Settings,
+    ApplySettings,
+    ReloadSettings,
+    OpenSettingsFile,
+    DiscardSettingsAndQuit,
     Find,
     Replace,
     EditorAction(DocumentId, EditorAction),
@@ -53,6 +58,7 @@ impl Command {
     pub(crate) fn apply_local(&self, editor: &mut EditorState, view: &mut ViewState) -> bool {
         match *self {
             Self::NewUntitled => {
+                view.settings.open = false;
                 editor.new_file();
                 view.focus_editor = true;
                 view.status = "New untitled file".into();
@@ -73,6 +79,7 @@ impl Command {
                         view.reveal_edit_directory(editor);
                     }
                 } else {
+                    view.settings.open = false;
                     editor.new_file();
                     view.focus_editor = true;
                     view.status = "New untitled file".into();
@@ -100,6 +107,7 @@ impl Command {
     /// Stable native menu identifiers; data-carrying UI actions have no menu ID.
     pub(crate) fn menu_id(&self) -> Option<&'static str> {
         match self {
+            Self::Settings => Some("settings"),
             Self::Find => Some("find"),
             Self::Replace => Some("replace"),
             Self::NewUntitled => Some("new"),
@@ -124,6 +132,7 @@ impl Command {
 
     pub(crate) fn from_menu_id(id: &str) -> Option<Self> {
         Some(match id {
+            "settings" => Self::Settings,
             "find" => Self::Find,
             "replace" => Self::Replace,
             "new" => Self::NewUntitled,

@@ -249,7 +249,8 @@ impl EditorSurface {
             Key::PageUp | Key::PageDown => {
                 let geometry = self.geometry(ui, buffer.text(), origin, None);
                 let columns = self.preferred_columns(buffer, &geometry);
-                let distance = ui.clip_rect().height().max(18.0) - 18.0;
+                let distance = ui.clip_rect().height().max(self.typography.line_height)
+                    - self.typography.line_height;
                 let set = buffer.selections();
                 let positions: Vec<_> = buffer
                     .selections()

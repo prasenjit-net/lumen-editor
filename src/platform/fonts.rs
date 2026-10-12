@@ -50,6 +50,10 @@ pub(crate) fn configure(ctx: &egui::Context) -> egui::FontDefinitions {
                 .insert(0, name.into());
         }
     }
+    let hack = egui::FontDefinitions::default().families[&egui::FontFamily::Monospace].clone();
+    fonts
+        .families
+        .insert(egui::FontFamily::Name("lumen-hack".into()), hack);
     ctx.set_fonts(fonts.clone());
     fonts
 }

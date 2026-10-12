@@ -2027,9 +2027,11 @@ dependencies = [
  "libc",
  "lumen-editor-core",
  "lumen-editor-surface",
+ "lumen-settings-core",
  "muda",
  "raw-window-handle",
  "rfd",
+ "tempfile",
  "trash",
  "windows-sys 0.61.2",
 ]
@@ -2051,6 +2053,13 @@ dependencies = [
  "egui 0.36.2",
  "lumen-editor-core",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "lumen-settings-core"
+version = "0.1.0"
+dependencies = [
+ "toml_edit",
 ]
 
 [[package]]
@@ -3458,13 +3467,14 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.25.17+spec-1.1.0"
+version = "0.25.9+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3641d5bbb5349a79e1020a242d251efbc546ad8048d133958323ce9c40a9c9c"
+checksum = "da053d28fe57e2c9d21b48261e14e7b4c8b670b54d2c684847b91feaf4c7dac5"
 dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 
@@ -3476,6 +3486,12 @@ checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
  "winnow",
 ]
+
+[[package]]
+name = "toml_writer"
+version = "1.1.3+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
 name = "tracing"

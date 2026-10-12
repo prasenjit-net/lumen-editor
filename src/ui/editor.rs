@@ -16,7 +16,8 @@ impl Workbench<'_> {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
                     for (index, file) in self.editor.files.iter().enumerate() {
-                        let selected = self.editor.active_file == Some(index);
+                        let selected =
+                            !self.view.settings.open && self.editor.active_file == Some(index);
                         Frame::default()
                             .fill(if selected { BG } else { TAB })
                             .inner_margin(Margin::symmetric(10, 6))
@@ -71,6 +72,42 @@ impl Workbench<'_> {
                                 }
                             });
                     }
+                    if self.view.settings.tab_open {
+                        let selected = self.view.settings.open;
+                        Frame::new()
+                            .fill(if selected { BG } else { TAB })
+                            .inner_margin(Margin::symmetric(10, 6))
+                            .corner_radius(CornerRadius {
+                                nw: 3,
+                                ne: 3,
+                                sw: 0,
+                                se: 0,
+                            })
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new(format!("{} Settings", icon::GEAR))
+                                                    .color(if selected { TEXT } else { MUTED }),
+                                            )
+                                            .frame(false),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.command(Command::Settings);
+                                    }
+                                    if ui
+                                        .small_button(icon::X)
+                                        .on_hover_text("Close Settings (drafts retained)")
+                                        .clicked()
+                                    {
+                                        self.view.settings.tab_open = false;
+                                        self.view.settings.open = false;
+                                    }
+                                });
+                            });
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .small_button(icon::PLUS)
@@ -83,6 +120,7 @@ impl Workbench<'_> {
                 });
             });
         if let Some(index) = select {
+            self.view.settings.open = false;
             self.editor.active_file = Some(index);
             self.view.focus_editor = true;
         }
@@ -103,6 +141,10 @@ impl Workbench<'_> {
                 surface(BG).show(ui, |ui| {
                     ui.set_min_size(ui.available_size());
                     self.editor_tabs(ui);
+                    if self.view.settings.open {
+                        self.settings_page(ui);
+                        return;
+                    }
                     let Some(index) = self.editor.active_file else {
                         ui.vertical_centered(|ui| {
                             ui.add_space(130.0);

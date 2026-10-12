@@ -29,6 +29,12 @@ impl Workbench<'_> {
             ))
         });
         surface.set_gutter_id(super::editor_gutter::gutter_id(document));
+        let path = self.editor.files[index].path.as_deref();
+        surface.set_typography(lumen_editor_surface::Typography {
+            font_size: self.view.settings.number("editor.font_size", path),
+            line_height: self.view.settings.number("editor.line_height", path),
+            bundled_font: self.view.settings.font_family(path) == "Hack",
+        });
         let output = Frame::new()
             .fill(BG)
             .corner_radius(4)

@@ -9,6 +9,7 @@ pub(crate) mod editor_input;
 mod events;
 mod explorer_ops;
 pub(crate) mod find;
+pub(crate) mod settings;
 #[cfg(test)]
 mod tests;
 pub(crate) mod view_state;
@@ -26,6 +27,7 @@ pub(crate) struct LumenApp {
     pub(crate) file_system: Box<dyn FileSystem>,
     pub(crate) dialogs: Box<dyn FileDialogs>,
     pub(crate) clipboard: Box<dyn ClipboardService>,
+    pub(crate) settings_store: Box<dyn crate::services::settings::SettingsStore>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
 }
@@ -37,6 +39,7 @@ impl Default for LumenApp {
             file_system: Box::new(LocalFileSystem),
             dialogs: Box::new(NativeDialogs),
             clipboard: Box::<NativeClipboard>::default(),
+            settings_store: Box::new(crate::services::settings::LocalSettingsStore),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
         }
@@ -44,6 +47,8 @@ impl Default for LumenApp {
 }
 impl eframe::App for LumenApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.sync_project_settings();
+        self.apply_workbench_settings(ctx);
         self.handle_events(ctx);
         // Apply actions after each component, retaining the original frame order:
         // an explorer click can still open a file in the editor this same frame.
@@ -55,6 +60,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.palette(ctx));
         self.render_component(ctx, |workbench| workbench.unsaved_changes_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.quit_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.settings_quit_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.delete_dialog(ctx));
     }
 }

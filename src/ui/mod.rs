@@ -13,6 +13,7 @@ mod explorer;
 mod explorer_actions;
 mod explorer_edit;
 mod palette;
+mod settings;
 pub(crate) mod theme;
 mod widgets;
 

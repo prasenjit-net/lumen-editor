@@ -76,6 +76,10 @@ impl Workbench<'_> {
                 ui.separator();
                 for (label, action) in [
                     (
+                        format!("{}  Preferences: Open Settings", icon::GEAR),
+                        Command::Settings,
+                    ),
+                    (
                         format!("{}  File: New Text File", icon::FILE_PLUS),
                         Command::NewUntitled,
                     ),

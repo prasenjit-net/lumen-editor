@@ -1,4 +1,4 @@
-use egui::{FontId, Galley, Pos2, Rect, Ui, Vec2, text::CCursor};
+use egui::{Galley, Pos2, Rect, Ui, Vec2, text::CCursor};
 use lumen_editor_core::{CaretAffinity, Composition};
 use std::ops::Range;
 use std::sync::Arc;
@@ -20,14 +20,15 @@ pub struct TextGeometry {
 
 impl TextGeometry {
     pub fn layout(ui: &Ui, text: &str, origin: Pos2) -> Self {
-        Self::layout_composition(ui, text, origin, None)
+        Self::layout_typography(ui, text, origin, None, crate::Typography::default())
     }
 
-    pub(crate) fn layout_composition(
+    pub(crate) fn layout_typography(
         ui: &Ui,
         text: &str,
         origin: Pos2,
         composition: Option<&Composition>,
+        typography: crate::Typography,
     ) -> Self {
         // One transient layout replaces the primary range. Stored source and
         // history remain untouched; neighboring text participates in this galley.
@@ -62,7 +63,14 @@ impl TextGeometry {
             .chain([visual.len()])
             .collect();
         let galley = ui.fonts_mut(|fonts| {
-            fonts.layout_no_wrap(visual, FontId::monospace(14.0), ui.visuals().text_color())
+            let mut job = egui::text::LayoutJob::simple(
+                visual,
+                typography.font_id(),
+                ui.visuals().text_color(),
+                f32::INFINITY,
+            );
+            job.sections[0].format.line_height = Some(typography.line_height);
+            fonts.layout_job(job)
         });
         Self {
             galley,

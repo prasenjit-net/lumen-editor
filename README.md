@@ -217,6 +217,35 @@ is rejected with feedback; the user explicitly accepted that grapheme-safe rule.
 Windows is compilation-
 checked, not runtime-tested. See [native validation](plan/native-editor-validation.md).
 
+### Settings
+
+Open Settings with the activity-bar gear, the native Settings menu, the command
+palette or Cmd/Ctrl+,. The searchable page is generated from section schemas.
+Schemas, validation, precedence, search and TOML encoding live in the independent
+[`lumen-settings-core`](crates/settings-core/README.md) crate; disk storage,
+application drafts and egui components remain outside it.
+Search names, descriptions or IDs; `@modified`, `@pending` and
+`@id:editor.font_size` are supported filters.
+
+User settings are stored at `~/.lumen/settings.toml` (Windows:
+`%USERPROFILE%\.lumen\settings.toml`). Project settings are stored inside the opened
+folder at `.lumen/settings.toml` and override user values. Apply saves only explicit
+overrides; Remove Override inherits, while Set Built-in Default writes an explicit
+default. Cancel discards the selected scope's draft. No files are created just by
+opening Settings or a folder.
+
+The initial controls cover font family (platform or bundled Hack), font size,
+line height, UI scale, sidebar visibility and hidden files. Both editor backends
+use the typography settings. Set line height at least as large as font size.
+Settings preserve document text and history. Outside-project files use user
+typography; untitled buffers inherit the current project.
+
+External changes currently require Reload (config files saved in Lumen reload
+automatically). Invalid files and disk conflicts are reported without replacing
+valid settings or drafts. Close an open config tab before applying its form draft,
+or edit/save that config directly. Broader settings capabilities and native
+acceptance are tracked in [the settings plan](plan/settings-feature-plan.md).
+
 ### Standalone multi-cursor fixture
 
 A separate in-memory prototype

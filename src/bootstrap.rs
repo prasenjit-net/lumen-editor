@@ -37,6 +37,7 @@ pub(crate) fn run() -> eframe::Result<()> {
                     app.open_file(path);
                 }
             }
+            app.initialize_settings(crate::services::settings::user_path());
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             {
                 let menu = platform::native_menu::NativeMenu::new(&cc.egui_ctx)?;
@@ -45,6 +46,8 @@ pub(crate) fn run() -> eframe::Result<()> {
                 menu.set_context(
                     app.editor.active_file.is_some(),
                     app.editor.active_file.is_some(),
+                    false,
+                    false,
                     false,
                 );
                 app.native_menu = Some(menu);

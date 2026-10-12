@@ -6,7 +6,9 @@ use eframe::egui;
 use std::path::PathBuf;
 impl LumenApp {
     pub(crate) fn request_quit(&mut self, ctx: &egui::Context) {
-        if self.editor.has_unsaved_changes() {
+        if self.view.settings.has_drafts() {
+            self.view.settings.pending_quit = true;
+        } else if self.editor.has_unsaved_changes() {
             self.view.pending_quit = true;
         } else {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -38,6 +40,7 @@ impl LumenApp {
     }
 
     pub(crate) fn open_file(&mut self, path: PathBuf) {
+        self.view.settings.open = false;
         if let Some(index) = self
             .editor
             .files
@@ -63,8 +66,9 @@ impl LumenApp {
         };
         match self.file_system.write_text(&path, &file.text) {
             Ok(()) => {
-                file.mark_saved(path);
+                file.mark_saved(path.clone());
                 self.view.status = "Saved".into();
+                self.settings_file_saved(&path);
             }
             Err(error) => self.view.status = format!("Could not save file: {error}"),
         }

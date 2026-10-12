@@ -3,6 +3,10 @@ use super::command::Command;
 use eframe::egui;
 impl LumenApp {
     pub(crate) fn handle_events(&mut self, ctx: &egui::Context) {
+        let settings = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Comma);
+        if ctx.input_mut(|input| input.consume_shortcut(&settings)) {
+            self.execute(Command::Settings, ctx);
+        }
         super::editor_action::validate_paste(&mut self.view, self.editor.active(), ctx);
         // Editor metadata follows the delivered keyboard segment, not the whole
         // raw batch. Other text fields keep ordinary clipboard handling.
@@ -36,17 +40,17 @@ impl LumenApp {
                 egui::Key::H
             },
         );
-        if ctx.input_mut(|input| input.consume_shortcut(&replace)) {
+        if !self.view.settings.open && ctx.input_mut(|input| input.consume_shortcut(&replace)) {
             self.execute(Command::Replace, ctx);
-        } else if ctx.input_mut(|input| input.consume_shortcut(&find)) {
+        } else if !self.view.settings.open && ctx.input_mut(|input| input.consume_shortcut(&find)) {
             self.execute(Command::Find, ctx);
         }
         if ctx.input(|input| input.viewport().close_requested())
             && !self.view.allow_quit
-            && self.editor.has_unsaved_changes()
+            && (self.editor.has_unsaved_changes() || self.view.settings.has_drafts())
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.view.pending_quit = true;
+            self.request_quit(ctx);
         }
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
@@ -68,7 +72,13 @@ impl LumenApp {
                     && self.view.delete_prompt.is_none()
                     && !self.view.command_palette
                     && !ctx.wants_keyboard_input();
-                menu.set_context(open, text_input, explorer);
+                menu.set_context(
+                    open,
+                    text_input,
+                    explorer,
+                    self.view.settings.open,
+                    self.view.settings.selected().pending() > 0,
+                );
             }
         }
         #[cfg(not(target_os = "macos"))]
@@ -97,9 +107,7 @@ impl LumenApp {
                 }
             }
             if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::W)) {
-                if let Some(index) = self.editor.active_file {
-                    self.execute(Command::RequestClose(index), ctx);
-                }
+                self.execute(Command::CloseEditor, ctx);
             }
         }
         self.route_platform_paste(ctx);

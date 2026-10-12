@@ -61,15 +61,22 @@ impl Shaper {
         })))
     }
 
-    pub(crate) fn layout(&self, text: &str) -> ShapedLayout {
+    pub(crate) fn layout(&self, text: &str, typography: crate::Typography) -> ShapedLayout {
         let mut resources = self.0.lock().expect("shaping resource lock");
-        let mut buffer = Buffer::new(&mut resources.fonts, Metrics::new(14.0, 18.0));
+        let mut buffer = Buffer::new(
+            &mut resources.fonts,
+            Metrics::new(typography.font_size, typography.line_height),
+        );
         buffer.set_size(None, None);
         buffer.set_wrap(Wrap::None);
         buffer.set_tab_width(4);
         buffer.set_text(
             text,
-            &Attrs::new().family(Family::Monospace),
+            &Attrs::new().family(if typography.bundled_font {
+                Family::Name("Hack")
+            } else {
+                Family::Monospace
+            }),
             Shaping::Advanced,
             None,
         );
@@ -114,8 +121,11 @@ impl ShapedLayout {
         let (x, y) = self
             .buffer
             .cursor_position(&cursor)
-            .unwrap_or((0.0, cursor.line as f32 * 18.0));
-        Rect::from_min_size(origin + vec2(x, y), vec2(1.0, 18.0))
+            .unwrap_or((0.0, cursor.line as f32 * self.buffer.metrics().line_height));
+        Rect::from_min_size(
+            origin + vec2(x, y),
+            vec2(1.0, self.buffer.metrics().line_height),
+        )
     }
 
     pub(crate) fn caret_with_affinity(
@@ -137,7 +147,10 @@ impl ShapedLayout {
                     } else {
                         glyph.x + glyph.w
                     };
-                    return Rect::from_min_size(origin + vec2(x, run.line_top), vec2(1.0, 18.0));
+                    return Rect::from_min_size(
+                        origin + vec2(x, run.line_top),
+                        vec2(1.0, self.buffer.metrics().line_height),
+                    );
                 }
             }
         }
@@ -257,7 +270,10 @@ impl ShapedLayout {
                         positions.get(&cursor.index).map(|x| Pos2::new(*x, *top))
                     })
                 });
-                position.unwrap_or(Pos2::new(0.0, cursor.line as f32 * 18.0))
+                position.unwrap_or(Pos2::new(
+                    0.0,
+                    cursor.line as f32 * self.buffer.metrics().line_height,
+                ))
             })
             .collect()
     }
@@ -501,7 +517,7 @@ mod tests {
     #[test]
     fn mixed_direction_arrows_follow_visual_order_and_retain_boundary_side() {
         let text = "abc אבג xyz";
-        let layout = Shaper::default().layout(text);
+        let layout = Shaper::default().layout(text, crate::Typography::default());
         let before = layout.caret_with_affinity(4, CaretAffinity::Before, Pos2::ZERO);
         let after = layout.caret_with_affinity(4, CaretAffinity::After, Pos2::ZERO);
         assert!((before.left() - after.left()).abs() > 1.0);
@@ -540,7 +556,7 @@ mod tests {
     #[test]
     fn visual_arrows_cross_empty_lines_and_keep_extended_graphemes_atomic() {
         let text = "é👩‍💻\n\n漢";
-        let layout = Shaper::default().layout(text);
+        let layout = Shaper::default().layout(text, crate::Typography::default());
         let mut cursor = (0, CaretAffinity::After);
         let boundaries: Vec<_> = text
             .grapheme_indices(true)
@@ -575,7 +591,7 @@ mod tests {
             "abc العربية xyz\nالعربية\n123",
             "a\u{2028}b\nend",
         ] {
-            let layout = Shaper::default().layout(text);
+            let layout = Shaper::default().layout(text, crate::Typography::default());
             let positions = layout.character_carets(text);
             let boundaries: Vec<_> = text
                 .char_indices()
@@ -594,7 +610,7 @@ mod tests {
     }
     #[test]
     fn retina_glyph_baselines_match_logical_layout_rows() {
-        let layout = Shaper::default().layout("one\ntwo\nthree");
+        let layout = Shaper::default().layout("one\ntwo\nthree", crate::Typography::default());
         for run in layout.buffer.layout_runs() {
             let glyph = run.glyphs.first().unwrap();
             for scale in [1.0, 1.5, 2.0] {

@@ -37,7 +37,12 @@ impl Workbench<'_> {
                             }
                         }
                         ui.add_space((ui.available_height() - 50.0).max(0.0));
-                        widgets::icon_button(ui, icon::GEAR, false);
+                        if widgets::icon_button(ui, icon::GEAR, self.view.settings.open)
+                            .on_hover_text("Settings (Cmd/Ctrl+,)")
+                            .clicked()
+                        {
+                            self.command(crate::app::command::Command::Settings);
+                        }
                     });
                 });
             });

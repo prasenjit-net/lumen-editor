@@ -50,6 +50,10 @@ behavior. Preserve existing functionality unless a task explicitly changes it.
 
 - Keep `main.rs` small; `bootstrap.rs` wires startup and platform integrations.
 - `model/` contains document/editor state and rules, with no egui or I/O.
+- `crates/settings-core/` owns settings section schemas, defaults, validation,
+  precedence, search and TOML parsing/serialization. Keep it independent of egui,
+  native platforms and filesystem I/O. Settings path/storage adapters stay in
+  `services/`; drafts/scope lifecycle stay in `app/`; rendering stays in `ui/`.
 - `app/` owns orchestration, shared typed commands, input routing, and view
   state. File workflows belong in `app/documents.rs`.
 - `services/` owns filesystem/dialog interfaces and local/native adapters.

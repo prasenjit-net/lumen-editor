@@ -85,6 +85,7 @@ impl Activity {
 }
 
 pub(crate) struct ViewState {
+    pub(crate) settings: super::settings::SettingsState,
     #[cfg(feature = "shared-editor")]
     pub(crate) shared_editor: bool,
     #[cfg(feature = "shared-editor")]
@@ -135,6 +136,7 @@ impl ViewState {
 impl Default for ViewState {
     fn default() -> Self {
         Self {
+            settings: Default::default(),
             #[cfg(feature = "shared-editor")]
             shared_editor: true,
             #[cfg(feature = "shared-editor")]

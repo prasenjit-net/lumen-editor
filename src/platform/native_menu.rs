@@ -33,6 +33,8 @@ impl NativeMenu {
                 }),
             ),
             &PredefinedMenuItem::separator(),
+            &item(Command::Settings, "Settings…", Code::Comma, false),
+            &PredefinedMenuItem::separator(),
             &PredefinedMenuItem::services(None),
             &PredefinedMenuItem::separator(),
             &PredefinedMenuItem::hide(Some("Hide Lumen")),
@@ -101,6 +103,8 @@ impl NativeMenu {
             },
         ];
         edit.append_items(&[&PredefinedMenuItem::separator(), &find[0], &find[1]])?;
+        #[cfg(target_os = "windows")]
+        edit.append(&item(Command::Settings, "Settings…", Code::Comma, false))?;
         let view = Submenu::new("View", true);
         view.append_items(&[
             &item(Command::Palette, "Command Palette…", Code::KeyP, true),
@@ -186,13 +190,20 @@ impl NativeMenu {
             .collect()
     }
 
-    pub fn set_context(&self, open: bool, text_input: bool, explorer: bool) {
+    pub fn set_context(
+        &self,
+        open: bool,
+        text_input: bool,
+        explorer: bool,
+        settings: bool,
+        pending: bool,
+    ) {
         for item in &self.find {
-            item.set_enabled(open);
+            item.set_enabled(open && !settings);
         }
-        for item in [&self.save, &self.save_as, &self.close] {
-            item.set_enabled(open);
-        }
+        self.save.set_enabled(if settings { pending } else { open });
+        self.save_as.set_enabled(open && !settings);
+        self.close.set_enabled(open || settings);
         for item in &self.edits {
             let clipboard = matches!(
                 Command::from_menu_id(&item.id().0),

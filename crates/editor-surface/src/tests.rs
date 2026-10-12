@@ -9,6 +9,31 @@ mod ime;
 mod shaped;
 mod typing;
 
+#[test]
+fn typography_relayouts_geometry_without_mutating_document_or_history() {
+    let (mut surface, mut buffer, ctx) = fixture("one\r\ntwo e\u{301} text");
+    buffer.replace_selections(&["x"]).unwrap();
+    let text = buffer.text().to_string();
+    let selections = buffer.selections().clone();
+    let revision = buffer.revision();
+    let before = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    assert!(surface.set_typography(crate::Typography {
+        font_size: 24.0,
+        line_height: 32.0,
+        bundled_font: false
+    }));
+    let after = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    assert!(after.geometry.size().y > before.geometry.size().y);
+    assert_eq!(buffer.text(), text);
+    assert_eq!(buffer.selections(), &selections);
+    assert_eq!(buffer.revision(), revision);
+    assert!(buffer.can_undo());
+    assert!(!surface.set_typography(crate::Typography {
+        font_size: f32::NAN,
+        ..Default::default()
+    }));
+}
+
 fn frame(
     surface: &mut EditorSurface,
     buffer: &mut EditorBuffer,

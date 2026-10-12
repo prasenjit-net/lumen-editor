@@ -49,7 +49,14 @@ impl Workbench<'_> {
                 .show(ui, |ui| {
                     // Reserve scrollbar hit regions instead of overlaying editable text.
                     ui.spacing_mut().scroll.floating = false;
-                    let font = FontId::monospace(14.0);
+                    let path = self.editor.files[index].path.as_deref();
+                    let font_size = self.view.settings.number("editor.font_size", path);
+                    let line_height = self.view.settings.number("editor.line_height", path);
+                    let font = if self.view.settings.font_family(path) == "Hack" {
+                        FontId::new(font_size, egui::FontFamily::Name("lumen-hack".into()))
+                    } else {
+                        FontId::monospace(font_size)
+                    };
                     let line_count = self.editor.files[index].text.split('\n').count();
                     let number_width = ui.fonts_mut(|fonts| {
                         fonts
@@ -81,12 +88,14 @@ impl Workbench<'_> {
                                 |ui: &egui::Ui, text: &dyn egui::TextBuffer, _: f32| {
                                     // Code lines do not wrap implicitly. Horizontal scrolling owns overflow.
                                     ui.fonts_mut(|fonts| {
-                                        fonts.layout_job(egui::text::LayoutJob::simple(
+                                        let mut job = egui::text::LayoutJob::simple(
                                             text.as_str().into(),
                                             font.clone(),
                                             TEXT,
                                             f32::INFINITY,
-                                        ))
+                                        );
+                                        job.sections[0].format.line_height = Some(line_height);
+                                        fonts.layout_job(job)
                                     })
                                 };
                             let output = ui
