@@ -1,11 +1,10 @@
 # Multi-cursor backend spike
 
 Pure text/selection/transaction core; no UI or filesystem dependencies. It is a
-workspace member and shared logical-line policy dependency. TextEdit remains the
-default application's editing/history owner. With `--features shared-editor`,
-the workbench uses this core exclusively for document edits/history; no document
-TextEdit history exists alongside it. This experimental build is not default
-production adoption.
+workspace member and shared logical-line policy dependency. The default application
+uses this core exclusively for document edits/history; no document TextEdit history
+exists alongside it. `--no-default-features` retains the legacy TextEdit backend.
+Default promotion was explicitly requested while native acceptance remains pending.
 
 - Endpoints are UTF-8 byte offsets on extended grapheme boundaries (including
   CRLF, combining marks and emoji sequences). Invalid sets are rejected atomically.
@@ -15,11 +14,16 @@ production adoption.
   One transaction updates all locations and collapses selections to final carets.
   Joining graphemes snap carets forward; duplicates then merge.
 - Undo/redo restores complete text/selection snapshots. Saves are independent
-  checkpoints; no-ops preserve state and redo. History is capped at 100 edits.
+  checkpoints; no-ops preserve state and redo. History is capped at 100 undo groups.
+- Anchor/head caret affinity is part of normalized selection and history state.
+  It survives undo and invalidates delayed paste/composition when the side changes.
+- Consecutive single-line typing coalesces within a one-second pause. Clocks are
+  supplied by adapters; save, navigation, clipboard and IME boundaries split groups.
 
 Full snapshots and linear scans are correctness-spike choices, not a measured
-large-file design. Native IME/clipboard/accessibility validation, shaping and
-default promotion remain pending. Feature-gated workbench integration is implemented.
+large-file design. Native IME/clipboard/accessibility validation and
+runtime acceptance remains pending. Default workbench integration is implemented;
+the legacy backend is still available with default features disabled.
 
 The surface spike now exercises this core with actual multi-location input.
 Horizontal movement/Shift extension and deletion operate on complete graphemes;

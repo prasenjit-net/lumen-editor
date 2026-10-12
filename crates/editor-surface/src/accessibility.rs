@@ -129,7 +129,7 @@ fn publish_shaped(ui: &Ui, response: &Response, geometry: &TextGeometry, buffer:
     }
     // Direct public node construction attaches unregistered nodes to egui's
     // root. Reparent only our rows, retaining every unrelated root child.
-    let row_ids: Vec<_> = shaped
+    let row_ids: std::collections::HashSet<_> = shaped
         .starts
         .iter()
         .enumerate()

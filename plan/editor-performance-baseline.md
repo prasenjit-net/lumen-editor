@@ -76,15 +76,67 @@ lines, newline boundaries, ligatures, combining marks, tabs, mixed-direction tex
 CRLF projection and transient preedit. This does not add bidi caret affinity or
 prove native VoiceOver behavior. Long-line glyph scans remain a potential cost.
 
+### Long-line and gutter follow-up
+
+The probe now reports fixture names/byte counts and includes a 13,000-byte single
+line with ligatures, combining marks, CJK and emoji. Offscreen gutter labels no
+longer produce paint commands; empty visible rows still keep their numbers.
+The full document geometry and accessibility rows remain unchanged.
+
+| Fixture | Bytes | AccessKit | Cold frame ms | Mean idle frame ms |
+| --- | ---: | --- | ---: | ---: |
+| 1,000 rows | 37,000 | Disabled | 14.042 | 8.673 |
+| 1,000 rows | 37,000 | Enabled | 10.670 | 8.754 |
+| Long Unicode line | 13,000 | Disabled | 6.864 | 5.620 |
+| Long Unicode line | 13,000 | Enabled | 21.484 | 20.492 |
+
+The Unicode sample uses embedded fallback fonts, not a native font-coverage check.
+Its enabled cost confirms that indexing document rows does not remove repeated
+glyph scans within a long line. A cluster/glyph lookup optimization needs the
+same coordinate-equivalence checks before replacing the current public run
+lookup; do not infer bidi caret-affinity support from matching positions.
+
 ## Remaining performance work
 
-- Cache/reuse unchanged shaping/layout across idle frames. Sizing/painting now
-  reuse a layout when source/preedit are unchanged, but each frame still rebuilds.
+### Completion-batch sample (2026-10-12)
+
+The shape cache now reuses an immutable layout when egui's galley identity is
+unchanged. A glyph/cluster index preserves the public run cursor-position policy
+without rescanning all glyphs for every character; positions and visual arrow
+stops are lazy per-layout caches. Text/source projection, font/style/scale changes
+and document identity invalidate the corresponding cached shape. Source mappings
+are not shared across differing LF/CRLF content. Cache equivalence/invalidation
+and affinity/history tests accompany this change.
+
+The expanded release probe measures cold + three idle frames:
+
+| Fixture | Bytes | Cursors | AccessKit | Cold ms | Idle mean ms |
+| --- | ---: | ---: | --- | ---: | ---: |
+| 1,000 rows | 37,000 | 1 | Disabled | 14.256 | 0.995 |
+| 1,000 rows | 37,000 | 1 | Enabled | 14.463 | 1.298 |
+| 10,000 rows | 370,000 | 1 | Disabled | 81.267 | 4.756 |
+| 10,000 rows | 370,000 | 1 | Enabled | 105.680 | 9.381 |
+| 1,000 cursors | 37,000 | 1,000 | Disabled | 10.437 | 2.622 |
+| 1,000 cursors | 37,000 | 1,000 | Enabled | 12.128 | 2.976 |
+| Long Unicode line | 13,000 | 1 | Disabled | 6.934 | 0.131 |
+| Long Unicode line | 13,000 | 1 | Enabled | 7.217 | 0.174 |
+
+A quadratic root-row membership check was also replaced with a set lookup;
+the preceding 10,000-row enabled sample averaged 20.792 ms idle. Root child order
+and unrelated children are preserved. No document/accessibility rows are removed.
+
+These samples exclude native input, GPU presentation, typing, allocator/RSS and
+native screen-reader consumers. Cold layout still scales with file size. The core
+1 MB typing/history figures above remain relevant; idle layout caching does not
+eliminate per-edit buffer rebuilding, source-map construction or full snapshots.
+
+- Unchanged shaping and character geometry are now cached across idle frames.
+  Further reduce per-edit buffer/source-map work, then measure native presentation.
 - Reduce enabled-accessibility character positioning costs without dropping
   document rows or changing source/selection semantics. Verify tree equivalence
   and native VoiceOver behavior before adopting incremental publication.
-- Cull offscreen gutter labels; measure long lines, many cursors and large-file
-  edits separately from cold font/glyph setup.
+- Offscreen gutter labels are culled and a long-line fixture is measured. Extend
+  coverage to many cursors and large-file edits separately from cold setup.
 - Replace full history snapshots only with an independently tested transaction
   representation; preserve checkpoints, original cursor sets and atomic commands.
 - Extend probes to native release builds and larger Unicode fixtures. Do not

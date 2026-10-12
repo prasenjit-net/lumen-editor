@@ -1,5 +1,52 @@
 # Native editor validation
 
+## Current workbench acceptance (2026-10-12)
+
+Default promotion was explicitly requested after this checklist was prepared.
+Normal `cargo run` / `cargo xtask bundle` now use the shared editor. Native results
+are still pending; either the normal or separate validation bundle can run these
+checks. Legacy launch: `cargo run --no-default-features`.
+
+The user can test macOS; Windows runtime remains pending. This acceptance applies
+to the newly cached/shaped, affinity-aware **full workbench**, not the older
+in-memory prototype. Use the separate `target/Lumen Experimental.app` bundle
+(built with `cargo xtask bundle --offline --shared-editor`) or
+`cargo run --features shared-editor`. Use a new untitled buffer/disposable file.
+Save any clipboard content you need before testing. No input methods or
+accessibility settings were changed by the agent.
+
+Report these as pass/fail/not tested, with macOS version and input method:
+
+1. **IME/dead keys:** start, update, commit and cancel Japanese/Chinese preedit;
+   check candidate placement after scrolling/resizing. Option+E then `e` inserts
+   `é` once. Repeat with multiple cursors; commit is one undo step, cancellation
+   does not mutate. Switch tabs/apps during preedit and confirm no late insertion.
+2. **Clipboard:** selected and empty-selection Copy/Cut/Paste; external Unicode
+   payload at multiple cursors; exact CRLF round-trip in a disposable saved file.
+   Immediately type after paste and undo paste/typing separately. Context-menu
+   paste after changing the caret/selection must cancel safely.
+3. **VoiceOver:** editable role, line reading, primary selection, selection changes
+   and focus return. Check after CRLF, during preedit and on mixed-direction text.
+   No duplicate tree rows or focus trap; accessible selection collapses secondary
+   cursors without editing the buffer.
+4. **Bidi/geometry:** paste `abc אבג xyz` and `abc العربية xyz` on separate lines.
+   Left/Right should move visually, without skipping inside combining characters
+   or emoji. Shift-arrows, click placement, multi-cursor Up/Down and undo must keep
+   the correct boundary side. Select `c א` in the Hebrew line: separate visible
+   highlights should not fill the intervening unselected Hebrew characters.
+   Repeat at narrow/wide widths and after horizontal scrolling.
+5. **Workbench/history:** Cmd+D, Shift+Cmd+L, Option+Cmd+Up/Down, Tab/Shift+Tab,
+   Escape, native/menu/popup undo. Consecutive typing groups; save creates an undo
+   boundary. Tab return restores scroll/selections. Right-click preserves selection.
+   Text/blank editor space uses an I-beam; gutter/scrollbar do not.
+6. **File lifecycle:** open duplicate file, save/save-as, cancel save-as, dirty
+   close/quit cancellation and a failing save to a disposable read-only target.
+   Unsaved content and history must survive failures/cancellation.
+
+See [the promotion gates](editor-promotion-checklist.md) before enabling the new
+backend by default. Screenshots/tree tests are not evidence that these native
+checks passed. Earlier prototype results below remain historical only.
+
 Updated 2026-10-11. The user reported **all five manual macOS checks passed** for
 the preceding default (egui-galley) prototype. Input-method/OS-version details
 were not supplied. This is user-reported validation, not an automated runtime

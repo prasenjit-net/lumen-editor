@@ -1,4 +1,6 @@
-use crate::{EditError, Selection, SelectionSet, selection::grapheme_boundaries};
+use crate::{
+    EditError, Selection, SelectionAffinity, SelectionSet, selection::grapheme_boundaries,
+};
 
 // Full snapshots are deliberately bounded for this correctness spike; measured
 // storage/history performance is a separate gate before production adoption.
@@ -99,6 +101,17 @@ impl EditorBuffer {
         primary: usize,
     ) -> Result<(), EditError> {
         let selections = SelectionSet::new(self.text(), selections, primary)?;
+        self.break_undo_group();
+        self.current.selections = selections;
+        Ok(())
+    }
+
+    pub fn set_selections_with_affinity(
+        &mut self,
+        selections: Vec<(Selection, SelectionAffinity)>,
+        primary: usize,
+    ) -> Result<(), EditError> {
+        let selections = SelectionSet::with_affinities(self.text(), selections, primary)?;
         self.break_undo_group();
         self.current.selections = selections;
         Ok(())

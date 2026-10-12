@@ -1,18 +1,23 @@
 # Shared editor integration
 
-Updated 2026-10-11. Implemented experimentally, not promoted to the default build.
+Updated 2026-10-12. Promoted by explicit user request to the default build.
+Native macOS/Windows acceptance remains pending; promotion does not imply those
+checks passed. Legacy adapters remain as a build-time fallback.
 
 ```sh
-cargo run --features shared-editor
-cargo xtask bundle --offline --shared-editor
+cargo run
+cargo xtask bundle --offline
+cargo run --no-default-features
+cargo xtask bundle --offline --legacy-editor
 ```
 
-The bundle is `target/Lumen Experimental.app`, with a distinct bundle identifier;
-the normal bundle remains `target/Lumen.app`. Both use native platform menus.
+Normal packaging creates `target/Lumen.app` with the shared editor. Legacy
+packaging creates `target/Lumen Legacy.app` with a distinct bundle identifier.
+`--shared-editor` still creates the separate validation bundle. All use native menus.
 
 ## Ownership and routes
 
-| Area | Default build | Shared-editor build |
+| Area | Legacy fallback | Default shared-editor build |
 | --- | --- | --- |
 | Document mutations/history | TextEdit | Document-owned EditorBuffer only |
 | Stored file contents | Document text | Read-only document snapshot of the core |
@@ -36,6 +41,30 @@ focus/modal guards remain in the controller. The old service reread's latency/
 snapshot race and session-only metadata limitations are not claimed resolved.
 
 ## Checks and evidence
+
+The follow-up reports below record pre-promotion checkpoints. Current default
+configuration is described at the top; pending native checks are not marked passed.
+
+### Completion batch (2026-10-12)
+
+See [the six-area checklist](editor-promotion-checklist.md) for current promotion
+status. This batch adds immutable shape caching, indexed cluster geometry,
+core-owned caret affinity, visual grapheme arrows/pointer mapping, retained
+affinity in undo/selection extension and delayed-paste/composition guards.
+Native-rendered bidi fixtures were reviewed at 300/900/1400 widths. Scale probes
+now include 10,000 rows and 1,000 cursors. Grapheme-safe Find rejection was
+explicitly accepted by the user and stays documented.
+
+The user will run the final macOS workbench checklist. Windows runtime remains
+pending by user direction. Default promotion and removal of legacy document
+adapters are intentionally not executed before native macOS acceptance.
+
+### Long-line and gutter follow-up
+
+The headless probe includes a long Unicode line. Gutter labels use shared row
+geometry but only vertically visible rows produce paint commands. A regression
+verifies that empty visible rows retain numbers and offscreen document rows do
+not add labels. No accessibility rows, document contents or caret state are culled.
 
 ### Accessibility row-index follow-up
 
@@ -106,9 +135,10 @@ integration checkpoint.
 
 ## Before default promotion
 
-1. Complete mixed-bidi affinity and visual arrow behavior, including selection
-   rectangles at direction boundaries. Logical grapheme movement is not full
-   bidi editing parity. Confirm configured fonts on both native platforms.
+1. Core affinity and visual grapheme arrow behavior now have regression coverage,
+   including disjoint direction-boundary selections. Confirm native behavior,
+   embedding/control-heavy documents and configured fonts on both platforms;
+   do not infer exhaustive Unicode bidi conformance from these fixtures.
 2. Repeat IME/candidate/cancellation, clipboard and VoiceOver checks on the shaped
    workbench using [the checklist](native-editor-validation.md). Keep Windows
    runtime explicitly pending until a host is available.

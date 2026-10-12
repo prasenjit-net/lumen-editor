@@ -9,6 +9,7 @@ default-members = ["."]
 resolver = "3"
 
 [features]
+default = ["shared-editor"]
 shared-editor = ["dep:lumen-editor-surface", "lumen-editor-surface/shaped"]
 
 [dependencies]

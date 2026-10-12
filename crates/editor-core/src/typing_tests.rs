@@ -1,6 +1,36 @@
 use crate::{EditorBuffer, Selection};
 
 #[test]
+fn history_and_normalization_preserve_caret_affinity() {
+    use crate::{CaretAffinity, SelectionAffinity};
+    let before = SelectionAffinity {
+        anchor: CaretAffinity::Before,
+        head: CaretAffinity::Before,
+    };
+    let after = SelectionAffinity::default();
+    let mut buffer = EditorBuffer::new("abc אבג".into());
+    buffer
+        .set_selections_with_affinity(
+            vec![(Selection::caret(4), after), (Selection::caret(1), before)],
+            0,
+        )
+        .unwrap();
+    assert_eq!(buffer.selections().affinities(), &[before, after]);
+    assert_eq!(buffer.selections().primary_index(), 1);
+    let original = buffer.selections().clone();
+    buffer.type_text("x", 0.0).unwrap();
+    buffer.undo();
+    assert_eq!(buffer.selections(), &original);
+    buffer
+        .set_selections_with_affinity(
+            vec![(Selection::caret(4), after), (Selection::caret(4), before)],
+            1,
+        )
+        .unwrap();
+    assert_eq!(buffer.selections().affinities(), &[before]);
+}
+
+#[test]
 fn consecutive_unicode_typing_at_multiple_cursors_is_one_undo_group() {
     let mut buffer = EditorBuffer::new("a b".into());
     buffer

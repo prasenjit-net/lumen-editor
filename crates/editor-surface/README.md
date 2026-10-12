@@ -12,10 +12,10 @@ To use the new cosmic-text/Swash renderer:
 cargo run -p lumen-editor-surface --example spike --features shaped -- 900
 ```
 
-Both examples edit memory only. The full feature-gated workbench is available
-with `cargo run --features shared-editor` from the project root. It supports real
-open/save operations; use disposable buffers for experimental testing. Default
-Lumen continues to use TextEdit until promotion gates pass.
+Both examples edit memory only. The full workbench uses this shaped surface by
+default with `cargo run` from the project root. It supports real open/save
+operations; use disposable buffers for native acceptance testing, which remains
+pending. `cargo run --no-default-features` retains the legacy TextEdit backend.
 
 Implemented:
 
@@ -60,10 +60,12 @@ The cosmic probe passes bounded source/Arabic caret checks; font coverage and
 visual correctness are separate checks. The user reported passing native macOS
 checks for the earlier egui-only prototype; new shaped IME/AT checks remain open.
 
-Not production-approved: full mixed-bidi affinity/visual arrow semantics, measured
-large-file layout/accessibility behavior, history/typing coalescing, complete
-platform font coverage and exhaustive workbench parity. Secondary vertical goals
-and word/line-edge details need more parity coverage. Windows has compilation
+Implemented experimentally: core affinity/visual grapheme arrows, independent
+vertical goals, typing coalescing, shape/character caches and indexed glyph lookup.
+Scale probes and coordinate/cache regression coverage are recorded in the
+integration report. Not production-approved: native IME/accessibility behavior,
+embedding/control-heavy bidi conformance, complete platform font coverage and
+exhaustive workbench parity. Windows has compilation
 checks, not native runtime validation.
 
 See [the integration report](../../plan/shared-editor-integration.md) and

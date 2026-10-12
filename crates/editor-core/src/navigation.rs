@@ -1,4 +1,4 @@
-use crate::{Direction, EditError, EditorBuffer, Selection};
+use crate::{CaretAffinity, Direction, EditError, EditorBuffer, Selection, SelectionAffinity};
 use unicode_segmentation::UnicodeSegmentation;
 
 impl EditorBuffer {
@@ -7,15 +7,31 @@ impl EditorBuffer {
             .selections()
             .selections()
             .iter()
-            .map(|selection| {
+            .zip(self.selections().affinities())
+            .map(|(selection, affinity)| {
                 let head = word_neighbor(self.text(), selection.head, direction);
-                Selection {
-                    anchor: if extend { selection.anchor } else { head },
-                    head,
-                }
+                let head_affinity = if head == selection.head {
+                    affinity.head
+                } else {
+                    CaretAffinity::After
+                };
+                (
+                    Selection {
+                        anchor: if extend { selection.anchor } else { head },
+                        head,
+                    },
+                    SelectionAffinity {
+                        anchor: if extend {
+                            affinity.anchor
+                        } else {
+                            head_affinity
+                        },
+                        head: head_affinity,
+                    },
+                )
             })
             .collect();
-        self.set_selections(selections, self.selections().primary_index())
+        self.set_selections_with_affinity(selections, self.selections().primary_index())
             .unwrap();
     }
 

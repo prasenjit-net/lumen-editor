@@ -35,3 +35,28 @@ fn stale_revision_or_selection_rejects_commit_atomically() {
         assert_eq!(buffer.selections(), &before);
     }
 }
+#[test]
+fn affinity_only_change_invalidates_a_captured_composition() {
+    use crate::{CaretAffinity, SelectionAffinity};
+    let mut buffer = EditorBuffer::new("abc אבג".into());
+    buffer.set_selections(vec![Selection::caret(4)], 0).unwrap();
+    let composition = Composition::begin(&buffer);
+    buffer
+        .set_selections_with_affinity(
+            vec![(
+                Selection::caret(4),
+                SelectionAffinity {
+                    anchor: CaretAffinity::Before,
+                    head: CaretAffinity::Before,
+                },
+            )],
+            0,
+        )
+        .unwrap();
+    assert_eq!(
+        composition.commit(&mut buffer, "x"),
+        Err(EditError::StaleComposition)
+    );
+    assert_eq!(buffer.text(), "abc אבג");
+    assert!(!buffer.can_undo());
+}

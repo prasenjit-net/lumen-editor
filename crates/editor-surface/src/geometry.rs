@@ -1,5 +1,5 @@
 use egui::{FontId, Galley, Pos2, Rect, Ui, Vec2, text::CCursor};
-use lumen_editor_core::Composition;
+use lumen_editor_core::{CaretAffinity, Composition};
 use std::ops::Range;
 use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
@@ -13,7 +13,7 @@ pub struct TextGeometry {
     graphemes: Vec<usize>,
     preedit: Option<(Range<usize>, usize)>,
     #[cfg(feature = "shaped")]
-    pub(crate) shaped: Option<crate::shaping::ShapedLayout>,
+    pub(crate) shaped: Option<Arc<crate::shaping::ShapedLayout>>,
     #[cfg(feature = "shaped")]
     visual_offsets: Vec<usize>,
 }
@@ -106,6 +106,66 @@ impl TextGeometry {
 
     pub fn caret_rect(&self, byte: usize) -> Rect {
         self.visual_caret(self.cursor(byte).index)
+    }
+
+    pub fn caret_with_affinity(&self, byte: usize, affinity: CaretAffinity) -> Rect {
+        #[cfg(feature = "shaped")]
+        if let Some(shaped) = &self.shaped {
+            return shaped.caret_with_affinity(
+                self.visual_byte(self.cursor(byte).index),
+                affinity,
+                self.origin,
+            );
+        }
+        let _ = affinity;
+        self.caret_rect(byte)
+    }
+
+    pub(crate) fn pointer_affinity(&self, pointer: Pos2, byte: usize) -> CaretAffinity {
+        let before = self.caret_with_affinity(byte, CaretAffinity::Before);
+        let after = self.caret_with_affinity(byte, CaretAffinity::After);
+        if before.center().distance_sq(pointer) < after.center().distance_sq(pointer) {
+            CaretAffinity::Before
+        } else {
+            CaretAffinity::After
+        }
+    }
+
+    pub(crate) fn visual_step(
+        &self,
+        byte: usize,
+        affinity: CaretAffinity,
+        right: bool,
+    ) -> Option<(usize, CaretAffinity)> {
+        #[cfg(feature = "shaped")]
+        if let Some(shaped) = &self.shaped {
+            let (target, affinity) = shaped.visual_step(
+                self.galley.text(),
+                self.visual_byte(self.cursor(byte).index),
+                affinity,
+                right,
+            )?;
+            let index = self.visual_offsets.binary_search(&target).ok()?;
+            let source = self.source_byte(self.byte_offsets[index])?;
+            return self
+                .graphemes
+                .binary_search(&source)
+                .is_ok()
+                .then_some((source, affinity));
+        }
+        let _ = (byte, affinity, right);
+        None
+    }
+
+    pub(crate) fn is_shaped(&self) -> bool {
+        #[cfg(feature = "shaped")]
+        {
+            self.shaped.is_some()
+        }
+        #[cfg(not(feature = "shaped"))]
+        {
+            false
+        }
     }
 
     pub(crate) fn visual_caret(&self, index: usize) -> Rect {
@@ -229,7 +289,7 @@ impl TextGeometry {
     fn hit_character(&self, pointer: Pos2) -> usize {
         #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
-            let byte = shaped.hit(pointer - self.origin);
+            let byte = shaped.hit(self.galley.text(), pointer - self.origin);
             return self
                 .visual_offsets
                 .binary_search(&byte)
@@ -241,11 +301,6 @@ impl TextGeometry {
     #[cfg(feature = "shaped")]
     pub(crate) fn visual_byte(&self, character: usize) -> usize {
         self.visual_offsets[character]
-    }
-
-    #[cfg(feature = "shaped")]
-    pub(crate) fn shape(&mut self, shaper: &crate::Shaper) {
-        self.shaped = Some(shaper.layout(self.galley.text()));
     }
 
     fn source_byte(&self, byte: usize) -> Option<usize> {

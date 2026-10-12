@@ -10,7 +10,7 @@ pub mod text_line;
 pub use buffer::{Direction, EditorBuffer};
 pub use clipboard::SelectionClipboard;
 pub use composition::Composition;
-pub use selection::{EditError, Selection, SelectionSet};
+pub use selection::{CaretAffinity, EditError, Selection, SelectionAffinity, SelectionSet};
 
 #[cfg(test)]
 mod tests;

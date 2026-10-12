@@ -1,6 +1,6 @@
 use crate::{DragSelection, EditorSurface};
 use egui::{Event, ImeEvent, Key, PointerButton, Pos2, Rect, Response, Ui};
-use lumen_editor_core::{Composition, Direction, EditorBuffer, Selection};
+use lumen_editor_core::{Composition, Direction, EditorBuffer, Selection, SelectionAffinity};
 
 impl EditorSurface {
     pub(crate) fn handle_input(
@@ -63,26 +63,53 @@ impl EditorSurface {
                     if clip.contains(pos) {
                         response.request_focus();
                         let byte = geometry.hit_test(pos);
+                        let affinity = geometry.pointer_affinity(pos, byte);
                         let set = buffer.selections();
                         let anchor = if modifiers.shift {
                             set.selections()[set.primary_index()].anchor
                         } else {
                             byte
                         };
+                        let anchor_affinity = if modifiers.shift {
+                            set.affinities()[set.primary_index()].anchor
+                        } else {
+                            affinity
+                        };
                         if modifiers.alt {
-                            let mut selections = set.selections().to_vec();
-                            selections.push(Selection::caret(byte));
+                            let mut selections: Vec<_> = set
+                                .selections()
+                                .iter()
+                                .copied()
+                                .zip(set.affinities().iter().copied())
+                                .collect();
+                            selections.push((
+                                Selection::caret(byte),
+                                SelectionAffinity {
+                                    anchor: affinity,
+                                    head: affinity,
+                                },
+                            ));
                             buffer
-                                .set_selections(selections, set.selections().len())
+                                .set_selections_with_affinity(selections, set.selections().len())
                                 .unwrap();
                             self.drag_anchor = None;
                         } else {
                             buffer
-                                .set_selections(vec![Selection { anchor, head: byte }], 0)
+                                .set_selections_with_affinity(
+                                    vec![(
+                                        Selection { anchor, head: byte },
+                                        SelectionAffinity {
+                                            anchor: anchor_affinity,
+                                            head: affinity,
+                                        },
+                                    )],
+                                    0,
+                                )
                                 .unwrap();
                             self.drag_anchor = Some(DragSelection {
                                 anchor,
                                 revision: buffer.revision(),
+                                affinity: anchor_affinity,
                             });
                         }
                     } else {
@@ -122,13 +149,21 @@ impl EditorSurface {
                         self.drag_anchor = None;
                         continue;
                     }
-                    let byte = self.geometry(ui, buffer.text(), origin, None).hit_test(pos);
+                    let geometry = self.geometry(ui, buffer.text(), origin, None);
+                    let byte = geometry.hit_test(pos);
+                    let affinity = geometry.pointer_affinity(pos, byte);
                     if buffer
-                        .set_selections(
-                            vec![Selection {
-                                anchor: drag.anchor,
-                                head: byte,
-                            }],
+                        .set_selections_with_affinity(
+                            vec![(
+                                Selection {
+                                    anchor: drag.anchor,
+                                    head: byte,
+                                },
+                                SelectionAffinity {
+                                    anchor: drag.affinity,
+                                    head: affinity,
+                                },
+                            )],
                             0,
                         )
                         .is_err()
@@ -273,14 +308,24 @@ impl EditorSurface {
                         Key::ArrowLeft | Key::ArrowRight
                             if !modifiers.command && !modifiers.alt && !modifiers.ctrl =>
                         {
-                            buffer.move_horizontal(
-                                if key == Key::ArrowLeft {
-                                    Direction::Backward
-                                } else {
-                                    Direction::Forward
-                                },
-                                modifiers.shift,
-                            );
+                            let geometry = self.geometry(ui, buffer.text(), origin, None);
+                            if geometry.is_shaped() {
+                                crate::visual_navigation::move_horizontal(
+                                    buffer,
+                                    &geometry,
+                                    key == Key::ArrowRight,
+                                    modifiers.shift,
+                                );
+                            } else {
+                                buffer.move_horizontal(
+                                    if key == Key::ArrowLeft {
+                                        Direction::Backward
+                                    } else {
+                                        Direction::Forward
+                                    },
+                                    modifiers.shift,
+                                );
+                            }
                         }
                         Key::Backspace | Key::Delete
                             if !modifiers.command && !modifiers.alt && !modifiers.ctrl =>
@@ -304,7 +349,13 @@ impl EditorSurface {
                         Key::Escape => {
                             let set = buffer.selections();
                             buffer
-                                .set_selections(vec![set.selections()[set.primary_index()]], 0)
+                                .set_selections_with_affinity(
+                                    vec![(
+                                        set.selections()[set.primary_index()],
+                                        set.affinities()[set.primary_index()],
+                                    )],
+                                    0,
+                                )
                                 .unwrap();
                         }
                         _ => {}

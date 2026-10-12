@@ -16,8 +16,18 @@ fn frame(
     events: Vec<Event>,
     width: f32,
 ) -> SurfaceOutput {
+    frame_with_cursor(surface, buffer, ctx, events, width).0
+}
+
+fn frame_with_cursor(
+    surface: &mut EditorSurface,
+    buffer: &mut EditorBuffer,
+    ctx: &Context,
+    events: Vec<Event>,
+    width: f32,
+) -> (SurfaceOutput, egui::CursorIcon) {
     let mut result = None;
-    let _ = ctx.run(
+    let output = ctx.run(
         RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 250.0))),
             events,
@@ -29,7 +39,7 @@ fn frame(
             });
         },
     );
-    result.unwrap()
+    (result.unwrap(), output.platform_output.cursor_icon)
 }
 
 fn fixture(text: &str) -> (EditorSurface, EditorBuffer, Context) {
@@ -40,6 +50,106 @@ fn fixture(text: &str) -> (EditorSurface, EditorBuffer, Context) {
     ctx.memory_mut(|memory| memory.request_focus(Id::new("test_surface")));
     frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
     (surface, buffer, ctx)
+}
+
+#[test]
+fn text_and_blank_editor_space_use_ibeam_without_claiming_gutter_or_scrollbars() {
+    for width in [300.0, 900.0, 1400.0] {
+        let (mut surface, mut buffer, ctx) = fixture("text");
+        let output = frame(&mut surface, &mut buffer, &ctx, vec![], width);
+        for point in [
+            output.geometry.caret_rect(1).center(),
+            output.text_clip.center(),
+        ] {
+            frame(
+                &mut surface,
+                &mut buffer,
+                &ctx,
+                vec![Event::PointerMoved(point)],
+                width,
+            );
+            let (_, cursor) = frame_with_cursor(&mut surface, &mut buffer, &ctx, vec![], width);
+            assert_eq!(cursor, egui::CursorIcon::Text);
+        }
+        frame(
+            &mut surface,
+            &mut buffer,
+            &ctx,
+            vec![Event::PointerMoved(output.gutter.center())],
+            width,
+        );
+        let (_, cursor) = frame_with_cursor(&mut surface, &mut buffer, &ctx, vec![], width);
+        assert_ne!(cursor, egui::CursorIcon::Text);
+        assert_eq!(buffer.revision(), 0);
+    }
+    let (mut surface, mut buffer, ctx) = fixture(&("long ".repeat(100) + &"\nrow".repeat(100)));
+    let output = frame(&mut surface, &mut buffer, &ctx, vec![], 300.0);
+    let scrollbar = pos2(output.text_clip.right() + 3.0, output.text_clip.center().y);
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::PointerMoved(scrollbar)],
+        300.0,
+    );
+    let (_, cursor) = frame_with_cursor(&mut surface, &mut buffer, &ctx, vec![], 300.0);
+    assert_ne!(cursor, egui::CursorIcon::Text);
+    assert_eq!(buffer.revision(), 0);
+}
+
+#[test]
+fn disabled_editor_does_not_advertise_text_editing_cursor() {
+    let (mut surface, mut buffer, ctx) = fixture("text");
+    let output = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    let point = output.text_clip.center();
+    for _ in 0..2 {
+        let output = ctx.run(
+            RawInput {
+                events: vec![Event::PointerMoved(point)],
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(500.0, 250.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.add_enabled_ui(false, |ui| {
+                        surface.show(ui, Id::new("test_surface"), &mut buffer);
+                    });
+                });
+            },
+        );
+        assert_ne!(output.platform_output.cursor_icon, egui::CursorIcon::Text);
+    }
+}
+
+#[test]
+fn gutter_paints_only_visible_numbers_including_empty_rows() {
+    let (mut surface, mut buffer, ctx) = fixture(&"\n".repeat(1_000));
+    let output = ctx.run(
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(300.0, 250.0))),
+            ..Default::default()
+        },
+        |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                surface.show(ui, Id::new("test_surface"), &mut buffer);
+            });
+        },
+    );
+    let numbers: Vec<_> = output
+        .shapes
+        .iter()
+        .filter_map(|shape| {
+            if let egui::epaint::Shape::Text(text) = &shape.shape {
+                text.galley.text().parse::<usize>().ok()
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(numbers.contains(&1));
+    assert!(numbers.len() >= 10 && numbers.len() < 20, "{numbers:?}");
+    assert!(!numbers.contains(&1_001));
+    assert_eq!(buffer.revision(), 0);
 }
 
 fn key(key: Key, modifiers: Modifiers) -> Event {

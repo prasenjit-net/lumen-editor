@@ -121,12 +121,19 @@ impl EditorBuffer {
             .selections()
             .selections()
             .iter()
-            .map(|selected| Selection {
-                anchor: remap(selected.anchor, &edits),
-                head: remap(selected.head, &edits),
+            .zip(self.selections().affinities())
+            .map(|(selected, affinity)| {
+                (
+                    Selection {
+                        anchor: remap(selected.anchor, &edits),
+                        head: remap(selected.head, &edits),
+                    },
+                    *affinity,
+                )
             })
             .collect();
-        let selections = SelectionSet::new(&text, selections, self.selections().primary_index())?;
+        let selections =
+            SelectionSet::with_affinities(&text, selections, self.selections().primary_index())?;
         Ok(self.commit_snapshot(text, selections))
     }
 }

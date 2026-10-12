@@ -7,12 +7,15 @@ mod gutter;
 mod input;
 #[cfg(feature = "shaped")]
 mod shaping;
+mod visual_navigation;
 
 use egui::{Align2, FontId, Id, Pos2, Rect, Response, ScrollArea, Sense, Stroke, Ui, vec2};
 pub use geometry::TextGeometry;
-use lumen_editor_core::{Composition, EditorBuffer, SelectionClipboard};
+use lumen_editor_core::{CaretAffinity, Composition, EditorBuffer, SelectionClipboard};
 #[cfg(feature = "shaped")]
 pub use shaping::Shaper;
+#[cfg(feature = "shaped")]
+use std::{cell::RefCell, sync::Arc};
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Default)]
@@ -29,12 +32,21 @@ pub struct EditorSurface {
     pub notice: Option<String>,
     #[cfg(feature = "shaped")]
     shaper: Option<Shaper>,
+    #[cfg(feature = "shaped")]
+    shape_cache: RefCell<Option<CachedShape>>,
+}
+
+#[cfg(feature = "shaped")]
+struct CachedShape {
+    galley: Arc<egui::Galley>,
+    layout: Arc<shaping::ShapedLayout>,
 }
 
 #[derive(Clone, Copy)]
 struct DragSelection {
     anchor: usize,
     revision: u64,
+    affinity: CaretAffinity,
 }
 
 pub struct SurfaceOutput {
@@ -73,7 +85,23 @@ impl EditorSurface {
         let geometry = {
             let mut geometry = geometry;
             if let Some(shaper) = &self.shaper {
-                geometry.shape(shaper);
+                // egui invalidates galley identity for text, fonts, scale and
+                // layout style changes. Cache only the matching immutable shape;
+                // source/preedit mappings remain owned by this geometry instance.
+                let mut cache = self.shape_cache.borrow_mut();
+                let layout = if let Some(cached) = &*cache
+                    && Arc::ptr_eq(&cached.galley, &geometry.galley)
+                {
+                    cached.layout.clone()
+                } else {
+                    let layout = Arc::new(shaper.layout(geometry.galley.text()));
+                    *cache = Some(CachedShape {
+                        galley: geometry.galley.clone(),
+                        layout: layout.clone(),
+                    });
+                    layout
+                };
+                geometry.shaped = Some(layout);
             }
             geometry
         };
@@ -81,6 +109,8 @@ impl EditorSurface {
     }
     pub fn show(&mut self, ui: &mut Ui, id: Id, buffer: &mut EditorBuffer) -> SurfaceOutput {
         if self.widget.is_some_and(|widget| widget != id) {
+            #[cfg(feature = "shaped")]
+            self.shape_cache.borrow_mut().take();
             buffer.break_undo_group();
             self.composition = None;
             self.composition_cancelled = true;
@@ -126,8 +156,9 @@ impl EditorSurface {
                     ui.clip_rect().max,
                 ));
                 let origin = content.min + vec2(gutter_width + 8.0, 4.0);
-                let mut response =
-                    ui.interact(content.intersect(text_clip), id, Sense::click_and_drag());
+                let mut response = ui
+                    .interact(content.intersect(text_clip), id, Sense::click_and_drag())
+                    .on_hover_cursor(egui::CursorIcon::Text);
                 let before_selection = buffer.selections().clone();
                 let before_preedit = self
                     .composition
@@ -167,7 +198,10 @@ impl EditorSurface {
                     .selections()
                     .selections()
                     .iter()
-                    .map(|selection| geometry.caret_rect(selection.head))
+                    .zip(buffer.selections().affinities())
+                    .map(|(selection, affinity)| {
+                        geometry.caret_with_affinity(selection.head, affinity.head)
+                    })
                     .collect();
                 accessibility::publish(ui, &response, &geometry, buffer);
                 if let Some(byte) = self.reveal.take().filter(|byte| {
@@ -256,6 +290,14 @@ impl EditorSurface {
                     .with_clip_rect(gutter.intersect(ui.clip_rect()));
                 gutter_painter.rect_filled(gutter, 0, ui.visuals().panel_fill);
                 for (index, row) in geometry.row_rects().iter().enumerate() {
+                    // Gutter labels share text row geometry, but only visible
+                    // rows need paint commands. Use vertical overlap so empty
+                    // lines (zero-width text rows) keep their numbers.
+                    if row.bottom() < gutter_painter.clip_rect().top()
+                        || row.top() > gutter_painter.clip_rect().bottom()
+                    {
+                        continue;
+                    }
                     gutter_painter.text(
                         Pos2::new(gutter.right() - 8.0, row.top()),
                         Align2::RIGHT_TOP,

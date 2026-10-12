@@ -1,6 +1,8 @@
 use crate::{EditorSurface, TextGeometry};
 use egui::{Key, Modifiers, Pos2, Ui};
-use lumen_editor_core::{Direction, EditorBuffer, Selection, SelectionSet};
+use lumen_editor_core::{
+    CaretAffinity, Direction, EditorBuffer, Selection, SelectionAffinity, SelectionSet,
+};
 
 /// Preferred visual columns belong to a complete, unchanged selection snapshot.
 /// Revision validation prevents reusing byte positions after an external edit.
@@ -85,11 +87,13 @@ impl EditorSurface {
                     || (cfg!(target_os = "macos") && modifiers.mac_cmd && !modifiers.alt) =>
             {
                 let end = matches!(key, Key::End | Key::ArrowRight);
+                let set = buffer.selections();
                 let selections = buffer
                     .selections()
                     .selections()
                     .iter()
-                    .map(|selection| {
+                    .zip(set.affinities())
+                    .map(|(selection, affinity)| {
                         let head = if modifiers.command && !cfg!(target_os = "macos") {
                             if end { buffer.text().len() } else { 0 }
                         } else if end {
@@ -106,18 +110,33 @@ impl EditorSurface {
                                 .rfind('\n')
                                 .map_or(0, |newline| newline + 1)
                         };
-                        Selection {
-                            anchor: if modifiers.shift {
-                                selection.anchor
-                            } else {
-                                head
+                        let head_affinity = if end {
+                            CaretAffinity::Before
+                        } else {
+                            CaretAffinity::After
+                        };
+                        (
+                            Selection {
+                                anchor: if modifiers.shift {
+                                    selection.anchor
+                                } else {
+                                    head
+                                },
+                                head,
                             },
-                            head,
-                        }
+                            SelectionAffinity {
+                                anchor: if modifiers.shift {
+                                    affinity.anchor
+                                } else {
+                                    head_affinity
+                                },
+                                head: head_affinity,
+                            },
+                        )
                     })
                     .collect();
                 buffer
-                    .set_selections(selections, buffer.selections().primary_index())
+                    .set_selections_with_affinity(selections, buffer.selections().primary_index())
                     .unwrap();
             }
             Key::D if modifiers.command && !modifiers.alt && !modifiers.shift => {
@@ -147,10 +166,24 @@ impl EditorSurface {
                 let x = columns[set.primary_index()];
                 if let Some(byte) = adjacent_row(&geometry, head, key == Key::ArrowDown, x) {
                     let mut selections = set.selections().to_vec();
+                    let mut affinities = set.affinities().to_vec();
                     let primary = selections.len();
                     selections.push(Selection::caret(byte));
+                    let affinity = geometry.pointer_affinity(
+                        Pos2::new(origin.x + x, geometry.caret_rect(byte).center().y),
+                        byte,
+                    );
+                    affinities.push(SelectionAffinity {
+                        anchor: affinity,
+                        head: affinity,
+                    });
                     columns.push(x);
-                    buffer.set_selections(selections.clone(), primary).unwrap();
+                    buffer
+                        .set_selections_with_affinity(
+                            selections.iter().copied().zip(affinities).collect(),
+                            primary,
+                        )
+                        .unwrap();
                     // Normalization can merge a newly added cursor with an
                     // existing selection. Start a fresh sequence in that case.
                     self.remember_columns(buffer, &selections, columns);
@@ -160,7 +193,7 @@ impl EditorSurface {
                 let geometry = self.geometry(ui, buffer.text(), origin, None);
                 let set = buffer.selections();
                 let columns = self.preferred_columns(buffer, &geometry);
-                let selections: Vec<_> = set
+                let positions: Vec<_> = set
                     .selections()
                     .iter()
                     .enumerate()
@@ -176,33 +209,57 @@ impl EditorSurface {
                             adjacent_row(&geometry, selection.head, key == Key::ArrowDown, column)
                                 .unwrap_or(selection.head)
                         };
-                        Selection {
-                            anchor: if modifiers.shift {
-                                selection.anchor
-                            } else {
-                                head
+                        let head_affinity = if head == selection.head {
+                            set.affinities()[index].head
+                        } else if modifiers.command {
+                            CaretAffinity::After
+                        } else {
+                            geometry.pointer_affinity(
+                                Pos2::new(origin.x + column, geometry.caret_rect(head).center().y),
+                                head,
+                            )
+                        };
+                        (
+                            Selection {
+                                anchor: if modifiers.shift {
+                                    selection.anchor
+                                } else {
+                                    head
+                                },
+                                head,
                             },
-                            head,
-                        }
+                            SelectionAffinity {
+                                anchor: if modifiers.shift {
+                                    set.affinities()[index].anchor
+                                } else {
+                                    head_affinity
+                                },
+                                head: head_affinity,
+                            },
+                        )
                     })
                     .collect();
                 buffer
-                    .set_selections(selections.clone(), set.primary_index())
+                    .set_selections_with_affinity(positions.clone(), set.primary_index())
                     .unwrap();
+                let selections: Vec<_> =
+                    positions.iter().map(|(selection, _)| *selection).collect();
                 self.remember_columns(buffer, &selections, columns);
             }
             Key::PageUp | Key::PageDown => {
                 let geometry = self.geometry(ui, buffer.text(), origin, None);
                 let columns = self.preferred_columns(buffer, &geometry);
                 let distance = ui.clip_rect().height().max(18.0) - 18.0;
-                let selections: Vec<_> = buffer
+                let set = buffer.selections();
+                let positions: Vec<_> = buffer
                     .selections()
                     .selections()
                     .iter()
                     .enumerate()
                     .map(|(index, selection)| {
-                        let caret = geometry.caret_rect(selection.head);
-                        let head = geometry.hit_test(Pos2::new(
+                        let caret = geometry
+                            .caret_with_affinity(selection.head, set.affinities()[index].head);
+                        let point = Pos2::new(
                             origin.x + columns[index],
                             caret.center().y
                                 + if key == Key::PageDown {
@@ -210,20 +267,37 @@ impl EditorSurface {
                                 } else {
                                     -distance
                                 },
-                        ));
-                        Selection {
-                            anchor: if modifiers.shift {
-                                selection.anchor
-                            } else {
-                                head
+                        );
+                        let head = geometry.hit_test(point);
+                        let affinity = geometry.pointer_affinity(point, head);
+                        (
+                            Selection {
+                                anchor: if modifiers.shift {
+                                    selection.anchor
+                                } else {
+                                    head
+                                },
+                                head,
                             },
-                            head,
-                        }
+                            SelectionAffinity {
+                                anchor: if modifiers.shift {
+                                    set.affinities()[index].anchor
+                                } else {
+                                    affinity
+                                },
+                                head: affinity,
+                            },
+                        )
                     })
                     .collect();
                 buffer
-                    .set_selections(selections.clone(), buffer.selections().primary_index())
+                    .set_selections_with_affinity(
+                        positions.clone(),
+                        buffer.selections().primary_index(),
+                    )
                     .unwrap();
+                let selections: Vec<_> =
+                    positions.iter().map(|(selection, _)| *selection).collect();
                 self.remember_columns(buffer, &selections, columns);
             }
             _ => return false,
@@ -242,7 +316,13 @@ impl EditorSurface {
             .selections()
             .selections()
             .iter()
-            .map(|selection| geometry.caret_rect(selection.head).left() - geometry.origin.x)
+            .zip(buffer.selections().affinities())
+            .map(|(selection, affinity)| {
+                geometry
+                    .caret_with_affinity(selection.head, affinity.head)
+                    .left()
+                    - geometry.origin.x
+            })
             .collect()
     }
 

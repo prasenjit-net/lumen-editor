@@ -1,5 +1,5 @@
 use eframe::egui;
-use lumen_editor_core::{EditorBuffer, Selection};
+use lumen_editor_core::{CaretAffinity, EditorBuffer, Selection, SelectionAffinity};
 use lumen_editor_surface::EditorSurface;
 
 // Reuse the workbench palette verbatim; unused workbench-only constants are
@@ -96,22 +96,42 @@ fn main() -> eframe::Result {
         Box::new(|creation| {
             let _fonts = fonts::configure(&creation.egui_ctx);
             theme::configure_ui(&creation.egui_ctx);
-            let text = "let first = 1;\r\nlet second = 2;\r\n// Unicode: e\u{301} 🌍 👩‍💻\r\n\r\n"
-                .to_owned()
-                + &"// A long line demonstrating shared horizontal scrolling. ".repeat(6);
+            let bidi = std::env::args().any(|argument| argument == "--bidi");
+            let text = if bidi {
+                "abc אבג xyz\r\nabc العربية xyz\r\n// office ffi é 漢 👩‍💻\r\n\r\n".to_owned()
+                    + &"// Mixed direction: hello שלום world · hello العربية world. ".repeat(6)
+            } else {
+                "let first = 1;\r\nlet second = 2;\r\n// Unicode: e\u{301} 🌍 👩‍💻\r\n\r\n".to_owned()
+                    + &"// A long line demonstrating shared horizontal scrolling. ".repeat(6)
+            };
             let mut buffer = EditorBuffer::new(text);
-            buffer
-                .set_selections(
-                    vec![
-                        Selection { anchor: 4, head: 9 },
-                        Selection {
-                            anchor: 20,
-                            head: 26,
-                        },
-                    ],
-                    0,
-                )
-                .unwrap();
+            if bidi {
+                buffer
+                    .set_selections_with_affinity(
+                        vec![(
+                            Selection { anchor: 2, head: 6 },
+                            SelectionAffinity {
+                                anchor: CaretAffinity::After,
+                                head: CaretAffinity::Before,
+                            },
+                        )],
+                        0,
+                    )
+                    .unwrap();
+            } else {
+                buffer
+                    .set_selections(
+                        vec![
+                            Selection { anchor: 4, head: 9 },
+                            Selection {
+                                anchor: 20,
+                                head: 26,
+                            },
+                        ],
+                        0,
+                    )
+                    .unwrap();
+            }
             #[cfg(not(feature = "shaped"))]
             let surface = EditorSurface::default();
             #[cfg(feature = "shaped")]

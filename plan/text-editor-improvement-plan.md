@@ -5,6 +5,19 @@ Prepared: 2026-10-10. Applies to the Rust/egui Lumen editor and `AGENTS.md`.
 
 ## Implementation progress
 
+Latest batch (2026-10-12): immutable shaped-layout/character caches, indexed glyph
+positions, core-owned caret affinity, visual grapheme arrows and shared pointer
+edges are implemented. Regression coverage includes affinity undo, sticky paste/
+composition targets, CRLF source mapping, disjoint bidi highlights and file-save
+cancellation/failure. Scale probes cover 10,000 rows, 1,000 cursors and long lines.
+The user accepted grapheme-safe Find rejection and will run native macOS acceptance;
+Windows runtime remains pending. The user subsequently requested default
+promotion: Cargo now enables the shared editor by default, with a legacy
+`--no-default-features` fallback. Native acceptance is still pending, not passed.
+See [the promotion checklist](editor-promotion-checklist.md).
+
+The following milestone is historical:
+
 Current combined milestone (2026-10-11): the `shared-editor` feature integrates
 the core and cosmic-text/Swash renderer into the full workbench. Typing, ordered
 clipboard, Find/Replace, native/popup actions, IME, saved checkpoints and complete

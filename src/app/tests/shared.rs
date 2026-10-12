@@ -48,6 +48,109 @@ fn edit_command(app: &mut LumenApp, ctx: &egui::Context, action: EditorAction) {
 }
 
 #[test]
+fn default_view_renders_document_core_without_an_opt_in_toggle() {
+    let (mut app, _) = test_app(TestDialogs::default());
+    app.view = crate::app::view_state::ViewState::default();
+    assert!(app.view.shared_editor);
+    app.new_file();
+    let ctx = egui::Context::default();
+    configure_ui(&ctx);
+    editor_frame(&mut app, &ctx, vec![]);
+    let document = app.editor.active().unwrap();
+    assert!(document.editing.is_some());
+    assert!(egui::text_edit::TextEditState::load(&ctx, text_widget_id(document.id)).is_none());
+}
+
+#[test]
+fn save_as_cancellation_and_failed_close_save_preserve_core_history() {
+    let (mut app, storage, ctx) = fixture("original");
+    editor_frame(&mut app, &ctx, vec![egui::Event::Text("x".into())]);
+    let id = app.editor.active().unwrap().id;
+    let original_selection = buffer(&app).selections().clone();
+    let revision = buffer(&app).revision();
+    app.save_as_active(); // Injected dialog cancels.
+    assert_eq!(buffer(&app).revision(), revision);
+    assert_eq!(buffer(&app).selections(), &original_selection);
+    assert!(buffer(&app).is_dirty());
+    storage.0.borrow_mut().fail_writes = true;
+    app.request_close(0);
+    assert_eq!(app.view.pending_close, Some(0));
+    app.execute(Command::SaveAndClose(0), &ctx);
+    assert_eq!(app.editor.active().unwrap().id, id);
+    assert!(buffer(&app).is_dirty());
+    assert_eq!(buffer(&app).text(), "xoriginal");
+    assert!(buffer(&app).can_undo());
+    edit_command(&mut app, &ctx, EditorAction::Undo);
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(buffer(&app).text(), "original");
+    assert!(!buffer(&app).is_dirty());
+}
+
+#[test]
+fn delayed_paste_rejects_affinity_only_target_changes() {
+    use lumen_editor_core::{CaretAffinity, SelectionAffinity};
+    let (mut app, _, ctx) = fixture("abc אבג xyz");
+    select(&mut app, vec![Selection::caret(4)], 0);
+    let clipboard = TestClipboard::default();
+    app.clipboard = Box::new(clipboard.clone());
+    app.execute(Command::Paste, &ctx);
+    app.start_clipboard_read(&ctx);
+    let request = app.view.editor_paste_target.unwrap().request;
+    app.editor.files[0]
+        .editing
+        .as_mut()
+        .unwrap()
+        .set_selections_with_affinity(
+            vec![(
+                Selection::caret(4),
+                SelectionAffinity {
+                    anchor: CaretAffinity::Before,
+                    head: CaretAffinity::Before,
+                },
+            )],
+            0,
+        )
+        .unwrap();
+    clipboard.complete(request, Ok(Some("unsafe".into())));
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(buffer(&app).text(), "abc אבג xyz");
+    assert!(!buffer(&app).is_dirty());
+}
+
+#[test]
+fn native_popup_undo_restores_visual_selection_and_affinity() {
+    use lumen_editor_core::{CaretAffinity, SelectionAffinity};
+    let (mut app, _, ctx) = fixture("abc אבג xyz");
+    app.editor.files[0]
+        .editing
+        .as_mut()
+        .unwrap()
+        .set_selections_with_affinity(
+            vec![(
+                Selection::caret(4),
+                SelectionAffinity {
+                    anchor: CaretAffinity::Before,
+                    head: CaretAffinity::Before,
+                },
+            )],
+            0,
+        )
+        .unwrap();
+    editor_frame(
+        &mut app,
+        &ctx,
+        vec![key(egui::Key::ArrowRight, egui::Modifiers::SHIFT)],
+    );
+    let selection = buffer(&app).selections().clone();
+    assert_eq!(selection.affinities()[0].anchor, CaretAffinity::Before);
+    editor_frame(&mut app, &ctx, vec![egui::Event::Text("x".into())]);
+    edit_command(&mut app, &ctx, EditorAction::Undo);
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(buffer(&app).selections(), &selection);
+    assert_eq!(buffer(&app).text(), "abc אבג xyz");
+}
+
+#[test]
 fn shaped_workbench_retains_all_cursor_columns_without_creating_history() {
     let (mut app, _, ctx) = fixture("abcdef\nx\nabcdef\nabcdef\nx\nabcdef");
     select(&mut app, vec![Selection::caret(3), Selection::caret(19)], 1);

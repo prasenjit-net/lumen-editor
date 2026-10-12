@@ -1,18 +1,48 @@
 //! Headless CPU frame probe. Does not measure native input or GPU presentation.
 use egui::{Context, Id, RawInput, Rect, Vec2};
-use lumen_editor_core::EditorBuffer;
+use lumen_editor_core::{EditorBuffer, Selection};
 use lumen_editor_surface::EditorSurface;
 use std::{hint::black_box, time::Instant};
 
 fn main() {
-    println!("rows,accessibility,cold_ms,idle_mean_ms");
-    for rows in [100, 1_000] {
+    println!("fixture,bytes,cursors,accessibility,cold_ms,idle_mean_ms");
+    for (fixture, text, cursors) in [
+        (
+            "100-rows",
+            "let value = office_ffi + 123; // é\n".repeat(100),
+            1,
+        ),
+        (
+            "1000-rows",
+            "let value = office_ffi + 123; // é\n".repeat(1_000),
+            1,
+        ),
+        (
+            "10000-rows",
+            "let value = office_ffi + 123; // é\n".repeat(10_000),
+            1,
+        ),
+        (
+            "1000-cursors",
+            "let value = office_ffi + 123; // é\n".repeat(1_000),
+            1_000,
+        ),
+        ("long-line", "office é 漢👩‍💻 ".repeat(500), 1),
+    ] {
         for accessibility in [false, true] {
             let ctx = Context::default();
             if accessibility {
                 ctx.enable_accesskit();
             }
-            let mut buffer = EditorBuffer::new("let value = office_ffi + 123; // é\n".repeat(rows));
+            let mut buffer = EditorBuffer::new(text.clone());
+            if cursors > 1 {
+                let selections = std::iter::once(0)
+                    .chain(text.match_indices('\n').map(|(byte, _)| byte + 1))
+                    .take(cursors)
+                    .map(Selection::caret)
+                    .collect();
+                buffer.set_selections(selections, 0).unwrap();
+            }
             #[cfg(feature = "shaped")]
             let mut surface = EditorSurface::with_shaper(lumen_editor_surface::Shaper::default());
             #[cfg(not(feature = "shaped"))]
@@ -38,7 +68,8 @@ fn main() {
                 timings.push(start.elapsed().as_secs_f64() * 1000.0);
             }
             println!(
-                "{rows},{accessibility},{:.3},{:.3}",
+                "{fixture},{},{cursors},{accessibility},{:.3},{:.3}",
+                text.len(),
                 timings[0],
                 timings[1..].iter().sum::<f64>() / 3.0
             );

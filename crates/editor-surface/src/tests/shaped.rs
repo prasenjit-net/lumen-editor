@@ -11,6 +11,201 @@ fn shaped_fixture(text: &str) -> (EditorSurface, EditorBuffer, Context) {
 }
 
 #[test]
+fn pointer_shift_arrows_and_undo_keep_bidi_affinity_in_the_core() {
+    use lumen_editor_core::{CaretAffinity, SelectionAffinity};
+    let (mut surface, mut buffer, ctx) = shaped_fixture("abc אבג xyz");
+    let output = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    let point = output
+        .geometry
+        .caret_with_affinity(4, CaretAffinity::Before)
+        .center();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        click(point, Modifiers::NONE),
+        500.0,
+    );
+    let set = buffer.selections();
+    let caret = set.selections()[set.primary_index()];
+    let affinity = set.affinities()[set.primary_index()].head;
+    let output = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    assert!(
+        (output
+            .geometry
+            .caret_with_affinity(caret.head, affinity)
+            .center()
+            - point)
+            .length()
+            < 1.0
+    );
+
+    buffer
+        .set_selections_with_affinity(
+            vec![(
+                Selection::caret(4),
+                SelectionAffinity {
+                    anchor: CaretAffinity::Before,
+                    head: CaretAffinity::Before,
+                },
+            )],
+            0,
+        )
+        .unwrap();
+    let anchor = buffer.selections().clone();
+    let before_x = output
+        .geometry
+        .caret_with_affinity(4, CaretAffinity::Before)
+        .left();
+    let moved = frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::ArrowRight, Modifiers::SHIFT)],
+        500.0,
+    );
+    assert_eq!(buffer.selections().selections()[0].anchor, 4);
+    assert_eq!(
+        buffer.selections().affinities()[0].anchor,
+        CaretAffinity::Before
+    );
+    assert!(moved.carets[0].left() > before_x);
+    let selection = buffer.selections().clone();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::Text("q".into())],
+        500.0,
+    );
+    buffer.undo();
+    assert_eq!(buffer.selections(), &selection);
+    buffer
+        .set_selections_with_affinity(
+            anchor
+                .selections()
+                .iter()
+                .copied()
+                .zip(anchor.affinities().iter().copied())
+                .collect(),
+            anchor.primary_index(),
+        )
+        .unwrap();
+    assert!(!buffer.is_dirty());
+}
+
+#[test]
+fn mixed_direction_selection_has_disjoint_rectangles_not_a_filled_gap() {
+    let (mut surface, mut buffer, ctx) = shaped_fixture("abc אבג xyz");
+    let output = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    let mut rects = output.geometry.selection_rects(2..6);
+    rects.sort_by(|left, right| left.left().total_cmp(&right.left()));
+    assert!(rects.len() >= 2, "{rects:?}");
+    assert!(
+        rects
+            .windows(2)
+            .any(|pair| pair[0].right() < pair[1].left())
+    );
+    assert_eq!(buffer.revision(), 0);
+}
+
+#[test]
+fn shaping_cache_reuses_idle_layout_and_invalidates_text_style_and_preedit() {
+    use std::sync::Arc;
+    let (mut surface, mut buffer, ctx) = shaped_fixture("office\nsecond");
+    let first = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0)
+        .geometry
+        .shaped
+        .unwrap();
+    let idle = frame(&mut surface, &mut buffer, &ctx, vec![], 900.0)
+        .geometry
+        .shaped
+        .unwrap();
+    assert!(Arc::ptr_eq(&first, &idle));
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::Text("x".into())],
+        900.0,
+    );
+    let edited = frame(&mut surface, &mut buffer, &ctx, vec![], 900.0)
+        .geometry
+        .shaped
+        .unwrap();
+    assert!(!Arc::ptr_eq(&first, &edited));
+    let preview = frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![
+            Event::Ime(egui::ImeEvent::Enabled),
+            Event::Ime(egui::ImeEvent::Preedit("漢".into())),
+        ],
+        900.0,
+    )
+    .geometry
+    .shaped
+    .unwrap();
+    assert!(!Arc::ptr_eq(&edited, &preview));
+    let same_preview = frame(&mut surface, &mut buffer, &ctx, vec![], 900.0)
+        .geometry
+        .shaped
+        .unwrap();
+    assert!(Arc::ptr_eq(&preview, &same_preview));
+    let cancelled = frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::Escape, Modifiers::NONE)],
+        900.0,
+    )
+    .geometry
+    .shaped
+    .unwrap();
+    assert!(!Arc::ptr_eq(&preview, &cancelled));
+    ctx.style_mut(|style| style.visuals.override_text_color = Some(egui::Color32::RED));
+    let styled = frame(&mut surface, &mut buffer, &ctx, vec![], 900.0)
+        .geometry
+        .shaped
+        .unwrap();
+    assert!(!Arc::ptr_eq(&cancelled, &styled));
+    ctx.set_pixels_per_point(2.0);
+    let scaled = frame(&mut surface, &mut buffer, &ctx, vec![], 900.0)
+        .geometry
+        .shaped
+        .unwrap();
+    assert!(!Arc::ptr_eq(&styled, &scaled));
+}
+
+#[test]
+fn shared_visual_shape_never_reuses_lf_source_offsets_for_crlf() {
+    use std::sync::Arc;
+    let (mut surface, mut buffer, ctx) = shaped_fixture("a\nb");
+    let before = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    assert_eq!(
+        before
+            .geometry
+            .hit_test(before.geometry.caret_rect(2).center()),
+        2
+    );
+    buffer.replace_document("a\r\nb").unwrap();
+    let after = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    assert_eq!(before.geometry.galley.text(), after.geometry.galley.text());
+    assert!(Arc::ptr_eq(
+        before.geometry.shaped.as_ref().unwrap(),
+        after.geometry.shaped.as_ref().unwrap()
+    ));
+    assert_eq!(
+        after
+            .geometry
+            .hit_test(after.geometry.caret_rect(3).center()),
+        3
+    );
+    assert_eq!(buffer.text(), "a\r\nb");
+}
+
+#[test]
 fn enabling_accessibility_after_idle_frames_still_publishes_complete_rows() {
     let (mut surface, mut buffer, ctx) = shaped_fixture("one\ntwo");
     ctx.enable_accesskit();
