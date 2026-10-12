@@ -170,6 +170,11 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+GitHub Actions runs these checks on every push and pull request. Workspace tests
+run on Linux, macOS and Windows; the macOS job also tests the legacy editor and
+builds the app bundle. CI checks the native builds but does not replace live UI
+validation.
+
 Application tests use in-memory storage and dialog doubles for open/save,
 cancellation, failure and dirty-buffer workflows, plus an egui pointer test
 for the explorer resize handle. Windows compilation can also be checked with
