@@ -14,6 +14,20 @@ pub(crate) const ACCENT: Color32 = Color32::from_rgb(0, 122, 204);
 pub(crate) const HOVER: Color32 = Color32::from_rgb(43, 43, 43);
 pub(crate) const INPUT: Color32 = Color32::from_rgb(49, 49, 49);
 
+#[cfg(feature = "shared-editor")]
+pub(crate) fn syntax_palette() -> lumen_editor_surface::SyntaxPalette {
+    lumen_editor_surface::SyntaxPalette {
+        comment: Color32::from_rgb(106, 153, 85),
+        string: Color32::from_rgb(206, 145, 120),
+        number: Color32::from_rgb(181, 206, 168),
+        keyword: Color32::from_rgb(197, 134, 192),
+        type_name: Color32::from_rgb(78, 201, 176),
+        function: Color32::from_rgb(220, 220, 170),
+        property: Color32::from_rgb(156, 220, 254),
+        tag: Color32::from_rgb(86, 156, 214),
+    }
+}
+
 pub(crate) fn configure_ui(ctx: &egui::Context) {
     ctx.set_theme(egui::ThemePreference::Dark);
     ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark));

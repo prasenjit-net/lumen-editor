@@ -66,7 +66,7 @@ fn explorer_new_file_accepts_nested_paths_and_trailing_separator_folders() {
             .files
             .contains_key(Path::new("project/nested/deep/module.rs"))
     );
-    assert_eq!(app.editor.active().unwrap().language, "Rust");
+    assert_eq!(app.editor.active().unwrap().language.as_str(), "Rust");
     app.view.explorer_selection = None;
     app.new_file();
     confirm_name(&mut app, "folder-only/");
@@ -92,7 +92,7 @@ fn rename_file_updates_metadata_but_keeps_unsaved_text_and_dirty_flag() {
         file.path.as_deref(),
         Some(Path::new("project/src/notes.md"))
     );
-    assert_eq!(file.language, "Markdown");
+    assert_eq!(file.language.as_str(), "Markdown");
     assert_eq!(file.text, "unsaved changes");
     assert!(file.dirty);
     assert_eq!(

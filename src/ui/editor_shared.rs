@@ -35,6 +35,17 @@ impl Workbench<'_> {
             line_height: self.view.settings.number("editor.line_height", path),
             bundled_font: self.view.settings.font_family(path) == "Hack",
         });
+        surface.set_syntax(
+            self.view
+                .settings
+                .document_boolean("editor.syntax_highlighting", path)
+                .then(|| {
+                    (
+                        self.editor.files[index].language,
+                        super::theme::syntax_palette(),
+                    )
+                }),
+        );
         let output = Frame::new()
             .fill(BG)
             .corner_radius(4)

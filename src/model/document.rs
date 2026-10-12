@@ -1,11 +1,12 @@
 use super::DocumentId;
+use lumen_editor_core::syntax::Language;
 use std::path::{Path, PathBuf};
 pub(crate) struct Document {
     pub(crate) id: DocumentId,
     pub(crate) revision: u64,
     pub(crate) path: Option<PathBuf>,
     pub(crate) name: String,
-    pub(crate) language: String,
+    pub(crate) language: Language,
     pub(crate) text: String,
     pub(crate) dirty: bool,
     saved_text: String,
@@ -19,7 +20,7 @@ impl Document {
             id: DocumentId::allocate(),
             revision: 0,
             name: display_name(&path),
-            language: language_for(&path),
+            language: Language::from_path(&path),
             path: Some(path),
             saved_text: text.clone(),
             text,
@@ -53,7 +54,7 @@ impl Document {
 
     pub(crate) fn relocate(&mut self, path: PathBuf) {
         self.name = display_name(&path);
-        self.language = language_for(&path);
+        self.language = Language::from_path(&path);
         self.path = Some(path);
     }
     pub(crate) fn untitled(number: usize) -> Self {
@@ -62,7 +63,7 @@ impl Document {
             revision: 0,
             path: None,
             name: format!("untitled-{number}.txt"),
-            language: "Plain Text".into(),
+            language: Language::Plain,
             text: String::new(),
             dirty: false,
             saved_text: String::new(),
@@ -92,32 +93,27 @@ impl Document {
     }
 }
 
-fn language_for(path: &Path) -> String {
-    match path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or_default()
-    {
-        "rs" => "Rust",
-        "toml" => "TOML",
-        "md" => "Markdown",
-        "json" => "JSON",
-        "yaml" | "yml" => "YAML",
-        "js" | "ts" | "tsx" | "jsx" => "JavaScript",
-        "html" => "HTML",
-        "css" => "CSS",
-        "py" => "Python",
-        "go" => "Go",
-        "c" | "h" | "cpp" | "hpp" => "C/C++",
-        "sh" => "Shell Script",
-        _ => "Plain Text",
-    }
-    .into()
-}
-
 pub(crate) fn display_name(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("Untitled")
         .into()
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    #[test]
+    fn exact_filename_language_updates_on_relocation_without_touching_text() {
+        let mut document =
+            Document::from_path(PathBuf::from("src/CMakeLists.txt"), "project(Lumen)".into());
+        assert_eq!(document.language, Language::CMake);
+        document.relocate(PathBuf::from("src/notes.txt"));
+        assert_eq!(document.language, Language::Plain);
+        document.relocate(PathBuf::from("src/Makefile"));
+        assert_eq!(document.language, Language::Makefile);
+        assert_eq!(document.text, "project(Lumen)");
+        assert!(!document.dirty);
+    }
 }

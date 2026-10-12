@@ -343,7 +343,14 @@ impl ShapedLayout {
             .collect()
     }
 
-    pub(crate) fn paint(&self, ui: &Ui, painter: &Painter, origin: Pos2) {
+    pub(crate) fn paint(
+        &self,
+        ui: &Ui,
+        painter: &Painter,
+        origin: Pos2,
+        spans: &[lumen_editor_core::syntax::Span],
+        palette: Option<crate::SyntaxPalette>,
+    ) {
         let scale = ui.ctx().pixels_per_point();
         let mut resources = self.shaper.0.lock().expect("shaping resource lock");
         if resources.textures.len() >= GLYPH_CACHE_LIMIT {
@@ -363,6 +370,8 @@ impl ShapedLayout {
                     continue;
                 }
                 let physical = physical_glyph(glyph, run.line_y, scale);
+                let byte = self.starts[run.line_i] + glyph.start;
+                let color = syntax_color(spans, palette, byte, ui.visuals().text_color());
                 if !resources.textures.contains_key(&physical.cache_key) {
                     let Resources {
                         fonts,
@@ -434,13 +443,62 @@ impl ShapedLayout {
                             if texture.colored {
                                 Color32::WHITE
                             } else {
-                                ui.visuals().text_color()
+                                color
                             },
                         );
                     }
                 }
             }
         }
+    }
+}
+
+fn syntax_color(
+    spans: &[lumen_editor_core::syntax::Span],
+    palette: Option<crate::SyntaxPalette>,
+    byte: usize,
+    default: Color32,
+) -> Color32 {
+    palette
+        .and_then(|palette| {
+            spans
+                .get(
+                    spans
+                        .partition_point(|span| span.range.start <= byte)
+                        .checked_sub(1)?,
+                )
+                .filter(|span| byte < span.range.end)
+                .map(|span| palette.color(span.kind))
+        })
+        .unwrap_or(default)
+}
+
+#[cfg(test)]
+mod syntax_tests {
+    use super::*;
+    #[test]
+    fn glyph_color_tracks_visual_byte_spans_and_defaults() {
+        let palette = crate::tests::test_syntax_palette();
+        let spans = lumen_editor_core::syntax::highlight(
+            "fn main()",
+            lumen_editor_core::syntax::Language::Rust,
+        );
+        assert_eq!(
+            syntax_color(&spans, Some(palette), 0, Color32::WHITE),
+            palette.keyword
+        );
+        assert_eq!(
+            syntax_color(&spans, Some(palette), 3, Color32::WHITE),
+            palette.function
+        );
+        assert_eq!(
+            syntax_color(&spans, Some(palette), 2, Color32::WHITE),
+            Color32::WHITE
+        );
+        assert_eq!(
+            syntax_color(&spans, None, 0, Color32::WHITE),
+            Color32::WHITE
+        );
     }
 }
 

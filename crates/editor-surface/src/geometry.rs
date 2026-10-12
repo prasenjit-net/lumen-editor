@@ -1,4 +1,5 @@
 use egui::{Galley, Pos2, Rect, Ui, Vec2, text::CCursor};
+use lumen_editor_core::syntax;
 use lumen_editor_core::{CaretAffinity, Composition};
 use std::ops::Range;
 use std::sync::Arc;
@@ -13,6 +14,10 @@ pub struct TextGeometry {
     graphemes: Vec<usize>,
     preedit: Option<(Range<usize>, usize)>,
     #[cfg(feature = "shaped")]
+    syntax_spans: Vec<syntax::Span>,
+    #[cfg(feature = "shaped")]
+    syntax_palette: Option<crate::SyntaxPalette>,
+    #[cfg(feature = "shaped")]
     pub(crate) shaped: Option<Arc<crate::shaping::ShapedLayout>>,
     #[cfg(feature = "shaped")]
     visual_offsets: Vec<usize>,
@@ -20,7 +25,7 @@ pub struct TextGeometry {
 
 impl TextGeometry {
     pub fn layout(ui: &Ui, text: &str, origin: Pos2) -> Self {
-        Self::layout_typography(ui, text, origin, None, crate::Typography::default())
+        Self::layout_typography(ui, text, origin, None, crate::Typography::default(), None)
     }
 
     pub(crate) fn layout_typography(
@@ -29,6 +34,7 @@ impl TextGeometry {
         origin: Pos2,
         composition: Option<&Composition>,
         typography: crate::Typography,
+        syntax: Option<(syntax::Language, crate::SyntaxPalette)>,
     ) -> Self {
         // One transient layout replaces the primary range. Stored source and
         // history remain untouched; neighboring text participates in this galley.
@@ -62,6 +68,9 @@ impl TextGeometry {
             .map(|(byte, _)| byte)
             .chain([visual.len()])
             .collect();
+        let syntax_spans = syntax.map_or_else(Vec::new, |(language, _)| {
+            syntax::highlight(&visual, language)
+        });
         let galley = ui.fonts_mut(|fonts| {
             let mut job = egui::text::LayoutJob::simple(
                 visual,
@@ -70,6 +79,35 @@ impl TextGeometry {
                 f32::INFINITY,
             );
             job.sections[0].format.line_height = Some(typography.line_height);
+            if let Some((_, palette)) = syntax {
+                let base = job.sections[0].format.clone();
+                job.sections.clear();
+                let mut position = 0;
+                for span in &syntax_spans {
+                    if position < span.range.start {
+                        job.sections.push(egui::text::LayoutSection {
+                            leading_space: 0.0,
+                            byte_range: position..span.range.start,
+                            format: base.clone(),
+                        });
+                    }
+                    let mut format = base.clone();
+                    format.color = palette.color(span.kind);
+                    job.sections.push(egui::text::LayoutSection {
+                        leading_space: 0.0,
+                        byte_range: span.range.clone(),
+                        format,
+                    });
+                    position = span.range.end;
+                }
+                if position < job.text.len() || job.sections.is_empty() {
+                    job.sections.push(egui::text::LayoutSection {
+                        leading_space: 0.0,
+                        byte_range: position..job.text.len(),
+                        format: base,
+                    });
+                }
+            }
             fonts.layout_job(job)
         });
         Self {
@@ -83,6 +121,10 @@ impl TextGeometry {
                 .collect(),
             preedit: preedit
                 .map(|composition| (composition.replacement_range(), composition.preedit().len())),
+            #[cfg(feature = "shaped")]
+            syntax_spans,
+            #[cfg(feature = "shaped")]
+            syntax_palette: syntax.map(|(_, palette)| palette),
             #[cfg(feature = "shaped")]
             shaped: None,
             #[cfg(feature = "shaped")]
@@ -288,7 +330,13 @@ impl TextGeometry {
     pub(crate) fn paint(&self, ui: &Ui, painter: &egui::Painter) {
         #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
-            shaped.paint(ui, painter, self.origin);
+            shaped.paint(
+                ui,
+                painter,
+                self.origin,
+                &self.syntax_spans,
+                self.syntax_palette,
+            );
             return;
         }
         painter.galley(self.origin, self.galley.clone(), ui.visuals().text_color());

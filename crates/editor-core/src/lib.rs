@@ -5,6 +5,7 @@ mod commands;
 mod composition;
 mod navigation;
 mod selection;
+pub mod syntax;
 pub mod text_line;
 
 pub use buffer::{Direction, EditorBuffer};

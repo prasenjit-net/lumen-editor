@@ -38,6 +38,8 @@ Implemented:
   IME, gutter and Find geometry from cosmic-text. Fonts are supplied by platform
   startup. Swash glyph textures honor DPI and have bounded cache/visible culling.
   An egui galley remains for source bookkeeping, not shaped coordinates.
+- Lexical syntax spans color the shared egui and shaped paint paths without
+  changing their source mapping, editing state, selection or undo history.
 
 The standalone example uses eframe's clipboard transport, including its CRLF
 normalization. The workbench retains injected tagged clipboard services and their

@@ -36,6 +36,19 @@ and drop or explorer operation undo. Symlink copying is rejected explicitly.
 
 ## Text editing
 
+The shared editor colors comments, strings, numbers, keywords, types, functions,
+properties and markup using a compact dark syntax palette. Rust, TOML, Markdown,
+JSON, YAML, JavaScript/TypeScript, HTML, CSS, Python, Go, C/C++ and shell files
+receive lexical highlighting; other files remain plain text. Exact filenames
+also select their syntax: `CMakeLists.txt`, Makefiles,
+`Dockerfile`/`Containerfile`, ignore files, `.editorconfig`, `.env` variants,
+`Cargo.lock`, and extensionless `README`/`CHANGELOG`. CMake, SQL, INI and
+related file extensions are recognized too. The searchable
+`editor.syntax_highlighting` setting can disable colors per user or project.
+Highlighting is display-only and does not provide semantic language-server
+classification or embedded-language parsing yet. The legacy TextEdit fallback
+remains plain text.
+
 Each tab owns its cursor, undo history and scroll state. Right-click in the
 editor for Undo/Redo, Cut/Copy, Paste, Select All, Find and Replace.
 Right-click preserves the selection. Undoing to saved content clears the dirty

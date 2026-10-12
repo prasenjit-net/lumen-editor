@@ -292,7 +292,7 @@ fn confirming_new_file_creates_opens_and_reveals_a_named_empty_file() {
     assert_eq!(storage.0.borrow().files[&path], "");
     let file = app.editor.active().unwrap();
     assert_eq!(file.path.as_ref(), Some(&path));
-    assert_eq!(file.language, "Rust");
+    assert_eq!(file.language.as_str(), "Rust");
     assert!(!file.dirty);
     assert!(app.view.explorer_edit.is_none());
     for directory in ["project", "project/src", "project/src/nested"] {
@@ -479,7 +479,7 @@ fn opening_an_existing_tab_preserves_edits_without_rereading() {
         .files
         .insert(path.clone(), "original".into());
     app.choose_file();
-    assert_eq!(app.editor.active().unwrap().language, "Rust");
+    assert_eq!(app.editor.active().unwrap().language.as_str(), "Rust");
     edit_active(&mut app, "edited");
     app.new_file();
     app.open_file(path);
@@ -514,7 +514,7 @@ fn saving_an_untitled_buffer_updates_metadata_only_after_writing() {
     let file = app.editor.active().unwrap();
     assert_eq!(file.path.as_ref(), Some(&path));
     assert_eq!(file.name, "saved.rs");
-    assert_eq!(file.language, "Rust");
+    assert_eq!(file.language.as_str(), "Rust");
     assert!(!file.dirty);
     assert_eq!(storage.0.borrow().files[&path], "fn main() {}");
     edit_active(&mut app, "updated");
@@ -559,7 +559,7 @@ fn failed_save_as_preserves_original_path_and_dirty_content() {
     app.save_as_active();
     let file = app.editor.active().unwrap();
     assert_eq!(file.path.as_ref(), Some(&original));
-    assert_eq!(file.language, "Plain Text");
+    assert_eq!(file.language.as_str(), "Plain Text");
     assert_eq!(file.text, "edited");
     assert!(file.dirty);
     assert!(app.view.status.starts_with("Could not save file:"));

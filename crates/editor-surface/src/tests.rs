@@ -2,6 +2,52 @@ use crate::{EditorSurface, SurfaceOutput};
 use egui::{Context, Event, Id, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, pos2, vec2};
 use lumen_editor_core::{EditorBuffer, Selection};
 
+pub(crate) fn test_syntax_palette() -> crate::SyntaxPalette {
+    crate::SyntaxPalette {
+        comment: egui::Color32::GREEN,
+        string: egui::Color32::YELLOW,
+        number: egui::Color32::LIGHT_BLUE,
+        keyword: egui::Color32::RED,
+        type_name: egui::Color32::BLUE,
+        function: egui::Color32::GOLD,
+        property: egui::Color32::KHAKI,
+        tag: egui::Color32::LIGHT_GREEN,
+    }
+}
+
+#[test]
+fn syntax_colors_keep_editor_geometry_and_document_unchanged() {
+    let (mut surface, mut buffer, ctx) = fixture("// 🌍\r\nfn main() { let x = 42; }");
+    let plain = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    let plain_caret = plain.geometry.caret_rect(9);
+    let revision = buffer.revision();
+    surface.set_syntax(Some((
+        lumen_editor_core::syntax::Language::Rust,
+        test_syntax_palette(),
+    )));
+    let colored = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    assert_eq!(colored.geometry.caret_rect(9), plain_caret);
+    assert_eq!(buffer.revision(), revision);
+    assert!(!buffer.is_dirty());
+    let job = &colored.geometry.galley.job;
+    assert!(
+        job.sections
+            .iter()
+            .any(|section| &job.text[section.byte_range.clone()] == "fn"
+                && section.format.color == egui::Color32::RED)
+    );
+    assert!(
+        job.sections
+            .iter()
+            .any(|section| &job.text[section.byte_range.clone()] == "42"
+                && section.format.color == egui::Color32::LIGHT_BLUE)
+    );
+    surface.set_syntax(None);
+    let plain_again = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    assert_eq!(plain_again.geometry.caret_rect(9), plain_caret);
+    assert_eq!(plain_again.geometry.galley.job.sections.len(), 1);
+}
+
 mod accessibility;
 mod commands;
 mod ime;

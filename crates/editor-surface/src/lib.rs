@@ -11,6 +11,7 @@ mod visual_navigation;
 
 use egui::{Align2, FontId, Id, Pos2, Rect, Response, ScrollArea, Sense, Stroke, Ui, vec2};
 pub use geometry::TextGeometry;
+use lumen_editor_core::syntax::{Kind, Language};
 use lumen_editor_core::{CaretAffinity, Composition, EditorBuffer, SelectionClipboard};
 #[cfg(feature = "shaped")]
 pub use shaping::Shaper;
@@ -21,6 +22,7 @@ use unicode_segmentation::UnicodeSegmentation;
 #[derive(Default)]
 pub struct EditorSurface {
     typography: Typography,
+    syntax: Option<(Language, SyntaxPalette)>,
     widget: Option<Id>,
     drag_anchor: Option<DragSelection>,
     pending_shortcut_text: bool,
@@ -112,6 +114,9 @@ pub struct SurfaceOutput {
 }
 
 impl EditorSurface {
+    pub fn set_syntax(&mut self, syntax: Option<(Language, SyntaxPalette)>) {
+        self.syntax = syntax.filter(|(language, _)| *language != Language::Plain);
+    }
     /// Defer relayout during composition/drag to preserve their layout authority.
     pub fn set_typography(&mut self, typography: Typography) -> bool {
         if !typography.font_size.is_finite()
@@ -153,8 +158,14 @@ impl EditorSurface {
         origin: Pos2,
         composition: Option<&Composition>,
     ) -> TextGeometry {
-        let geometry =
-            TextGeometry::layout_typography(ui, text, origin, composition, self.typography);
+        let geometry = TextGeometry::layout_typography(
+            ui,
+            text,
+            origin,
+            composition,
+            self.typography,
+            self.syntax,
+        );
         #[cfg(feature = "shaped")]
         let geometry = {
             let mut geometry = geometry;
@@ -391,6 +402,32 @@ impl EditorSurface {
                 }
             })
             .inner
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct SyntaxPalette {
+    pub comment: egui::Color32,
+    pub string: egui::Color32,
+    pub number: egui::Color32,
+    pub keyword: egui::Color32,
+    pub type_name: egui::Color32,
+    pub function: egui::Color32,
+    pub property: egui::Color32,
+    pub tag: egui::Color32,
+}
+impl SyntaxPalette {
+    pub(crate) fn color(self, kind: Kind) -> egui::Color32 {
+        match kind {
+            Kind::Comment => self.comment,
+            Kind::String => self.string,
+            Kind::Number => self.number,
+            Kind::Keyword => self.keyword,
+            Kind::Type => self.type_name,
+            Kind::Function => self.function,
+            Kind::Property => self.property,
+            Kind::Tag => self.tag,
+        }
     }
 }
 

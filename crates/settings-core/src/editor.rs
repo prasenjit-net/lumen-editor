@@ -4,6 +4,16 @@ pub(crate) const SCHEMA: SectionSchema = SectionSchema {
     validate: Some(validate),
     settings: &[
         Setting {
+            id: "editor.syntax_highlighting",
+            default: DefaultValue::Bool(true),
+            name: "Syntax Highlighting",
+            category: "Editor",
+            help: "Color recognized code tokens without changing document content.",
+            aliases: "code color language tokens",
+            control: Control::Bool,
+            document: true,
+        },
+        Setting {
             id: "editor.font_family",
             default: DefaultValue::Choice("platform"),
             name: "Font Family",

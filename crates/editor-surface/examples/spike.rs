@@ -5,6 +5,7 @@ use lumen_editor_surface::EditorSurface;
 // Reuse the workbench palette verbatim; unused workbench-only constants are
 // expected in this isolated diagnostic example, not a second theme.
 #[allow(dead_code)]
+#[allow(unexpected_cfgs)]
 #[path = "../../../src/ui/theme.rs"]
 mod theme;
 

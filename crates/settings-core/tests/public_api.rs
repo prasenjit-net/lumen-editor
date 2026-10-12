@@ -27,7 +27,7 @@ fn public_api_preserves_precedence_sparse_roundtrips_and_search_rules() {
     assert!(!encoded.contains("font_size"));
     let (roundtrip, _) = parse(Some(&encoded)).unwrap();
     assert_eq!(roundtrip, project);
-    assert_eq!(catalog().count(), 6);
+    assert_eq!(catalog().count(), 7);
     assert!(validate_layers(&Layer::new(), None).is_ok());
 }
 
