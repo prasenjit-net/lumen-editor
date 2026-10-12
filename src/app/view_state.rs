@@ -62,7 +62,7 @@ impl ExplorerEdit {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum Activity {
     #[default]
     Explorer,

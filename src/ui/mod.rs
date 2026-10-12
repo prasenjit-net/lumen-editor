@@ -8,6 +8,7 @@ mod editor_gutter;
 mod editor_menu;
 #[cfg(feature = "shared-editor")]
 mod editor_shared;
+mod editor_tabs;
 mod editor_viewport;
 mod explorer;
 mod explorer_actions;

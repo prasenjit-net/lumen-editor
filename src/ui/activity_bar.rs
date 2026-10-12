@@ -1,6 +1,7 @@
 use super::Workbench;
 use super::theme::{ACCENT, SIDEBAR};
 use super::widgets::{self, canvas, surface};
+use crate::app::command::Command;
 use crate::app::view_state::Activity;
 use crate::icon;
 use eframe::egui::{self, Stroke};
@@ -22,9 +23,11 @@ impl Workbench<'_> {
                             (Activity::RunDebug, icon::DEBUG),
                             (Activity::Extensions, icon::PUZZLE_PIECE),
                         ] {
-                            let response =
-                                widgets::icon_button(ui, glyph, self.view.activity == activity);
-                            if self.view.activity == activity {
+                            let selected =
+                                self.view.sidebar_visible && self.view.activity == activity;
+                            let response = widgets::icon_button(ui, glyph, selected)
+                                .on_hover_text(activity.title());
+                            if selected {
                                 ui.painter().vline(
                                     response.rect.left(),
                                     response.rect.y_range(),
@@ -32,8 +35,7 @@ impl Workbench<'_> {
                                 );
                             }
                             if response.clicked() {
-                                self.view.activity = activity;
-                                self.view.sidebar_visible = true;
+                                self.command(Command::ActivateActivity(activity));
                             }
                         }
                         ui.add_space((ui.available_height() - 50.0).max(0.0));
@@ -41,10 +43,126 @@ impl Workbench<'_> {
                             .on_hover_text("Settings (Cmd/Ctrl+,)")
                             .clicked()
                         {
-                            self.command(crate::app::command::Command::Settings);
+                            self.command(Command::Settings);
                         }
                     });
                 });
             });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{LumenApp, view_state::ExplorerEdit};
+
+    fn frame(
+        app: &mut LumenApp,
+        ctx: &egui::Context,
+        width: f32,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| app.render_component(ctx, |workbench| workbench.activity_bar(ctx)),
+        )
+    }
+
+    fn click(app: &mut LumenApp, ctx: &egui::Context, width: f32, glyph: &str) {
+        let output = frame(app, ctx, width, vec![]);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == glyph => {
+                    Some(egui::Rect::from_min_size(text.pos, text.galley.size()).center())
+                }
+                _ => None,
+            })
+            .expect("activity icon is visible");
+        for pressed in [true, false] {
+            frame(
+                app,
+                ctx,
+                width,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+    }
+
+    fn active_stripes(output: &egui::FullOutput) -> usize {
+        output.shapes.iter().filter(|shape| matches!(&shape.shape,
+            egui::Shape::LineSegment { stroke, .. } if stroke.color == ACCENT && stroke.width == 2.0
+        )).count()
+    }
+
+    #[test]
+    fn activity_clicks_toggle_and_switch_without_losing_work() {
+        for width in [300.0, 900.0, 1400.0] {
+            let mut app = LumenApp::default();
+            app.editor.new_file();
+            app.editor.files[0].text = "unsaved work".into();
+            app.editor.files[0].dirty = true;
+            let document_id = app.editor.files[0].id;
+            app.view.explorer_edit = Some(ExplorerEdit::new("/workspace".into()));
+            app.view.explorer_edit.as_mut().unwrap().name = "draft.rs".into();
+            app.view.expanded_dirs.insert("/workspace".into());
+            let ctx = egui::Context::default();
+            crate::ui::theme::configure_ui(&ctx);
+            frame(&mut app, &ctx, width, vec![]);
+            for (activity, glyph) in [
+                (Activity::Explorer, icon::FILES),
+                (Activity::Search, icon::MAGNIFYING_GLASS),
+                (Activity::SourceControl, icon::GIT_BRANCH),
+                (Activity::RunDebug, icon::DEBUG),
+                (Activity::Extensions, icon::PUZZLE_PIECE),
+            ] {
+                app.view.activity = Activity::Explorer;
+                app.view.sidebar_visible = false;
+                app.view.explorer_focused = true;
+                click(&mut app, &ctx, width, glyph);
+                assert_eq!(app.view.activity, activity);
+                assert!(app.view.sidebar_visible);
+                assert!(!app.view.explorer_focused);
+                assert_eq!(active_stripes(&frame(&mut app, &ctx, width, vec![])), 1);
+                click(&mut app, &ctx, width, glyph);
+                assert!(!app.view.sidebar_visible);
+                assert_eq!(active_stripes(&frame(&mut app, &ctx, width, vec![])), 0);
+                click(&mut app, &ctx, width, glyph);
+                assert!(app.view.sidebar_visible);
+                let other = if activity == Activity::Explorer {
+                    icon::MAGNIFYING_GLASS
+                } else {
+                    icon::FILES
+                };
+                click(&mut app, &ctx, width, other);
+                assert!(app.view.sidebar_visible);
+                assert_ne!(app.view.activity, activity);
+            }
+            assert_eq!(app.editor.files[0].id, document_id);
+            assert_eq!(app.editor.files[0].text, "unsaved work");
+            assert!(app.editor.files[0].dirty);
+            assert_eq!(app.view.explorer_edit.as_ref().unwrap().name, "draft.rs");
+            assert!(
+                app.view
+                    .expanded_dirs
+                    .contains(std::path::Path::new("/workspace"))
+            );
+        }
     }
 }

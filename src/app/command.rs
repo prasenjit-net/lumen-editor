@@ -1,5 +1,5 @@
 use super::editor_action::EditorAction;
-use super::view_state::{ExplorerEdit, ViewState};
+use super::view_state::{Activity, ExplorerEdit, ViewState};
 use crate::model::{DocumentId, EditorState};
 use std::path::PathBuf;
 
@@ -36,6 +36,7 @@ pub(crate) enum Command {
     Quit,
     Palette,
     ToggleSidebar,
+    ActivateActivity(Activity),
     Welcome,
     Copy,
     Cut,
@@ -57,6 +58,12 @@ impl Command {
     /// access to dialogs or filesystem writes. Other actions go to the controller.
     pub(crate) fn apply_local(&self, editor: &mut EditorState, view: &mut ViewState) -> bool {
         match *self {
+            Self::ActivateActivity(activity) => {
+                view.sidebar_visible = !(view.sidebar_visible && view.activity == activity);
+                view.activity = activity;
+                // Hidden or replaced explorer views must not intercept editor shortcuts.
+                view.explorer_focused = false;
+            }
             Self::NewUntitled => {
                 view.settings.open = false;
                 editor.new_file();

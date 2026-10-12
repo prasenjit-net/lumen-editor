@@ -55,7 +55,10 @@ impl LumenApp {
                 }
             }
             Command::NewFile => self.new_file(),
-            Command::NewUntitled | Command::CollapseFolders | Command::RefreshExplorer => {
+            Command::NewUntitled
+            | Command::CollapseFolders
+            | Command::RefreshExplorer
+            | Command::ActivateActivity(_) => {
                 command.apply_local(&mut self.editor, &mut self.view);
             }
             Command::NewFolder => self.new_folder(),
