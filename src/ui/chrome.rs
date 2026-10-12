@@ -119,9 +119,32 @@ impl Workbench<'_> {
                                 .color(Color32::WHITE),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            #[cfg(feature = "shared-editor")]
+                            let cursors = self
+                                .active()
+                                .and_then(|file| file.editing.as_ref())
+                                .map(|buffer| {
+                                    let selections = buffer.selections().selections();
+                                    if selections.len() > 1 {
+                                        let noun = if selections
+                                            .iter()
+                                            .any(|selection| !selection.range().is_empty())
+                                        {
+                                            "selections"
+                                        } else {
+                                            "cursors"
+                                        };
+                                        format!("{} {noun}   ", selections.len())
+                                    } else {
+                                        String::new()
+                                    }
+                                })
+                                .unwrap_or_default();
+                            #[cfg(not(feature = "shared-editor"))]
+                            let cursors = String::new();
                             ui.label(
                                 RichText::new(format!(
-                                    "{}   UTF-8   LF",
+                                    "{cursors}{}   UTF-8   LF",
                                     self.active()
                                         .map(|file| file.language.as_str())
                                         .unwrap_or("Plain Text")

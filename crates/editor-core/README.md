@@ -37,12 +37,16 @@ Next/all occurrence selection uses exact literals and grapheme-aware word
 seeding (letters/digits/underscore); no regex, language tokenization or case folding.
 Indentation deduplicates touched logical lines, excludes an end at the next line
 start, remaps both endpoints and keeps direction in one history entry. Clipboard
-fragments are explicit, immutable session metadata in document order; distribution
-requires exact payload and cursor-count matches, otherwise paste broadcasts.
+fragments are explicit, immutable session metadata in document order; exact
+payload and cursor-count matches preserve those fragments. External clipboard
+rows distribute when their count matches the number of cursors; otherwise the
+full text is pasted at each cursor.
 All-empty selections copy/cut deduplicated logical lines using the rules shared
 with the default app. Matching explicit line metadata inserts before each logical
 line and restores original columns; unknown external text is never inferred to be
 line content. Mixed selections retain empty fragments without copying full lines.
 Cross-process MIME metadata and destination newline conversion remain open.
+Pasting a copied column at a single cursor does not yet spread it across rows
+or pad short destination lines to a visual column.
 
 Run `cargo test -p lumen-editor-core`.

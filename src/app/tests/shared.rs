@@ -218,6 +218,48 @@ fn workbench_multi_cursor_history_is_core_owned_and_save_checkpoint_survives_und
 }
 
 #[test]
+fn popup_cut_copy_and_tagged_paste_edit_each_selected_range() {
+    let (mut app, _, ctx) = fixture("aa bb");
+    let clipboard = TestClipboard::default();
+    app.clipboard = Box::new(clipboard.clone());
+    select(
+        &mut app,
+        vec![
+            Selection { anchor: 0, head: 2 },
+            Selection { anchor: 3, head: 5 },
+        ],
+        1,
+    );
+    let original = buffer(&app).selections().clone();
+    edit_command(&mut app, &ctx, EditorAction::Copy);
+    let output = editor_frame(&mut app, &ctx, vec![]);
+    assert!(
+        output.platform_output.commands.iter().any(
+            |command| matches!(command, egui::OutputCommand::CopyText(text) if text == "aa\nbb")
+        )
+    );
+    assert_eq!(buffer(&app).selections(), &original);
+    assert!(!buffer(&app).is_dirty());
+
+    edit_command(&mut app, &ctx, EditorAction::Cut);
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(buffer(&app).text(), " ");
+    edit_command(&mut app, &ctx, EditorAction::Paste);
+    editor_frame(&mut app, &ctx, vec![]);
+    app.start_clipboard_read(&ctx);
+    let request = app.view.editor_paste_target.unwrap().request;
+    clipboard.complete(request, Ok(Some("aa\nbb".into())));
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(buffer(&app).text(), "aa bb");
+    edit_command(&mut app, &ctx, EditorAction::Undo);
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(buffer(&app).text(), " ");
+    edit_command(&mut app, &ctx, EditorAction::Undo);
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(buffer(&app).selections(), &original);
+}
+
+#[test]
 fn failed_save_and_rename_preserve_shared_history_and_unsaved_content() {
     let (mut app, storage, ctx) = fixture("original");
     editor_frame(&mut app, &ctx, vec![egui::Event::Text("changed".into())]);
@@ -359,10 +401,7 @@ fn tagged_paste_checks_the_entire_shared_selection_set() {
         }
         clipboard.complete(request, Ok(Some("漢\r\n".into())));
         editor_frame(&mut app, &ctx, vec![]);
-        assert_eq!(
-            buffer(&app).text(),
-            if change { "a b" } else { "漢\r\na 漢\r\nb" }
-        );
+        assert_eq!(buffer(&app).text(), if change { "a b" } else { "漢a b" });
     }
 }
 

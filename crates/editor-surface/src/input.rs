@@ -1,4 +1,4 @@
-use crate::{DragSelection, EditorSurface};
+use crate::{DragSelection, EditorSurface, TextGeometry};
 use egui::{Event, ImeEvent, Key, PointerButton, Pos2, Rect, Response, Ui};
 use lumen_editor_core::{Composition, Direction, EditorBuffer, Selection, SelectionAffinity};
 
@@ -15,6 +15,7 @@ impl EditorSurface {
         if !ui.is_enabled() || !ui.input(|input| input.focused) {
             buffer.break_undo_group();
             self.drag_anchor = None;
+            self.pending_shortcut_text = false;
             self.vertical_goals = None;
             self.cancel_composition();
             return false;
@@ -31,6 +32,14 @@ impl EditorSurface {
             self.cancel_composition();
             self.notice = Some("Composition cancelled: editor target changed".into());
         }
+        let shortcut_in_events = events.iter().any(|event| {
+            matches!(event, Event::Key { key: Key::I, pressed: true, modifiers, .. }
+                if modifiers.alt && modifiers.shift)
+        });
+        let mut suppress_shortcut_text =
+            shortcut_in_events || std::mem::take(&mut self.pending_shortcut_text);
+        let mut shortcut_this_frame = false;
+        let mut consumed_shortcut_text = false;
         for event in events {
             // Passive pointer motion and key releases must not erase preferred
             // columns between consecutive vertical moves. Actual edits and
@@ -75,13 +84,31 @@ impl EditorSurface {
                         } else {
                             affinity
                         };
-                        if modifiers.alt {
-                            let mut selections: Vec<_> = set
+                        if modifiers.alt && modifiers.shift {
+                            buffer
+                                .set_selections_with_affinity(
+                                    vec![(
+                                        Selection::caret(byte),
+                                        SelectionAffinity {
+                                            anchor: affinity,
+                                            head: affinity,
+                                        },
+                                    )],
+                                    0,
+                                )
+                                .unwrap();
+                            self.drag_anchor = Some(DragSelection::Column {
+                                origin: pos,
+                                revision: buffer.revision(),
+                            });
+                        } else if modifiers.alt {
+                            let previous: Vec<_> = set
                                 .selections()
                                 .iter()
                                 .copied()
                                 .zip(set.affinities().iter().copied())
                                 .collect();
+                            let mut selections = previous.clone();
                             selections.push((
                                 Selection::caret(byte),
                                 SelectionAffinity {
@@ -90,9 +117,14 @@ impl EditorSurface {
                                 },
                             ));
                             buffer
-                                .set_selections_with_affinity(selections, set.selections().len())
+                                .set_selections_with_affinity(selections, previous.len())
                                 .unwrap();
-                            self.drag_anchor = None;
+                            self.drag_anchor = Some(DragSelection::Additive {
+                                anchor: byte,
+                                revision: buffer.revision(),
+                                affinity,
+                                previous,
+                            });
                         } else {
                             buffer
                                 .set_selections_with_affinity(
@@ -106,7 +138,7 @@ impl EditorSurface {
                                     0,
                                 )
                                 .unwrap();
-                            self.drag_anchor = Some(DragSelection {
+                            self.drag_anchor = Some(DragSelection::Linear {
                                 anchor,
                                 revision: buffer.revision(),
                                 affinity: anchor_affinity,
@@ -118,10 +150,16 @@ impl EditorSurface {
                     }
                 } else {
                     self.drag_anchor = None;
-                    if clip.contains(pos) && response.double_clicked_by(PointerButton::Primary) {
+                    if clip.contains(pos)
+                        && !modifiers.alt
+                        && response.double_clicked_by(PointerButton::Primary)
+                    {
                         buffer.select_next_occurrence();
                     }
-                    if clip.contains(pos) && response.triple_clicked_by(PointerButton::Primary) {
+                    if clip.contains(pos)
+                        && !modifiers.alt
+                        && response.triple_clicked_by(PointerButton::Primary)
+                    {
                         let set = buffer.selections();
                         let head = set.selections()[set.primary_index()].head;
                         let start = buffer.text()[..head]
@@ -144,28 +182,32 @@ impl EditorSurface {
                 continue;
             }
             if let Event::PointerMoved(pos) = event {
-                if let Some(drag) = self.drag_anchor {
-                    if drag.revision != buffer.revision() {
+                if let Some(drag) = self.drag_anchor.clone() {
+                    if drag.revision() != buffer.revision() {
                         self.drag_anchor = None;
                         continue;
                     }
                     let geometry = self.geometry(ui, buffer.text(), origin, None);
-                    let byte = geometry.hit_test(pos);
-                    let affinity = geometry.pointer_affinity(pos, byte);
+                    let (selections, primary) = match drag {
+                        DragSelection::Column { origin, .. } => {
+                            column_selections(&geometry, origin, pos)
+                        }
+                        DragSelection::Linear {
+                            anchor, affinity, ..
+                        } => (vec![drag_range(&geometry, anchor, affinity, pos)], 0),
+                        DragSelection::Additive {
+                            anchor,
+                            affinity,
+                            mut previous,
+                            ..
+                        } => {
+                            let primary = previous.len();
+                            previous.push(drag_range(&geometry, anchor, affinity, pos));
+                            (previous, primary)
+                        }
+                    };
                     if buffer
-                        .set_selections_with_affinity(
-                            vec![(
-                                Selection {
-                                    anchor: drag.anchor,
-                                    head: byte,
-                                },
-                                SelectionAffinity {
-                                    anchor: drag.affinity,
-                                    head: affinity,
-                                },
-                            )],
-                            0,
-                        )
+                        .set_selections_with_affinity(selections, primary)
                         .is_err()
                     {
                         self.drag_anchor = None;
@@ -248,6 +290,11 @@ impl EditorSurface {
                     buffer.paste(&text, self.clipboard.as_ref()).unwrap();
                 }
                 Event::Text(text) if self.composition.is_none() => {
+                    if suppress_shortcut_text && matches!(text.as_str(), "ˆ" | "^" | "\u{0302}") {
+                        suppress_shortcut_text = false;
+                        consumed_shortcut_text = true;
+                        continue;
+                    }
                     self.drag_anchor = None;
                     buffer
                         .type_text(&text, ui.input(|input| input.time))
@@ -281,6 +328,10 @@ impl EditorSurface {
                         buffer.break_undo_group();
                     }
                     if self.selection_command(ui, key, modifiers, origin, buffer) {
+                        // Option+Shift+I can also emit macOS's dead-key text.
+                        // The command owns this keypress, not the text event.
+                        shortcut_this_frame = key == Key::I && modifiers.alt && modifiers.shift;
+                        suppress_shortcut_text = shortcut_this_frame && !consumed_shortcut_text;
                         continue;
                     }
                     match key {
@@ -368,11 +419,15 @@ impl EditorSurface {
         if !ui.input(|input| input.focused) || !ui.memory(|memory| memory.has_focus(response.id)) {
             buffer.break_undo_group();
             self.drag_anchor = None;
+            self.pending_shortcut_text = false;
             self.vertical_goals = None;
             self.cancel_composition();
         }
         if !ui.input(|input| input.pointer.primary_down()) {
             self.drag_anchor = None;
+        }
+        if ui.input(|input| input.focused) && ui.memory(|memory| memory.has_focus(response.id)) {
+            self.pending_shortcut_text = shortcut_this_frame && suppress_shortcut_text;
         }
         before != buffer.revision()
     }
@@ -383,4 +438,53 @@ impl EditorSurface {
         }
         self.composition_cancelled = true;
     }
+}
+
+fn drag_range(
+    geometry: &TextGeometry,
+    anchor: usize,
+    anchor_affinity: lumen_editor_core::CaretAffinity,
+    pointer: Pos2,
+) -> (Selection, SelectionAffinity) {
+    let head = geometry.hit_test(pointer);
+    (
+        Selection { anchor, head },
+        SelectionAffinity {
+            anchor: anchor_affinity,
+            head: geometry.pointer_affinity(pointer, head),
+        },
+    )
+}
+
+/// Shift+Alt drag creates one range per displayed row. Both endpoints come
+/// from the same geometry used for text painting and ordinary pointer mapping.
+fn column_selections(
+    geometry: &TextGeometry,
+    origin: Pos2,
+    pointer: Pos2,
+) -> (Vec<(Selection, SelectionAffinity)>, usize) {
+    let rows = geometry.row_rects();
+    let row_at = |y: f32| {
+        rows.iter()
+            .position(|row| y < row.bottom())
+            .unwrap_or(rows.len() - 1)
+    };
+    let first = row_at(origin.y);
+    let last = row_at(pointer.y);
+    let start = first.min(last);
+    let end = first.max(last);
+    let selections = rows[start..=end]
+        .iter()
+        .map(|row| {
+            let anchor_point = Pos2::new(origin.x, row.center().y);
+            let anchor = geometry.hit_test(anchor_point);
+            drag_range(
+                geometry,
+                anchor,
+                geometry.pointer_affinity(anchor_point, anchor),
+                Pos2::new(pointer.x, row.center().y),
+            )
+        })
+        .collect();
+    (selections, last - start)
 }

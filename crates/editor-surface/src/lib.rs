@@ -23,6 +23,7 @@ pub struct EditorSurface {
     typography: Typography,
     widget: Option<Id>,
     drag_anchor: Option<DragSelection>,
+    pending_shortcut_text: bool,
     composition: Option<Composition>,
     composition_cancelled: bool,
     clipboard: Option<SelectionClipboard>,
@@ -69,11 +70,36 @@ struct CachedShape {
     layout: Arc<shaping::ShapedLayout>,
 }
 
-#[derive(Clone, Copy)]
-struct DragSelection {
-    anchor: usize,
-    revision: u64,
-    affinity: CaretAffinity,
+#[derive(Clone)]
+enum DragSelection {
+    Linear {
+        anchor: usize,
+        revision: u64,
+        affinity: CaretAffinity,
+    },
+    Additive {
+        anchor: usize,
+        revision: u64,
+        affinity: CaretAffinity,
+        previous: Vec<(
+            lumen_editor_core::Selection,
+            lumen_editor_core::SelectionAffinity,
+        )>,
+    },
+    Column {
+        origin: Pos2,
+        revision: u64,
+    },
+}
+
+impl DragSelection {
+    fn revision(&self) -> u64 {
+        match self {
+            Self::Linear { revision, .. }
+            | Self::Additive { revision, .. }
+            | Self::Column { revision, .. } => *revision,
+        }
+    }
 }
 
 pub struct SurfaceOutput {

@@ -5,6 +5,15 @@ Prepared: 2026-10-10. Applies to the Rust/egui Lumen editor and `AGENTS.md`.
 
 ## Implementation progress
 
+Multi-selection update (2026-10-12): the default shared editor accepts
+Option/Alt-drag for an additional range, Shift+Option/Alt-drag for column ranges,
+and Shift+Option/Alt+I for cursors at selected line ends. Typing, context-menu
+Cut/Copy/Paste and undo act on the complete selection set. Session clipboard
+fragments distribute by cursor; external clipboard rows distribute when counts
+match, otherwise the full text is pasted at each cursor. A column copied into a
+single cursor still needs visual-column spread/padding; native macOS and Windows
+clipboard/IME acceptance remains pending.
+
 Latest batch (2026-10-12): immutable shaped-layout/character caches, indexed glyph
 positions, core-owned caret affinity, visual grapheme arrows and shared pointer
 edges are implemented. Regression coverage includes affinity undo, sticky paste/

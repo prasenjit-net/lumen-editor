@@ -145,6 +145,9 @@ impl EditorSurface {
             Key::L if modifiers.command && modifiers.shift && !modifiers.alt => {
                 buffer.select_all_occurrences();
             }
+            Key::I if modifiers.alt && modifiers.shift && !modifiers.command => {
+                buffer.select_line_ends();
+            }
             Key::Tab if !modifiers.command && !modifiers.alt && !modifiers.ctrl => {
                 if modifiers.shift
                     || buffer

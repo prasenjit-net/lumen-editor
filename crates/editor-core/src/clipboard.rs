@@ -2,8 +2,8 @@
 use crate::{EditError, EditorBuffer, Selection};
 use std::collections::BTreeSet;
 
-/// Explicit session metadata, in canonical document order. External text is
-/// never implicitly interpreted as distributed multi-selection content.
+/// Explicit session metadata, in canonical document order. Exact matches keep
+/// original fragments; external text uses only the visible row-count rule.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectionClipboard {
     pub(crate) fragments: Vec<String>,
@@ -159,7 +159,20 @@ impl EditorBuffer {
             let fragments: Vec<_> = metadata.fragments.iter().map(String::as_str).collect();
             self.replace_selections(&fragments)
         } else {
-            self.replace_selections(&[text])
+            // VS Code distributes rows from an external clipboard when its row
+            // count matches the number of cursors. Session metadata above keeps
+            // exact fragments (including embedded newlines) when available.
+            let rows: Vec<_> = text
+                .split('\n')
+                .map(|row| row.strip_suffix('\r').unwrap_or(row))
+                .collect();
+            if self.selections().selections().len() > 1
+                && rows.len() == self.selections().selections().len()
+            {
+                self.replace_selections(&rows)
+            } else {
+                self.replace_selections(&[text])
+            }
         }
     }
 }

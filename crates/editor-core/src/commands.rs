@@ -3,6 +3,56 @@ use std::{collections::BTreeSet, ops::Range};
 use unicode_segmentation::UnicodeSegmentation;
 
 impl EditorBuffer {
+    /// Replace a multi-line selection with one caret at the end of each
+    /// touched logical line. A selection ending at the next line's start does
+    /// not include that next line. This is a selection-only command.
+    pub fn select_line_ends(&mut self) -> bool {
+        let text = self.text();
+        let starts: Vec<_> = std::iter::once(0)
+            .chain(text.match_indices('\n').map(|(byte, _)| byte + 1))
+            .collect();
+        let mut ends = BTreeSet::new();
+        let line_at = |byte| {
+            starts
+                .partition_point(|start| *start <= byte)
+                .saturating_sub(1)
+        };
+        let line_end = |index: usize| {
+            let next = starts.get(index + 1).copied().unwrap_or(text.len());
+            if next > 0 && text.as_bytes()[next - 1] == b'\n' {
+                let before_newline = next - 1;
+                if before_newline > 0 && text.as_bytes()[before_newline - 1] == b'\r' {
+                    before_newline - 1
+                } else {
+                    before_newline
+                }
+            } else {
+                next
+            }
+        };
+        for selection in self.selections().selections() {
+            let range = selection.range();
+            let last = if range.is_empty() {
+                range.end
+            } else {
+                range.end - 1
+            };
+            for index in line_at(range.start)..=line_at(last) {
+                ends.insert(line_end(index));
+            }
+        }
+        let primary_head = self.selections().selections()[self.selections().primary_index()].head;
+        let primary_end = line_end(line_at(primary_head));
+        let cursors: Vec<_> = ends.into_iter().map(Selection::caret).collect();
+        let primary = cursors
+            .iter()
+            .rposition(|cursor| cursor.head <= primary_end)
+            .unwrap_or(0);
+        let before = self.selections().clone();
+        self.set_selections(cursors, primary).unwrap();
+        before != *self.selections()
+    }
+
     /// Select the word at a lone caret first; otherwise add the next literal
     /// occurrence, wrapping once. Does not edit text or create undo history.
     pub fn select_next_occurrence(&mut self) -> bool {

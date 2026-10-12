@@ -22,6 +22,8 @@ Implemented:
 - Multi-location typing, selection-only and logical-line copy/cut/paste, explicit
   session fragment distribution, full-set undo/redo and saved checkpoints.
 - Option/Alt-click, primary/Shift-click/drag and right-click selection preservation.
+- Option/Alt-drag adds a selected range; Shift+Option/Alt-drag selects a column
+  using rendered rows. Shift+Option/Alt+I places cursors at selected line ends.
 - Next/all occurrence shortcuts; native cursor-above/below; grapheme, word,
   vertical, page and line navigation; Tab/Shift+Tab indentation.
 - One two-axis viewport with fixed gutter, reserved scrollbars, line selection

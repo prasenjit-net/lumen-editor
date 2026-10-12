@@ -60,7 +60,7 @@ fn all_occurrences_are_literal_grapheme_safe_and_keep_primary_location() {
 }
 
 #[test]
-fn distributed_clipboard_requires_explicit_matching_metadata_and_count() {
+fn session_fragments_require_matching_metadata_and_cursor_count() {
     let mut source = EditorBuffer::new("漢\r\n👩‍💻".into());
     let len = source.text().len();
     source
@@ -106,6 +106,55 @@ fn distributed_clipboard_requires_explicit_matching_metadata_and_count() {
         .paste(clipboard.text(), Some(&clipboard))
         .unwrap();
     assert_eq!(destination.text(), "漢\n👩‍💻a b");
+}
+
+#[test]
+fn external_rows_distribute_only_when_cursor_count_matches() {
+    let mut buffer = EditorBuffer::new("a b c".into());
+    buffer
+        .set_selections(
+            vec![
+                Selection::caret(0),
+                Selection::caret(2),
+                Selection::caret(4),
+            ],
+            1,
+        )
+        .unwrap();
+    let before = buffer.selections().clone();
+    buffer.paste("漢\r\n🌍\n", None).unwrap();
+    assert_eq!(buffer.text(), "漢a 🌍b c");
+    assert!(buffer.undo());
+    assert_eq!(buffer.selections(), &before);
+    buffer.paste("one\ntwo", None).unwrap();
+    assert_eq!(buffer.text(), "one\ntwoa one\ntwob one\ntwoc");
+    assert!(buffer.undo());
+    assert_eq!(buffer.selections(), &before);
+}
+
+#[test]
+fn cursor_at_end_of_each_selected_line_deduplicates_crlf_and_excludes_next_start() {
+    let mut buffer = EditorBuffer::new("é\r\nsecond\r\nthird".into());
+    buffer
+        .set_selections(
+            vec![
+                Selection {
+                    anchor: 0,
+                    head: 12,
+                },
+                Selection::caret(5),
+            ],
+            0,
+        )
+        .unwrap();
+    assert!(buffer.select_line_ends());
+    assert_eq!(
+        buffer.selections().selections(),
+        &[Selection::caret(2), Selection::caret(10)]
+    );
+    assert_eq!(buffer.revision(), 0);
+    assert!(!buffer.is_dirty());
+    assert!(!buffer.can_undo());
 }
 
 #[test]

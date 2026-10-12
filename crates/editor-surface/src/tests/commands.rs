@@ -1,6 +1,89 @@
 use super::*;
 
 #[test]
+fn selected_lines_gain_end_cursors_and_type_as_one_edit() {
+    let (mut surface, mut buffer, ctx) = fixture("one\ntwo\nthree");
+    buffer
+        .set_selections(vec![Selection { anchor: 0, head: 8 }], 0)
+        .unwrap();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![
+            key(Key::I, Modifiers::SHIFT | Modifiers::ALT),
+            Event::Text("ˆ".into()),
+        ],
+        500.0,
+    );
+    assert_eq!(
+        buffer.selections().selections(),
+        &[Selection::caret(3), Selection::caret(7)]
+    );
+    assert_eq!(buffer.text(), "one\ntwo\nthree");
+    let before = buffer.selections().clone();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::Text("!".into())],
+        500.0,
+    );
+    assert_eq!(buffer.text(), "one!\ntwo!\nthree");
+    assert!(buffer.undo());
+    assert_eq!(buffer.selections(), &before);
+}
+
+#[test]
+fn line_end_shortcut_ignores_delayed_or_earlier_dead_key_text() {
+    for events in [
+        vec![
+            key(Key::I, Modifiers::SHIFT | Modifiers::ALT),
+            Event::Text("ˆ".into()),
+        ],
+        vec![
+            Event::Text("ˆ".into()),
+            key(Key::I, Modifiers::SHIFT | Modifiers::ALT),
+        ],
+    ] {
+        let (mut surface, mut buffer, ctx) = fixture("a\nb");
+        buffer
+            .set_selections(vec![Selection { anchor: 0, head: 3 }], 0)
+            .unwrap();
+        frame(&mut surface, &mut buffer, &ctx, events, 500.0);
+        assert_eq!(buffer.text(), "a\nb");
+        frame(
+            &mut surface,
+            &mut buffer,
+            &ctx,
+            vec![Event::Text("!".into())],
+            500.0,
+        );
+        assert_eq!(buffer.text(), "a!\nb!");
+    }
+
+    let (mut surface, mut buffer, ctx) = fixture("a\nb");
+    buffer
+        .set_selections(vec![Selection { anchor: 0, head: 3 }], 0)
+        .unwrap();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::I, Modifiers::SHIFT | Modifiers::ALT)],
+        500.0,
+    );
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::Text("ˆ".into())],
+        500.0,
+    );
+    assert_eq!(buffer.text(), "a\nb");
+}
+
+#[test]
 fn every_cursor_retains_column_through_short_lines_and_passive_events() {
     let (mut surface, mut buffer, ctx) = fixture("abcdef\nx\nabcdef\nabcdef\nx\nabcdef");
     buffer

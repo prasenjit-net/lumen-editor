@@ -272,6 +272,150 @@ fn alt_click_adds_a_real_cursor_then_typing_edits_both_locations() {
 }
 
 #[test]
+fn alt_drag_adds_a_range_and_clipboard_edits_every_selection_once() {
+    let (mut surface, mut buffer, ctx) = fixture("alpha beta gamma");
+    buffer
+        .set_selections(vec![Selection { anchor: 0, head: 5 }], 0)
+        .unwrap();
+    let output = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    let start = output.geometry.caret_rect(11).center();
+    let end = output.geometry.caret_rect(16).center();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![
+            Event::PointerMoved(start),
+            Event::PointerButton {
+                pos: start,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::ALT,
+            },
+        ],
+        500.0,
+    );
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::PointerMoved(end)],
+        500.0,
+    );
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::ALT,
+        }],
+        500.0,
+    );
+    let selections = buffer.selections().clone();
+    assert_eq!(
+        selections.selections(),
+        &[
+            Selection { anchor: 0, head: 5 },
+            Selection {
+                anchor: 11,
+                head: 16
+            }
+        ]
+    );
+    frame(&mut surface, &mut buffer, &ctx, vec![Event::Copy], 500.0);
+    assert_eq!(surface.clipboard.as_ref().unwrap().text(), "alpha\ngamma");
+    assert!(!buffer.is_dirty());
+    frame(&mut surface, &mut buffer, &ctx, vec![Event::Cut], 500.0);
+    assert_eq!(buffer.text(), " beta ");
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::Paste("alpha\ngamma".into())],
+        500.0,
+    );
+    assert_eq!(buffer.text(), "alpha beta gamma");
+    assert!(buffer.undo());
+    assert_eq!(buffer.text(), " beta ");
+    assert!(buffer.undo());
+    assert_eq!(buffer.selections(), &selections);
+}
+
+#[test]
+fn shift_alt_drag_selects_columns_and_distributes_cut_copy_paste() {
+    let (mut surface, mut buffer, ctx) = fixture("abc\nxy\npqr");
+    let output = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    let start = output.geometry.caret_rect(1).center();
+    let end = output.geometry.caret_rect(10).center();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![
+            Event::PointerMoved(start),
+            Event::PointerButton {
+                pos: start,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::ALT | Modifiers::SHIFT,
+            },
+        ],
+        500.0,
+    );
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::PointerMoved(end)],
+        500.0,
+    );
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::ALT | Modifiers::SHIFT,
+        }],
+        500.0,
+    );
+    let selections = buffer.selections().clone();
+    assert_eq!(
+        selections.selections(),
+        &[
+            Selection { anchor: 1, head: 3 },
+            Selection { anchor: 5, head: 6 },
+            Selection {
+                anchor: 8,
+                head: 10
+            },
+        ]
+    );
+    assert_eq!(selections.primary_index(), 2);
+    frame(&mut surface, &mut buffer, &ctx, vec![Event::Copy], 500.0);
+    assert_eq!(surface.clipboard.as_ref().unwrap().text(), "bc\ny\nqr");
+    frame(&mut surface, &mut buffer, &ctx, vec![Event::Cut], 500.0);
+    assert_eq!(buffer.text(), "a\nx\np");
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::Paste("bc\ny\nqr".into())],
+        500.0,
+    );
+    assert_eq!(buffer.text(), "abc\nxy\npqr");
+    assert!(buffer.undo());
+    assert_eq!(buffer.text(), "a\nx\np");
+    assert!(buffer.undo());
+    assert_eq!(buffer.selections(), &selections);
+}
+
+#[test]
 fn ordinary_click_collapses_cursors_and_blank_space_maps_to_eof() {
     let (mut surface, mut buffer, ctx) = fixture("abc");
     buffer

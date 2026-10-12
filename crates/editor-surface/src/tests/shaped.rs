@@ -41,6 +41,45 @@ fn typography_invalidates_shape_cache_and_caret_rows_together() {
 }
 
 #[test]
+fn column_drag_uses_shaped_rows_and_preserves_crlf_grapheme_boundaries() {
+    let (mut surface, mut buffer, ctx) = shaped_fixture("ab\r\nx\r\nab");
+    let output = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    let start = output.geometry.caret_rect(1).center();
+    let end = output.geometry.caret_rect(9).center();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![
+            Event::PointerMoved(start),
+            Event::PointerButton {
+                pos: start,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::ALT | Modifiers::SHIFT,
+            },
+        ],
+        500.0,
+    );
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::PointerMoved(end)],
+        500.0,
+    );
+    assert_eq!(
+        buffer.selections().selections(),
+        &[
+            Selection { anchor: 1, head: 2 },
+            Selection::caret(5),
+            Selection { anchor: 8, head: 9 },
+        ]
+    );
+    assert_eq!(buffer.revision(), 0);
+}
+
+#[test]
 fn pointer_shift_arrows_and_undo_keep_bidi_affinity_in_the_core() {
     use lumen_editor_core::{CaretAffinity, SelectionAffinity};
     let (mut surface, mut buffer, ctx) = shaped_fixture("abc אבג xyz");

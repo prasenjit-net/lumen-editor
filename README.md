@@ -189,12 +189,16 @@ Find/Replace and complete-selection undo/redo, with a cosmic-text/Swash renderer
 cargo run
 ```
 
-Option/Alt-click adds a cursor; Cmd/Ctrl+D selects the next occurrence and
-Shift+Cmd/Ctrl+L selects all. Cursor-above/below uses Option+Cmd+Up/Down on macOS,
+Option/Alt-click adds a cursor; Option/Alt-drag adds another selected range;
+Shift+Option/Alt-drag makes a column selection. Shift+Option/Alt+I places a
+cursor at the end of each selected line. Cmd/Ctrl+D selects the next occurrence
+and Shift+Cmd/Ctrl+L selects all. Cursor-above/below uses Option+Cmd+Up/Down on macOS,
 Ctrl+Alt+Up/Down on Windows, and Shift+Alt+Up/Down on Linux. Tab/Shift+Tab
-indent/outdent touched lines once. Logical-line copy/cut, session fragment
-distribution, native/popup commands, save checkpoints and stable tab IDs share
-the same editing owner. The editor never instantiates TextEdit document history
+indent/outdent touched lines once. Cut, copy and paste apply to every selection;
+matching clipboard rows distribute in document order, while a different row
+count pastes the full text at each cursor. Logical-line copy/cut, native/popup
+commands, save checkpoints and stable tab IDs share the same editing owner.
+The editor never instantiates TextEdit document history
 in this mode; generic fields such as Find remain ordinary text widgets.
 
 Build `cargo xtask bundle --offline` on macOS to produce `target/Lumen.app` with
