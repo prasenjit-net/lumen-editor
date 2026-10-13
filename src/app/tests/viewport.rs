@@ -460,3 +460,17 @@ fn find_reveals_a_match_offscreen_on_both_axes() {
     );
     assert!(!app.editor.files[0].dirty);
 }
+
+#[test]
+fn go_to_line_moves_legacy_caret_without_changing_text() {
+    let (mut app, ctx) = fixture("one\r\ntwo\r\nthree");
+    let id = app.editor.active().unwrap().id;
+    app.go_to_line(id, "2:2");
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(
+        selection(&app, &ctx).primary.index,
+        "one\r\nt".chars().count()
+    );
+    assert_eq!(app.editor.active().unwrap().text, "one\r\ntwo\r\nthree");
+    assert!(!app.editor.active().unwrap().dirty);
+}

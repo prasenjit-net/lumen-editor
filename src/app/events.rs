@@ -71,6 +71,7 @@ impl LumenApp {
                     && self.view.explorer_edit.is_none()
                     && self.view.delete_prompt.is_none()
                     && !self.view.command_palette
+                    && self.view.navigation.mode.is_none()
                     && !ctx.wants_keyboard_input();
                 menu.set_context(
                     open,
@@ -83,15 +84,27 @@ impl LumenApp {
         }
         #[cfg(not(target_os = "macos"))]
         {
+            let palette = egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::P,
+            );
+            if ctx.input_mut(|input| input.consume_shortcut(&palette)) {
+                self.execute(Command::Palette, ctx);
+            }
+            let quick_open = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::P);
+            if ctx.input_mut(|input| input.consume_shortcut(&quick_open)) {
+                self.execute(Command::QuickOpen, ctx);
+            }
+            let go_to_line = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::G);
+            if ctx.input_mut(|input| input.consume_shortcut(&go_to_line)) {
+                self.execute(Command::GoToLine, ctx);
+            }
             let workspace_search = egui::KeyboardShortcut::new(
                 egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
                 egui::Key::F,
             );
             if ctx.input_mut(|input| input.consume_shortcut(&workspace_search)) {
                 self.execute(Command::ShowWorkspaceSearch, ctx);
-            }
-            if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::P)) {
-                self.execute(Command::Palette, ctx);
             }
             if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::B)) {
                 self.execute(Command::ToggleSidebar, ctx);

@@ -9,6 +9,7 @@ pub(crate) mod editor_input;
 mod events;
 mod explorer_ops;
 pub(crate) mod find;
+mod navigation;
 mod safety;
 pub(crate) mod settings;
 #[cfg(test)]
@@ -33,6 +34,7 @@ pub(crate) struct LumenApp {
     pub(crate) recovery_store: Box<dyn crate::services::recovery::RecoveryStore>,
     pub(crate) safety: safety::SafetyState,
     pub(crate) search_job: Option<workspace_search::SearchJob>,
+    pub(crate) file_index_job: Option<navigation::FileIndexJob>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
 }
@@ -48,6 +50,7 @@ impl Default for LumenApp {
             recovery_store: Box::new(crate::services::recovery::LocalRecoveryStore::new()),
             safety: safety::SafetyState::default(),
             search_job: None,
+            file_index_job: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
         }
@@ -66,6 +69,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.sidebar(ctx));
         self.render_component(ctx, |workbench| workbench.editor(ctx));
         self.render_component(ctx, |workbench| workbench.palette(ctx));
+        self.render_component(ctx, |workbench| workbench.navigation_palette(ctx));
         self.render_component(ctx, |workbench| workbench.unsaved_changes_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.quit_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.settings_quit_dialog(ctx));
@@ -75,6 +79,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.workspace_replace_preview(ctx));
         self.maintain_documents(ctx);
         self.poll_workspace_search(ctx);
+        self.poll_file_index(ctx);
     }
 }
 

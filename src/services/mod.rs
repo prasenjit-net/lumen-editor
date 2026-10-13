@@ -1,6 +1,7 @@
 //! Replaceable filesystem, dialog and clipboard boundaries.
 mod clipboard;
 mod dialogs;
+pub(crate) mod file_index;
 mod file_operations;
 mod filesystem;
 pub(crate) mod recovery;

@@ -19,6 +19,7 @@ mod clipboard;
 mod editor;
 mod explorer;
 mod find;
+mod navigation;
 mod paste;
 mod safety;
 #[cfg(feature = "shared-editor")]

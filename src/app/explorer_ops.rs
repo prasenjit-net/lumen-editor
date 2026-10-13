@@ -115,6 +115,8 @@ impl LumenApp {
         }
         match kind {
             ExplorerEditKind::NewFile => {
+                self.view.navigation.add_workspace_path(&target);
+                self.view.navigation.remember(&target);
                 let index = self
                     .editor
                     .files
@@ -160,6 +162,7 @@ impl LumenApp {
     }
 
     fn relocate_open_paths(&mut self, source: &Path, target: &Path) {
+        self.view.navigation.relocate(source, target);
         for file in &mut self.editor.files {
             if let Some(suffix) = file
                 .path
@@ -207,6 +210,7 @@ impl LumenApp {
             return;
         }
         self.editor.detach_deleted(&path);
+        self.view.navigation.forget_deleted(&path);
         self.view
             .expanded_dirs
             .retain(|directory| !directory.starts_with(&path));

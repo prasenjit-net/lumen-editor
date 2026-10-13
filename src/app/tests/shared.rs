@@ -62,6 +62,22 @@ fn default_view_renders_document_core_without_an_opt_in_toggle() {
 }
 
 #[test]
+fn go_to_line_moves_shared_caret_without_history_or_text_change() {
+    let (mut app, _, ctx) = fixture("one\r\ne\u{301}x\r\nthree");
+    let id = app.editor.active().unwrap().id;
+    let before = buffer(&app).text().to_owned();
+    app.go_to_line(id, "2:2");
+    editor_frame(&mut app, &ctx, vec![]);
+    let selections = buffer(&app).selections();
+    assert_eq!(
+        selections.selections()[selections.primary_index()].head,
+        "one\r\ne\u{301}".len()
+    );
+    assert_eq!(buffer(&app).text(), before);
+    assert!(!buffer(&app).can_undo());
+}
+
+#[test]
 fn save_as_cancellation_and_failed_close_save_preserve_core_history() {
     let (mut app, storage, ctx) = fixture("original");
     editor_frame(&mut app, &ctx, vec![egui::Event::Text("x".into())]);

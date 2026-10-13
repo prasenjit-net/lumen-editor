@@ -12,6 +12,7 @@ use eframe::egui::{self, Frame, Margin, Stroke, StrokeKind, TextEdit};
 impl Workbench<'_> {
     pub(super) fn editor_find_bar(&mut self, ui: &mut egui::Ui, document: DocumentId) {
         let blocked = self.view.command_palette
+            || self.view.navigation.mode.is_some()
             || self.view.pending_close.is_some()
             || self.view.pending_quit
             || self.view.delete_prompt.is_some()

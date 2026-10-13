@@ -107,7 +107,9 @@ impl NativeMenu {
         edit.append(&item(Command::Settings, "Settings…", Code::Comma, false))?;
         let view = Submenu::new("View", true);
         view.append_items(&[
+            &item(Command::QuickOpen, "Go to File…", Code::KeyP, false),
             &item(Command::Palette, "Command Palette…", Code::KeyP, true),
+            &item(Command::GoToLine, "Go to Line/Column…", Code::KeyG, false),
             &item(Command::ToggleSidebar, "Toggle Sidebar", Code::KeyB, false),
             &item(
                 Command::ShowWorkspaceSearch,

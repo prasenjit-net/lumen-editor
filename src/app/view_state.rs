@@ -50,6 +50,29 @@ pub(crate) struct DeletePrompt {
     pub(crate) error: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NavigationMode {
+    QuickOpen,
+    GoToLine,
+}
+
+#[derive(Default)]
+pub(crate) struct NavigationView {
+    pub(crate) mode: Option<NavigationMode>,
+    pub(crate) query: String,
+    pub(crate) focus: bool,
+    pub(crate) selected: usize,
+    pub(crate) matches: Vec<PathBuf>,
+    pub(crate) matched_query: Option<String>,
+    pub(crate) indexed_root: Option<PathBuf>,
+    pub(crate) paths: Vec<PathBuf>,
+    pub(crate) running: bool,
+    pub(crate) limited: bool,
+    pub(crate) errors: usize,
+    pub(crate) recent: Vec<PathBuf>,
+    pub(crate) error: Option<String>,
+}
+
 pub(crate) struct SaveConflict {
     pub(crate) document: crate::model::DocumentId,
     pub(crate) revision: u64,
@@ -144,6 +167,8 @@ pub(crate) struct ViewState {
     pub(crate) explorer_focused: bool,
     pub(crate) focus_editor: bool,
     pub(crate) command_palette: bool,
+    pub(crate) navigation: NavigationView,
+    pub(crate) pending_goto: Option<(crate::model::DocumentId, usize)>,
     pub(crate) search: String,
     pub(crate) workspace_search: WorkspaceSearchView,
     pub(crate) sidebar_visible: bool,
@@ -199,6 +224,8 @@ impl Default for ViewState {
             explorer_focused: false,
             focus_editor: false,
             command_palette: false,
+            navigation: NavigationView::default(),
+            pending_goto: None,
             search: String::new(),
             workspace_search: WorkspaceSearchView::default(),
             sidebar_visible: true,

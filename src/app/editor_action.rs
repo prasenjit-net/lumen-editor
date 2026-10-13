@@ -88,6 +88,7 @@ pub(crate) fn blocked(view: &ViewState) -> bool {
     view.settings.open
         || view.settings.pending_quit
         || view.command_palette
+        || view.navigation.mode.is_some()
         || view.pending_close.is_some()
         || view.pending_quit
         || view.delete_prompt.is_some()

@@ -17,6 +17,7 @@ impl LumenApp {
             && self.view.explorer_edit.is_none()
             && self.view.delete_prompt.is_none()
             && !self.view.command_palette
+            && self.view.navigation.mode.is_none()
             && !ctx.wants_keyboard_input();
         match command {
             Command::Settings => {
@@ -54,6 +55,10 @@ impl LumenApp {
             }
             Command::ApplyWorkspaceReplace => self.apply_workspace_replace(),
             Command::OpenWorkspaceHit(path, range) => self.open_workspace_hit(path, range),
+            Command::QuickOpen => self.open_quick_open(ctx),
+            Command::GoToLine => self.open_go_to_line(),
+            Command::OpenQuickPath(path) => self.open_quick_path(path),
+            Command::NavigateTo(document, input) => self.go_to_line(document, &input),
             Command::EditorAction(document, action) => {
                 if !self.view.settings.open
                     && self.editor.active().is_some_and(|file| file.id == document)
@@ -130,7 +135,10 @@ impl LumenApp {
                 }
             }
             Command::Quit => self.request_quit(ctx),
-            Command::Palette => self.view.command_palette = true,
+            Command::Palette => {
+                self.view.navigation.mode = None;
+                self.view.command_palette = true;
+            }
             Command::ToggleSidebar => self.view.sidebar_visible = !self.view.sidebar_visible,
             Command::Welcome => self.view.status = "Lumen — New: ⌘N · Open: ⌘O · Save: ⌘S".into(),
             Command::Copy | Command::Cut if explorer_clipboard => {

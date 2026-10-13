@@ -123,6 +123,26 @@ impl Workbench<'_> {
                                     if output.response.changed() {
                                         self.editor.files[index].record_text_change();
                                     }
+                                    if let Some((target, byte)) = self.view.pending_goto.take()
+                                        && target == document
+                                    {
+                                        let character =
+                                            self.editor.files[index].text[..byte].chars().count();
+                                        let cursor = egui::text::CCursor::new(character);
+                                        let mut widget = output.state.clone();
+                                        widget.cursor.set_char_range(Some(
+                                            egui::text::CCursorRange::one(cursor),
+                                        ));
+                                        widget.store(&ctx, text_widget_id(document));
+                                        ui.scroll_to_rect(
+                                            output
+                                                .galley
+                                                .pos_from_cursor(cursor)
+                                                .translate(output.galley_pos.to_vec2()),
+                                            None,
+                                        );
+                                        output.response.request_focus();
+                                    }
                                     if replacing {
                                         finish_replace(&output, &self.editor.files[index], &ctx);
                                     }

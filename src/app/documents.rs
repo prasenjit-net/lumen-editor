@@ -30,6 +30,8 @@ impl LumenApp {
 
     pub(crate) fn choose_folder(&mut self) {
         if let Some(folder) = self.dialogs.open_folder() {
+            self.cancel_file_index();
+            self.view.navigation.indexed_root = None;
             self.cancel_workspace_search();
             self.view.workspace_search.results = None;
             self.view.workspace_search.completed_request = None;
@@ -54,12 +56,16 @@ impl LumenApp {
             .position(|file| file.path.as_deref() == Some(path.as_path()))
         {
             self.editor.active_file = Some(index);
+            self.view.navigation.remember(&path);
             return;
         }
         match self.file_system.read_text(&path) {
             Ok(text) => {
                 self.editor.files.push(Document::from_path(path, text));
                 self.editor.active_file = Some(self.editor.files.len() - 1);
+                if let Some(path) = self.editor.active().and_then(|file| file.path.as_deref()) {
+                    self.view.navigation.remember(path);
+                }
                 self.view.status = "File opened".into();
             }
             Err(error) => self.view.status = format!("Could not open file: {error}"),
@@ -80,6 +86,8 @@ impl LumenApp {
         match result {
             Ok(()) => {
                 file.mark_saved(path.clone());
+                self.view.navigation.remember(&path);
+                self.view.navigation.add_workspace_path(&path);
                 self.view.save_conflict = None;
                 self.view.status = "Saved".into();
                 self.settings_file_saved(&path);
@@ -166,6 +174,7 @@ impl LumenApp {
         match result {
             Ok(()) => {
                 file.mark_saved(conflict.path.clone());
+                self.view.navigation.remember(&conflict.path);
                 self.view.status = "External version overwritten by explicit request".into();
                 self.settings_file_saved(&conflict.path);
             }

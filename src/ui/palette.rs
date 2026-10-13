@@ -95,6 +95,8 @@ impl Workbench<'_> {
                         format!("{}  File: Open File", icon::FILE_ARROW_UP),
                         Command::OpenFile,
                     ),
+                    (format!("{}  Go to File", icon::FILE), Command::QuickOpen),
+                    ("Go to Line/Column".into(), Command::GoToLine),
                     (
                         format!("{}  File: Open Folder", icon::FOLDER_OPEN),
                         Command::OpenFolder,

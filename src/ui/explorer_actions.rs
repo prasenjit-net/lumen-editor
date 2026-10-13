@@ -94,6 +94,7 @@ impl Workbench<'_> {
             || self.view.explorer_edit.is_some()
             || self.view.delete_prompt.is_some()
             || self.view.command_palette
+            || self.view.navigation.mode.is_some()
             || ui.ctx().wants_keyboard_input()
         {
             return;

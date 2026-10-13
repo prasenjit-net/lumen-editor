@@ -53,6 +53,21 @@ impl Workbench<'_> {
             surface.reveal(range.start);
             find.reveal = false;
         }
+        if let Some((target, byte)) = self.view.pending_goto.take()
+            && target == document
+        {
+            if self.editor.files[index]
+                .editing
+                .as_mut()
+                .unwrap()
+                .set_selections(vec![lumen_editor_core::Selection::caret(byte)], 0)
+                .is_ok()
+            {
+                surface.reveal(byte);
+            } else {
+                self.view.status = "Could not move to that text position".into();
+            }
+        }
         let output = Frame::new()
             .fill(BG)
             .corner_radius(4)
