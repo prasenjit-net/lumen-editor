@@ -10,7 +10,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const PREVIEW_MATCHES_PER_PAGE: usize = 20;
+const PREVIEW_HUNKS_PER_PAGE: usize = 12;
+const MAX_MATCHES_PER_HUNK: usize = 8;
+const MAX_FULL_HUNK_BYTES: usize = 4_000;
 
 impl Workbench<'_> {
     pub(crate) fn workspace_search_panel(&mut self, ui: &mut egui::Ui) {
@@ -339,8 +341,8 @@ fn show_workspace_replace_preview(
         .wrap(),
     );
     if let Some(results) = &state.results {
-        let matches = selected_preview_matches(results, &state.selected);
-        let pages = matches.len().div_ceil(PREVIEW_MATCHES_PER_PAGE).max(1);
+        let hunks = selected_preview_hunks(results, &state.selected);
+        let pages = hunks.len().div_ceil(PREVIEW_HUNKS_PER_PAGE).max(1);
         state.preview_page = state.preview_page.min(pages - 1);
         ui.horizontal(|ui| {
             if ui
@@ -359,9 +361,10 @@ fn show_workspace_replace_preview(
         });
         ui.label(
             RichText::new(format!(
-                "{} matches in {} selected files",
-                matches.len(),
-                state.selected.len()
+                "{} matches in {} selected files · {} change groups",
+                selected_preview_matches(results, &state.selected).len(),
+                state.selected.len(),
+                hunks.len()
             ))
             .color(MUTED)
             .size(11.0),
@@ -370,10 +373,10 @@ fn show_workspace_replace_preview(
             columns[0].label(RichText::new("Before").color(MUTED).size(11.0));
             columns[1].label(RichText::new("After").color(MUTED).size(11.0));
         });
-        show_preview_match_page(ui, &matches, state.preview_page, &state.replacement);
+        show_preview_hunk_page(ui, &hunks, state.preview_page, &state.replacement);
         ui.add(
             egui::Label::new(
-                RichText::new("Excerpts are shortened; every match is available by page. Full files are checked before writing.")
+                RichText::new("Nearby edits are grouped with context. Long groups use per-match excerpts; full files are checked before writing.")
                     .color(MUTED)
                     .size(11.0),
             )
@@ -394,22 +397,23 @@ fn show_workspace_replace_preview(
     (close, apply)
 }
 
-fn show_preview_match_page(
+fn show_preview_hunk_page(
     ui: &mut egui::Ui,
-    matches: &[(&SearchFile, &SearchHit)],
+    hunks: &[PreviewHunk<'_>],
     page: usize,
     replacement: &str,
 ) {
     ScrollArea::vertical()
         .id_salt(("workspace_replace_preview", page))
-        .max_height(360.0)
+        .max_height(320.0)
         .show(ui, |ui| {
             let mut previous_file = None;
-            for &(file, hit) in matches
+            for hunk in hunks
                 .iter()
-                .skip(page * PREVIEW_MATCHES_PER_PAGE)
-                .take(PREVIEW_MATCHES_PER_PAGE)
+                .skip(page * PREVIEW_HUNKS_PER_PAGE)
+                .take(PREVIEW_HUNKS_PER_PAGE)
             {
+                let file = hunk.file;
                 if previous_file != Some(file.path.as_path()) {
                     if previous_file.is_some() {
                         ui.separator();
@@ -419,22 +423,60 @@ fn show_preview_match_page(
                         .on_hover_text(path);
                     previous_file = Some(file.path.as_path());
                 }
-                let (before, after) = preview_hit(&file.original, hit, replacement);
                 ui.label(
-                    RichText::new(format!("{}:{}", hit.line, hit.column))
-                        .color(MUTED)
-                        .size(11.0),
+                    RichText::new(format!(
+                        "Line {} · {} match(es)",
+                        hunk.line,
+                        hunk.hits.len()
+                    ))
+                    .color(MUTED)
+                    .size(11.0),
                 );
-                ui.columns(2, |columns| {
-                    columns[0]
-                        .add(egui::Label::new(RichText::new(&before).monospace()).truncate())
-                        .on_hover_text(&before);
-                    columns[1]
-                        .add(egui::Label::new(RichText::new(&after).monospace()).truncate())
-                        .on_hover_text(&after);
-                });
+                if hunk.end - hunk.start > MAX_FULL_HUNK_BYTES {
+                    for hit in hunk.hits {
+                        let (before, after) = preview_hit(&file.original, hit, replacement);
+                        preview_columns(
+                            ui,
+                            &before,
+                            &after,
+                            egui::Id::new(("preview_hit", file.path.as_path(), hit.range.start)),
+                        );
+                    }
+                } else if let Some((before, after)) = preview_hunk_text(hunk, replacement) {
+                    preview_columns(
+                        ui,
+                        &before,
+                        &after,
+                        egui::Id::new((
+                            "preview_hunk",
+                            file.path.as_path(),
+                            hunk.hits[0].range.start,
+                        )),
+                    );
+                } else {
+                    ui.label(
+                        RichText::new("Preview unavailable: invalid match ranges").color(MUTED),
+                    );
+                }
             }
         });
+}
+
+fn preview_columns(ui: &mut egui::Ui, before: &str, after: &str, id: egui::Id) {
+    ui.columns(2, |columns| {
+        for (index, (column, text)) in columns.iter_mut().zip([before, after]).enumerate() {
+            ScrollArea::horizontal()
+                .id_salt(id.with(index))
+                .max_width(column.available_width())
+                .show(column, |ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(text).monospace().size(12.0))
+                            .extend()
+                            .halign(egui::Align::Min),
+                    );
+                });
+        }
+    });
 }
 
 #[derive(Default)]
@@ -597,6 +639,85 @@ fn selected_preview_matches<'a>(
         .filter(|file| selected.contains(&file.path))
         .flat_map(|file| file.hits.iter().map(move |hit| (file, hit)))
         .collect()
+}
+
+struct PreviewHunk<'a> {
+    file: &'a SearchFile,
+    hits: &'a [SearchHit],
+    start: usize,
+    end: usize,
+    line: usize,
+}
+
+fn selected_preview_hunks<'a>(
+    results: &'a SearchResult,
+    selected: &HashSet<PathBuf>,
+) -> Vec<PreviewHunk<'a>> {
+    let mut hunks = Vec::new();
+    for file in results
+        .files
+        .iter()
+        .filter(|file| selected.contains(&file.path))
+    {
+        let text = &file.original;
+        let line_starts: Vec<_> = std::iter::once(0)
+            .chain(
+                text.bytes()
+                    .enumerate()
+                    .filter_map(|(index, byte)| (byte == b'\n').then_some(index + 1)),
+            )
+            .collect();
+        let mut active: Option<(usize, usize, usize, usize)> = None;
+        for (index, hit) in file.hits.iter().enumerate() {
+            if text.get(hit.range.clone()).is_none() {
+                continue;
+            }
+            let line = line_starts
+                .partition_point(|start| *start <= hit.range.start)
+                .saturating_sub(1);
+            let start = line_starts[line.saturating_sub(1)];
+            let end = line_starts.get(line + 2).copied().unwrap_or(text.len());
+            if let Some((first, last, _, active_end)) = &mut active
+                && start <= *active_end
+                && *last - *first < MAX_MATCHES_PER_HUNK
+            {
+                *last = index + 1;
+                *active_end = (*active_end).max(end);
+            } else {
+                if let Some((first, last, start, end)) = active.take() {
+                    hunks.push(PreviewHunk {
+                        file,
+                        hits: &file.hits[first..last],
+                        start,
+                        end,
+                        line: file.hits[first].line,
+                    });
+                }
+                active = Some((index, index + 1, start, end));
+            }
+        }
+        if let Some((first, last, start, end)) = active {
+            hunks.push(PreviewHunk {
+                file,
+                hits: &file.hits[first..last],
+                start,
+                end,
+                line: file.hits[first].line,
+            });
+        }
+    }
+    hunks
+}
+
+fn preview_hunk_text(hunk: &PreviewHunk<'_>, replacement: &str) -> Option<(String, String)> {
+    let before = hunk.file.original.get(hunk.start..hunk.end)?;
+    let ranges: Vec<_> = hunk
+        .hits
+        .iter()
+        .map(|hit| hit.range.start - hunk.start..hit.range.end - hunk.start)
+        .collect();
+    let after = crate::model::search::replace_matches(before, &ranges, replacement)?;
+    Some((before.to_owned(), after))
 }
 
 fn preview_hit(text: &str, hit: &SearchHit, replacement: &str) -> (String, String) {
@@ -772,11 +893,11 @@ mod tests {
         let second = PathBuf::from("/workspace/second.rs");
         let file = |path: PathBuf, count| SearchFile {
             path,
-            original: "needle".into(),
+            original: "needle\n\n\n\n".repeat(count),
             hits: (0..count)
-                .map(|line| SearchHit {
-                    range: 0..6,
-                    line,
+                .map(|index| SearchHit {
+                    range: index * 10..index * 10 + 6,
+                    line: index * 4 + 1,
                     column: 1,
                     snippet: "needle".into(),
                 })
@@ -786,24 +907,21 @@ mod tests {
             files: vec![file(first.clone(), 23), file(second.clone(), 2)],
             ..Default::default()
         };
-        let matches = selected_preview_matches(&results, &HashSet::from([first]));
-        assert_eq!(matches.len(), 23);
-        assert_eq!(matches.chunks(PREVIEW_MATCHES_PER_PAGE).count(), 2);
+        let hunks = selected_preview_hunks(&results, &HashSet::from([first]));
+        assert_eq!(hunks.len(), 23);
+        assert_eq!(hunks.chunks(PREVIEW_HUNKS_PER_PAGE).count(), 2);
         assert_eq!(
-            matches
-                .chunks(PREVIEW_MATCHES_PER_PAGE)
-                .nth(1)
-                .unwrap()
-                .len(),
-            3
+            hunks.chunks(PREVIEW_HUNKS_PER_PAGE).nth(1).unwrap().len(),
+            11
         );
+        assert_eq!(hunks.iter().map(|hunk| hunk.hits.len()).sum::<usize>(), 23);
 
-        let matches = selected_preview_matches(&results, &HashSet::from([second]));
-        assert_eq!(matches.len(), 2);
+        let hunks = selected_preview_hunks(&results, &HashSet::from([second]));
+        assert_eq!(hunks.len(), 2);
         assert!(
-            matches
+            hunks
                 .iter()
-                .all(|(file, _)| file.path == results.files[1].path)
+                .all(|hunk| hunk.file.path == results.files[1].path)
         );
     }
 
@@ -824,6 +942,74 @@ mod tests {
     }
 
     #[test]
+    fn nearby_matches_share_a_hunk_with_combined_replacement_and_context() {
+        let path = PathBuf::from("/workspace/a.txt");
+        let original = "before\r\nα needle and needle\r\nafter\r\n";
+        let first = original.find("needle").unwrap();
+        let second = original.rfind("needle").unwrap();
+        let results = SearchResult {
+            files: vec![SearchFile {
+                path: path.clone(),
+                original: original.into(),
+                hits: vec![
+                    SearchHit {
+                        range: first..first + 6,
+                        line: 2,
+                        column: 3,
+                        snippet: String::new(),
+                    },
+                    SearchHit {
+                        range: second..second + 6,
+                        line: 2,
+                        column: 14,
+                        snippet: String::new(),
+                    },
+                ],
+            }],
+            ..Default::default()
+        };
+        let hunks = selected_preview_hunks(&results, &HashSet::from([path]));
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].hits.len(), 2);
+        let (before, after) = preview_hunk_text(&hunks[0], "tea").unwrap();
+        assert_eq!(before, original);
+        assert_eq!(after, "before\r\nα tea and tea\r\nafter\r\n");
+    }
+
+    #[test]
+    fn dense_long_line_preview_is_bounded_and_covers_every_match() {
+        let path = PathBuf::from("/workspace/dense.txt");
+        let results = SearchResult {
+            files: vec![SearchFile {
+                path: path.clone(),
+                original: "x".repeat(6_000),
+                hits: (0..100)
+                    .map(|index| SearchHit {
+                        range: index * 2..index * 2 + 1,
+                        line: 1,
+                        column: index * 2 + 1,
+                        snippet: String::new(),
+                    })
+                    .collect(),
+            }],
+            ..Default::default()
+        };
+        let hunks = selected_preview_hunks(&results, &HashSet::from([path]));
+        assert_eq!(hunks.len(), 13);
+        assert!(
+            hunks
+                .iter()
+                .all(|hunk| hunk.hits.len() <= MAX_MATCHES_PER_HUNK)
+        );
+        assert_eq!(hunks.iter().map(|hunk| hunk.hits.len()).sum::<usize>(), 100);
+        assert!(
+            hunks
+                .iter()
+                .all(|hunk| hunk.end - hunk.start > MAX_FULL_HUNK_BYTES)
+        );
+    }
+
+    #[test]
     fn replace_preview_stays_within_narrow_and_wide_viewports() {
         for width in [520.0, 900.0] {
             let mut app = LumenApp::default();
@@ -831,11 +1017,11 @@ mod tests {
             app.view.workspace_search.results = Some(SearchResult {
                 files: vec![SearchFile {
                     path: path.clone(),
-                    original: "needle".into(),
-                    hits: (1..=30)
-                        .map(|line| SearchHit {
-                            range: 0..6,
-                            line,
+                    original: "needle\n\n\n\n".repeat(30),
+                    hits: (0..30)
+                        .map(|index| SearchHit {
+                            range: index * 10..index * 10 + 6,
+                            line: index * 4 + 1,
                             column: 1,
                             snippet: "needle".into(),
                         })
@@ -849,7 +1035,7 @@ mod tests {
             let ctx = egui::Context::default();
             crate::ui::theme::configure_ui(&ctx);
             let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 600.0));
-            let _ = ctx.run(
+            let output = ctx.run(
                 egui::RawInput {
                     screen_rect: Some(screen),
                     ..Default::default()
@@ -861,9 +1047,59 @@ mod tests {
             let rect = ctx
                 .memory(|memory| memory.area_rect(egui::Id::new("Preview Workspace Replace")))
                 .expect("preview window should be shown");
+            assert!(
+                !output.shapes.iter().any(|shape| match &shape.shape {
+                    egui::Shape::Text(text) =>
+                        text.galley.text().contains("First use of widget ID"),
+                    _ => false,
+                }),
+                "preview widget IDs must be unique"
+            );
             assert!(rect.width() <= screen.width(), "width {width}: {rect:?}");
             assert_eq!(app.view.workspace_search.preview_page, 1);
         }
+    }
+
+    #[test]
+    fn dense_preview_hunks_use_distinct_scroll_ids() {
+        let mut app = LumenApp::default();
+        let path = PathBuf::from("/workspace/dense.txt");
+        app.view.workspace_search.results = Some(SearchResult {
+            files: vec![SearchFile {
+                path: path.clone(),
+                original: "x".repeat(6_000),
+                hits: (0..100)
+                    .map(|index| SearchHit {
+                        range: index * 2..index * 2 + 1,
+                        line: 1,
+                        column: index * 2 + 1,
+                        snippet: String::new(),
+                    })
+                    .collect(),
+            }],
+            ..Default::default()
+        });
+        app.view.workspace_search.selected.insert(path);
+        app.view.workspace_search.preview_open = true;
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| app.render_component(ctx, |workbench| workbench.workspace_replace_preview(ctx)),
+        );
+        assert!(
+            !output.shapes.iter().any(|shape| match &shape.shape {
+                egui::Shape::Text(text) => text.galley.text().contains("First use of widget ID"),
+                _ => false,
+            }),
+            "dense preview widget IDs must be unique"
+        );
     }
 
     #[test]
