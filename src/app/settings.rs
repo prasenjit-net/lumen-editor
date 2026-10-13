@@ -103,6 +103,12 @@ impl SettingsState {
             _ => unreachable!(),
         }
     }
+    pub(crate) fn search_exclude(&self) -> String {
+        match self.effective(setting("search.exclude"), None).0 {
+            Value::Text(value) => value,
+            _ => unreachable!(),
+        }
+    }
 }
 impl LumenApp {
     pub(crate) fn initialize_settings(&mut self, user_path: Option<PathBuf>) {

@@ -90,7 +90,8 @@ impl Workbench<'_> {
                     TextEdit::singleline(&mut state.exclude)
                         .hint_text("Files to exclude")
                         .desired_width((ui.available_width() - 12.0).max(80.0)),
-                );
+                )
+                .on_hover_text("Adds to the effective Search: Exclude Patterns setting.");
             }
             if state.running {
                 let progress = state.progress.unwrap_or_default();
@@ -457,12 +458,14 @@ fn result_row(
                     ui.add(
                         egui::Label::new(RichText::new(&text).size(12.0))
                             .truncate()
+                            .selectable(false)
                             .sense(egui::Sense::click()),
                     )
                 },
             )
             .inner
-            .on_hover_text(&text);
+            .on_hover_text(&text)
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
         clicked = response.clicked()
             || (response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
         if replace {
@@ -472,6 +475,7 @@ fn result_row(
                     egui::Button::new(icon::REPLACE_ALL).frame(false),
                 )
                 .on_hover_text(tooltip)
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .clicked();
         }
     });
@@ -528,6 +532,36 @@ mod tests {
             },
         );
         width.get()
+    }
+
+    #[test]
+    fn search_result_hover_uses_clickable_cursor() {
+        for width in [180.0, 300.0, 600.0] {
+            let ctx = egui::Context::default();
+            crate::ui::theme::configure_ui(&ctx);
+            let draw = |events| {
+                ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 100.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            result_row(ui, "1:1  needle".into(), 0.0, false, "");
+                        });
+                    },
+                )
+                .platform_output
+                .cursor_icon
+            };
+            draw(vec![]);
+            let cursor = draw(vec![egui::Event::PointerMoved(egui::pos2(35.0, 19.0))]);
+            assert_eq!(cursor, egui::CursorIcon::PointingHand, "width {width}");
+        }
     }
 
     #[test]

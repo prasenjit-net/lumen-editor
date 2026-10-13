@@ -385,4 +385,26 @@ mod tests {
         assert!(partial.cancelled);
         assert!(partial.scanned < 130);
     }
+
+    #[test]
+    fn configured_and_temporary_globs_exclude_folders_and_files() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("generated")).unwrap();
+        fs::write(root.path().join("generated/output.rs"), "term").unwrap();
+        fs::write(root.path().join("trace.log"), "term").unwrap();
+        fs::write(root.path().join("main.rs"), "term").unwrap();
+        let result = search_with_progress(
+            &SearchRequest {
+                root: root.path().into(),
+                query: "term".into(),
+                include: String::new(),
+                exclude: "generated,*.log".into(),
+                options: SearchOptions::default(),
+            },
+            &AtomicBool::new(false),
+            |_| {},
+        );
+        assert_eq!(result.files.len(), 1);
+        assert_eq!(result.files[0].path, root.path().join("main.rs"));
+    }
 }

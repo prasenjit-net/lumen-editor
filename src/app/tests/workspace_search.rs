@@ -55,6 +55,44 @@ fn prepared() -> (LumenApp, MemoryFileSystem, PathBuf) {
 }
 
 #[test]
+fn effective_settings_and_panel_exclusions_invalidate_old_replace_preview() {
+    use lumen_settings_core::Value;
+
+    let (mut app, _, _) = prepared();
+    app.view
+        .settings
+        .user
+        .persisted
+        .insert("search.exclude".into(), Value::Text("*.tmp".into()));
+    app.view.workspace_search.exclude = "*.log".into();
+    assert_eq!(app.combined_workspace_exclude(), "*.tmp,*.log");
+    app.view.settings.root = Some(PathBuf::from("root"));
+    app.view
+        .settings
+        .project
+        .persisted
+        .insert("search.exclude".into(), Value::Text("generated".into()));
+    assert_eq!(app.combined_workspace_exclude(), "generated,*.log");
+    app.view
+        .workspace_search
+        .completed_request
+        .as_mut()
+        .unwrap()
+        .exclude = app.combined_workspace_exclude();
+    app.preview_workspace_replace();
+    assert!(app.view.workspace_search.preview_open);
+
+    app.view
+        .settings
+        .project
+        .persisted
+        .insert("search.exclude".into(), Value::Text("*.cache".into()));
+    app.preview_workspace_replace();
+    assert!(!app.view.workspace_search.preview_open);
+    assert!(app.view.status.contains("Search inputs changed"));
+}
+
+#[test]
 fn file_and_folder_replace_actions_limit_the_preview_and_write_scope() {
     let (mut app, storage, root_file) = prepared();
     let nested = PathBuf::from("root/sub/b.txt");

@@ -63,6 +63,7 @@ impl LumenApp {
 
     pub(crate) fn start_workspace_search(&mut self, ctx: &egui::Context) {
         self.cancel_workspace_search();
+        let exclude = self.combined_workspace_exclude();
         let view = &mut self.view.workspace_search;
         view.results = None;
         view.completed_request = None;
@@ -86,7 +87,7 @@ impl LumenApp {
             root,
             query: view.query.clone(),
             include: view.include.clone(),
-            exclude: view.exclude.clone(),
+            exclude,
             options: SearchOptions {
                 match_case: view.match_case,
                 whole_word: view.whole_word,
@@ -306,10 +307,19 @@ impl LumenApp {
             self.editor.workspace.as_ref() == Some(&request.root)
                 && request.query == view.query
                 && request.include == view.include
-                && request.exclude == view.exclude
+                && request.exclude == self.combined_workspace_exclude()
                 && request.options.match_case == view.match_case
                 && request.options.whole_word == view.whole_word
         })
+    }
+
+    pub(crate) fn combined_workspace_exclude(&self) -> String {
+        let configured = self.view.settings.search_exclude();
+        [configured.trim(), self.view.workspace_search.exclude.trim()]
+            .into_iter()
+            .filter(|patterns| !patterns.is_empty())
+            .collect::<Vec<_>>()
+            .join(",")
     }
 }
 

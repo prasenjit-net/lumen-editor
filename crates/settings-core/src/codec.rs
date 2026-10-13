@@ -1,5 +1,5 @@
 //! TOML decoding and sparse, comment-preserving encoding. No filesystem access.
-use crate::{Layer, Value, catalog};
+use crate::{Control, Layer, Value, catalog};
 use toml_edit::{DocumentMut, Item};
 
 pub fn parse(content: Option<&str>) -> Result<(Layer, Vec<String>), String> {
@@ -29,7 +29,10 @@ pub fn parse(content: Option<&str>) -> Result<(Layer, Vec<String>), String> {
                     } else if let Some(value) = item.as_integer() {
                         Value::Number(value as f64)
                     } else if let Some(value) = item.as_str() {
-                        Value::Choice(value.into())
+                        match setting.control {
+                            Control::Text(_) => Value::Text(value.into()),
+                            _ => Value::Choice(value.into()),
+                        }
                     } else {
                         return Err(format!("Invalid type for {id}"));
                     };
@@ -64,7 +67,7 @@ pub fn serialize(original: Option<&str>, layer: &Layer) -> Result<String, String
             let mut item = match value {
                 Value::Number(value) => toml_edit::value(*value),
                 Value::Bool(value) => toml_edit::value(*value),
-                Value::Choice(value) => toml_edit::value(value),
+                Value::Choice(value) | Value::Text(value) => toml_edit::value(value),
             };
             if let Some(previous) = document[section].get(name).and_then(Item::as_value)
                 && let Some(next) = item.as_value_mut()

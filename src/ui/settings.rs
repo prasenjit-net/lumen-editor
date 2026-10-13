@@ -291,6 +291,14 @@ fn control(ui: &mut egui::Ui, setting: &Setting, value: &mut Value) -> bool {
                 });
             *value != before
         }
+        (Control::Text(_), Value::Text(value)) => ui
+            .add(
+                TextEdit::singleline(value)
+                    .hint_text("e.g. generated,*.min.js")
+                    .desired_width(ui.available_width().clamp(100.0, 420.0)),
+            )
+            .on_hover_text(setting.help)
+            .changed(),
         _ => false,
     }
 }

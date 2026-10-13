@@ -7,6 +7,7 @@ mod appearance;
 mod editor;
 mod explorer;
 mod files;
+mod search;
 mod workbench;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -29,13 +30,14 @@ pub enum Value {
     Number(f64),
     Bool(bool),
     Choice(String),
+    Text(String),
 }
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Number(value) => write!(f, "{value}"),
             Self::Bool(value) => write!(f, "{value}"),
-            Self::Choice(value) => write!(f, "{value}"),
+            Self::Choice(value) | Self::Text(value) => write!(f, "{value}"),
         }
     }
 }
@@ -44,6 +46,7 @@ pub enum Control {
     Number(f64, f64),
     Bool,
     Choice(&'static [&'static str]),
+    Text(usize),
 }
 pub struct Setting {
     pub id: &'static str,
@@ -60,6 +63,7 @@ pub enum DefaultValue {
     Number(f64),
     Bool(bool),
     Choice(&'static str),
+    Text(&'static str),
 }
 pub type SectionValidator = fn(&Layer) -> Result<(), String>;
 pub struct SectionSchema {
@@ -74,6 +78,7 @@ pub const SECTIONS: &[SectionSchema] = &[
     appearance::SCHEMA,
     workbench::SCHEMA,
     explorer::SCHEMA,
+    search::SCHEMA,
 ];
 pub fn catalog() -> impl Iterator<Item = &'static Setting> {
     SECTIONS.iter().flat_map(|section| section.settings.iter())
@@ -90,6 +95,7 @@ impl Setting {
             DefaultValue::Choice(value) => Value::Choice(value.into()),
             DefaultValue::Number(value) => Value::Number(value),
             DefaultValue::Bool(value) => Value::Bool(value),
+            DefaultValue::Text(value) => Value::Text(value.into()),
         }
     }
 
@@ -100,6 +106,9 @@ impl Setting {
             }
             (Control::Bool, Value::Bool(_)) => true,
             (Control::Choice(choices), Value::Choice(value)) => choices.contains(&value.as_str()),
+            (Control::Text(max_length), Value::Text(value)) => {
+                value.len() <= max_length && !value.chars().any(char::is_control)
+            }
             _ => false,
         };
         if valid {

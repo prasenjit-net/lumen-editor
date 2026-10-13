@@ -39,7 +39,10 @@ and drop or explorer operation undo. Symlink copying is rejected explicitly.
 The Search activity panel searches an open folder in a cancellable background
 scan, showing scanned-file and match counts while it runs. Press Cmd/Ctrl+Shift+F,
 type a literal query, then Enter; Match Case,
-Whole Word, include and exclude globs narrow results. Click a result to open
+Whole Word, include and exclude globs narrow results. The searchable
+`search.exclude` setting accepts comma-separated globs at user or project scope;
+the project value takes priority, and the panel's exclude field adds temporary
+patterns. Click a result to open
 its file at the match. Results form a virtualized, collapsible folder/file tree
 that keeps all bounded matches available, with Replace
 actions for all results or an individual folder or file. Replace offers a
