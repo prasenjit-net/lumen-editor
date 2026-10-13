@@ -25,7 +25,11 @@ pub(super) fn set(root: &Path, target: &str) -> Result<String, Box<dyn Error>> {
 }
 
 fn read_text(path: &Path) -> Result<String, Box<dyn Error>> {
-    Ok(fs::read_to_string(path)?.replace("\r\n", "\n"))
+    Ok(normalize_line_endings(&fs::read_to_string(path)?))
+}
+
+fn normalize_line_endings(text: &str) -> String {
+    text.replace("\r\n", "\n")
 }
 
 fn current_version(manifest: &str) -> Result<String, Box<dyn Error>> {
@@ -146,6 +150,14 @@ fn replace_plist_value(plist: &str, key: &str, target: &str) -> Result<String, B
 mod tests {
     use super::*;
 
+    fn fixtures() -> (String, String, String) {
+        (
+            normalize_line_endings(include_str!("../../Cargo.toml")),
+            normalize_line_endings(include_str!("../../Cargo.lock")),
+            normalize_line_endings(include_str!("../../assets/macos/Info.plist")),
+        )
+    }
+
     #[test]
     fn bump_resets_lower_components_and_rejects_invalid_versions() {
         assert_eq!(bumped_version("0.1.9", "patch").unwrap(), "0.1.10");
@@ -158,13 +170,20 @@ mod tests {
     }
 
     #[test]
+    fn windows_line_endings_are_normalized_before_version_parsing() {
+        let manifest = "[package]\r\nname = \"lumen-editor\"\r\nversion = \"0.1.0\"\r\n";
+        assert_eq!(
+            current_version(&normalize_line_endings(manifest)).unwrap(),
+            "0.1.0"
+        );
+    }
+
+    #[test]
     fn updates_only_editor_and_bundle_versions() {
-        let manifest = include_str!("../../Cargo.toml");
-        let lock = include_str!("../../Cargo.lock");
-        let plist = include_str!("../../assets/macos/Info.plist");
-        let current = current_version(manifest).unwrap();
+        let (manifest, lock, plist) = fixtures();
+        let current = current_version(&manifest).unwrap();
         let (manifest, lock, plist) =
-            updated_contents(manifest, lock, plist, &current, "0.2.0").unwrap();
+            updated_contents(&manifest, &lock, &plist, &current, "0.2.0").unwrap();
         assert_eq!(current_version(&manifest).unwrap(), "0.2.0");
         assert!(lock.contains("name = \"lumen-editor\"\nversion = \"0.2.0\""));
         assert_eq!(
@@ -177,23 +196,21 @@ mod tests {
 
     #[test]
     fn rejects_inconsistent_metadata_before_writing() {
-        let manifest = include_str!("../../Cargo.toml");
-        let lock = include_str!("../../Cargo.lock");
-        let plist = include_str!("../../assets/macos/Info.plist");
-        let current = current_version(manifest).unwrap();
-        assert!(updated_contents(manifest, lock, plist, "9.9.9", "10.0.0").is_err());
-        assert!(updated_contents(manifest, lock, plist, &current, "0.1.1").is_ok());
+        let (manifest, lock, plist) = fixtures();
+        let current = current_version(&manifest).unwrap();
+        assert!(updated_contents(&manifest, &lock, &plist, "9.9.9", "10.0.0").is_err());
+        assert!(updated_contents(&manifest, &lock, &plist, &current, "0.1.1").is_ok());
         let wrong_lock = lock.replacen(
             &format!("name = \"lumen-editor\"\nversion = \"{current}\""),
             "name = \"lumen-editor\"\nversion = \"9.9.9\"",
             1,
         );
-        assert!(updated_contents(manifest, &wrong_lock, plist, &current, "0.1.1").is_err());
+        assert!(updated_contents(&manifest, &wrong_lock, &plist, &current, "0.1.1").is_err());
         let wrong_plist = plist.replacen(
             &format!("<key>CFBundleShortVersionString</key><string>{current}</string>"),
             "<key>CFBundleShortVersionString</key><string>9.9.9</string>",
             1,
         );
-        assert!(updated_contents(manifest, lock, &wrong_plist, &current, "0.1.1").is_err());
+        assert!(updated_contents(&manifest, &lock, &wrong_plist, &current, "0.1.1").is_err());
     }
 }
