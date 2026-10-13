@@ -37,7 +37,8 @@ and drop or explorer operation undo. Symlink copying is rejected explicitly.
 ## Text editing
 
 The Search activity panel searches an open folder in a cancellable background
-scan. Press Cmd/Ctrl+Shift+F, type a literal query, then Enter; Match Case,
+scan, showing scanned-file and match counts while it runs. Press Cmd/Ctrl+Shift+F,
+type a literal query, then Enter; Match Case,
 Whole Word, include and exclude globs narrow results. Click a result to open
 its file at the match. Results form a virtualized, collapsible folder/file tree
 that keeps all bounded matches available, with Replace

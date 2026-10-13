@@ -50,7 +50,7 @@ are conservatively skipped. Search snapshots are limited to 10,000 matches and
 64 MiB of matching text; a limit warning asks the user to narrow the query.
 
 Still needed before the full exit gate: complete Git ignore semantics and
-settings-backed exclusions, a scan progress stream,
+settings-backed exclusions,
 live native testing at narrow/default/wide widths and with a large workspace,
 and a richer hunk-level replacement preview. The current preview paginates
 selected files and shows the first 10 matches per file. No operation-wide
@@ -60,6 +60,8 @@ rollback or undo is provided.
   result counts, file grouping, snippets and keyboard navigation.
 - [x] Virtualize result rows so every bounded hit remains reachable without
   painting the entire tree each frame.
+- [x] Stream throttled scan progress to the Search panel without blocking the UI
+  or queuing unbounded updates; cancellation discards stale progress.
 - [ ] Respect `.gitignore`/configured exclusions, skip binary or oversized
   files with clear feedback, and keep searches responsive/cancellable.
 - [x] Add workspace replacement with a preview and scoped folder/file actions,

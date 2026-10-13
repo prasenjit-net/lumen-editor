@@ -70,6 +70,7 @@ pub(crate) struct WorkspaceSearchView {
     pub(crate) details_visible: bool,
     pub(crate) focus_query: bool,
     pub(crate) running: bool,
+    pub(crate) progress: Option<crate::services::workspace_search::SearchProgress>,
     pub(crate) results: Option<crate::services::workspace_search::SearchResult>,
     pub(crate) completed_request: Option<crate::services::workspace_search::SearchRequest>,
     pub(crate) selected: HashSet<PathBuf>,

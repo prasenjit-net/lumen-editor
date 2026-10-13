@@ -19,8 +19,13 @@ use unicode_segmentation::UnicodeSegmentation;
 
 pub(crate) struct SearchJob {
     cancelled: Arc<AtomicBool>,
-    receiver: Receiver<workspace_search::SearchResult>,
+    receiver: Receiver<SearchEvent>,
     request: SearchRequest,
+}
+
+enum SearchEvent {
+    Progress(workspace_search::SearchProgress),
+    Finished(workspace_search::SearchResult),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +74,7 @@ impl LumenApp {
         view.preview_page = 0;
         view.report.clear();
         view.replaced_files = 0;
+        view.progress = None;
         let Some(root) = self.editor.workspace.clone() else {
             self.view.status = "Open a folder to search its files".into();
             return;
@@ -88,11 +94,18 @@ impl LumenApp {
         };
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = cancelled.clone();
-        let (sender, receiver) = mpsc::channel();
+        // Drop intermediate snapshots if the UI is busy; the final result is never dropped.
+        let (sender, receiver) = mpsc::sync_channel(8);
         let worker_request = request.clone();
         std::thread::spawn(move || {
-            let result = workspace_search::search(&worker_request, &worker_cancelled);
-            let _ = sender.send(result);
+            let result = workspace_search::search_with_progress(
+                &worker_request,
+                &worker_cancelled,
+                |progress| {
+                    let _ = sender.try_send(SearchEvent::Progress(progress));
+                },
+            );
+            let _ = sender.send(SearchEvent::Finished(result));
         });
         self.search_job = Some(SearchJob {
             cancelled,
@@ -107,42 +120,61 @@ impl LumenApp {
     pub(crate) fn cancel_workspace_search(&mut self) {
         if let Some(job) = self.search_job.take() {
             job.cancelled.store(true, Ordering::Relaxed);
+            self.view.status = "Workspace search cancelled".into();
         }
         self.view.workspace_search.running = false;
+        self.view.workspace_search.progress = None;
     }
 
     pub(crate) fn poll_workspace_search(&mut self, ctx: &egui::Context) {
         let Some(job) = &self.search_job else { return };
-        match job.receiver.try_recv() {
-            Ok(result) => {
-                let request = job.request.clone();
-                let matches: usize = result.files.iter().map(|file| file.hits.len()).sum();
-                let view = &mut self.view.workspace_search;
-                view.completed_request = Some(request.clone());
-                view.selected = result.files.iter().map(|file| file.path.clone()).collect();
-                view.expanded_files = view.selected.clone();
-                view.expanded_folders = result
-                    .files
-                    .iter()
-                    .filter_map(|file| file.path.parent())
-                    .flat_map(|folder| {
-                        folder
-                            .ancestors()
-                            .take_while(|ancestor| ancestor.starts_with(&request.root))
-                            .map(Path::to_path_buf)
-                    })
-                    .collect();
-                view.running = false;
-                view.results = Some(result);
-                self.search_job = None;
-                self.view.status = format!("{matches} workspace match(es)");
+        let mut finished = None;
+        let mut disconnected = false;
+        loop {
+            match job.receiver.try_recv() {
+                Ok(SearchEvent::Progress(progress)) => {
+                    self.view.workspace_search.progress = Some(progress);
+                }
+                Ok(SearchEvent::Finished(result)) => {
+                    finished = Some((job.request.clone(), result));
+                    break;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
             }
-            Err(mpsc::TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(100)),
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.search_job = None;
-                self.view.workspace_search.running = false;
-                self.view.status = "Workspace search stopped unexpectedly".into();
-            }
+        }
+        if let Some((request, result)) = finished {
+            let matches: usize = result.files.iter().map(|file| file.hits.len()).sum();
+            let view = &mut self.view.workspace_search;
+            view.completed_request = Some(request.clone());
+            view.selected = result.files.iter().map(|file| file.path.clone()).collect();
+            view.expanded_files = view.selected.clone();
+            view.expanded_folders = result
+                .files
+                .iter()
+                .filter_map(|file| file.path.parent())
+                .flat_map(|folder| {
+                    folder
+                        .ancestors()
+                        .take_while(|ancestor| ancestor.starts_with(&request.root))
+                        .map(Path::to_path_buf)
+                })
+                .collect();
+            view.running = false;
+            view.progress = None;
+            view.results = Some(result);
+            self.search_job = None;
+            self.view.status = format!("{matches} workspace match(es)");
+        } else if disconnected {
+            self.search_job = None;
+            self.view.workspace_search.running = false;
+            self.view.workspace_search.progress = None;
+            self.view.status = "Workspace search stopped unexpectedly".into();
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(100));
         }
     }
 
@@ -278,6 +310,75 @@ impl LumenApp {
                 && request.options.match_case == view.match_case
                 && request.options.whole_word == view.whole_word
         })
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[test]
+    fn progress_updates_until_final_result_and_cancel_drops_old_events() {
+        let mut app = LumenApp::default();
+        let request = SearchRequest {
+            root: PathBuf::from("/workspace"),
+            query: "term".into(),
+            include: String::new(),
+            exclude: String::new(),
+            options: SearchOptions::default(),
+        };
+        let (sender, receiver) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        app.search_job = Some(SearchJob {
+            cancelled: cancelled.clone(),
+            receiver,
+            request,
+        });
+        app.view.workspace_search.running = true;
+        sender
+            .send(SearchEvent::Progress(workspace_search::SearchProgress {
+                scanned: 64,
+                skipped: 2,
+                matches: 5,
+            }))
+            .unwrap();
+        let ctx = egui::Context::default();
+        app.poll_workspace_search(&ctx);
+        assert_eq!(app.view.workspace_search.progress.unwrap().scanned, 64);
+        assert!(app.view.workspace_search.running);
+
+        sender
+            .send(SearchEvent::Finished(
+                workspace_search::SearchResult::default(),
+            ))
+            .unwrap();
+        app.poll_workspace_search(&ctx);
+        assert!(!app.view.workspace_search.running);
+        assert!(app.view.workspace_search.progress.is_none());
+        assert!(app.search_job.is_none());
+
+        let (sender, receiver) = mpsc::channel();
+        app.search_job = Some(SearchJob {
+            cancelled: cancelled.clone(),
+            receiver,
+            request: SearchRequest {
+                root: PathBuf::from("/workspace"),
+                query: "term".into(),
+                include: String::new(),
+                exclude: String::new(),
+                options: SearchOptions::default(),
+            },
+        });
+        app.view.workspace_search.running = true;
+        app.cancel_workspace_search();
+        assert!(cancelled.load(Ordering::Relaxed));
+        assert!(app.view.workspace_search.progress.is_none());
+        assert!(!app.view.workspace_search.running);
+        assert!(
+            sender
+                .send(SearchEvent::Progress(Default::default()))
+                .is_err()
+        );
     }
 }
 

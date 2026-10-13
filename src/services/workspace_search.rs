@@ -5,6 +5,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
+    time::{Duration, Instant},
 };
 
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -45,6 +46,13 @@ pub(crate) struct SearchResult {
     pub(crate) cancelled: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SearchProgress {
+    pub(crate) scanned: usize,
+    pub(crate) skipped: usize,
+    pub(crate) matches: usize,
+}
+
 #[derive(Clone)]
 struct IgnoreRule {
     directory: PathBuf,
@@ -53,7 +61,11 @@ struct IgnoreRule {
     directory_only: bool,
 }
 
-pub(crate) fn search(request: &SearchRequest, cancel: &AtomicBool) -> SearchResult {
+pub(crate) fn search_with_progress(
+    request: &SearchRequest,
+    cancel: &AtomicBool,
+    mut on_progress: impl FnMut(SearchProgress),
+) -> SearchResult {
     let mut result = SearchResult::default();
     if request.query.is_empty() {
         return result;
@@ -61,6 +73,8 @@ pub(crate) fn search(request: &SearchRequest, cancel: &AtomicBool) -> SearchResu
     let mut stack = vec![(request.root.clone(), Vec::<IgnoreRule>::new())];
     let mut retained_bytes = 0;
     let mut retained_matches = 0;
+    let mut processed_entries = 0;
+    let mut last_report = Instant::now();
     while let Some((directory, mut rules)) = stack.pop() {
         if cancel.load(Ordering::Relaxed) {
             result.cancelled = true;
@@ -80,6 +94,15 @@ pub(crate) fn search(request: &SearchRequest, cancel: &AtomicBool) -> SearchResu
             if cancel.load(Ordering::Relaxed) {
                 result.cancelled = true;
                 break;
+            }
+            processed_entries += 1;
+            if processed_entries % 64 == 0 || last_report.elapsed() >= Duration::from_millis(100) {
+                on_progress(SearchProgress {
+                    scanned: result.scanned,
+                    skipped: result.skipped,
+                    matches: retained_matches,
+                });
+                last_report = Instant::now();
             }
             let entry = match entry {
                 Ok(entry) => entry,
@@ -290,7 +313,7 @@ mod tests {
         fs::write(root.path().join("src/main.rs"), "é\r\né").unwrap();
         fs::write(root.path().join("src/hidden.rs"), "é").unwrap();
         fs::write(root.path().join("src/other.tmp"), "é").unwrap();
-        let result = search(
+        let result = search_with_progress(
             &SearchRequest {
                 root: root.path().into(),
                 query: "é".into(),
@@ -299,6 +322,7 @@ mod tests {
                 options: SearchOptions::default(),
             },
             &AtomicBool::new(false),
+            |_| {},
         );
         assert_eq!(result.files.len(), 1);
         assert_eq!(result.files[0].hits.len(), 2);
@@ -322,9 +346,43 @@ mod tests {
             exclude: String::new(),
             options: SearchOptions::default(),
         };
-        let result = search(&request, &AtomicBool::new(false));
+        let result = search_with_progress(&request, &AtomicBool::new(false), |_| {});
         assert_eq!(result.files.len(), 1);
         assert!(result.skipped >= 2);
-        assert!(search(&request, &AtomicBool::new(true)).cancelled);
+        assert!(search_with_progress(&request, &AtomicBool::new(true), |_| {}).cancelled);
+    }
+
+    #[test]
+    fn progress_reports_and_cancellation_stops_the_scan() {
+        let root = tempfile::tempdir().unwrap();
+        for index in 0..130 {
+            fs::write(root.path().join(format!("{index:03}.txt")), "term").unwrap();
+        }
+        let request = SearchRequest {
+            root: root.path().into(),
+            query: "term".into(),
+            include: String::new(),
+            exclude: String::new(),
+            options: SearchOptions::default(),
+        };
+        let mut reports = Vec::new();
+        let result = search_with_progress(&request, &AtomicBool::new(false), |progress| {
+            reports.push(progress)
+        });
+        assert_eq!(result.scanned, 130);
+        assert_eq!(result.files.len(), 130);
+        assert!(!reports.is_empty());
+        assert!(
+            reports
+                .windows(2)
+                .all(|pair| pair[0].scanned <= pair[1].scanned)
+        );
+
+        let cancelled = AtomicBool::new(false);
+        let partial = search_with_progress(&request, &cancelled, |_| {
+            cancelled.store(true, Ordering::Relaxed);
+        });
+        assert!(partial.cancelled);
+        assert!(partial.scanned < 130);
     }
 }

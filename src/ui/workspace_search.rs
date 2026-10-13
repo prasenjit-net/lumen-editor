@@ -93,7 +93,19 @@ impl Workbench<'_> {
                 );
             }
             if state.running {
-                ui.label(RichText::new("Searching…").color(MUTED));
+                let progress = state.progress.unwrap_or_default();
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(format!(
+                            "Searching… {} files · {} matches",
+                            progress.scanned, progress.matches
+                        ))
+                        .color(MUTED)
+                        .size(11.0),
+                    )
+                    .truncate(),
+                )
+                .on_hover_text(format!("{} skipped", progress.skipped));
             }
             if state.replaced_files > 0 {
                 ui.label(format!("Replaced in {} file(s)", state.replaced_files));
@@ -621,6 +633,32 @@ mod tests {
         assert!(groups[&root].files.is_empty());
         assert!(groups[&root.join("src")].files.is_empty());
         assert_eq!(groups[&root.join("src/deep")].files.len(), 1);
+    }
+
+    #[test]
+    fn progress_text_and_cancel_action_keep_a_narrow_sidebar_stable() {
+        let mut app = LumenApp::default();
+        app.view.activity = Activity::Search;
+        app.editor.workspace = Some(PathBuf::from("/workspace"));
+        app.view.workspace_search.running = true;
+        app.view.workspace_search.progress =
+            Some(crate::services::workspace_search::SearchProgress {
+                scanned: 100_000,
+                skipped: 999,
+                matches: 10_000,
+            });
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let widths = [
+            egui::pos2(850.0, 400.0),
+            egui::pos2(120.0, 120.0),
+            egui::pos2(120.0, 180.0),
+        ]
+        .map(|point| sidebar_width(&mut app, &ctx, point));
+        assert!(
+            widths.iter().all(|width| (*width - widths[0]).abs() < 1.0),
+            "progress widened sidebar: {widths:?}"
+        );
     }
 
     #[test]
