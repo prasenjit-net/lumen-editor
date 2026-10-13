@@ -209,6 +209,15 @@ run on Linux, macOS and Windows; the macOS job also tests the legacy editor and
 builds the app bundle. CI checks the native builds but does not replace live UI
 validation.
 
+To publish a release, update the crate version in `Cargo.toml` and
+`CFBundleShortVersionString` in `assets/macos/Info.plist`, then push a release
+branch named `r<major>.<minor>.<patch>` (for example, `r0.1.0`). The Release
+workflow can also be run manually with an existing release branch name. It
+checks that versions agree, tests and packages macOS, Windows and Linux builds,
+then creates a `v<version>` GitHub release with archives and SHA-256 checksums.
+An existing release tag is never replaced. These builds are not signed or
+notarized.
+
 Application tests use in-memory storage and dialog doubles for open/save,
 cancellation, failure and dirty-buffer workflows, plus an egui pointer test
 for the explorer resize handle. Windows compilation can also be checked with
