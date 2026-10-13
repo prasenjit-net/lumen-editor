@@ -79,3 +79,31 @@ fn go_to_line_targets_active_document_without_editing_it() {
             .contains("Editor changed")
     );
 }
+
+#[test]
+fn recent_files_survive_restart_and_missing_targets_are_pruned() {
+    let temp = tempfile::tempdir().unwrap();
+    let settings = temp.path().join(".lumen/settings.toml");
+    let path = temp.path().join("main.rs");
+    let (mut app, storage) = test_app(TestDialogs::default());
+    storage
+        .0
+        .borrow_mut()
+        .files
+        .insert(path.clone(), "body".into());
+    app.initialize_recent_files(Some(settings.clone()));
+    app.open_file(path.clone());
+    assert_eq!(app.view.navigation.recent, vec![path.clone()]);
+
+    let (mut reopened, _) = test_app(TestDialogs::default());
+    reopened.initialize_recent_files(Some(settings.clone()));
+    assert_eq!(reopened.view.navigation.recent, vec![path.clone()]);
+    reopened.view.navigation.mode = Some(NavigationMode::QuickOpen);
+    reopened.open_quick_path(path.clone());
+    assert!(reopened.view.navigation.recent.is_empty());
+    assert!(reopened.view.navigation.error.is_some());
+
+    let (mut after_missing, _) = test_app(TestDialogs::default());
+    after_missing.initialize_recent_files(Some(settings));
+    assert!(after_missing.view.navigation.recent.is_empty());
+}

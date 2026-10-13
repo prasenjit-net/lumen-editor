@@ -74,20 +74,21 @@ final-file diff. No operation-wide rollback or undo is provided.
 Exit gate: Unicode and CRLF matches, ignored files, cancellation, permission
 errors, dirty tabs and replace failures have regression coverage.
 
-## 3. Open and navigate files quickly — initial implementation
+## 3. Open and navigate files quickly — implemented; native acceptance pending
 
 Quick Open now uses a cancellable background workspace index, filename/path fuzzy
-ranking and recent files from this app session. Cmd/Ctrl+P opens it; Cmd/Ctrl+Shift+P
+ranking and a bounded user-level recent-files history that survives restart.
+Matching workspace files rank ahead of external recents. Cmd/Ctrl+P opens it; Cmd/Ctrl+Shift+P
 continues to open the command palette. Go to Line/Column is available through
 Cmd/Ctrl+G and the native View menu; it moves the caret by stable document ID
 without editing text. Both commands are also in the command palette. The index
 respects nested `.gitignore`, excludes generated `.git`/`target` trees, and is
-capped at 100,000 files. Recents are not persisted across launches. Explorer
+capped at 100,000 files. Missing recent targets are pruned when opened. Explorer
 create/rename/delete updates the index, but external changes are not watched;
 reopen the folder to rebuild the index.
 Native interaction and large-workspace acceptance remain open.
 
-- [ ] Finish fuzzy Quick Open by filename/path, persistent recently opened files and a
+- [x] Finish fuzzy Quick Open by filename/path, persistent recently opened files and a
   workspace-aware ranking; keep the Explorer and native Open dialog intact.
 - [x] Add Go to Line/Column, sharing the command palette/shortcut routing and
   stable document IDs.

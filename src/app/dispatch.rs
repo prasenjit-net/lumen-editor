@@ -138,6 +138,7 @@ impl LumenApp {
             Command::Palette => {
                 self.view.navigation.mode = None;
                 self.view.command_palette = true;
+                self.view.command_palette_focus = true;
             }
             Command::ToggleSidebar => self.view.sidebar_visible = !self.view.sidebar_visible,
             Command::Welcome => self.view.status = "Lumen — New: ⌘N · Open: ⌘O · Save: ⌘S".into(),

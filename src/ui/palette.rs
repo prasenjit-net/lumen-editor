@@ -56,7 +56,14 @@ impl Workbench<'_> {
         if !self.view.command_palette {
             return;
         }
+        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            self.view.command_palette = false;
+            self.view.command_palette_focus = false;
+            return;
+        }
+        let mut open = true;
         egui::Window::new("Command Palette")
+            .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .default_width(560.0)
@@ -68,11 +75,16 @@ impl Workbench<'_> {
                     .stroke(Stroke::new(1.0_f32, BORDER)),
             )
             .show(ctx, |ui| {
-                ui.add(
+                let query = ui.add(
                     TextEdit::singleline(&mut self.view.search)
+                        .id(egui::Id::new("command_palette_query"))
                         .hint_text("Type a command")
                         .desired_width(f32::INFINITY),
                 );
+                if self.view.command_palette_focus {
+                    query.request_focus();
+                    self.view.command_palette_focus = false;
+                }
                 ui.separator();
                 for (label, action) in [
                     (
@@ -118,5 +130,52 @@ impl Workbench<'_> {
                     }
                 }
             });
+        if !open {
+            self.view.command_palette = false;
+            self.view.command_palette_focus = false;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{app::LumenApp, ui::theme::configure_ui};
+
+    fn frame(app: &mut LumenApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| app.render_component(ctx, |workbench| workbench.palette(ctx)),
+        );
+    }
+
+    #[test]
+    fn escape_closes_palette_even_when_query_has_focus() {
+        let mut app = LumenApp::default();
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        app.execute(Command::Palette, &ctx);
+        frame(&mut app, &ctx, vec![]);
+        frame(&mut app, &ctx, vec![]);
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("command_palette_query"))));
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(!app.view.command_palette);
     }
 }

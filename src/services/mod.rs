@@ -4,6 +4,7 @@ mod dialogs;
 pub(crate) mod file_index;
 mod file_operations;
 mod filesystem;
+pub(crate) mod recent_files;
 pub(crate) mod recovery;
 mod reveal;
 pub(crate) mod settings;

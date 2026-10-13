@@ -6,6 +6,7 @@ use super::{
 use crate::{
     model::DocumentId,
     services::file_index::{self, FileIndex},
+    services::recent_files::{LocalRecentFilesStore, RecentFilesStore},
 };
 use eframe::egui;
 use std::{
@@ -30,6 +31,44 @@ pub(crate) struct FileIndexJob {
 }
 
 impl LumenApp {
+    pub(crate) fn initialize_recent_files(&mut self, settings_path: Option<PathBuf>) {
+        let Some(settings_path) = settings_path else {
+            return;
+        };
+        let store = Box::new(LocalRecentFilesStore::new(&settings_path));
+        match store.load() {
+            Ok(paths) => {
+                for path in paths.into_iter().rev() {
+                    if path.is_absolute() {
+                        self.view.navigation.remember(&path);
+                    }
+                }
+            }
+            Err(error) => {
+                self.view.navigation.recent_warning =
+                    Some(format!("Could not load recent files: {error}"));
+            }
+        }
+        self.recent_files_store = Some(store);
+    }
+
+    pub(crate) fn remember_recent_file(&mut self, path: &Path) {
+        self.view.navigation.remember(path);
+        self.save_recent_files();
+    }
+
+    pub(crate) fn save_recent_files(&mut self) {
+        if let Some(store) = &self.recent_files_store {
+            match store.save(&self.view.navigation.recent) {
+                Ok(()) => self.view.navigation.recent_warning = None,
+                Err(error) => {
+                    self.view.navigation.recent_warning =
+                        Some(format!("Could not save recent files: {error}"));
+                }
+            }
+        }
+    }
+
     pub(crate) fn open_quick_open(&mut self, ctx: &egui::Context) {
         self.view.command_palette = false;
         let navigation = &mut self.view.navigation;
@@ -112,6 +151,10 @@ impl LumenApp {
         } else {
             self.view.navigation.error = Some(self.view.status.clone());
             self.view.navigation.focus = true;
+            if !self.file_system.entry_exists(&path) {
+                self.view.navigation.forget_deleted(&path);
+                self.save_recent_files();
+            }
         }
     }
 
@@ -214,8 +257,17 @@ impl NavigationView {
                 .and_then(|name| name.to_str())
                 .unwrap_or("");
             if let Some(score) = fuzzy_score(name, &relative.to_string_lossy(), &self.query) {
+                let workspace_bonus = if !self.query.trim().is_empty()
+                    && root.is_some_and(|root| path.starts_with(root))
+                {
+                    600
+                } else {
+                    0
+                };
                 let rank = (
-                    score + recent.get(path).map_or(0, |index| 500 - *index as i64),
+                    score
+                        + workspace_bonus
+                        + recent.get(path).map_or(0, |index| 500 - *index as i64),
                     Reverse(path),
                 );
                 if best.len() < MAX_RESULTS {
@@ -337,6 +389,17 @@ mod tests {
         view.remember(Path::new("/project/test.rs"));
         view.refresh(Some(Path::new("/project")));
         assert_eq!(view.matches[0], PathBuf::from("/project/test.rs"));
+    }
+    #[test]
+    fn matching_workspace_files_rank_above_external_recents() {
+        let mut view = NavigationView {
+            query: "main".into(),
+            paths: vec!["/project/src/main.rs".into()],
+            ..Default::default()
+        };
+        view.remember(Path::new("/elsewhere/main.rs"));
+        view.refresh(Some(Path::new("/project")));
+        assert_eq!(view.matches[0], PathBuf::from("/project/src/main.rs"));
     }
     #[test]
     fn location_is_one_based_clamped_and_grapheme_safe() {

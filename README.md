@@ -228,7 +228,9 @@ for the explorer resize handle. Windows compilation can also be checked with
 Quick Open uses Cmd/Ctrl+P to find files in the opened folder by fuzzy filename
 or path match; Cmd/Ctrl+Shift+P opens the command palette. Cmd/Ctrl+G opens Go to
 Line/Column (`line:column`, both 1-based). Quick Open shows recently opened files
-from the current session even without a folder. The workspace index skips
+even without a folder and keeps its bounded history in the user-level
+`~/.lumen/recent-files.toml` (or the corresponding user directory on Windows).
+Workspace files rank ahead of external recents when searching. The workspace index skips
 `.gitignore` matches and generated `.git`/`target` trees; reopen the folder to
 refresh it after changes made outside Lumen. The native Open File dialog remains
 available through Cmd/Ctrl+O.

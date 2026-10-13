@@ -70,6 +70,7 @@ pub(crate) struct NavigationView {
     pub(crate) limited: bool,
     pub(crate) errors: usize,
     pub(crate) recent: Vec<PathBuf>,
+    pub(crate) recent_warning: Option<String>,
     pub(crate) error: Option<String>,
 }
 
@@ -167,6 +168,7 @@ pub(crate) struct ViewState {
     pub(crate) explorer_focused: bool,
     pub(crate) focus_editor: bool,
     pub(crate) command_palette: bool,
+    pub(crate) command_palette_focus: bool,
     pub(crate) navigation: NavigationView,
     pub(crate) pending_goto: Option<(crate::model::DocumentId, usize)>,
     pub(crate) search: String,
@@ -224,6 +226,7 @@ impl Default for ViewState {
             explorer_focused: false,
             focus_editor: false,
             command_palette: false,
+            command_palette_focus: false,
             navigation: NavigationView::default(),
             pending_goto: None,
             search: String::new(),

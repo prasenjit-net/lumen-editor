@@ -28,8 +28,10 @@ pub(crate) fn run() -> eframe::Result<()> {
                     lumen_editor_surface::Shaper::new(&platform::editor_fonts::definitions(_fonts)),
                 ));
             }
+            app.initialize_recent_files(crate::services::settings::user_path());
             for argument in std::env::args_os().skip(1) {
                 let path = PathBuf::from(argument);
+                let path = std::path::absolute(&path).unwrap_or(path);
                 if path.is_dir() {
                     app.editor.workspace = Some(path.clone());
                     app.view.expanded_dirs.insert(path);

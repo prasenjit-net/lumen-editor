@@ -105,6 +105,9 @@ impl Workbench<'_> {
         if !open {
             self.view.navigation.mode = None;
         }
+        if self.view.navigation.mode.is_none() && self.editor.active().is_some() {
+            self.view.focus_editor = true;
+        }
         if let Some(action) = action {
             self.command(action);
         }
@@ -142,6 +145,9 @@ fn show_quick_results(
                 .size(11.0)
                 .color(MUTED),
         );
+    }
+    if let Some(warning) = &nav.recent_warning {
+        ui.label(RichText::new(warning).size(11.0).color(MUTED));
     }
     egui::ScrollArea::vertical()
         .max_height(330.0)
@@ -301,5 +307,22 @@ mod tests {
         assert_eq!(app.view.pending_goto, Some((document, "first\ns".len())));
         assert_eq!(app.editor.files[0].text, "first\nsecond");
         assert_eq!(app.view.navigation.mode, None);
+    }
+
+    #[test]
+    fn escape_cancels_navigation_and_returns_focus_to_editor() {
+        let mut app = LumenApp::default();
+        app.editor.new_file();
+        app.view.navigation.mode = Some(NavigationMode::QuickOpen);
+        app.view.navigation.focus = true;
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        frame(&mut app, &ctx, 400.0, vec![]);
+        frame(&mut app, &ctx, 400.0, vec![]);
+        frame(&mut app, &ctx, 400.0, vec![key(egui::Key::Escape)]);
+        assert_eq!(app.view.navigation.mode, None);
+        assert!(app.view.focus_editor);
+        assert_eq!(app.editor.files.len(), 1);
+        assert!(!app.editor.files[0].dirty);
     }
 }

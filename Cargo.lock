@@ -2100,6 +2100,7 @@ dependencies = [
  "raw-window-handle",
  "rfd",
  "tempfile",
+ "toml_edit",
  "trash",
  "unicode-segmentation",
  "windows-sys 0.61.2",
