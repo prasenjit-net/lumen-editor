@@ -46,6 +46,13 @@ impl Workbench<'_> {
                     )
                 }),
         );
+        if let Some(find) = self.view.find.get_mut(&document)
+            && find.reveal
+            && let Some(range) = find.matches.get(find.current)
+        {
+            surface.reveal(range.start);
+            find.reveal = false;
+        }
         let output = Frame::new()
             .fill(BG)
             .corner_radius(4)

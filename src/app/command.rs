@@ -17,6 +17,7 @@ pub(crate) enum Command {
     Replace,
     StartWorkspaceSearch,
     CancelWorkspaceSearch,
+    ClearWorkspaceSearch,
     PreviewWorkspaceReplace,
     PreviewWorkspaceReplaceScope(ReplaceScope),
     ApplyWorkspaceReplace,

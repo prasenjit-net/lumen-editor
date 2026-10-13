@@ -40,13 +40,14 @@ impl FindState {
             self.pending = None;
             return None;
         }
-        if ctx.input(|input| input.pointer.any_pressed() || input.pointer.any_released()) {
-            if self.pending.is_some() {
-                ctx.request_repaint();
-            }
-            return None;
+        // A Search result opens on pointer release. Only defer replacement input;
+        // the result selection must reach the editor in that same frame.
+        let pointer_active =
+            ctx.input(|input| input.pointer.any_pressed() || input.pointer.any_released());
+        if pointer_active && self.pending.is_some() {
+            ctx.request_repaint();
         }
-        if let Some(edit) = self.pending.take() {
+        if let Some(edit) = self.pending.take_if(|_| !pointer_active) {
             if edit.revision != document.revision {
                 return Some("Replace cancelled: document changed".into());
             }

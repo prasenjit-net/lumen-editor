@@ -47,6 +47,7 @@ impl LumenApp {
             Command::Find | Command::Replace => (),
             Command::StartWorkspaceSearch => self.start_workspace_search(ctx),
             Command::CancelWorkspaceSearch => self.cancel_workspace_search(),
+            Command::ClearWorkspaceSearch => self.clear_workspace_search(),
             Command::PreviewWorkspaceReplace => self.preview_workspace_replace(),
             Command::PreviewWorkspaceReplaceScope(scope) => {
                 self.preview_workspace_replace_scope(scope)

@@ -1,8 +1,8 @@
 use super::{Workbench, theme::MUTED};
 use crate::{
-    app::{command::Command, workspace_search::ReplaceScope},
+    app::{command::Command, view_state::WorkspaceSearchView, workspace_search::ReplaceScope},
     icon,
-    services::workspace_search::{SearchFile, SearchHit},
+    services::workspace_search::{SearchFile, SearchHit, SearchResult},
 };
 use eframe::egui::{self, RichText, ScrollArea, TextEdit};
 use std::{
@@ -10,21 +10,27 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const PREVIEW_MATCHES_PER_PAGE: usize = 20;
+
 impl Workbench<'_> {
     pub(crate) fn workspace_search_panel(&mut self, ui: &mut egui::Ui) {
         let mut start = false;
         let mut cancel = false;
+        let mut clear = false;
         let mut preview = false;
         let mut open = None;
         let mut scoped_preview = None;
         {
             let state = &mut self.view.workspace_search;
             ui.horizontal(|ui| {
+                let can_clear = !state.query.is_empty() || state.results.is_some() || state.running;
                 let response = ui.add(
                     TextEdit::singleline(&mut state.query)
                         .id(egui::Id::new("workspace_search_query"))
                         .hint_text("Search")
-                        .desired_width((ui.available_width() - 50.0).max(80.0)),
+                        .desired_width(
+                            (ui.available_width() - if can_clear { 76.0 } else { 50.0 }).max(80.0),
+                        ),
                 );
                 if state.focus_query {
                     response.request_focus();
@@ -32,6 +38,14 @@ impl Workbench<'_> {
                 }
                 if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
                     start = true;
+                }
+                if can_clear
+                    && ui
+                        .small_button(icon::X)
+                        .on_hover_text("Clear search")
+                        .clicked()
+                {
+                    clear = true;
                 }
                 if ui
                     .small_button(icon::MAGNIFYING_GLASS)
@@ -243,7 +257,9 @@ impl Workbench<'_> {
                 ui.label(RichText::new("Open a folder to search its files.").color(MUTED));
             }
         }
-        if start {
+        if clear {
+            self.command(Command::ClearWorkspaceSearch);
+        } else if start {
             self.command(Command::StartWorkspaceSearch);
         }
         if cancel {
@@ -269,39 +285,16 @@ impl Workbench<'_> {
         let mut confirm = false;
         let mut close = false;
         let state = &mut self.view.workspace_search;
-        if state.preview_open {
-            egui::Window::new("Preview Workspace Replace").resizable(true).default_width(700.0).show(ctx, |ui| {
-            ui.label("Only selected files will be changed. Open tabs are skipped; changed files are rejected.");
-            if let Some(results) = &state.results {
-                let pages = state.selected.len().div_ceil(10).max(1);
-                state.preview_page = state.preview_page.min(pages - 1);
-                ui.horizontal(|ui| {
-                    if ui.add_enabled(state.preview_page > 0, egui::Button::new("Previous")).clicked() { state.preview_page -= 1; }
-                    ui.label(format!("Page {} of {}", state.preview_page + 1, pages));
-                    if ui.add_enabled(state.preview_page + 1 < pages, egui::Button::new("Next")).clicked() { state.preview_page += 1; }
-                });
-                ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                    for file in results.files.iter().filter(|file| state.selected.contains(&file.path)).skip(state.preview_page * 10).take(10) {
-                        ui.label(RichText::new(file.path.display().to_string()).strong());
-                        for hit in file.hits.iter().take(10) {
-                            let (before, after) = preview_hit(&file.original, hit, &state.replacement);
-                            ui.label(format!("{}:{}", hit.line, hit.column));
-                            ui.horizontal_top(|ui| {
-                                ui.vertical(|ui| { ui.label("Before"); ui.label(RichText::new(before).monospace()); });
-                                ui.vertical(|ui| { ui.label("After"); ui.label(RichText::new(after).monospace()); });
-                            });
-                        }
-                        if file.hits.len() > 10 { ui.label(format!("{} more matches in this file", file.hits.len() - 10)); }
-                        ui.separator();
-                    }
-                });
-                ui.label(RichText::new("Preview shows the first 10 matches per file; the full file is checked before writing.").color(MUTED).size(11.0));
-            }
-            ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() { close = true; }
-                if ui.add_enabled(!state.selected.is_empty(), egui::Button::new("Replace Selected…")).clicked() { apply = true; }
-            });
-        });
+        if state.preview_open
+            && let Some(response) = egui::Window::new("Preview Workspace Replace")
+                .resizable(true)
+                .default_width(700.0)
+                .max_width((ctx.content_rect().width() - 16.0).max(320.0))
+                .show(ctx, |ui| show_workspace_replace_preview(ui, state))
+            && let Some((was_closed, was_applied)) = response.inner
+        {
+            close = was_closed;
+            apply = was_applied;
         }
         if close {
             state.preview_open = false;
@@ -333,6 +326,115 @@ impl Workbench<'_> {
             self.command(Command::ApplyWorkspaceReplace);
         }
     }
+}
+
+fn show_workspace_replace_preview(
+    ui: &mut egui::Ui,
+    state: &mut WorkspaceSearchView,
+) -> (bool, bool) {
+    ui.add(
+        egui::Label::new(
+            "Only selected files will be changed. Open tabs are skipped; changed files are rejected.",
+        )
+        .wrap(),
+    );
+    if let Some(results) = &state.results {
+        let matches = selected_preview_matches(results, &state.selected);
+        let pages = matches.len().div_ceil(PREVIEW_MATCHES_PER_PAGE).max(1);
+        state.preview_page = state.preview_page.min(pages - 1);
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(state.preview_page > 0, egui::Button::new("Previous"))
+                .clicked()
+            {
+                state.preview_page -= 1;
+            }
+            ui.label(format!("Page {} of {}", state.preview_page + 1, pages));
+            if ui
+                .add_enabled(state.preview_page + 1 < pages, egui::Button::new("Next"))
+                .clicked()
+            {
+                state.preview_page += 1;
+            }
+        });
+        ui.label(
+            RichText::new(format!(
+                "{} matches in {} selected files",
+                matches.len(),
+                state.selected.len()
+            ))
+            .color(MUTED)
+            .size(11.0),
+        );
+        ui.columns(2, |columns| {
+            columns[0].label(RichText::new("Before").color(MUTED).size(11.0));
+            columns[1].label(RichText::new("After").color(MUTED).size(11.0));
+        });
+        show_preview_match_page(ui, &matches, state.preview_page, &state.replacement);
+        ui.add(
+            egui::Label::new(
+                RichText::new("Excerpts are shortened; every match is available by page. Full files are checked before writing.")
+                    .color(MUTED)
+                    .size(11.0),
+            )
+            .wrap(),
+        );
+    }
+    let mut close = false;
+    let mut apply = false;
+    ui.horizontal(|ui| {
+        close = ui.button("Cancel").clicked();
+        apply = ui
+            .add_enabled(
+                !state.selected.is_empty(),
+                egui::Button::new("Replace Selected…"),
+            )
+            .clicked();
+    });
+    (close, apply)
+}
+
+fn show_preview_match_page(
+    ui: &mut egui::Ui,
+    matches: &[(&SearchFile, &SearchHit)],
+    page: usize,
+    replacement: &str,
+) {
+    ScrollArea::vertical()
+        .id_salt(("workspace_replace_preview", page))
+        .max_height(360.0)
+        .show(ui, |ui| {
+            let mut previous_file = None;
+            for &(file, hit) in matches
+                .iter()
+                .skip(page * PREVIEW_MATCHES_PER_PAGE)
+                .take(PREVIEW_MATCHES_PER_PAGE)
+            {
+                if previous_file != Some(file.path.as_path()) {
+                    if previous_file.is_some() {
+                        ui.separator();
+                    }
+                    let path = file.path.display().to_string();
+                    ui.add(egui::Label::new(RichText::new(&path).strong()).truncate())
+                        .on_hover_text(path);
+                    previous_file = Some(file.path.as_path());
+                }
+                let (before, after) = preview_hit(&file.original, hit, replacement);
+                ui.label(
+                    RichText::new(format!("{}:{}", hit.line, hit.column))
+                        .color(MUTED)
+                        .size(11.0),
+                );
+                ui.columns(2, |columns| {
+                    columns[0]
+                        .add(egui::Label::new(RichText::new(&before).monospace()).truncate())
+                        .on_hover_text(&before);
+                    columns[1]
+                        .add(egui::Label::new(RichText::new(&after).monospace()).truncate())
+                        .on_hover_text(&after);
+                });
+            }
+        });
 }
 
 #[derive(Default)]
@@ -453,21 +555,20 @@ fn result_row(
         ui.spacing_mut().item_spacing.x = 2.0;
         ui.add_space(indent);
         let width = (ui.available_width() - if replace { 30.0 } else { 2.0 }).max(24.0);
+        let row = ui.allocate_ui_with_layout(
+            egui::vec2(width, 21.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_width(width);
+                ui.add(
+                    egui::Label::new(RichText::new(&text).size(12.0))
+                        .truncate()
+                        .selectable(false),
+                );
+            },
+        );
         let response = ui
-            .allocate_ui_with_layout(
-                egui::vec2(width, 21.0),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.set_width(width);
-                    ui.add(
-                        egui::Label::new(RichText::new(&text).size(12.0))
-                            .truncate()
-                            .selectable(false)
-                            .sense(egui::Sense::click()),
-                    )
-                },
-            )
-            .inner
+            .interact(row.response.rect, row.response.id, egui::Sense::click())
             .on_hover_text(&text)
             .on_hover_cursor(egui::CursorIcon::PointingHand);
         clicked = response.clicked()
@@ -486,6 +587,18 @@ fn result_row(
     (clicked, replace_clicked)
 }
 
+fn selected_preview_matches<'a>(
+    results: &'a SearchResult,
+    selected: &HashSet<PathBuf>,
+) -> Vec<(&'a SearchFile, &'a SearchHit)> {
+    results
+        .files
+        .iter()
+        .filter(|file| selected.contains(&file.path))
+        .flat_map(|file| file.hits.iter().map(move |hit| (file, hit)))
+        .collect()
+}
+
 fn preview_hit(text: &str, hit: &SearchHit, replacement: &str) -> (String, String) {
     let start = text[..hit.range.start]
         .rfind('\n')
@@ -493,21 +606,38 @@ fn preview_hit(text: &str, hit: &SearchHit, replacement: &str) -> (String, Strin
     let end = text[hit.range.end..]
         .find('\n')
         .map_or(text.len(), |offset| hit.range.end + offset);
-    let before: String = text[start..end]
-        .trim_end_matches('\r')
+    let prefix = &text[start..hit.range.start];
+    let suffix = text[hit.range.end..end].trim_end_matches('\r');
+    let tail: String = prefix
         .chars()
-        .take(180)
+        .rev()
+        .take(70)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
         .collect();
-    let after = format!(
-        "{}{}{}",
-        &text[start..hit.range.start],
-        replacement,
-        &text[hit.range.end..end]
+    let head: String = suffix.chars().take(70).collect();
+    let left = if tail.len() < prefix.len() { "…" } else { "" };
+    let right = if head.len() < suffix.len() { "…" } else { "" };
+    let before = format!(
+        "{left}{tail}{}{head}{right}",
+        leading_excerpt(&text[hit.range.clone()], 160)
     );
-    (
-        before,
-        after.trim_end_matches('\r').chars().take(180).collect(),
-    )
+    let after = format!(
+        "{left}{tail}{}{head}{right}",
+        leading_excerpt(replacement, 160)
+    );
+    (before, after)
+}
+
+fn leading_excerpt(text: &str, limit: usize) -> String {
+    let mut chars = text.chars();
+    let excerpt: String = chars.by_ref().take(limit).collect();
+    if chars.next().is_some() {
+        format!("{excerpt}…")
+    } else {
+        excerpt
+    }
 }
 
 #[cfg(test)]
@@ -565,6 +695,174 @@ mod tests {
             draw(vec![]);
             let cursor = draw(vec![egui::Event::PointerMoved(egui::pos2(35.0, 19.0))]);
             assert_eq!(cursor, egui::CursorIcon::PointingHand, "width {width}");
+        }
+    }
+
+    #[test]
+    fn search_hit_whitespace_is_clickable() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let draw = |events| {
+            let clicked = Cell::new(false);
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(300.0, 100.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        clicked.set(result_row(ui, "1:1  needle".into(), 0.0, false, "").0);
+                    });
+                },
+            );
+            clicked.get()
+        };
+        draw(vec![]);
+        let pos = egui::pos2(220.0, 19.0);
+        draw(vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        assert!(draw(vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }]));
+    }
+
+    #[test]
+    fn search_result_text_stays_left_aligned_at_panel_widths() {
+        for width in [180.0, 300.0, 600.0] {
+            let ctx = egui::Context::default();
+            crate::ui::theme::configure_ui(&ctx);
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 100.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        result_row(ui, "1:1  needle".into(), 0.0, false, "");
+                    });
+                },
+            );
+            let text_x = output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text().contains("needle") => {
+                    Some(text.pos.x)
+                }
+                _ => None,
+            });
+            assert!(text_x.unwrap() < 20.0, "width {width}: {text_x:?}");
+        }
+    }
+
+    #[test]
+    fn replace_preview_pages_cover_every_selected_match() {
+        let first = PathBuf::from("/workspace/first.rs");
+        let second = PathBuf::from("/workspace/second.rs");
+        let file = |path: PathBuf, count| SearchFile {
+            path,
+            original: "needle".into(),
+            hits: (0..count)
+                .map(|line| SearchHit {
+                    range: 0..6,
+                    line,
+                    column: 1,
+                    snippet: "needle".into(),
+                })
+                .collect(),
+        };
+        let results = SearchResult {
+            files: vec![file(first.clone(), 23), file(second.clone(), 2)],
+            ..Default::default()
+        };
+        let matches = selected_preview_matches(&results, &HashSet::from([first]));
+        assert_eq!(matches.len(), 23);
+        assert_eq!(matches.chunks(PREVIEW_MATCHES_PER_PAGE).count(), 2);
+        assert_eq!(
+            matches
+                .chunks(PREVIEW_MATCHES_PER_PAGE)
+                .nth(1)
+                .unwrap()
+                .len(),
+            3
+        );
+
+        let matches = selected_preview_matches(&results, &HashSet::from([second]));
+        assert_eq!(matches.len(), 2);
+        assert!(
+            matches
+                .iter()
+                .all(|(file, _)| file.path == results.files[1].path)
+        );
+    }
+
+    #[test]
+    fn replace_preview_excerpt_keeps_long_line_match_visible() {
+        let prefix = "α".repeat(100);
+        let text = format!("{prefix}needle{}\r\n", "β".repeat(100));
+        let hit = SearchHit {
+            range: prefix.len()..prefix.len() + 6,
+            line: 1,
+            column: 101,
+            snippet: String::new(),
+        };
+        let (before, after) = preview_hit(&text, &hit, "replacement");
+        assert!(before.starts_with('…') && before.contains("needle"));
+        assert!(after.contains("replacement") && after.ends_with('…'));
+        assert!(!before.contains('\r') && !after.contains('\r'));
+    }
+
+    #[test]
+    fn replace_preview_stays_within_narrow_and_wide_viewports() {
+        for width in [520.0, 900.0] {
+            let mut app = LumenApp::default();
+            let path = PathBuf::from("/workspace/long-name.rs");
+            app.view.workspace_search.results = Some(SearchResult {
+                files: vec![SearchFile {
+                    path: path.clone(),
+                    original: "needle".into(),
+                    hits: (1..=30)
+                        .map(|line| SearchHit {
+                            range: 0..6,
+                            line,
+                            column: 1,
+                            snippet: "needle".into(),
+                        })
+                        .collect(),
+                }],
+                ..Default::default()
+            });
+            app.view.workspace_search.selected.insert(path);
+            app.view.workspace_search.preview_open = true;
+            app.view.workspace_search.preview_page = 1;
+            let ctx = egui::Context::default();
+            crate::ui::theme::configure_ui(&ctx);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 600.0));
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    app.render_component(ctx, |workbench| workbench.workspace_replace_preview(ctx))
+                },
+            );
+            let rect = ctx
+                .memory(|memory| memory.area_rect(egui::Id::new("Preview Workspace Replace")))
+                .expect("preview window should be shown");
+            assert!(rect.width() <= screen.width(), "width {width}: {rect:?}");
+            assert_eq!(app.view.workspace_search.preview_page, 1);
         }
     }
 

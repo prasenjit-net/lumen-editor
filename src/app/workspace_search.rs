@@ -133,6 +133,26 @@ impl LumenApp {
         self.view.workspace_search.progress = None;
     }
 
+    pub(crate) fn clear_workspace_search(&mut self) {
+        self.cancel_workspace_search();
+        let view = &mut self.view.workspace_search;
+        view.query.clear();
+        view.results = None;
+        view.completed_request = None;
+        view.selected.clear();
+        view.expanded_files.clear();
+        view.expanded_folders.clear();
+        view.preview_open = false;
+        view.confirmation_open = false;
+        view.preview_replacement = None;
+        view.preview_selected.clear();
+        view.preview_page = 0;
+        view.report.clear();
+        view.replaced_files = 0;
+        view.focus_query = true;
+        self.view.status = "Search cleared".into();
+    }
+
     pub(crate) fn poll_workspace_search(&mut self, ctx: &egui::Context) {
         let Some(job) = &self.search_job else { return };
         let mut finished = None;

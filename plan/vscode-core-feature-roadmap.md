@@ -54,7 +54,7 @@ are conservatively skipped. Search snapshots are limited to 10,000 matches and
 Still needed before the full exit gate: live native testing at
 narrow/default/wide widths and with a large workspace,
 and a richer hunk-level replacement preview. The current preview paginates
-selected files and shows the first 10 matches per file. No operation-wide
+every selected match but shows a per-match excerpt, not a combined final-file diff. No operation-wide
 rollback or undo is provided.
 
 - [x] Build a Search activity panel with query, file glob and exclude controls,

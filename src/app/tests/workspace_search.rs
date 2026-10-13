@@ -5,6 +5,75 @@ use crate::{
     services::workspace_search::{SearchFile, SearchHit, SearchRequest, SearchResult},
 };
 
+#[cfg(feature = "shared-editor")]
+#[test]
+fn opening_workspace_hit_selects_match_on_click_release() {
+    use lumen_editor_core::Selection;
+
+    let (mut app, _, path) = prepared();
+    app.view.shared_editor = true;
+    let ctx = egui::Context::default();
+    configure_ui(&ctx);
+    app.open_workspace_hit(path.clone(), 7..12);
+    assert_eq!(app.editor.active().unwrap().path.as_ref(), Some(&path));
+    super::editor::editor_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerButton {
+            pos: egui::pos2(30.0, 180.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    let document = app.editor.active().unwrap();
+    assert_eq!(
+        document.editing.as_ref().unwrap().selections().selections(),
+        &[Selection {
+            anchor: 7,
+            head: 12
+        }]
+    );
+    assert_eq!(
+        ctx.memory(|memory| memory.focused()),
+        Some(crate::app::editor_action::text_widget_id(document.id))
+    );
+    assert!(!document.dirty);
+}
+
+#[cfg(feature = "shared-editor")]
+#[test]
+fn opening_distant_workspace_hit_reveals_it_in_editor_viewport() {
+    let (mut app, storage, path) = prepared();
+    app.view.shared_editor = true;
+    let text = format!("{}target", "line\n".repeat(100));
+    let start = text.len() - "target".len();
+    storage
+        .0
+        .borrow_mut()
+        .files
+        .insert(path.clone(), text.clone());
+    app.view.workspace_search.query = "target".into();
+    app.view
+        .workspace_search
+        .completed_request
+        .as_mut()
+        .unwrap()
+        .query = "target".into();
+    let ctx = egui::Context::default();
+    configure_ui(&ctx);
+    app.open_workspace_hit(path, start..text.len());
+    super::editor::editor_frame(&mut app, &ctx, vec![]);
+    super::editor::editor_frame(&mut app, &ctx, vec![]);
+    let output = app.view.shared_output.as_ref().unwrap();
+    assert!(
+        output
+            .text_clip
+            .intersects(output.geometry.caret_rect(start)),
+        "distant match must be scrolled into view"
+    );
+}
+
 fn prepared() -> (LumenApp, MemoryFileSystem, PathBuf) {
     let (mut app, storage) = test_app(TestDialogs::default());
     let path = PathBuf::from("root/a.txt");
@@ -52,6 +121,46 @@ fn prepared() -> (LumenApp, MemoryFileSystem, PathBuf) {
     app.view.workspace_search.preview_replacement = Some("tea".into());
     app.view.workspace_search.confirmation_open = true;
     (app, storage, path)
+}
+
+#[test]
+fn clearing_search_resets_results_without_changing_open_files_or_filters() {
+    let (mut app, storage, path) = prepared();
+    app.open_file(path.clone());
+    let document_id = app.editor.active().unwrap().id;
+    let search = &mut app.view.workspace_search;
+    search.running = true;
+    search.include = "*.rs".into();
+    search.exclude = "target".into();
+    search.match_case = true;
+    search.expanded_files.insert(path.clone());
+    search.expanded_folders.insert(PathBuf::from("root"));
+    search.report.push("earlier error".into());
+    search.replaced_files = 2;
+
+    app.clear_workspace_search();
+
+    let search = &app.view.workspace_search;
+    assert!(search.query.is_empty());
+    assert!(search.results.is_none());
+    assert!(search.completed_request.is_none());
+    assert!(!search.running);
+    assert!(search.progress.is_none());
+    assert!(search.selected.is_empty());
+    assert!(search.expanded_files.is_empty());
+    assert!(search.expanded_folders.is_empty());
+    assert!(!search.preview_open);
+    assert!(!search.confirmation_open);
+    assert!(search.preview_selected.is_empty());
+    assert!(search.report.is_empty());
+    assert_eq!(search.replaced_files, 0);
+    assert_eq!(search.replacement, "tea");
+    assert_eq!(search.include, "*.rs");
+    assert_eq!(search.exclude, "target");
+    assert!(search.match_case);
+    assert!(search.focus_query);
+    assert_eq!(app.editor.active().unwrap().id, document_id);
+    assert_eq!(storage.0.borrow().files[&path], "café\r\ncafé");
 }
 
 #[test]

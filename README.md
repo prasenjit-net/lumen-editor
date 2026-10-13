@@ -46,7 +46,8 @@ patterns. Click a result to open
 its file at the match. Results form a virtualized, collapsible folder/file tree
 that keeps all bounded matches available, with Replace
 actions for all results or an individual folder or file. Replace offers a
-before/after preview
+paginated, per-match before/after preview (including matches beyond the first
+ten in a file)
 and explicit confirmation. An open editor tab is skipped, and a file changed
 since search is never silently overwritten; failures are reported in Search.
 Scans skip links, `.git`, `target`, binary/non-UTF-8 files and files over 2 MiB.
