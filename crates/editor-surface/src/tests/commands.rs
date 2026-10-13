@@ -1,6 +1,80 @@
 use super::*;
 
 #[test]
+fn paired_typing_overtype_and_ime_commit_stay_separate() {
+    let (mut surface, mut buffer, ctx) = fixture("a\nb");
+    buffer
+        .set_selections(vec![Selection::caret(1), Selection::caret(3)], 1)
+        .unwrap();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::Text("(".into())],
+        500.0,
+    );
+    assert_eq!(buffer.text(), "a()\nb()");
+    assert_eq!(
+        buffer.selections().selections(),
+        &[Selection::caret(2), Selection::caret(6)]
+    );
+    let revision = buffer.revision();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::Text(")".into())],
+        500.0,
+    );
+    assert_eq!(buffer.revision(), revision);
+    assert_eq!(buffer.text(), "a()\nb()");
+    assert!(buffer.undo());
+    assert_eq!(buffer.text(), "a\nb");
+
+    surface.set_pairing(crate::PairingOptions {
+        auto_closing_brackets: false,
+        ..Default::default()
+    });
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::Text("(".into())],
+        500.0,
+    );
+    assert_eq!(buffer.text(), "a(\nb(");
+
+    let (mut surface, mut buffer, ctx) = fixture("");
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![
+            Event::Ime(egui::ImeEvent::Enabled),
+            Event::Ime(egui::ImeEvent::Commit("(".into())),
+        ],
+        500.0,
+    );
+    assert_eq!(buffer.text(), "(");
+}
+
+#[test]
+fn apostrophe_inside_word_does_not_create_a_pair() {
+    let (mut surface, mut buffer, ctx) = fixture("dont");
+    buffer.set_selections(vec![Selection::caret(3)], 0).unwrap();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![Event::Text("'".into())],
+        500.0,
+    );
+    assert_eq!(buffer.text(), "don't");
+    assert!(buffer.undo());
+    assert_eq!(buffer.text(), "dont");
+}
+
+#[test]
 fn configured_enter_and_tab_keep_multicursor_edits_atomic() {
     let (mut surface, mut buffer, ctx) = fixture("  one {\r\n  two {");
     surface.set_indentation(lumen_editor_core::Indentation {

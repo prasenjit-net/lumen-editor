@@ -104,10 +104,16 @@ precedence. Enter and Tab use one editor-core transaction for multi-cursor
 edits, including CRLF. Detection samples up to 200 lines. The optional legacy
 TextEdit fallback still uses egui's built-in indentation rules. Native
 interaction acceptance and the remaining editing behaviors are open.
+Bracket/quote completion now wraps selections and inserts paired delimiters
+as one core undo step, while IME commits stay literal. Bracket matching is
+painted from the editor's shared text geometry. Matching is still lexical (it
+does not exclude comments or strings), and native interaction acceptance is
+pending.
 
 - [x] Add auto-indent and configurable indentation detection/size to the default shared editor.
-- [ ] Add bracket/quote completion and matching with multi-cursor, selection,
-  IME and undo-safe behavior.
+- [ ] Complete bracket/quote matching in syntax-aware contexts and validate
+  native multi-cursor, selection, IME and undo behavior. Lexical completion and
+  matching with automated coverage are implemented.
 - [ ] Add code folding with gutter affordances and persistent per-tab fold state.
 
 Exit gate: all editing operations remain one coherent history owner, preserve

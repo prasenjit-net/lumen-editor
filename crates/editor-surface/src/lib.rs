@@ -25,6 +25,7 @@ use unicode_segmentation::UnicodeSegmentation;
 pub struct EditorSurface {
     typography: Typography,
     indentation: Indentation,
+    pairing: PairingOptions,
     syntax: Option<(Language, SyntaxPalette)>,
     widget: Option<Id>,
     drag_anchor: Option<DragSelection>,
@@ -49,6 +50,23 @@ pub struct Typography {
     pub font_size: f32,
     pub line_height: f32,
     pub bundled_font: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PairingOptions {
+    pub auto_closing_brackets: bool,
+    pub auto_closing_quotes: bool,
+    pub bracket_matching: bool,
+}
+
+impl Default for PairingOptions {
+    fn default() -> Self {
+        Self {
+            auto_closing_brackets: true,
+            auto_closing_quotes: true,
+            bracket_matching: true,
+        }
+    }
 }
 impl Default for Typography {
     fn default() -> Self {
@@ -119,6 +137,9 @@ pub struct SurfaceOutput {
 impl EditorSurface {
     pub fn set_indentation(&mut self, indentation: Indentation) {
         self.indentation = indentation;
+    }
+    pub fn set_pairing(&mut self, pairing: PairingOptions) {
+        self.pairing = pairing;
     }
     pub fn set_syntax(&mut self, syntax: Option<(Language, SyntaxPalette)>) {
         self.syntax = syntax.filter(|(language, _)| *language != Language::Plain);
@@ -285,6 +306,28 @@ impl EditorSurface {
                     }
                 }
                 geometry.paint(ui, &painter);
+                if self.pairing.bracket_matching
+                    && self.composition.is_none()
+                    && response.has_focus()
+                {
+                    let primary =
+                        buffer.selections().selections()[buffer.selections().primary_index()];
+                    if primary.range().is_empty()
+                        && let Some((left, right)) =
+                            lumen_editor_core::matching_brackets(buffer.text(), primary.head)
+                    {
+                        for range in [left, right] {
+                            for rect in geometry.selection_rects(range) {
+                                painter.rect_stroke(
+                                    rect,
+                                    1,
+                                    Stroke::new(1.0_f32, ui.visuals().selection.stroke.color),
+                                    egui::StrokeKind::Inside,
+                                );
+                            }
+                        }
+                    }
+                }
                 let carets: Vec<_> = buffer
                     .selections()
                     .selections()

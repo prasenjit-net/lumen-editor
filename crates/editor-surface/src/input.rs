@@ -296,6 +296,33 @@ impl EditorSurface {
                         continue;
                     }
                     self.drag_anchor = None;
+                    if let Some(ch) = single_character(&text) {
+                        let skip = match ch {
+                            ')' | ']' | '}' if self.pairing.auto_closing_brackets => true,
+                            '\'' | '"' | '`' if self.pairing.auto_closing_quotes => true,
+                            _ => false,
+                        };
+                        if skip && buffer.skip_closing(ch) {
+                            continue;
+                        }
+                        let close = match ch {
+                            '(' if self.pairing.auto_closing_brackets => Some(')'),
+                            '[' if self.pairing.auto_closing_brackets => Some(']'),
+                            '{' if self.pairing.auto_closing_brackets => Some('}'),
+                            '\'' | '"' | '`'
+                                if self.pairing.auto_closing_quotes
+                                    && quote_pair_allowed(buffer, ch) =>
+                            {
+                                Some(ch)
+                            }
+                            _ => None,
+                        };
+                        if let Some(close) = close {
+                            buffer.break_undo_group();
+                            buffer.insert_pair(ch, close).unwrap();
+                            continue;
+                        }
+                    }
                     buffer
                         .type_text(&text, ui.input(|input| input.time))
                         .unwrap();
@@ -439,6 +466,27 @@ impl EditorSurface {
         }
         self.composition_cancelled = true;
     }
+}
+
+fn single_character(text: &str) -> Option<char> {
+    let mut chars = text.chars();
+    let first = chars.next()?;
+    chars.next().is_none().then_some(first)
+}
+
+fn quote_pair_allowed(buffer: &EditorBuffer, quote: char) -> bool {
+    buffer.selections().selections().iter().all(|selection| {
+        let range = selection.range();
+        if !range.is_empty() {
+            return true;
+        }
+        let before = buffer.text()[..range.start].chars().next_back();
+        let after = buffer.text()[range.end..].chars().next();
+        before != Some('\\')
+            && after.is_none_or(|ch| {
+                ch.is_whitespace() || matches!(ch, ')' | ']' | '}' | ',' | ';') || ch == quote
+            })
+    })
 }
 
 fn drag_range(

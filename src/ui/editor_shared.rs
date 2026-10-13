@@ -45,6 +45,20 @@ impl Workbench<'_> {
                 .settings
                 .document_boolean("editor.auto_indent", path),
         });
+        surface.set_pairing(lumen_editor_surface::PairingOptions {
+            auto_closing_brackets: self
+                .view
+                .settings
+                .document_boolean("editor.auto_closing_brackets", path),
+            auto_closing_quotes: self
+                .view
+                .settings
+                .document_boolean("editor.auto_closing_quotes", path),
+            bracket_matching: self
+                .view
+                .settings
+                .document_boolean("editor.bracket_matching", path),
+        });
         surface.set_typography(lumen_editor_surface::Typography {
             font_size: self.view.settings.number("editor.font_size", path),
             line_height: self.view.settings.number("editor.line_height", path),
