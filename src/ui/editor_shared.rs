@@ -30,6 +30,21 @@ impl Workbench<'_> {
         });
         surface.set_gutter_id(super::editor_gutter::gutter_id(document));
         let path = self.editor.files[index].path.as_deref();
+        surface.set_indentation(lumen_editor_core::Indentation {
+            width: self.view.settings.number("editor.indent_size", path) as usize,
+            insert_spaces: self
+                .view
+                .settings
+                .document_boolean("editor.insert_spaces", path),
+            detect: self
+                .view
+                .settings
+                .document_boolean("editor.detect_indentation", path),
+            auto_indent: self
+                .view
+                .settings
+                .document_boolean("editor.auto_indent", path),
+        });
         surface.set_typography(lumen_editor_surface::Typography {
             font_size: self.view.settings.number("editor.font_size", path),
             line_height: self.view.settings.number("editor.line_height", path),

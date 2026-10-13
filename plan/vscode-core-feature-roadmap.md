@@ -98,7 +98,14 @@ focus return and cancelled navigation behave consistently.
 
 ## 4. Complete everyday code-editing behavior
 
-- [ ] Add auto-indent and configurable indentation detection/size.
+In progress: the default shared editor now has schema-driven Auto Indent,
+Detect Indentation, Indent Size and Insert Spaces settings with user/project
+precedence. Enter and Tab use one editor-core transaction for multi-cursor
+edits, including CRLF. Detection samples up to 200 lines. The optional legacy
+TextEdit fallback still uses egui's built-in indentation rules. Native
+interaction acceptance and the remaining editing behaviors are open.
+
+- [x] Add auto-indent and configurable indentation detection/size to the default shared editor.
 - [ ] Add bracket/quote completion and matching with multi-cursor, selection,
   IME and undo-safe behavior.
 - [ ] Add code folding with gutter affordances and persistent per-tab fold state.

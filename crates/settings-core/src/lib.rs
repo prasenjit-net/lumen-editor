@@ -201,6 +201,13 @@ mod tests {
     #[test]
     fn invalid_numbers_types_and_inherited_geometry_are_rejected() {
         assert!(
+            validate_layers(
+                &Layer::from([("editor.indent_size".into(), Value::Number(2.5))]),
+                None
+            )
+            .is_err()
+        );
+        assert!(
             setting("editor.font_size")
                 .validate(&Value::Number(f64::NAN))
                 .is_err()

@@ -149,6 +149,7 @@ impl EditorSurface {
                 buffer.select_line_ends();
             }
             Key::Tab if !modifiers.command && !modifiers.alt && !modifiers.ctrl => {
+                let indentation = self.indentation.effective(buffer.text()).unit();
                 if modifiers.shift
                     || buffer
                         .selections()
@@ -156,9 +157,9 @@ impl EditorSurface {
                         .iter()
                         .any(|selection| !selection.range().is_empty())
                 {
-                    buffer.indent_lines("    ", modifiers.shift).unwrap();
+                    buffer.indent_lines(&indentation, modifiers.shift).unwrap();
                 } else {
-                    buffer.replace_selections(&["    "]).unwrap();
+                    buffer.replace_selections(&[&indentation]).unwrap();
                 }
             }
             Key::ArrowUp | Key::ArrowDown if cursor_shortcut(modifiers) => {

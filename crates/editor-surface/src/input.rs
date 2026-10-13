@@ -390,12 +390,13 @@ impl EditorSurface {
                                 .unwrap();
                         }
                         Key::Enter => {
-                            let newline = if buffer.text().contains("\r\n") {
-                                "\r\n"
-                            } else {
-                                "\n"
-                            };
-                            buffer.replace_selections(&[newline]).unwrap();
+                            let fragments = self
+                                .indentation
+                                .effective(buffer.text())
+                                .newline_fragments(buffer.text(), buffer.selections());
+                            let fragments: Vec<&str> =
+                                fragments.iter().map(String::as_str).collect();
+                            buffer.replace_selections(&fragments).unwrap();
                         }
                         Key::Escape => {
                             let set = buffer.selections();

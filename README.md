@@ -244,6 +244,12 @@ Find/Replace and complete-selection undo/redo, with a cosmic-text/Swash renderer
 cargo run
 ```
 
+Its Editor settings include Auto Indent, Detect Indentation, Indent Size, and
+Insert Spaces. Enter carries the line's leading whitespace and adds one indent
+after an opening bracket. Tab and Shift+Tab use the detected or configured unit;
+project settings override user settings. The optional legacy TextEdit fallback
+keeps egui's built-in indentation behavior rather than these new rules.
+
 Option/Alt-click adds a cursor; Option/Alt-drag adds another selected range;
 Shift+Option/Alt-drag makes a column selection. Shift+Option/Alt+I places a
 cursor at the end of each selected line. Cmd/Ctrl+D selects the next occurrence

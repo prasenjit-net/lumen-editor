@@ -12,7 +12,9 @@ mod visual_navigation;
 use egui::{Align2, FontId, Id, Pos2, Rect, Response, ScrollArea, Sense, Stroke, Ui, vec2};
 pub use geometry::TextGeometry;
 use lumen_editor_core::syntax::{Kind, Language};
-use lumen_editor_core::{CaretAffinity, Composition, EditorBuffer, SelectionClipboard};
+use lumen_editor_core::{
+    CaretAffinity, Composition, EditorBuffer, Indentation, SelectionClipboard,
+};
 #[cfg(feature = "shaped")]
 pub use shaping::Shaper;
 #[cfg(feature = "shaped")]
@@ -22,6 +24,7 @@ use unicode_segmentation::UnicodeSegmentation;
 #[derive(Default)]
 pub struct EditorSurface {
     typography: Typography,
+    indentation: Indentation,
     syntax: Option<(Language, SyntaxPalette)>,
     widget: Option<Id>,
     drag_anchor: Option<DragSelection>,
@@ -114,6 +117,9 @@ pub struct SurfaceOutput {
 }
 
 impl EditorSurface {
+    pub fn set_indentation(&mut self, indentation: Indentation) {
+        self.indentation = indentation;
+    }
     pub fn set_syntax(&mut self, syntax: Option<(Language, SyntaxPalette)>) {
         self.syntax = syntax.filter(|(language, _)| *language != Language::Plain);
     }

@@ -1,6 +1,52 @@
 use super::*;
 
 #[test]
+fn configured_enter_and_tab_keep_multicursor_edits_atomic() {
+    let (mut surface, mut buffer, ctx) = fixture("  one {\r\n  two {");
+    surface.set_indentation(lumen_editor_core::Indentation {
+        width: 2,
+        insert_spaces: true,
+        detect: false,
+        auto_indent: true,
+    });
+    buffer
+        .set_selections(
+            vec![
+                Selection::caret("  one {".len()),
+                Selection::caret(buffer.text().len()),
+            ],
+            1,
+        )
+        .unwrap();
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::Enter, Modifiers::NONE)],
+        500.0,
+    );
+    assert_eq!(buffer.text(), "  one {\r\n    \r\n  two {\r\n    ");
+    assert!(buffer.undo());
+    assert_eq!(buffer.text(), "  one {\r\n  two {");
+    surface.set_indentation(lumen_editor_core::Indentation {
+        width: 2,
+        insert_spaces: false,
+        detect: false,
+        auto_indent: false,
+    });
+    frame(
+        &mut surface,
+        &mut buffer,
+        &ctx,
+        vec![key(Key::Tab, Modifiers::NONE)],
+        500.0,
+    );
+    assert_eq!(buffer.text(), "  one {\t\r\n  two {\t");
+    assert!(buffer.undo());
+    assert_eq!(buffer.text(), "  one {\r\n  two {");
+}
+
+#[test]
 fn selected_lines_gain_end_cursors_and_type_as_one_edit() {
     let (mut surface, mut buffer, ctx) = fixture("one\ntwo\nthree");
     buffer
