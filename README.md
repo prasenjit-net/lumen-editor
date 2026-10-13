@@ -209,14 +209,16 @@ run on Linux, macOS and Windows; the macOS job also tests the legacy editor and
 builds the app bundle. CI checks the native builds but does not replace live UI
 validation.
 
-To publish a release, update the crate version in `Cargo.toml` and
-`CFBundleShortVersionString` in `assets/macos/Info.plist`, then push a release
-branch named `r<major>.<minor>.<patch>` (for example, `r0.1.0`). The Release
-workflow can also be run manually with an existing release branch name. It
-checks that versions agree, tests and packages macOS, Windows and Linux builds,
-then creates a `v<version>` GitHub release with archives and SHA-256 checksums.
-An existing release tag is never replaced. These builds are not signed or
-notarized.
+To publish a release, manually run the Release workflow from the default branch
+and choose `patch`, `minor`, or `major`. It increments the version in
+`Cargo.toml`, `Cargo.lock`, and the macOS `Info.plist`, then tests and packages
+macOS, Windows, and Linux builds. Only after all builds pass does it push the
+version commit and `v<version>` tag and publish a GitHub release with archives
+and SHA-256 checksums. A changed default branch or conflicting tag stops the
+release; it never force-pushes or replaces an existing release. These builds
+are not signed or notarized. The workflow's version commit is pushed with
+`GITHUB_TOKEN`, so it does not trigger the normal push CI workflow; the release
+workflow runs the platform tests itself.
 
 Application tests use in-memory storage and dialog doubles for open/save,
 cancellation, failure and dirty-buffer workflows, plus an egui pointer test

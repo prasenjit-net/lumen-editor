@@ -1,5 +1,7 @@
 use std::{env, error::Error, fs, path::PathBuf, process::Command};
 
+mod version;
+
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum BundleEditor {
     #[default]
@@ -11,6 +13,20 @@ enum BundleEditor {
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
+        Some(command @ ("bump-version" | "set-version")) => {
+            let value = args.next().ok_or("Missing version or bump level")?;
+            if args.next().is_some() {
+                return Err("Expected exactly one version or bump level".into());
+            }
+            let root = workspace_root()?;
+            let new_version = if command == "bump-version" {
+                version::bump(&root, &value)?
+            } else {
+                version::set(&root, &value)?
+            };
+            println!("{new_version}");
+            Ok(())
+        }
         Some("bundle") => {
             let mut release = false;
             let mut offline = false;
@@ -36,7 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         None | Some("--help" | "-h") => {
             println!(
-                "Usage: cargo xtask bundle [--release] [--offline] [--shared-editor | --legacy-editor]\n\nPackage target/Lumen.app with the default shared editor. Optional flags create separate experimental or legacy fallback bundles."
+                "Usage: cargo xtask bundle [--release] [--offline] [--shared-editor | --legacy-editor]\n       cargo xtask bump-version <major|minor|patch>\n       cargo xtask set-version <major.minor.patch>\n\nPackage target/Lumen.app, or update the application version in Cargo.toml, Cargo.lock, and Info.plist."
             );
             Ok(())
         }
@@ -50,10 +66,7 @@ fn bundle(release: bool, offline: bool, editor: BundleEditor) -> Result<(), Box<
             "The .app bundler requires macOS. On Windows, use cargo build --release.".into(),
         );
     }
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or("Cannot locate workspace root")?
-        .to_path_buf();
+    let root = workspace_root()?;
     let target = match env::var_os("CARGO_TARGET_DIR") {
         Some(path) => {
             let path = PathBuf::from(path);
@@ -109,6 +122,13 @@ fn bundle(release: bool, offline: bool, editor: BundleEditor) -> Result<(), Box<
     fs::write(contents.join("Info.plist"), plist)?;
     println!("Built {} ({profile})", app.display());
     Ok(())
+}
+
+fn workspace_root() -> Result<PathBuf, Box<dyn Error>> {
+    Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("Cannot locate workspace root")?
+        .to_path_buf())
 }
 
 fn editor_feature_args(editor: BundleEditor) -> &'static [&'static str] {

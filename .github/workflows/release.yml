@@ -1,86 +1,56 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - 'r[0-9]*.[0-9]*.[0-9]*'
   workflow_dispatch:
     inputs:
-      release_branch:
-        description: 'Existing release branch, for example r0.1.0'
+      bump:
+        description: 'Version component to increment from Cargo.toml'
         required: true
-        type: string
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.release_branch || github.ref_name }}
+  group: release-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
   prepare:
-    name: Validate release and source
+    name: Prepare version and validate source
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      commit: ${{ steps.version.outputs.commit }}
+      base: ${{ steps.version.outputs.base }}
     steps:
-      - name: Validate release branch
-        id: branch
-        shell: bash
-        env:
-          RELEASE_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.release_branch || github.ref_name }}
-        run: |
-          if [[ ! "$RELEASE_BRANCH" =~ ^r(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "Expected a release branch such as r0.1.0, got: $RELEASE_BRANCH" >&2
-            exit 1
-          fi
-          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
-            echo "ref=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=refs/heads/$RELEASE_BRANCH" >> "$GITHUB_OUTPUT"
-          fi
-          echo "version=${RELEASE_BRANCH#r}" >> "$GITHUB_OUTPUT"
-
-      - name: Confirm manually selected branch exists
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_BRANCH: ${{ inputs.release_branch }}
-        run: |
-          if ! gh api "repos/$GITHUB_REPOSITORY/branches/$RELEASE_BRANCH" >/dev/null; then
-            echo "Push branch $RELEASE_BRANCH before running a manual release" >&2
-            exit 1
-          fi
-
       - uses: actions/checkout@v6
         with:
-          ref: ${{ steps.branch.outputs.ref }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - name: Match branch, crate and macOS bundle versions
+      - name: Bump version from the default branch
         id: version
         shell: bash
         env:
-          RELEASE_VERSION: ${{ steps.branch.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_BUMP: ${{ inputs.bump }}
         run: |
-          package_version="$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[] | select(.name == "lumen-editor") | .version')"
-          if [[ "$package_version" != "$RELEASE_VERSION" ]]; then
-            echo "Release branch version $RELEASE_VERSION does not match Cargo.toml version $package_version" >&2
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "Run releases from the default branch ($DEFAULT_BRANCH)" >&2
             exit 1
           fi
-          if ! grep -Fq "<key>CFBundleShortVersionString</key><string>$RELEASE_VERSION</string>" assets/macos/Info.plist; then
-            echo "macOS Info.plist version does not match $RELEASE_VERSION" >&2
-            exit 1
-          fi
-          echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          version="$(cargo run --locked --package xtask -- bump-version "$RELEASE_BUMP")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "base=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -92,9 +62,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.prepare.outputs.commit }}
+          ref: ${{ needs.prepare.outputs.base }}
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      - name: Apply release version
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: cargo run --locked --package xtask -- set-version "$RELEASE_VERSION"
       - run: cargo test --workspace --locked
       - run: cargo test --workspace --no-default-features --locked
       - run: cargo xtask bundle --release
@@ -118,9 +92,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.prepare.outputs.commit }}
+          ref: ${{ needs.prepare.outputs.base }}
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      - name: Apply release version
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: cargo run --locked --package xtask -- set-version $env:RELEASE_VERSION
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked
       - name: Package executable
@@ -143,9 +122,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.prepare.outputs.commit }}
+          ref: ${{ needs.prepare.outputs.base }}
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      - name: Apply release version
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: cargo run --locked --package xtask -- set-version "$RELEASE_VERSION"
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked
       - name: Package executable
@@ -170,8 +153,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.prepare.outputs.commit }}
-          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.base }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/download-artifact@v8
         with:
           pattern: lumen-*
@@ -182,17 +166,49 @@ jobs:
         run: |
           test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 3
           (cd dist && sha256sum Lumen-* > SHA256SUMS)
-      - name: Create release from the validated commit
+      - name: Commit and tag the tested version
+        id: tag
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          BASE_COMMIT: ${{ needs.prepare.outputs.base }}
+        run: |
+          tag="v$RELEASE_VERSION"
+          git fetch origin --tags "refs/heads/$DEFAULT_BRANCH"
+          if git rev-parse --verify -q "refs/tags/${tag}^{commit}" >/dev/null; then
+            release_commit="$(git rev-parse "refs/tags/${tag}^{commit}")"
+            if [[ "$(git rev-parse "${release_commit}^")" != "$BASE_COMMIT" ]]; then
+              echo "Existing tag $tag does not belong to this release attempt" >&2
+              exit 1
+            fi
+          else
+            if [[ "$(git ls-remote origin "refs/heads/$DEFAULT_BRANCH" | cut -f1)" != "$BASE_COMMIT" ]]; then
+              echo "Default branch advanced during the release; start a new run" >&2
+              exit 1
+            fi
+            cargo run --locked --package xtask -- set-version "$RELEASE_VERSION"
+            git add Cargo.toml Cargo.lock assets/macos/Info.plist
+            git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -m "Release $tag"
+            git tag -a "$tag" -m "Lumen $tag"
+            git push --atomic origin "HEAD:refs/heads/$DEFAULT_BRANCH" "refs/tags/$tag"
+            release_commit="$(git rev-parse HEAD)"
+          fi
+          if ! git show "$release_commit:Cargo.toml" | grep -Fq "version = \"$RELEASE_VERSION\""; then
+            echo "Tagged commit does not contain release version $RELEASE_VERSION" >&2
+            exit 1
+          fi
+          echo "name=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-          RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+          RELEASE_TAG: ${{ steps.tag.outputs.name }}
         run: |
-          tag="v$RELEASE_VERSION"
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
-            echo "Tag $tag already exists; refusing to replace a published release" >&2
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to overwrite its assets" >&2
             exit 1
           fi
-          gh release create "$tag" dist/* --repo "$GH_REPO" --target "$RELEASE_COMMIT" --title "Lumen $tag" --generate-notes
+          gh release create "$RELEASE_TAG" dist/* --repo "$GH_REPO" --verify-tag --title "Lumen $RELEASE_TAG" --generate-notes
