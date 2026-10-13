@@ -43,6 +43,18 @@ jobs:
           fi
           echo "version=${RELEASE_BRANCH#r}" >> "$GITHUB_OUTPUT"
 
+      - name: Confirm manually selected branch exists
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+        run: |
+          if ! gh api "repos/$GITHUB_REPOSITORY/branches/$RELEASE_BRANCH" >/dev/null; then
+            echo "Push branch $RELEASE_BRANCH before running a manual release" >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           ref: ${{ steps.branch.outputs.ref }}
@@ -183,4 +195,4 @@ jobs:
             echo "Tag $tag already exists; refusing to replace a published release" >&2
             exit 1
           fi
-          gh release create "$tag" dist/* --target "$RELEASE_COMMIT" --title "Lumen $tag" --generate-notes
+          gh release create "$tag" dist/* --repo "$GH_REPO" --target "$RELEASE_COMMIT" --title "Lumen $tag" --generate-notes

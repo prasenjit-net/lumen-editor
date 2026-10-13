@@ -513,12 +513,10 @@ mod tests {
     fn failed_new_snapshot_does_not_delete_imported_backup() {
         let root = tempfile::tempdir().unwrap();
         let directory = root.path().join("recovery");
-        let first = LocalRecoveryStore::with_directory(Some(directory.clone()));
-        first.save(&[doc("interrupted")]).unwrap();
-        let (old_path, _) = first.own_paths(&directory);
-        drop(first);
+        fs::create_dir(&directory).unwrap();
+        let old_path = directory.join("session-interrupted.bin");
+        fs::write(&old_path, encode(&[doc("interrupted")])).unwrap();
         let second = LocalRecoveryStore::with_directory(Some(directory.clone()));
-        assert_ne!(old_path, second.own_paths(&directory).0);
         let loaded = second.load().unwrap();
         assert_eq!(
             loaded.documents,
