@@ -5,6 +5,12 @@ use std::ops::Range;
 use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 
+pub(crate) struct LayoutConfig {
+    pub(crate) typography: crate::Typography,
+    pub(crate) language: Option<syntax::Language>,
+    pub(crate) syntax: Option<(syntax::Language, crate::SyntaxPalette)>,
+}
+
 /// One source-to-layout mapping for painting and pointer/caret geometry.
 /// CRLF projects to one visual newline without altering the stored document.
 pub struct TextGeometry {
@@ -13,19 +19,31 @@ pub struct TextGeometry {
     byte_offsets: Vec<usize>,
     graphemes: Vec<usize>,
     preedit: Option<(Range<usize>, usize)>,
-    #[cfg(feature = "shaped")]
     syntax_spans: Vec<syntax::Span>,
     #[cfg(feature = "shaped")]
     syntax_palette: Option<crate::SyntaxPalette>,
     #[cfg(feature = "shaped")]
     pub(crate) shaped: Option<Arc<crate::shaping::ShapedLayout>>,
-    #[cfg(feature = "shaped")]
     visual_offsets: Vec<usize>,
+    folded: Vec<Range<usize>>,
+    source_lines: usize,
+    row_lines: Vec<usize>,
 }
 
 impl TextGeometry {
     pub fn layout(ui: &Ui, text: &str, origin: Pos2) -> Self {
-        Self::layout_typography(ui, text, origin, None, crate::Typography::default(), None)
+        Self::layout_typography(
+            ui,
+            text,
+            origin,
+            None,
+            LayoutConfig {
+                typography: crate::Typography::default(),
+                language: None,
+                syntax: None,
+            },
+            &[],
+        )
     }
 
     pub(crate) fn layout_typography(
@@ -33,9 +51,14 @@ impl TextGeometry {
         text: &str,
         origin: Pos2,
         composition: Option<&Composition>,
-        typography: crate::Typography,
-        syntax: Option<(syntax::Language, crate::SyntaxPalette)>,
+        config: LayoutConfig,
+        folded: &[Range<usize>],
     ) -> Self {
+        let LayoutConfig {
+            typography,
+            language,
+            syntax,
+        } = config;
         // One transient layout replaces the primary range. Stored source and
         // history remain untouched; neighboring text participates in this galley.
         let preedit = composition.filter(|composition| !composition.preedit().is_empty());
@@ -52,7 +75,21 @@ impl TextGeometry {
         let mut visual = String::new();
         let mut byte_offsets = vec![0];
         let mut characters = layout_text.char_indices().peekable();
+        let mut folds = folded.iter().peekable();
         while let Some((offset, character)) = characters.next() {
+            if folds.peek().is_some_and(|range| range.start == offset) {
+                let end = folds.next().unwrap().end;
+                while characters.peek().is_some_and(|(byte, _)| *byte < end) {
+                    characters.next();
+                }
+                if end < layout_text.len() {
+                    visual.push('\n');
+                    byte_offsets.push(end);
+                } else {
+                    *byte_offsets.last_mut().unwrap() = end;
+                }
+                continue;
+            }
             if character == '\r' && characters.peek().is_some_and(|(_, next)| *next == '\n') {
                 characters.next();
                 visual.push('\n');
@@ -62,15 +99,14 @@ impl TextGeometry {
                 byte_offsets.push(offset + character.len_utf8());
             }
         }
-        #[cfg(feature = "shaped")]
         let visual_offsets = visual
             .char_indices()
             .map(|(byte, _)| byte)
             .chain([visual.len()])
             .collect();
-        let syntax_spans = syntax.map_or_else(Vec::new, |(language, _)| {
-            syntax::highlight(&visual, language)
-        });
+        let syntax_spans = language
+            .or_else(|| syntax.map(|(language, _)| language))
+            .map_or_else(Vec::new, |language| syntax::highlight(&visual, language));
         let galley = ui.fonts_mut(|fonts| {
             let mut job = egui::text::LayoutJob::simple(
                 visual,
@@ -110,6 +146,20 @@ impl TextGeometry {
             }
             fonts.layout_job(job)
         });
+        let line_starts: Vec<_> = std::iter::once(0)
+            .chain(text.match_indices('\n').map(|(byte, _)| byte + 1))
+            .collect();
+        let mut character = 0;
+        let row_lines = galley
+            .rows
+            .iter()
+            .map(|row| {
+                let byte = byte_offsets[character.min(byte_offsets.len() - 1)];
+                let line = line_starts.partition_point(|start| *start <= byte);
+                character += row.char_count_including_newline();
+                line
+            })
+            .collect();
         Self {
             galley,
             origin,
@@ -121,14 +171,15 @@ impl TextGeometry {
                 .collect(),
             preedit: preedit
                 .map(|composition| (composition.replacement_range(), composition.preedit().len())),
-            #[cfg(feature = "shaped")]
             syntax_spans,
             #[cfg(feature = "shaped")]
             syntax_palette: syntax.map(|(_, palette)| palette),
             #[cfg(feature = "shaped")]
             shaped: None,
-            #[cfg(feature = "shaped")]
             visual_offsets,
+            folded: folded.to_vec(),
+            source_lines: line_starts.len(),
+            row_lines,
         }
     }
 
@@ -137,13 +188,23 @@ impl TextGeometry {
     }
 
     fn project_byte(&self, byte: usize) -> usize {
-        match &self.preedit {
+        let byte = match &self.preedit {
             Some((range, length)) if byte >= range.end && byte > range.start => {
                 byte - range.len() + length
             }
             Some((range, _)) if byte >= range.start => range.start,
             _ => byte,
+        };
+        for range in &self.folded {
+            if range.start <= byte && byte < range.end {
+                return if self.byte_offsets.binary_search(&range.start).is_ok() {
+                    range.start
+                } else {
+                    range.end
+                };
+            }
         }
+        byte
     }
 
     fn visual_cursor(&self, byte: usize) -> CCursor {
@@ -279,6 +340,14 @@ impl TextGeometry {
         self.row_rects().len()
     }
 
+    pub(crate) fn source_line_count(&self) -> usize {
+        self.source_lines
+    }
+
+    pub(crate) fn source_line_for_row(&self, row: usize) -> usize {
+        self.row_lines[row]
+    }
+
     pub fn row_rects(&self) -> Vec<Rect> {
         #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
@@ -325,6 +394,22 @@ impl TextGeometry {
                 rect
             })
             .collect()
+    }
+
+    pub(crate) fn is_code_byte(&self, source: usize) -> bool {
+        let projected = self.project_byte(source);
+        let Ok(index) = self.byte_offsets.binary_search(&projected) else {
+            return false;
+        };
+        let visual = self.visual_offsets[index];
+        let span = self.syntax_spans.get(
+            self.syntax_spans
+                .partition_point(|span| span.range.end <= visual),
+        );
+        !span.is_some_and(|span| {
+            span.range.contains(&visual)
+                && matches!(span.kind, syntax::Kind::Comment | syntax::Kind::String)
+        })
     }
 
     pub(crate) fn paint(&self, ui: &Ui, painter: &egui::Painter) {

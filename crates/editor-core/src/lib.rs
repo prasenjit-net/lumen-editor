@@ -3,6 +3,7 @@ mod buffer;
 mod clipboard;
 mod commands;
 mod composition;
+mod folding;
 mod indentation;
 mod navigation;
 mod pairing;
@@ -13,8 +14,9 @@ pub mod text_line;
 pub use buffer::{Direction, EditorBuffer};
 pub use clipboard::SelectionClipboard;
 pub use composition::Composition;
+pub use folding::{FoldRange, discover_folds};
 pub use indentation::Indentation;
-pub use pairing::matching_brackets;
+pub use pairing::{matching_brackets, matching_brackets_where};
 pub use selection::{CaretAffinity, EditError, Selection, SelectionAffinity, SelectionSet};
 
 #[cfg(test)]

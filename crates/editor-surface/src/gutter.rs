@@ -16,13 +16,39 @@ impl EditorSurface {
         geometry: &TextGeometry,
         buffer: &mut EditorBuffer,
     ) {
+        let fold_at_pointer = ui
+            .input(|input| input.pointer.hover_pos())
+            .and_then(|pointer| {
+                if pointer.x < gutter.left() + 2.0 || pointer.x >= gutter.left() + 20.0 {
+                    return None;
+                }
+                let row = geometry
+                    .row_rects()
+                    .iter()
+                    .position(|rect| rect.top() <= pointer.y && pointer.y < rect.bottom())?;
+                self.fold_ranges
+                    .iter()
+                    .find(|range| range.header + 1 == geometry.source_line_for_row(row))
+                    .copied()
+            });
         let response = ui
             .interact(
                 gutter.intersect(ui.clip_rect()),
                 self.gutter_id.unwrap_or(id.with("gutter")),
                 Sense::click_and_drag(),
             )
-            .on_hover_text("Select line; Shift-click to extend");
+            .on_hover_text(if let Some(range) = fold_at_pointer {
+                if self.collapsed.contains(&range.header) {
+                    "Expand folded lines"
+                } else {
+                    "Collapse lines"
+                }
+            } else {
+                "Select line; Shift-click to extend"
+            });
+        if fold_at_pointer.is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
         if !ui.is_enabled() || !ui.input(|input| input.focused) {
             self.gutter_drag = None;
             if ui.ctx().is_being_dragged(response.id) {
@@ -31,6 +57,13 @@ impl EditorSurface {
             return;
         }
         let start = response.hovered() && ui.input(|input| input.pointer.primary_pressed());
+        if start && let Some(range) = fold_at_pointer {
+            self.gutter_drag = None;
+            self.toggle_fold(range.header, buffer);
+            ui.memory_mut(|memory| memory.request_focus(id));
+            ui.ctx().request_repaint();
+            return;
+        }
         if !start && !response.dragged_by(PointerButton::Primary) {
             if !ui.input(|input| input.pointer.primary_down()) {
                 self.gutter_drag = None;

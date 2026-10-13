@@ -171,6 +171,8 @@ pub(crate) struct ViewState {
     pub(crate) command_palette_focus: bool,
     pub(crate) navigation: NavigationView,
     pub(crate) pending_goto: Option<(crate::model::DocumentId, usize)>,
+    pub(crate) fold_tabs:
+        std::collections::HashMap<crate::model::DocumentId, super::folding::FoldTabState>,
     pub(crate) search: String,
     pub(crate) workspace_search: WorkspaceSearchView,
     pub(crate) sidebar_visible: bool,
@@ -229,6 +231,7 @@ impl Default for ViewState {
             command_palette_focus: false,
             navigation: NavigationView::default(),
             pending_goto: None,
+            fold_tabs: Default::default(),
             search: String::new(),
             workspace_search: WorkspaceSearchView::default(),
             sidebar_visible: true,

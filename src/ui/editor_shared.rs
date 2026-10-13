@@ -4,6 +4,7 @@ use super::{
     theme::{ACCENT, BG},
 };
 use crate::app::editor_action::{blocked, prepare_action, text_widget_id};
+use crate::icon;
 use eframe::egui::{self, Frame, Stroke, StrokeKind};
 
 impl Workbench<'_> {
@@ -29,6 +30,19 @@ impl Workbench<'_> {
             ))
         });
         surface.set_gutter_id(super::editor_gutter::gutter_id(document));
+        let fold_state = self.view.fold_tabs.entry(document).or_default();
+        fold_state.refresh(
+            &self.editor.files[index].text,
+            self.editor.files[index].language,
+            self.editor.files[index].revision,
+        );
+        surface.set_folding(
+            &self.editor.files[index].text,
+            &fold_state.ranges,
+            &fold_state.collapsed(),
+            icon::CARET_RIGHT,
+            icon::CARET_DOWN,
+        );
         let path = self.editor.files[index].path.as_deref();
         surface.set_indentation(lumen_editor_core::Indentation {
             width: self.view.settings.number("editor.indent_size", path) as usize,
@@ -64,6 +78,7 @@ impl Workbench<'_> {
             line_height: self.view.settings.number("editor.line_height", path),
             bundled_font: self.view.settings.font_family(path) == "Hack",
         });
+        surface.set_language(self.editor.files[index].language);
         surface.set_syntax(
             self.view
                 .settings
@@ -113,6 +128,13 @@ impl Workbench<'_> {
             })
             .inner;
         self.editor.files[index].sync_shared_editing();
+        if let Some(headers) = &output.folded_headers {
+            self.view
+                .fold_tabs
+                .entry(document)
+                .or_default()
+                .set_collapsed(headers, &self.editor.files[index].text);
+        }
         if let Some(notice) = &surface.notice {
             self.view.status = notice.clone();
         }

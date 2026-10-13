@@ -251,8 +251,8 @@ project settings override user settings. The optional legacy TextEdit fallback
 keeps egui's built-in indentation behavior rather than these new rules.
 The shared editor can also auto-close brackets and quotes, wrap selected text,
 overtype an existing closer, and outline matching brackets. These behaviors
-have per-document Editor settings. Bracket matching is currently lexical and
-does not skip comments or strings.
+have per-document Editor settings. Matching skips comments and strings in
+recognized syntax regions, even when syntax colors are disabled.
 
 Option/Alt-click adds a cursor; Option/Alt-drag adds another selected range;
 Shift+Option/Alt-drag makes a column selection. Shift+Option/Alt+I places a

@@ -104,17 +104,20 @@ precedence. Enter and Tab use one editor-core transaction for multi-cursor
 edits, including CRLF. Detection samples up to 200 lines. The optional legacy
 TextEdit fallback still uses egui's built-in indentation rules. Native
 interaction acceptance and the remaining editing behaviors are open.
-Bracket/quote completion now wraps selections and inserts paired delimiters
-as one core undo step, while IME commits stay literal. Bracket matching is
-painted from the editor's shared text geometry. Matching is still lexical (it
-does not exclude comments or strings), and native interaction acceptance is
-pending.
+Bracket/quote completion wraps selections and inserts paired delimiters as one
+core undo step, while IME commits stay literal. Bracket matching uses syntax
+spans to skip recognized comments and strings and paints from the shared text
+geometry. Native interaction acceptance remains pending.
+Read-only fold-range discovery now covers bracket-delimited code and
+indentation-based Python/YAML blocks. Collapsing rows and gutter controls are
+not exposed yet: they require a common source/display projection so editing,
+accessibility, IME, caret movement, hit testing and line numbers stay aligned.
 
 - [x] Add auto-indent and configurable indentation detection/size to the default shared editor.
-- [ ] Complete bracket/quote matching in syntax-aware contexts and validate
-  native multi-cursor, selection, IME and undo behavior. Lexical completion and
-  matching with automated coverage are implemented.
+- [ ] Validate bracket/quote completion and syntax-aware matching in native
+  multi-cursor, selection, IME and undo workflows. Automated coverage is in place.
 - [ ] Add code folding with gutter affordances and persistent per-tab fold state.
+  Fold-range discovery is implemented; visual collapsing remains pending.
 
 Exit gate: all editing operations remain one coherent history owner, preserve
 grapheme boundaries and keep gutter/text hit testing aligned.

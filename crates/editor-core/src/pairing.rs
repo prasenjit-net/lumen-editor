@@ -53,18 +53,31 @@ impl EditorBuffer {
 
 /// Find matching ASCII brackets next to a caret without changing document state.
 pub fn matching_brackets(text: &str, caret: usize) -> Option<(Range<usize>, Range<usize>)> {
-    let candidate = text
+    matching_brackets_where(text, caret, |_| true)
+}
+
+/// The caller can exclude lexical regions such as strings and comments.
+pub fn matching_brackets_where(
+    text: &str,
+    caret: usize,
+    allowed: impl Fn(usize) -> bool,
+) -> Option<(Range<usize>, Range<usize>)> {
+    let at_caret = text
         .get(caret..)
         .and_then(|after| after.chars().next().map(|ch| (caret, ch)))
-        .filter(|(_, ch)| is_bracket(*ch))
-        .or_else(|| {
+        .filter(|(_, ch)| is_bracket(*ch));
+    let candidate = if let Some(candidate) = at_caret {
+        allowed(candidate.0).then_some(candidate)
+    } else {
+        {
             text.get(..caret).and_then(|before| {
                 before
                     .char_indices()
                     .next_back()
-                    .filter(|(_, ch)| is_bracket(*ch))
+                    .filter(|(index, ch)| is_bracket(*ch) && allowed(*index))
             })
-        })?;
+        }
+    }?;
     let (start, bracket) = candidate;
     let (partner, forward) = match bracket {
         '(' => (')', true),
@@ -87,6 +100,9 @@ pub fn matching_brackets(text: &str, caret: usize) -> Option<(Range<usize>, Rang
         Box::new(source.char_indices().rev())
     };
     for (index, ch) in positions {
+        if !allowed(index) {
+            continue;
+        }
         if ch == bracket {
             depth += 1;
         } else if ch == partner {
@@ -163,5 +179,11 @@ mod tests {
         assert_eq!(matching_brackets(text, 3), Some((2..3, 4..5)));
         assert_eq!(matching_brackets(text, 6), Some((5..6, 1..2)));
         assert_eq!(matching_brackets("(unfinished", 1), None);
+        let text = "(\"ignored )\" + [ok])";
+        let excluded = 2..12;
+        assert_eq!(
+            matching_brackets_where(text, 0, |byte| !excluded.contains(&byte)),
+            Some((0..1, text.len() - 1..text.len()))
+        );
     }
 }

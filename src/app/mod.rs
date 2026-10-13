@@ -9,6 +9,7 @@ pub(crate) mod editor_input;
 mod events;
 mod explorer_ops;
 pub(crate) mod find;
+mod folding;
 mod navigation;
 mod safety;
 pub(crate) mod settings;

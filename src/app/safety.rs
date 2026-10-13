@@ -111,6 +111,9 @@ impl LumenApp {
         self.safety
             .last_edits
             .retain(|id, _| self.editor.files.iter().any(|file| file.id == *id));
+        self.view
+            .fold_tabs
+            .retain(|id, _| self.editor.files.iter().any(|file| file.id == *id));
         for file in &self.editor.files {
             if file.dirty {
                 let entry = self

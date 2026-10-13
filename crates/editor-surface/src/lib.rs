@@ -2,6 +2,7 @@
 mod accessibility;
 mod commands;
 mod composition_ui;
+mod folding;
 mod geometry;
 mod gutter;
 mod input;
@@ -10,15 +11,17 @@ mod shaping;
 mod visual_navigation;
 
 use egui::{Align2, FontId, Id, Pos2, Rect, Response, ScrollArea, Sense, Stroke, Ui, vec2};
+use geometry::LayoutConfig;
 pub use geometry::TextGeometry;
 use lumen_editor_core::syntax::{Kind, Language};
 use lumen_editor_core::{
-    CaretAffinity, Composition, EditorBuffer, Indentation, SelectionClipboard,
+    CaretAffinity, Composition, EditorBuffer, FoldRange, Indentation, SelectionClipboard,
 };
 #[cfg(feature = "shaped")]
 pub use shaping::Shaper;
 #[cfg(feature = "shaped")]
 use std::{cell::RefCell, sync::Arc};
+use std::{collections::BTreeSet, ops::Range};
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Default)]
@@ -27,6 +30,7 @@ pub struct EditorSurface {
     indentation: Indentation,
     pairing: PairingOptions,
     syntax: Option<(Language, SyntaxPalette)>,
+    language: Option<Language>,
     widget: Option<Id>,
     drag_anchor: Option<DragSelection>,
     pending_shortcut_text: bool,
@@ -37,6 +41,12 @@ pub struct EditorSurface {
     reveal: Option<usize>,
     gutter_id: Option<Id>,
     gutter_drag: Option<(std::ops::Range<usize>, u64)>,
+    fold_ranges: Vec<FoldRange>,
+    collapsed: BTreeSet<usize>,
+    fold_intervals: Vec<(usize, Range<usize>)>,
+    fold_icons: Option<(&'static str, &'static str)>,
+    folds_changed: bool,
+    fold_suspended: bool,
     pub notice: Option<String>,
     #[cfg(feature = "shaped")]
     shaper: Option<Shaper>,
@@ -132,9 +142,13 @@ pub struct SurfaceOutput {
     pub gutter: Rect,
     pub carets: Vec<Rect>,
     pub ime_cursor: Option<Rect>,
+    pub folded_headers: Option<BTreeSet<usize>>,
 }
 
 impl EditorSurface {
+    pub fn set_language(&mut self, language: Language) {
+        self.language = (language != Language::Plain).then_some(language);
+    }
     pub fn set_indentation(&mut self, indentation: Indentation) {
         self.indentation = indentation;
     }
@@ -185,13 +199,22 @@ impl EditorSurface {
         origin: Pos2,
         composition: Option<&Composition>,
     ) -> TextGeometry {
+        let folds = if composition.is_some() {
+            Vec::new()
+        } else {
+            self.active_fold_intervals()
+        };
         let geometry = TextGeometry::layout_typography(
             ui,
             text,
             origin,
             composition,
-            self.typography,
-            self.syntax,
+            LayoutConfig {
+                typography: self.typography,
+                language: self.language,
+                syntax: self.syntax,
+            },
+            &folds,
         );
         #[cfg(feature = "shaped")]
         let geometry = {
@@ -220,6 +243,10 @@ impl EditorSurface {
         geometry
     }
     pub fn show(&mut self, ui: &mut Ui, id: Id, buffer: &mut EditorBuffer) -> SurfaceOutput {
+        self.fold_suspended = false;
+        self.folds_changed = false;
+        self.reveal_hidden_selections(buffer);
+        self.reveal_hidden_target(buffer.text());
         if self.widget.is_some_and(|widget| widget != id) {
             #[cfg(feature = "shaped")]
             self.shape_cache.borrow_mut().take();
@@ -250,7 +277,7 @@ impl EditorSurface {
                 let gutter_width =
                     ui.fonts_mut(|fonts| {
                         fonts.layout_no_wrap(
-                            initial.row_count().to_string(),
+                            initial.source_line_count().to_string(),
                             self.typography.font_id(),
                             ui.visuals().weak_text_color(),
                         )
@@ -278,10 +305,16 @@ impl EditorSurface {
                     .map(|composition| composition.preedit().to_owned());
                 let text_changed = self.handle_input(ui, &response, text_clip, origin, buffer);
                 if text_changed {
+                    self.fold_suspended = true;
+                } else {
+                    self.reveal_hidden_selections(buffer);
+                }
+                if text_changed {
                     response.mark_changed();
                     ui.ctx().request_repaint();
                 }
                 let geometry = if !text_changed
+                    && !self.fold_suspended
                     && before_preedit.as_deref()
                         == self.composition.as_ref().map(Composition::preedit)
                 {
@@ -313,8 +346,11 @@ impl EditorSurface {
                     let primary =
                         buffer.selections().selections()[buffer.selections().primary_index()];
                     if primary.range().is_empty()
-                        && let Some((left, right)) =
-                            lumen_editor_core::matching_brackets(buffer.text(), primary.head)
+                        && let Some((left, right)) = lumen_editor_core::matching_brackets_where(
+                            buffer.text(),
+                            primary.head,
+                            |byte| geometry.is_code_byte(byte),
+                        )
                     {
                         for range in [left, right] {
                             for rect in geometry.selection_rects(range) {
@@ -435,10 +471,39 @@ impl EditorSurface {
                     gutter_painter.text(
                         Pos2::new(gutter.right() - 8.0, row.top()),
                         Align2::RIGHT_TOP,
-                        (index + 1).to_string(),
+                        geometry.source_line_for_row(index).to_string(),
                         self.typography.font_id(),
                         ui.visuals().weak_text_color(),
                     );
+                    if let Some(range) = self
+                        .fold_ranges
+                        .iter()
+                        .find(|range| range.header + 1 == geometry.source_line_for_row(index))
+                        && let Some((collapsed_icon, expanded_icon)) = self.fold_icons
+                    {
+                        let collapsed = self.collapsed.contains(&range.header);
+                        let hovered = ui.input(|input| {
+                            input.pointer.hover_pos().is_some_and(|pointer| {
+                                pointer.x >= gutter.left() + 2.0
+                                    && pointer.x < gutter.left() + 20.0
+                                    && row.top() <= pointer.y
+                                    && pointer.y < row.bottom()
+                            })
+                        });
+                        if collapsed || hovered {
+                            gutter_painter.text(
+                                Pos2::new(gutter.left() + 3.0, row.center().y),
+                                Align2::LEFT_CENTER,
+                                if collapsed {
+                                    collapsed_icon
+                                } else {
+                                    expanded_icon
+                                },
+                                FontId::proportional(13.0),
+                                ui.visuals().weak_text_color(),
+                            );
+                        }
+                    }
                 }
                 self.gutter_input(ui, id, gutter, &geometry, buffer);
                 SurfaceOutput {
@@ -448,6 +513,7 @@ impl EditorSurface {
                     gutter,
                     carets,
                     ime_cursor,
+                    folded_headers: self.folds_changed.then(|| self.collapsed.clone()),
                 }
             })
             .inner

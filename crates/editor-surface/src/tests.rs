@@ -48,8 +48,38 @@ fn syntax_colors_keep_editor_geometry_and_document_unchanged() {
     assert_eq!(plain_again.geometry.galley.job.sections.len(), 1);
 }
 
+#[test]
+fn bracket_matching_uses_syntax_spans_after_crlf_projection() {
+    let text = "fn main() { // }\r\n  let x = \"}\";\r\n}";
+    let (mut surface, mut buffer, ctx) = fixture(text);
+    surface.set_syntax(Some((
+        lumen_editor_core::syntax::Language::Rust,
+        test_syntax_palette(),
+    )));
+    let output = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    let open = text.find('{').unwrap();
+    let comment = text.find("// }").unwrap() + 3;
+    let string = text.find("\"}\"").unwrap() + 1;
+    assert!(output.geometry.is_code_byte(open));
+    assert!(!output.geometry.is_code_byte(comment));
+    assert!(!output.geometry.is_code_byte(string));
+    assert_eq!(
+        lumen_editor_core::matching_brackets_where(text, open, |byte| {
+            output.geometry.is_code_byte(byte)
+        }),
+        Some((open..open + 1, text.len() - 1..text.len()))
+    );
+    assert_eq!(buffer.revision(), 0);
+    surface.set_syntax(None);
+    surface.set_language(lumen_editor_core::syntax::Language::Rust);
+    let uncolored = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    assert!(!uncolored.geometry.is_code_byte(comment));
+    assert!(!uncolored.geometry.is_code_byte(string));
+}
+
 mod accessibility;
 mod commands;
+mod folding;
 mod ime;
 #[cfg(feature = "shaped")]
 mod shaped;
