@@ -4,8 +4,13 @@ use std::{
     fs::{self, File, OpenOptions, TryLockError},
     io::{self, Write},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+// Clock resolution varies by host; two stores in one process must never share
+// a snapshot name even when SystemTime returns the same instant.
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RecoveryDocument {
@@ -58,7 +63,11 @@ impl LocalRecoveryStore {
             .as_nanos();
         Self {
             directory,
-            session: format!("session-{}-{nonce}", std::process::id()),
+            session: format!(
+                "session-{}-{nonce}-{}",
+                std::process::id(),
+                NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed)
+            ),
             state: RefCell::new(RecoveryState::default()),
         }
     }
@@ -509,7 +518,14 @@ mod tests {
         let (old_path, _) = first.own_paths(&directory);
         drop(first);
         let second = LocalRecoveryStore::with_directory(Some(directory.clone()));
-        assert_eq!(second.load().unwrap().documents, vec![doc("interrupted")]);
+        assert_ne!(old_path, second.own_paths(&directory).0);
+        let loaded = second.load().unwrap();
+        assert_eq!(
+            loaded.documents,
+            vec![doc("interrupted")],
+            "{:?}",
+            loaded.warnings
+        );
         let (_, lock_path) = second.own_paths(&directory);
         fs::create_dir(&lock_path).unwrap(); // Makes ownership creation fail.
         assert!(second.save(&[doc("new")]).is_err());
