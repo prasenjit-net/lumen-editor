@@ -39,7 +39,8 @@ and drop or explorer operation undo. Symlink copying is rejected explicitly.
 The Search activity panel searches an open folder in a cancellable background
 scan. Press Cmd/Ctrl+Shift+F, type a literal query, then Enter; Match Case,
 Whole Word, include and exclude globs narrow results. Click a result to open
-its file at the match. Results form a collapsible folder/file tree, with Replace
+its file at the match. Results form a virtualized, collapsible folder/file tree
+that keeps all bounded matches available, with Replace
 actions for all results or an individual folder or file. Replace offers a
 before/after preview
 and explicit confirmation. An open editor tab is skipped, and a file changed

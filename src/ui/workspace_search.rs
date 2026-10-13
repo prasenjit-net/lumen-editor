@@ -5,7 +5,10 @@ use crate::{
     services::workspace_search::{SearchFile, SearchHit},
 };
 use eframe::egui::{self, RichText, ScrollArea, TextEdit};
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::{Path, PathBuf},
+};
 
 impl Workbench<'_> {
     pub(crate) fn workspace_search_panel(&mut self, ui: &mut egui::Ui) {
@@ -140,96 +143,72 @@ impl Workbench<'_> {
                         .size(11.0),
                     );
                 }
+                let rows = visible_rows(
+                    &results.files,
+                    self.editor.workspace.as_deref(),
+                    &state.expanded_folders,
+                    &state.expanded_files,
+                );
+                ui.add_space(4.0);
                 ScrollArea::vertical()
                     .id_salt("workspace_search_results")
-                    .show(ui, |ui| {
-                        let root = self.editor.workspace.as_deref();
-                        for (folder, group) in grouped_files(&results.files, root) {
-                            if root.is_some_and(|root| {
-                                folder
-                                    .ancestors()
-                                    .skip(1)
-                                    .take_while(|ancestor| ancestor.starts_with(root))
-                                    .any(|ancestor| !state.expanded_folders.contains(ancestor))
-                            }) {
-                                continue;
-                            }
-                            let folder_open = state.expanded_folders.contains(&folder);
-                            let folder_label =
-                                folder.file_name().unwrap_or_default().to_string_lossy();
-                            let depth = root
-                                .and_then(|root| folder.strip_prefix(root).ok())
-                                .map_or(0, |relative| relative.components().count());
-                            let indent = depth as f32 * 12.0;
-                            let hits = group.hits;
-                            let (toggle, replace) = result_row(
-                                ui,
-                                format!(
-                                    "{}  {}  {} ({hits})",
-                                    if folder_open {
-                                        icon::CARET_DOWN
-                                    } else {
-                                        icon::CARET_RIGHT
-                                    },
-                                    icon::FOLDER,
-                                    folder_label
-                                ),
-                                indent,
-                                state.replace_visible,
-                                "Preview replace in folder",
-                            );
-                            if toggle {
-                                if folder_open {
-                                    state.expanded_folders.remove(&folder);
-                                } else {
-                                    state.expanded_folders.insert(folder.clone());
-                                }
-                            }
-                            if replace {
-                                scoped_preview = Some(ReplaceScope::Folder(folder.clone()));
-                            }
-                            if !state.expanded_folders.contains(&folder) {
-                                continue;
-                            }
-                            for file in group.files {
-                                let expanded = state.expanded_files.contains(&file.path);
-                                let name =
-                                    file.path.file_name().unwrap_or_default().to_string_lossy();
-                                let (toggle, replace) = result_row(
-                                    ui,
-                                    format!(
-                                        "{}  {}  {} ({})",
-                                        if expanded {
-                                            icon::CARET_DOWN
-                                        } else {
-                                            icon::CARET_RIGHT
-                                        },
-                                        icon::FILE,
-                                        name,
-                                        file.hits.len()
-                                    ),
-                                    indent + 12.0,
-                                    state.replace_visible,
-                                    "Preview replace in file",
-                                );
-                                if toggle {
-                                    if expanded {
-                                        state.expanded_files.remove(&file.path);
-                                    } else {
-                                        state.expanded_files.insert(file.path.clone());
+                    .max_height(ui.available_height())
+                    .show_rows(ui, 21.0, rows.len(), |ui, range| {
+                        for row in &rows[range] {
+                            match row {
+                                SearchRow::Folder { path, hits, depth } => {
+                                    let expanded = state.expanded_folders.contains(path);
+                                    let name =
+                                        path.file_name().unwrap_or_default().to_string_lossy();
+                                    let (toggle, replace) = result_row(
+                                        ui,
+                                        format!(
+                                            "{}  {}  {} ({hits})",
+                                            caret(expanded),
+                                            icon::FOLDER,
+                                            name
+                                        ),
+                                        *depth as f32 * 12.0,
+                                        state.replace_visible,
+                                        "Preview replace in folder",
+                                    );
+                                    if toggle {
+                                        toggle_path(&mut state.expanded_folders, path);
+                                    }
+                                    if replace {
+                                        scoped_preview = Some(ReplaceScope::Folder(path.clone()));
                                     }
                                 }
-                                if replace {
-                                    scoped_preview = Some(ReplaceScope::File(file.path.clone()));
+                                SearchRow::File { file, depth } => {
+                                    let expanded = state.expanded_files.contains(&file.path);
+                                    let name =
+                                        file.path.file_name().unwrap_or_default().to_string_lossy();
+                                    let (toggle, replace) = result_row(
+                                        ui,
+                                        format!(
+                                            "{}  {}  {} ({})",
+                                            caret(expanded),
+                                            icon::FILE,
+                                            name,
+                                            file.hits.len()
+                                        ),
+                                        *depth as f32 * 12.0 + 12.0,
+                                        state.replace_visible,
+                                        "Preview replace in file",
+                                    );
+                                    if toggle {
+                                        toggle_path(&mut state.expanded_files, &file.path);
+                                    }
+                                    if replace {
+                                        scoped_preview =
+                                            Some(ReplaceScope::File(file.path.clone()));
+                                    }
                                 }
-                                if !state.expanded_files.contains(&file.path) {
-                                    continue;
-                                }
-                                for hit in file.hits.iter().take(100) {
+                                SearchRow::Hit { file, hit, depth } => {
                                     let (clicked, _) = result_row(
                                         ui,
                                         format!("{}:{}  {}", hit.line, hit.column, hit.snippet),
-                                        indent + 27.0,
+                                        *depth as f32 * 12.0 + 27.0,
                                         false,
                                         "",
                                     );
@@ -239,16 +218,6 @@ impl Workbench<'_> {
                                             hit.range.clone(),
                                         ));
                                     }
-                                }
-                                if file.hits.len() > 100 {
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "{} more matches",
-                                            file.hits.len() - 100
-                                        ))
-                                        .color(MUTED)
-                                        .size(11.0),
-                                    );
                                 }
                             }
                         }
@@ -353,6 +322,80 @@ impl Workbench<'_> {
 struct SearchGroup<'a> {
     files: Vec<&'a SearchFile>,
     hits: usize,
+}
+
+enum SearchRow<'a> {
+    Folder {
+        path: PathBuf,
+        hits: usize,
+        depth: usize,
+    },
+    File {
+        file: &'a SearchFile,
+        depth: usize,
+    },
+    Hit {
+        file: &'a SearchFile,
+        hit: &'a SearchHit,
+        depth: usize,
+    },
+}
+
+fn visible_rows<'a>(
+    files: &'a [SearchFile],
+    root: Option<&Path>,
+    expanded_folders: &HashSet<PathBuf>,
+    expanded_files: &HashSet<PathBuf>,
+) -> Vec<SearchRow<'a>> {
+    let mut rows = Vec::new();
+    for (folder, group) in grouped_files(files, root) {
+        if root.is_some_and(|root| {
+            folder
+                .ancestors()
+                .skip(1)
+                .take_while(|ancestor| ancestor.starts_with(root))
+                .any(|ancestor| !expanded_folders.contains(ancestor))
+        }) {
+            continue;
+        }
+        let depth = root
+            .and_then(|root| folder.strip_prefix(root).ok())
+            .map_or(0, |relative| relative.components().count());
+        let folder_open = expanded_folders.contains(&folder);
+        rows.push(SearchRow::Folder {
+            path: folder,
+            hits: group.hits,
+            depth,
+        });
+        if !folder_open {
+            continue;
+        }
+        for file in group.files {
+            rows.push(SearchRow::File { file, depth });
+            if expanded_files.contains(&file.path) {
+                rows.extend(
+                    file.hits
+                        .iter()
+                        .map(|hit| SearchRow::Hit { file, hit, depth }),
+                );
+            }
+        }
+    }
+    rows
+}
+
+fn caret(expanded: bool) -> &'static str {
+    if expanded {
+        icon::CARET_DOWN
+    } else {
+        icon::CARET_RIGHT
+    }
+}
+
+fn toggle_path(paths: &mut HashSet<PathBuf>, path: &Path) {
+    if !paths.remove(path) {
+        paths.insert(path.to_path_buf());
+    }
 }
 
 fn grouped_files<'a>(
@@ -578,5 +621,35 @@ mod tests {
         assert!(groups[&root].files.is_empty());
         assert!(groups[&root.join("src")].files.is_empty());
         assert_eq!(groups[&root.join("src/deep")].files.len(), 1);
+    }
+
+    #[test]
+    fn virtualized_tree_exposes_every_hit_and_respects_collapsed_ancestors() {
+        let root = PathBuf::from("/workspace");
+        let file_path = root.join("src/deep/main.rs");
+        let files = [SearchFile {
+            path: file_path.clone(),
+            original: "x".into(),
+            hits: (0..150)
+                .map(|line| SearchHit {
+                    range: 0..1,
+                    line,
+                    column: 1,
+                    snippet: "x".into(),
+                })
+                .collect(),
+        }];
+        let folders = HashSet::from([root.clone(), root.join("src"), root.join("src/deep")]);
+        let expanded_files = HashSet::from([file_path]);
+        let rows = visible_rows(&files, Some(&root), &folders, &expanded_files);
+        assert_eq!(rows.len(), 3 + 1 + 150);
+        assert!(matches!(rows.last(), Some(SearchRow::Hit { hit, .. }) if hit.line == 149));
+
+        let collapsed = HashSet::from([root.clone()]);
+        let rows = visible_rows(&files, Some(&root), &collapsed, &expanded_files);
+        assert_eq!(rows.len(), 2);
+        assert!(
+            matches!(&rows[1], SearchRow::Folder { path, hits: 150, .. } if path == &root.join("src"))
+        );
     }
 }
