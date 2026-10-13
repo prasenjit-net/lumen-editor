@@ -46,7 +46,7 @@ patterns. Click a result to open
 its file at the match. Results form a virtualized, collapsible folder/file tree
 that keeps all bounded matches available, with Replace
 actions for all results or an individual folder or file. Replace offers a
-paginated, grouped before/after preview with nearby edits shown together
+paginated, color-coded diff preview with nearby edits shown together
 (long groups use per-match excerpts), followed by explicit confirmation. An open
 editor tab is skipped, and a file changed
 since search is never silently overwritten; failures are reported in Search.

@@ -53,9 +53,9 @@ are conservatively skipped. Search snapshots are limited to 10,000 matches and
 
 Still needed before the full exit gate: live native testing at
 narrow/default/wide widths and with a large workspace. The replacement preview
-now groups nearby edits with context and paginates every group. Very long groups
-fall back to per-match excerpts, rather than a combined final-file diff. No
-operation-wide rollback or undo is provided.
+now groups nearby edits into color-coded diff hunks and paginates every group.
+Very long groups fall back to per-match excerpts, rather than a combined
+final-file diff. No operation-wide rollback or undo is provided.
 
 - [x] Build a Search activity panel with query, file glob and exclude controls,
   result counts, file grouping, snippets and keyboard navigation.

@@ -13,6 +13,12 @@ pub(crate) const BORDER: Color32 = Color32::from_rgb(43, 43, 43);
 pub(crate) const ACCENT: Color32 = Color32::from_rgb(0, 122, 204);
 pub(crate) const HOVER: Color32 = Color32::from_rgb(43, 43, 43);
 pub(crate) const INPUT: Color32 = Color32::from_rgb(49, 49, 49);
+pub(crate) const DIFF_REMOVED_BG: Color32 = Color32::from_rgb(64, 37, 37);
+pub(crate) const DIFF_ADDED_BG: Color32 = Color32::from_rgb(34, 67, 44);
+pub(crate) const DIFF_REMOVED_TEXT: Color32 = Color32::from_rgb(244, 135, 113);
+pub(crate) const DIFF_ADDED_TEXT: Color32 = Color32::from_rgb(137, 209, 133);
+pub(crate) const DIFF_REMOVED_HIGHLIGHT: Color32 = Color32::from_rgb(105, 45, 45);
+pub(crate) const DIFF_ADDED_HIGHLIGHT: Color32 = Color32::from_rgb(46, 91, 57);
 
 #[cfg(feature = "shared-editor")]
 pub(crate) fn syntax_palette() -> lumen_editor_surface::SyntaxPalette {

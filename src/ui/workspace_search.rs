@@ -1,4 +1,7 @@
-use super::{Workbench, theme::MUTED};
+use super::{
+    Workbench,
+    theme::{DIFF_ADDED_TEXT, DIFF_REMOVED_TEXT, MUTED},
+};
 use crate::{
     app::{command::Command, view_state::WorkspaceSearchView, workspace_search::ReplaceScope},
     icon,
@@ -12,7 +15,6 @@ use std::{
 
 const PREVIEW_HUNKS_PER_PAGE: usize = 12;
 const MAX_MATCHES_PER_HUNK: usize = 8;
-const MAX_FULL_HUNK_BYTES: usize = 4_000;
 
 impl Workbench<'_> {
     pub(crate) fn workspace_search_panel(&mut self, ui: &mut egui::Ui) {
@@ -369,14 +371,22 @@ fn show_workspace_replace_preview(
             .color(MUTED)
             .size(11.0),
         );
-        ui.columns(2, |columns| {
-            columns[0].label(RichText::new("Before").color(MUTED).size(11.0));
-            columns[1].label(RichText::new("After").color(MUTED).size(11.0));
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("− Removed")
+                    .color(DIFF_REMOVED_TEXT)
+                    .size(11.0),
+            );
+            ui.label(
+                RichText::new("+ Replacement")
+                    .color(DIFF_ADDED_TEXT)
+                    .size(11.0),
+            );
         });
         show_preview_hunk_page(ui, &hunks, state.preview_page, &state.replacement);
         ui.add(
             egui::Label::new(
-                RichText::new("Nearby edits are grouped with context. Long groups use per-match excerpts; full files are checked before writing.")
+                RichText::new("Unchanged lines are shown for context. Long groups use per-match excerpts; full files are checked before writing.")
                     .color(MUTED)
                     .size(11.0),
             )
@@ -432,51 +442,15 @@ fn show_preview_hunk_page(
                     .color(MUTED)
                     .size(11.0),
                 );
-                if hunk.end - hunk.start > MAX_FULL_HUNK_BYTES {
-                    for hit in hunk.hits {
-                        let (before, after) = preview_hit(&file.original, hit, replacement);
-                        preview_columns(
-                            ui,
-                            &before,
-                            &after,
-                            egui::Id::new(("preview_hit", file.path.as_path(), hit.range.start)),
-                        );
-                    }
-                } else if let Some((before, after)) = preview_hunk_text(hunk, replacement) {
-                    preview_columns(
-                        ui,
-                        &before,
-                        &after,
-                        egui::Id::new((
-                            "preview_hunk",
-                            file.path.as_path(),
-                            hunk.hits[0].range.start,
-                        )),
-                    );
-                } else {
-                    ui.label(
-                        RichText::new("Preview unavailable: invalid match ranges").color(MUTED),
-                    );
-                }
+                super::workspace_search_diff::show_hunk(
+                    ui,
+                    file,
+                    hunk.hits,
+                    hunk.start..hunk.end,
+                    replacement,
+                );
             }
         });
-}
-
-fn preview_columns(ui: &mut egui::Ui, before: &str, after: &str, id: egui::Id) {
-    ui.columns(2, |columns| {
-        for (index, (column, text)) in columns.iter_mut().zip([before, after]).enumerate() {
-            ScrollArea::horizontal()
-                .id_salt(id.with(index))
-                .max_width(column.available_width())
-                .show(column, |ui| {
-                    ui.add(
-                        egui::Label::new(RichText::new(text).monospace().size(12.0))
-                            .extend()
-                            .halign(egui::Align::Min),
-                    );
-                });
-        }
-    });
 }
 
 #[derive(Default)]
@@ -709,58 +683,6 @@ fn selected_preview_hunks<'a>(
     hunks
 }
 
-fn preview_hunk_text(hunk: &PreviewHunk<'_>, replacement: &str) -> Option<(String, String)> {
-    let before = hunk.file.original.get(hunk.start..hunk.end)?;
-    let ranges: Vec<_> = hunk
-        .hits
-        .iter()
-        .map(|hit| hit.range.start - hunk.start..hit.range.end - hunk.start)
-        .collect();
-    let after = crate::model::search::replace_matches(before, &ranges, replacement)?;
-    Some((before.to_owned(), after))
-}
-
-fn preview_hit(text: &str, hit: &SearchHit, replacement: &str) -> (String, String) {
-    let start = text[..hit.range.start]
-        .rfind('\n')
-        .map_or(0, |index| index + 1);
-    let end = text[hit.range.end..]
-        .find('\n')
-        .map_or(text.len(), |offset| hit.range.end + offset);
-    let prefix = &text[start..hit.range.start];
-    let suffix = text[hit.range.end..end].trim_end_matches('\r');
-    let tail: String = prefix
-        .chars()
-        .rev()
-        .take(70)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    let head: String = suffix.chars().take(70).collect();
-    let left = if tail.len() < prefix.len() { "…" } else { "" };
-    let right = if head.len() < suffix.len() { "…" } else { "" };
-    let before = format!(
-        "{left}{tail}{}{head}{right}",
-        leading_excerpt(&text[hit.range.clone()], 160)
-    );
-    let after = format!(
-        "{left}{tail}{}{head}{right}",
-        leading_excerpt(replacement, 160)
-    );
-    (before, after)
-}
-
-fn leading_excerpt(text: &str, limit: usize) -> String {
-    let mut chars = text.chars();
-    let excerpt: String = chars.by_ref().take(limit).collect();
-    if chars.next().is_some() {
-        format!("{excerpt}…")
-    } else {
-        excerpt
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -926,22 +848,6 @@ mod tests {
     }
 
     #[test]
-    fn replace_preview_excerpt_keeps_long_line_match_visible() {
-        let prefix = "α".repeat(100);
-        let text = format!("{prefix}needle{}\r\n", "β".repeat(100));
-        let hit = SearchHit {
-            range: prefix.len()..prefix.len() + 6,
-            line: 1,
-            column: 101,
-            snippet: String::new(),
-        };
-        let (before, after) = preview_hit(&text, &hit, "replacement");
-        assert!(before.starts_with('…') && before.contains("needle"));
-        assert!(after.contains("replacement") && after.ends_with('…'));
-        assert!(!before.contains('\r') && !after.contains('\r'));
-    }
-
-    #[test]
     fn nearby_matches_share_a_hunk_with_combined_replacement_and_context() {
         let path = PathBuf::from("/workspace/a.txt");
         let original = "before\r\nα needle and needle\r\nafter\r\n";
@@ -971,9 +877,6 @@ mod tests {
         let hunks = selected_preview_hunks(&results, &HashSet::from([path]));
         assert_eq!(hunks.len(), 1);
         assert_eq!(hunks[0].hits.len(), 2);
-        let (before, after) = preview_hunk_text(&hunks[0], "tea").unwrap();
-        assert_eq!(before, original);
-        assert_eq!(after, "before\r\nα tea and tea\r\nafter\r\n");
     }
 
     #[test]
@@ -1002,11 +905,7 @@ mod tests {
                 .all(|hunk| hunk.hits.len() <= MAX_MATCHES_PER_HUNK)
         );
         assert_eq!(hunks.iter().map(|hunk| hunk.hits.len()).sum::<usize>(), 100);
-        assert!(
-            hunks
-                .iter()
-                .all(|hunk| hunk.end - hunk.start > MAX_FULL_HUNK_BYTES)
-        );
+        assert!(hunks.iter().all(|hunk| hunk.end - hunk.start > 4_000));
     }
 
     #[test]

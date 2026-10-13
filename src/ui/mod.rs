@@ -18,6 +18,7 @@ mod settings;
 pub(crate) mod theme;
 mod widgets;
 mod workspace_search;
+mod workspace_search_diff;
 
 use crate::{
     app::{command::Command, view_state::ViewState},
