@@ -98,15 +98,21 @@ impl LumenApp {
         // Drop intermediate snapshots if the UI is busy; the final result is never dropped.
         let (sender, receiver) = mpsc::sync_channel(8);
         let worker_request = request.clone();
+        let worker_ctx = ctx.clone();
         std::thread::spawn(move || {
             let result = workspace_search::search_with_progress(
                 &worker_request,
                 &worker_cancelled,
                 |progress| {
-                    let _ = sender.try_send(SearchEvent::Progress(progress));
+                    if sender.try_send(SearchEvent::Progress(progress)).is_ok() {
+                        worker_ctx.request_repaint();
+                    }
                 },
             );
+            // Wake the UI even if the bounded channel is full and send must wait.
+            worker_ctx.request_repaint();
             let _ = sender.send(SearchEvent::Finished(result));
+            worker_ctx.request_repaint();
         });
         self.search_job = Some(SearchJob {
             cancelled,
@@ -326,6 +332,27 @@ impl LumenApp {
 #[cfg(test)]
 mod progress_tests {
     use super::*;
+
+    #[test]
+    fn background_search_wakes_idle_ui_when_results_arrive() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("match.rs"), "term").unwrap();
+        let mut app = LumenApp::default();
+        app.editor.workspace = Some(root.path().to_path_buf());
+        app.view.workspace_search.query = "term".into();
+        let ctx = egui::Context::default();
+        let main_thread = std::thread::current().id();
+        let (sender, receiver) = mpsc::channel();
+        ctx.set_request_repaint_callback(move |info| {
+            if info.delay.is_zero() && std::thread::current().id() != main_thread {
+                let _ = sender.send(());
+            }
+        });
+        app.start_workspace_search(&ctx);
+        receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the search worker should wake the UI without pointer input");
+    }
 
     #[test]
     fn progress_updates_until_final_result_and_cancel_drops_old_events() {

@@ -50,9 +50,11 @@ before/after preview
 and explicit confirmation. An open editor tab is skipped, and a file changed
 since search is never silently overwritten; failures are reported in Search.
 Scans skip links, `.git`, `target`, binary/non-UTF-8 files and files over 2 MiB.
-The `.gitignore` matcher currently handles common glob rules but not every Git
-edge case. See [the roadmap](plan/vscode-core-feature-roadmap.md) for current
-limits and remaining validation.
+Nested `.gitignore` files use Git-style pattern matching, including anchoring,
+escaped names, character classes and negation. The result-count tooltip breaks
+down skipped entries; descendants of a skipped directory are not counted.
+Git's global excludes and `.git/info/exclude` are not read. See
+[the roadmap](plan/vscode-core-feature-roadmap.md) for remaining validation.
 
 The shared editor colors comments, strings, numbers, keywords, types, functions,
 properties and markup using a compact dark syntax palette. Rust, TOML, Markdown,

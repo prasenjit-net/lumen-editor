@@ -1,9 +1,11 @@
 //! Bounded, cancellable filesystem search. No editor or egui state lives here.
 use crate::model::search::{SearchOptions, find_matches};
+use ignore::gitignore::Gitignore;
 use std::{
     fs, io,
     ops::Range,
     path::{Path, PathBuf},
+    sync::Arc,
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
@@ -41,6 +43,9 @@ pub(crate) struct SearchResult {
     pub(crate) files: Vec<SearchFile>,
     pub(crate) scanned: usize,
     pub(crate) skipped: usize,
+    pub(crate) skipped_links_or_internal: usize,
+    pub(crate) skipped_ignored_or_excluded: usize,
+    pub(crate) skipped_non_text_or_large: usize,
     pub(crate) errors: Vec<String>,
     pub(crate) limited: bool,
     pub(crate) cancelled: bool,
@@ -53,14 +58,6 @@ pub(crate) struct SearchProgress {
     pub(crate) matches: usize,
 }
 
-#[derive(Clone)]
-struct IgnoreRule {
-    directory: PathBuf,
-    pattern: String,
-    negated: bool,
-    directory_only: bool,
-}
-
 pub(crate) fn search_with_progress(
     request: &SearchRequest,
     cancel: &AtomicBool,
@@ -70,7 +67,7 @@ pub(crate) fn search_with_progress(
     if request.query.is_empty() {
         return result;
     }
-    let mut stack = vec![(request.root.clone(), Vec::<IgnoreRule>::new())];
+    let mut stack = vec![(request.root.clone(), Vec::<Arc<Gitignore>>::new())];
     let mut retained_bytes = 0;
     let mut retained_matches = 0;
     let mut processed_entries = 0;
@@ -122,12 +119,14 @@ pub(crate) fn search_with_progress(
             // Do not recurse through links, or inspect generated/VCS internals.
             if kind.is_symlink() || matches!(entry.file_name().to_str(), Some(".git" | "target")) {
                 result.skipped += 1;
+                result.skipped_links_or_internal += 1;
                 continue;
             }
             let relative = path.strip_prefix(&request.root).unwrap_or(&path);
             if ignored(&path, kind.is_dir(), &rules) || matches_patterns(relative, &request.exclude)
             {
                 result.skipped += 1;
+                result.skipped_ignored_or_excluded += 1;
                 continue;
             }
             if kind.is_dir() {
@@ -161,7 +160,10 @@ pub(crate) fn search_with_progress(
                         original: text,
                     });
                 }
-                Ok(None) => result.skipped += 1,
+                Ok(None) => {
+                    result.skipped += 1;
+                    result.skipped_non_text_or_large += 1;
+                }
                 Err(error) => result.errors.push(format!("{}: {error}", path.display())),
             }
         }
@@ -215,43 +217,30 @@ fn hits(text: &str, ranges: Vec<Range<usize>>) -> Vec<SearchHit> {
         .collect()
 }
 
-fn read_ignore_rules(directory: &Path, rules: &mut Vec<IgnoreRule>, errors: &mut Vec<String>) {
+fn read_ignore_rules(directory: &Path, rules: &mut Vec<Arc<Gitignore>>, errors: &mut Vec<String>) {
     let path = directory.join(".gitignore");
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
+    match fs::metadata(&path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => return,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return,
         Err(error) => {
             errors.push(format!("{}: {error}", path.display()));
             return;
         }
-    };
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let negated = line.starts_with('!');
-        let pattern = line.strip_prefix('!').unwrap_or(line);
-        rules.push(IgnoreRule {
-            directory: directory.to_path_buf(),
-            pattern: pattern.trim_end_matches('/').trim_start_matches('/').into(),
-            negated,
-            directory_only: pattern.ends_with('/'),
-        });
     }
+    let (matcher, error) = Gitignore::new(&path);
+    if let Some(error) = error {
+        errors.push(format!("{}: {error}", path.display()));
+    }
+    rules.push(Arc::new(matcher));
 }
 
-fn ignored(path: &Path, is_dir: bool, rules: &[IgnoreRule]) -> bool {
+fn ignored(path: &Path, is_dir: bool, rules: &[Arc<Gitignore>]) -> bool {
     let mut ignored = false;
     for rule in rules {
-        if rule.directory_only && !is_dir {
-            continue;
-        }
-        let Ok(relative) = path.strip_prefix(&rule.directory) else {
-            continue;
-        };
-        if pattern_matches(relative, &rule.pattern) {
-            ignored = !rule.negated;
+        let matched = rule.matched(path, is_dir);
+        if !matched.is_none() {
+            ignored = matched.is_ignore();
         }
     }
     ignored
@@ -328,6 +317,56 @@ mod tests {
         assert_eq!(result.files[0].hits.len(), 2);
         assert_eq!(result.files[0].hits[1].line, 2);
         assert_eq!(result.files[0].hits[1].range, 4..6);
+        assert_eq!(result.skipped_ignored_or_excluded, 2);
+    }
+
+    #[test]
+    fn gitignore_anchors_escapes_classes_and_nested_negation() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("src")).unwrap();
+        fs::create_dir(root.path().join("blocked")).unwrap();
+        fs::write(
+            root.path().join(".gitignore"),
+            "\\#literal.rs\n\\!bang.rs\n/root-only.rs\n*.tmp\n[ab].rs\nblocked/\n",
+        )
+        .unwrap();
+        fs::write(root.path().join("src/.gitignore"), "!keep.tmp\n").unwrap();
+        for name in [
+            "#literal.rs",
+            "!bang.rs",
+            "root-only.rs",
+            "a.rs",
+            "blocked/hidden.rs",
+            "src/keep.tmp",
+            "src/other.tmp",
+            "src/root-only.rs",
+            "src/b.rs",
+            "src/main.rs",
+        ] {
+            fs::write(root.path().join(name), "term").unwrap();
+        }
+        let result = search_with_progress(
+            &SearchRequest {
+                root: root.path().into(),
+                query: "term".into(),
+                include: String::new(),
+                exclude: String::new(),
+                options: SearchOptions::default(),
+            },
+            &AtomicBool::new(false),
+            |_| {},
+        );
+        let names: Vec<_> = result
+            .files
+            .iter()
+            .map(|file| file.path.strip_prefix(root.path()).unwrap().to_path_buf())
+            .collect();
+        assert_eq!(
+            names,
+            ["src/keep.tmp", "src/main.rs", "src/root-only.rs"].map(PathBuf::from)
+        );
+        assert!(result.skipped >= 6);
+        assert_eq!(result.skipped_ignored_or_excluded, result.skipped);
     }
     #[test]
     fn cancellation_binary_size_and_errors_are_reported() {
@@ -348,7 +387,8 @@ mod tests {
         };
         let result = search_with_progress(&request, &AtomicBool::new(false), |_| {});
         assert_eq!(result.files.len(), 1);
-        assert!(result.skipped >= 2);
+        assert_eq!(result.skipped_non_text_or_large, 2);
+        assert_eq!(result.skipped, 2);
         assert!(search_with_progress(&request, &AtomicBool::new(true), |_| {}).cancelled);
     }
 
@@ -406,5 +446,6 @@ mod tests {
         );
         assert_eq!(result.files.len(), 1);
         assert_eq!(result.files[0].path, root.path().join("main.rs"));
+        assert_eq!(result.skipped_ignored_or_excluded, 2);
     }
 }

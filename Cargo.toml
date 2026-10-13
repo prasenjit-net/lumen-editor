@@ -18,6 +18,7 @@ rfd = "0.15"
 trash = "5.2"
 arboard = { version = "3.6", default-features = false }
 tempfile = "3"
+ignore = "0.4"
 unicode-segmentation = "1.13"
 lumen-settings-core = { path = "crates/settings-core" }
 lumen-editor-core = { path = "crates/editor-core" }

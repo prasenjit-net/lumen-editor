@@ -1,6 +1,6 @@
 # VS Code-inspired core feature roadmap
 
-Updated: 2026-10-12. This is Lumen's recommended implementation order, not an
+Updated: 2026-10-13. This is Lumen's recommended implementation order, not an
 official VS Code ranking. Preserve existing editor, Explorer, settings, native
 menu and file workflows while adding each feature. The broader native/editor
 acceptance backlog remains in [pending-activities.md](pending-activities.md).
@@ -42,15 +42,17 @@ Implemented so far: a Search activity panel with literal query, Match Case/Whole
 Word, include/exclude glob fields, grouped file/line results and keyboard-openable
 match rows. Cmd/Ctrl+Shift+F opens the panel. A cancellable background scan
 skips symlink traversal, `.git`/`target`, binary and files above 2 MiB, and
-retains bounded snapshots. Nested `.gitignore` supports basic `*`, `?`, `**`,
-directory rules and negation, but not the full Git ignore grammar. Replacement
+retains bounded snapshots. Nested `.gitignore` files use the `ignore` crate's
+Git-style pattern grammar; global excludes and `.git/info/exclude` are not read.
+The result tooltip reports skip categories, counting ignored directories as
+entries rather than every descendant. Replacement
 has all-results, folder and file actions, a capped before/after preview, separate confirmation,
 grapheme checks, guarded writes and a per-file failure report. Open editor tabs
 are conservatively skipped. Search snapshots are limited to 10,000 matches and
 64 MiB of matching text; a limit warning asks the user to narrow the query.
 
-Still needed before the full exit gate: complete Git ignore semantics,
-live native testing at narrow/default/wide widths and with a large workspace,
+Still needed before the full exit gate: live native testing at
+narrow/default/wide widths and with a large workspace,
 and a richer hunk-level replacement preview. The current preview paginates
 selected files and shows the first 10 matches per file. No operation-wide
 rollback or undo is provided.
@@ -63,7 +65,7 @@ rollback or undo is provided.
   or queuing unbounded updates; cancellation discards stale progress.
 - [x] Apply schema-driven `search.exclude` settings with project-over-user
   priority alongside temporary panel exclusions.
-- [ ] Respect `.gitignore`/configured exclusions, skip binary or oversized
+- [x] Respect `.gitignore`/configured exclusions, skip binary or oversized
   files with clear feedback, and keep searches responsive/cancellable.
 - [x] Add workspace replacement with a preview and scoped folder/file actions,
   conflict detection and a recoverable failure report. Never silently overwrite

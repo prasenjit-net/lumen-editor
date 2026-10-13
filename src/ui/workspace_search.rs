@@ -128,8 +128,12 @@ impl Workbench<'_> {
                         .size(11.0),
                 )
                 .on_hover_text(format!(
-                    "{} files scanned · {} skipped",
-                    results.scanned, results.skipped
+                    "{} files scanned · {} entries skipped\n{} symlinks/internal directories · {} ignored/excluded entries · {} binary, non-UTF-8 or over 2 MiB\nEntries inside skipped directories are not counted.",
+                    results.scanned,
+                    results.skipped,
+                    results.skipped_links_or_internal,
+                    results.skipped_ignored_or_excluded,
+                    results.skipped_non_text_or_large,
                 ));
                 if results.limited {
                     ui.label("Result limit reached; narrow the search.");
