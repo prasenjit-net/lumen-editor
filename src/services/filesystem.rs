@@ -25,6 +25,22 @@ pub(crate) trait FileSystem {
         }
         self.write_text(path, text)
     }
+    /// Guard a workspace replacement against paths that escape the opened root.
+    fn write_workspace_replace(
+        &self,
+        root: &Path,
+        path: &Path,
+        expected: &str,
+        text: &str,
+    ) -> io::Result<()> {
+        if !path.starts_with(root) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Path is outside the workspace",
+            ));
+        }
+        self.write_text_if_unchanged(path, expected, text)
+    }
     /// Atomically create an empty file; never replace an existing entry.
     fn create_file(&self, path: &Path) -> io::Result<()>;
     fn create_directory(&self, path: &Path) -> io::Result<()>;
@@ -59,6 +75,33 @@ impl FileSystem for LocalFileSystem {
             .persist_noclobber(path)
             .map_err(|error| error.error)?;
         Ok(())
+    }
+    fn write_workspace_replace(
+        &self,
+        root: &Path,
+        path: &Path,
+        expected: &str,
+        text: &str,
+    ) -> io::Result<()> {
+        let workspace = fs::canonicalize(root)?;
+        let target = fs::canonicalize(path)?;
+        if !target.starts_with(&workspace) || !path.starts_with(root) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Path escapes the workspace",
+            ));
+        }
+        let mut component = root.to_path_buf();
+        for part in path.strip_prefix(root).unwrap().components() {
+            component.push(part);
+            if fs::symlink_metadata(&component)?.file_type().is_symlink() {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "Workspace path became a symbolic link",
+                ));
+            }
+        }
+        self.write_text_if_unchanged(path, expected, text)
     }
     fn create_file(&self, path: &Path) -> io::Result<()> {
         fs::OpenOptions::new()
@@ -198,5 +241,21 @@ mod tests {
             .write_text_if_unchanged(&path, "external", "mine")
             .unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "mine");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_replace_rejects_retargeted_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("secret.txt");
+        fs::write(&target, "same text").unwrap();
+        let linked = root.path().join("result.txt");
+        std::os::unix::fs::symlink(&target, &linked).unwrap();
+        let error = LocalFileSystem
+            .write_workspace_replace(root.path(), &linked, "same text", "replacement")
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_to_string(target).unwrap(), "same text");
     }
 }

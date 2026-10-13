@@ -2033,6 +2033,7 @@ dependencies = [
  "rfd",
  "tempfile",
  "trash",
+ "unicode-segmentation",
  "windows-sys 0.61.2",
 ]
 

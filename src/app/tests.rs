@@ -24,6 +24,7 @@ mod safety;
 #[cfg(feature = "shared-editor")]
 mod shared;
 mod viewport;
+mod workspace_search;
 
 #[derive(Default)]
 struct TestStorage {

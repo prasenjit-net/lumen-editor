@@ -30,6 +30,9 @@ impl LumenApp {
 
     pub(crate) fn choose_folder(&mut self) {
         if let Some(folder) = self.dialogs.open_folder() {
+            self.cancel_workspace_search();
+            self.view.workspace_search.results = None;
+            self.view.workspace_search.completed_request = None;
             self.editor.workspace = Some(folder.clone());
             self.view.expanded_dirs.clear();
             self.view.expanded_dirs.insert(folder.clone());

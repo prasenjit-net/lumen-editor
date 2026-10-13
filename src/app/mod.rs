@@ -14,6 +14,7 @@ pub(crate) mod settings;
 #[cfg(test)]
 mod tests;
 pub(crate) mod view_state;
+pub(crate) mod workspace_search;
 use crate::{
     model::EditorState,
     services::{
@@ -31,6 +32,7 @@ pub(crate) struct LumenApp {
     pub(crate) settings_store: Box<dyn crate::services::settings::SettingsStore>,
     pub(crate) recovery_store: Box<dyn crate::services::recovery::RecoveryStore>,
     pub(crate) safety: safety::SafetyState,
+    pub(crate) search_job: Option<workspace_search::SearchJob>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
 }
@@ -45,6 +47,7 @@ impl Default for LumenApp {
             settings_store: Box::new(crate::services::settings::LocalSettingsStore),
             recovery_store: Box::new(crate::services::recovery::LocalRecoveryStore::new()),
             safety: safety::SafetyState::default(),
+            search_job: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
         }
@@ -69,7 +72,9 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.delete_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.save_conflict_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.safety_details_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.workspace_replace_preview(ctx));
         self.maintain_documents(ctx);
+        self.poll_workspace_search(ctx);
     }
 }
 

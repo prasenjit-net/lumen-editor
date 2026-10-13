@@ -36,6 +36,19 @@ and drop or explorer operation undo. Symlink copying is rejected explicitly.
 
 ## Text editing
 
+The Search activity panel searches an open folder in a cancellable background
+scan. Press Cmd/Ctrl+Shift+F, type a literal query, then Enter; Match Case,
+Whole Word, include and exclude globs narrow results. Click a result to open
+its file at the match. Results form a collapsible folder/file tree, with Replace
+actions for all results or an individual folder or file. Replace offers a
+before/after preview
+and explicit confirmation. An open editor tab is skipped, and a file changed
+since search is never silently overwritten; failures are reported in Search.
+Scans skip links, `.git`, `target`, binary/non-UTF-8 files and files over 2 MiB.
+The `.gitignore` matcher currently handles common glob rules but not every Git
+edge case. See [the roadmap](plan/vscode-core-feature-roadmap.md) for current
+limits and remaining validation.
+
 The shared editor colors comments, strings, numbers, keywords, types, functions,
 properties and markup using a compact dark syntax palette. Rust, TOML, Markdown,
 JSON, YAML, JavaScript/TypeScript, HTML, CSS, Python, Go, C/C++ and shell files

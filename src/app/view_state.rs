@@ -58,6 +58,32 @@ pub(crate) struct SaveConflict {
     pub(crate) show_comparison: bool,
 }
 
+#[derive(Default)]
+pub(crate) struct WorkspaceSearchView {
+    pub(crate) query: String,
+    pub(crate) replacement: String,
+    pub(crate) include: String,
+    pub(crate) exclude: String,
+    pub(crate) match_case: bool,
+    pub(crate) whole_word: bool,
+    pub(crate) replace_visible: bool,
+    pub(crate) details_visible: bool,
+    pub(crate) focus_query: bool,
+    pub(crate) running: bool,
+    pub(crate) results: Option<crate::services::workspace_search::SearchResult>,
+    pub(crate) completed_request: Option<crate::services::workspace_search::SearchRequest>,
+    pub(crate) selected: HashSet<PathBuf>,
+    pub(crate) expanded_files: HashSet<PathBuf>,
+    pub(crate) expanded_folders: HashSet<PathBuf>,
+    pub(crate) preview_open: bool,
+    pub(crate) confirmation_open: bool,
+    pub(crate) preview_replacement: Option<String>,
+    pub(crate) preview_selected: HashSet<PathBuf>,
+    pub(crate) preview_page: usize,
+    pub(crate) report: Vec<String>,
+    pub(crate) replaced_files: usize,
+}
+
 impl ExplorerEdit {
     pub(crate) fn new(directory: PathBuf) -> Self {
         Self {
@@ -118,6 +144,7 @@ pub(crate) struct ViewState {
     pub(crate) focus_editor: bool,
     pub(crate) command_palette: bool,
     pub(crate) search: String,
+    pub(crate) workspace_search: WorkspaceSearchView,
     pub(crate) sidebar_visible: bool,
     pub(crate) status: String,
     pub(crate) safety_notices: Vec<String>,
@@ -172,6 +199,7 @@ impl Default for ViewState {
             focus_editor: false,
             command_palette: false,
             search: String::new(),
+            workspace_search: WorkspaceSearchView::default(),
             sidebar_visible: true,
             status: "Ready".into(),
             safety_notices: Vec::new(),

@@ -105,6 +105,10 @@ impl Workbench<'_> {
                         Command::Find,
                     ),
                     ("Editor: Replace".into(), Command::Replace),
+                    (
+                        format!("{}  Search: Find in Files", icon::MAGNIFYING_GLASS),
+                        Command::ShowWorkspaceSearch,
+                    ),
                 ] {
                     if ui.selectable_label(false, label).clicked() {
                         self.command(action);

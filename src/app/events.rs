@@ -83,6 +83,13 @@ impl LumenApp {
         }
         #[cfg(not(target_os = "macos"))]
         {
+            let workspace_search = egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::F,
+            );
+            if ctx.input_mut(|input| input.consume_shortcut(&workspace_search)) {
+                self.execute(Command::ShowWorkspaceSearch, ctx);
+            }
             if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::P)) {
                 self.execute(Command::Palette, ctx);
             }

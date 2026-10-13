@@ -45,6 +45,14 @@ impl LumenApp {
             Command::Find if !self.view.settings.open => self.open_find(false, ctx),
             Command::Replace if !self.view.settings.open => self.open_find(true, ctx),
             Command::Find | Command::Replace => (),
+            Command::StartWorkspaceSearch => self.start_workspace_search(ctx),
+            Command::CancelWorkspaceSearch => self.cancel_workspace_search(),
+            Command::PreviewWorkspaceReplace => self.preview_workspace_replace(),
+            Command::PreviewWorkspaceReplaceScope(scope) => {
+                self.preview_workspace_replace_scope(scope)
+            }
+            Command::ApplyWorkspaceReplace => self.apply_workspace_replace(),
+            Command::OpenWorkspaceHit(path, range) => self.open_workspace_hit(path, range),
             Command::EditorAction(document, action) => {
                 if !self.view.settings.open
                     && self.editor.active().is_some_and(|file| file.id == document)
@@ -58,7 +66,8 @@ impl LumenApp {
             Command::NewUntitled
             | Command::CollapseFolders
             | Command::RefreshExplorer
-            | Command::ActivateActivity(_) => {
+            | Command::ActivateActivity(_)
+            | Command::ShowWorkspaceSearch => {
                 command.apply_local(&mut self.editor, &mut self.view);
             }
             Command::NewFolder => self.new_folder(),

@@ -109,6 +109,12 @@ impl NativeMenu {
         view.append_items(&[
             &item(Command::Palette, "Command Palette…", Code::KeyP, true),
             &item(Command::ToggleSidebar, "Toggle Sidebar", Code::KeyB, false),
+            &item(
+                Command::ShowWorkspaceSearch,
+                "Find in Files…",
+                Code::KeyF,
+                true,
+            ),
         ])?;
         let window = Submenu::new("Window", true);
         #[cfg(target_os = "macos")]

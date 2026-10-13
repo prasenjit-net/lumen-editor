@@ -1,6 +1,8 @@
 use super::editor_action::EditorAction;
 use super::view_state::{Activity, ExplorerEdit, ViewState};
+use super::workspace_search::ReplaceScope;
 use crate::model::{DocumentId, EditorState};
+use std::ops::Range;
 use std::path::PathBuf;
 
 /// Shared actions from native menus, shortcuts and workbench components.
@@ -13,6 +15,12 @@ pub(crate) enum Command {
     DiscardSettingsAndQuit,
     Find,
     Replace,
+    StartWorkspaceSearch,
+    CancelWorkspaceSearch,
+    PreviewWorkspaceReplace,
+    PreviewWorkspaceReplaceScope(ReplaceScope),
+    ApplyWorkspaceReplace,
+    OpenWorkspaceHit(PathBuf, Range<usize>),
     EditorAction(DocumentId, EditorAction),
     NewFile,
     NewUntitled,
@@ -43,6 +51,7 @@ pub(crate) enum Command {
     Palette,
     ToggleSidebar,
     ActivateActivity(Activity),
+    ShowWorkspaceSearch,
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     Welcome,
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
@@ -74,6 +83,12 @@ impl Command {
                 view.sidebar_visible = !(view.sidebar_visible && view.activity == activity);
                 view.activity = activity;
                 // Hidden or replaced explorer views must not intercept editor shortcuts.
+                view.explorer_focused = false;
+            }
+            Self::ShowWorkspaceSearch => {
+                view.activity = Activity::Search;
+                view.sidebar_visible = true;
+                view.workspace_search.focus_query = true;
                 view.explorer_focused = false;
             }
             Self::NewUntitled => {
@@ -139,6 +154,7 @@ impl Command {
             Self::Quit => Some("quit"),
             Self::Palette => Some("palette"),
             Self::ToggleSidebar => Some("sidebar"),
+            Self::ShowWorkspaceSearch => Some("workspace_search"),
             Self::Welcome => Some("welcome"),
             Self::Copy => Some("copy"),
             Self::Cut => Some("cut"),
@@ -165,6 +181,7 @@ impl Command {
             "quit" => Self::Quit,
             "palette" => Self::Palette,
             "sidebar" => Self::ToggleSidebar,
+            "workspace_search" => Self::ShowWorkspaceSearch,
             "welcome" => Self::Welcome,
             "copy" => Self::Copy,
             "cut" => Self::Cut,

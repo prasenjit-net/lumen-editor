@@ -126,7 +126,9 @@ impl Workbench<'_> {
             .frame(canvas())
             .show(ctx, |ui| {
                 surface(PANEL).show(ui, |ui| {
-                    ui.set_min_size(ui.available_size());
+                    // Width belongs to SidePanel's drag state. Setting a content
+                    // minimum from `available_size` can grow it on hover/pass 2.
+                    ui.set_min_height(ui.available_height());
                     let explorer_actions = [
                         HeaderAction {
                             glyph: icon::FILE_PLUS,
@@ -168,13 +170,7 @@ impl Workbench<'_> {
                                 .show(ui, |ui| self.explorer(ui));
                         }
                         Activity::Search => {
-                            ui.label(RichText::new("Search").size(18.0));
-                            ui.add_space(4.0);
-                            ui.add(
-                                TextEdit::singleline(&mut self.view.search)
-                                    .hint_text("Search files")
-                                    .desired_width(f32::INFINITY),
-                            );
+                            self.workspace_search_panel(ui);
                         }
                         Activity::SourceControl => {
                             ui.label(RichText::new("Source Control").size(18.0));
