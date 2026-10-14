@@ -163,9 +163,11 @@ impl Workbench<'_> {
             } else {
                 "Commit"
             };
-            // Never let a TextEdit's natural width raise the SidePanel's
-            // minimum width. The input yields space first at narrow widths.
-            let message_width = (ui.available_width() - 58.0).max(24.0);
+            // Reserve the full Commit/Amend button and row spacing. Reserving
+            // only the button's text width makes the row a few pixels too wide;
+            // SidePanel then persists that overflow as its next frame's width.
+            const COMMIT_BUTTON_AND_SPACING: f32 = 70.0;
+            let message_width = (ui.available_width() - COMMIT_BUTTON_AND_SPACING).max(24.0);
             let response = ui
                 .add_enabled_ui(
                     (has_staged || self.view.source_control.amend_commit)
@@ -534,6 +536,109 @@ mod tests {
         width.get()
     }
 
+    fn source_sidebar_frame(
+        app: &mut LumenApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> f32 {
+        let width = Cell::new(0.0);
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                app.render_component(ctx, |workbench| workbench.sidebar(ctx));
+                width.set(ctx.available_rect().left());
+            },
+        );
+        width.get()
+    }
+
+    #[test]
+    fn source_sidebar_does_not_grow_as_git_status_arrives() {
+        let mut app = LumenApp::default();
+        app.view.activity = Activity::SourceControl;
+        app.editor.workspace = Some(PathBuf::from("/workspace"));
+        let ctx = egui::Context::default();
+        theme::configure_ui(&ctx);
+        let mut widths = vec![source_sidebar_frame(&mut app, &ctx, vec![])];
+        app.view.source_control.snapshot = Some(GitSnapshot {
+            root: PathBuf::from("/workspace"),
+            branch: "feature/a-branch-name-long-enough-to-previously-grow-the-sidebar".into(),
+            changes: vec![GitChange {
+                path: PathBuf::from("src/long-file.rs"),
+                index: 'M',
+                worktree: 'M',
+            }],
+        });
+        for point in [
+            egui::pos2(850.0, 400.0),
+            egui::pos2(120.0, 95.0),
+            egui::pos2(120.0, 180.0),
+            egui::pos2(850.0, 400.0),
+        ] {
+            widths.push(source_sidebar_frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(point)],
+            ));
+        }
+        app.view.source_control.amend_commit = true;
+        app.view.source_control.commit_message = "a long commit message which must clip".into();
+        app.view.source_control.commit_error = Some("a long Git error which must clip".into());
+        for _ in 0..3 {
+            widths.push(source_sidebar_frame(&mut app, &ctx, vec![]));
+        }
+        assert!(
+            widths.iter().all(|width| (*width - widths[0]).abs() < 2.0),
+            "source sidebar changed width: {widths:?}"
+        );
+
+        let edge = egui::pos2(widths[0] - 1.0, 300.0);
+        source_sidebar_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(edge)]);
+        source_sidebar_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: edge,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        let narrow = source_sidebar_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(edge - egui::vec2(58.0, 0.0))],
+        );
+        assert!(
+            narrow < widths[0] - 40.0,
+            "sidebar could not shrink: {widths:?} -> {narrow}"
+        );
+        source_sidebar_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: edge - egui::vec2(58.0, 0.0),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        let retained: Vec<_> = (0..4)
+            .map(|_| source_sidebar_frame(&mut app, &ctx, vec![]))
+            .collect();
+        assert!(
+            retained.iter().all(|width| (*width - narrow).abs() < 2.0),
+            "narrow width drifted: {narrow} -> {retained:?}"
+        );
+    }
+
     #[test]
     fn source_control_content_and_hover_never_expand_the_sidebar() {
         let mut app = LumenApp::default();
@@ -551,16 +656,13 @@ mod tests {
         let ctx = egui::Context::default();
         theme::configure_ui(&ctx);
         for requested in [180.0, 240.0, 600.0] {
-            // The shared canvas frame contributes its fixed 2px gutters on
-            // both sides; only drift beyond that outer width is a regression.
-            let expected = requested + 4.0;
             let widths = [
                 source_sidebar_width(&mut app, &ctx, requested, egui::pos2(850.0, 400.0)),
                 source_sidebar_width(&mut app, &ctx, requested, egui::pos2(120.0, 95.0)),
                 source_sidebar_width(&mut app, &ctx, requested, egui::pos2(120.0, 180.0)),
             ];
             assert!(
-                widths.iter().all(|width| (*width - expected).abs() < 2.0),
+                widths.iter().all(|width| (*width - requested).abs() < 2.0),
                 "source content widened sidebar {requested}: {widths:?}"
             );
         }
@@ -570,7 +672,7 @@ mod tests {
         );
         let width = source_sidebar_width(&mut app, &ctx, 180.0, egui::pos2(120.0, 95.0));
         assert!(
-            (180.0..=186.0).contains(&width),
+            (width - 180.0).abs() < 2.0,
             "source error widened sidebar: {width}"
         );
     }
