@@ -483,7 +483,9 @@ fn untracked_preview(root: &Path, path: &Path, relative: &Path) -> Result<String
     }
     let resolved = fs::canonicalize(path)
         .map_err(|error| format!("Could not resolve untracked file: {error}"))?;
-    if !resolved.starts_with(root) {
+    let resolved_root = fs::canonicalize(root)
+        .map_err(|error| format!("Could not resolve Git repository path: {error}"))?;
+    if !resolved.starts_with(&resolved_root) {
         return Err("Untracked file resolves outside the repository".into());
     }
     let mut bytes = Vec::new();
