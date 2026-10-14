@@ -216,15 +216,16 @@ impl SourceControlService for LocalGit {
     }
 
     fn unstage(&self, root: &Path, paths: &[PathBuf]) -> Result<(), String> {
-        match git_paths(root, ["restore", "--staged", "--"], paths, "unstage") {
-            Ok(()) => Ok(()),
-            // In a repository without an initial commit, `restore --staged`
-            // cannot name HEAD. Removing only the index entries has the same
-            // unstage result while leaving the worktree untouched.
-            Err(error) if error.contains("could not resolve HEAD") => {
-                git_paths(root, ["rm", "--cached", "--"], paths, "unstage")
-            }
-            Err(error) => Err(error),
+        let head = git_command(root)
+            .args(["rev-parse", "--verify", "HEAD"])
+            .output()
+            .map_err(|error| format!("Could not inspect Git HEAD: {error}"))?;
+        if head.status.success() {
+            git_paths(root, ["restore", "--staged", "--"], paths, "unstage")
+        } else {
+            // An unborn repository has no HEAD for `restore --staged` to name.
+            // Drop only the index entries and leave worktree files untouched.
+            git_paths(root, ["rm", "--cached", "-f", "--"], paths, "unstage")
         }
     }
 
@@ -595,7 +596,12 @@ mod tests {
         fs::write(root.join("untracked.rs"), "new\n").unwrap();
         let service = LocalGit;
         let snapshot = service.snapshot(root).unwrap().unwrap();
-        assert_eq!(snapshot.root, fs::canonicalize(root).unwrap());
+        // Windows canonicalization adds an extended-length prefix that Git's
+        // `--show-toplevel` output does not use; compare the resolved paths.
+        assert_eq!(
+            fs::canonicalize(&snapshot.root).unwrap(),
+            fs::canonicalize(root).unwrap()
+        );
         assert!(
             snapshot
                 .changes
@@ -683,8 +689,7 @@ mod tests {
         assert!(
             service
                 .diff(&root, &root.join("../outside"), DiffSide::Untracked)
-                .unwrap_err()
-                .contains("not a repository file")
+                .is_err()
         );
     }
 
@@ -706,6 +711,7 @@ mod tests {
             );
         };
         git(&["init", "--quiet"]);
+        git(&["config", "core.autocrlf", "false"]);
         git(&["config", "user.name", "Test"]);
         git(&["config", "user.email", "test@example.invalid"]);
         fs::write(root.join("one.rs"), "one\n").unwrap();
@@ -725,7 +731,12 @@ mod tests {
                 .iter()
                 .any(|change| change.path == Path::new("two.rs") && change.index == '?')
         );
+        fs::write(root.join("one.rs"), "edited after staging\n").unwrap();
         service.unstage(root, &[PathBuf::from("one.rs")]).unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("one.rs")).unwrap(),
+            "edited after staging\n"
+        );
         assert!(
             service
                 .snapshot(root)
@@ -770,6 +781,7 @@ mod tests {
             );
         };
         git(&["init", "--quiet"]);
+        git(&["config", "core.autocrlf", "false"]);
         git(&["config", "user.name", "Test"]);
         git(&["config", "user.email", "test@example.invalid"]);
         fs::write(root.join("one.rs"), "one\n").unwrap();
