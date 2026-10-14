@@ -4,7 +4,7 @@ version = "0.1.2"
 edition = "2024"
 
 [workspace]
-members = ["xtask", "crates/editor-core", "crates/editor-surface", "crates/settings-core"]
+members = ["xtask", "crates/editor-core", "crates/editor-surface", "crates/settings-core", "crates/terminal-core"]
 default-members = ["."]
 resolver = "3"
 
@@ -17,13 +17,16 @@ eframe = "0.33"
 rfd = "0.15"
 trash = "5.2"
 arboard = { version = "3.6", default-features = false }
+alacritty_terminal = "0.25"
 tempfile = "3"
 ignore = "0.4"
+portable-pty = "0.9"
 unicode-segmentation = "1.13"
 toml_edit = "0.25"
 lumen-settings-core = { path = "crates/settings-core" }
 lumen-editor-core = { path = "crates/editor-core" }
 lumen-editor-surface = { path = "crates/editor-surface", optional = true }
+lumen-terminal-core = { path = "crates/terminal-core" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

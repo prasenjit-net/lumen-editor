@@ -118,6 +118,16 @@ impl NativeMenu {
                 true,
             ),
         ])?;
+        // Keep the terminal discoverable from the native menu on macOS and
+        // Windows as well as from the status bar, mirroring VS Code's panel
+        // toggle shortcut.
+        let terminal = Submenu::new("Terminal", true);
+        terminal.append(&item(
+            Command::ToggleTerminal,
+            "Toggle Terminal",
+            Code::KeyJ,
+            false,
+        ))?;
         let window = Submenu::new("Window", true);
         #[cfg(target_os = "macos")]
         window.append_items(&[
@@ -139,7 +149,7 @@ impl NativeMenu {
             None,
         ))?;
         #[cfg(target_os = "macos")]
-        menu.append_items(&[&app, &file, &edit, &view, &window, &help])?;
+        menu.append_items(&[&app, &file, &edit, &view, &terminal, &window, &help])?;
         #[cfg(target_os = "windows")]
         {
             help.append(&PredefinedMenuItem::about(
@@ -150,7 +160,7 @@ impl NativeMenu {
                     ..Default::default()
                 }),
             ))?;
-            menu.append_items(&[&file, &edit, &view, &window, &help])?;
+            menu.append_items(&[&file, &edit, &view, &terminal, &window, &help])?;
         }
         #[cfg(target_os = "macos")]
         window.set_as_windows_menu_for_nsapp();

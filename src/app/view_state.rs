@@ -125,6 +125,23 @@ pub(crate) struct SourceControlView {
     pub(crate) last_refresh: Option<std::time::Instant>,
 }
 
+#[derive(Default)]
+pub(crate) struct TerminalView {
+    pub(crate) open: bool,
+    pub(crate) input: String,
+    pub(crate) history: Vec<String>,
+    pub(crate) history_index: Option<usize>,
+    pub(crate) history_draft: String,
+    pub(crate) emulator: Option<lumen_terminal_core::Terminal>,
+    pub(crate) error: Option<String>,
+    pub(crate) focus_input: bool,
+    pub(crate) scroll_to_bottom: bool,
+    pub(crate) rows: u16,
+    pub(crate) columns: u16,
+    pub(crate) applied_rows: u16,
+    pub(crate) applied_columns: u16,
+}
+
 /// Confirmation state stays in the app layer; the UI only presents it and
 /// emits typed commands, while the Git service performs the operation.
 pub(crate) struct SourceRevertPrompt {
@@ -212,6 +229,7 @@ pub(crate) struct ViewState {
     pub(crate) search: String,
     pub(crate) workspace_search: WorkspaceSearchView,
     pub(crate) source_control: SourceControlView,
+    pub(crate) terminal: TerminalView,
     pub(crate) sidebar_visible: bool,
     pub(crate) status: String,
     pub(crate) safety_notices: Vec<String>,
@@ -272,6 +290,7 @@ impl Default for ViewState {
             search: String::new(),
             workspace_search: WorkspaceSearchView::default(),
             source_control: SourceControlView::default(),
+            terminal: TerminalView::default(),
             sidebar_visible: true,
             status: "Ready".into(),
             safety_notices: Vec::new(),

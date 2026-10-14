@@ -4,8 +4,7 @@ use super::theme::MUTED;
 use super::theme::STATUS;
 #[cfg(not(target_os = "windows"))]
 use super::theme::{TEXT, TITLE};
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-use crate::icon;
+use crate::{app::command::Command, icon};
 use eframe::egui::{self, Color32, Frame, Margin, RichText, TopBottomPanel};
 #[cfg(target_os = "macos")]
 use eframe::egui::{FontId, Vec2};
@@ -128,6 +127,21 @@ impl Workbench<'_> {
                                 .size(11.0)
                                 .color(Color32::WHITE),
                         );
+                        if ui
+                            .add_enabled(
+                                self.editor.workspace.is_some(),
+                                egui::Button::new(
+                                    RichText::new(icon::TERMINAL)
+                                        .size(13.0)
+                                        .color(Color32::WHITE),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text("Toggle Terminal")
+                            .clicked()
+                        {
+                            self.command(Command::ToggleTerminal);
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             #[cfg(feature = "shared-editor")]
                             let cursors = self

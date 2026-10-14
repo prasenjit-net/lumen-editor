@@ -14,6 +14,7 @@ mod navigation;
 mod safety;
 pub(crate) mod settings;
 pub(crate) mod source_control;
+pub(crate) mod terminal;
 #[cfg(test)]
 mod tests;
 pub(crate) mod view_state;
@@ -41,6 +42,7 @@ pub(crate) struct LumenApp {
     pub(crate) source_control_job: Option<source_control::SourceControlJob>,
     pub(crate) source_control_service:
         std::sync::Arc<dyn crate::services::source_control::SourceControlService>,
+    pub(crate) terminal_session: Option<crate::services::terminal::TerminalSession>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
 }
@@ -60,6 +62,7 @@ impl Default for LumenApp {
             file_index_job: None,
             source_control_job: None,
             source_control_service: std::sync::Arc::new(crate::services::source_control::LocalGit),
+            terminal_session: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
         }
@@ -77,6 +80,8 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.activity_bar(ctx));
         self.ensure_source_control(ctx);
         self.render_component(ctx, |workbench| workbench.sidebar(ctx));
+        self.render_component(ctx, |workbench| workbench.terminal_panel(ctx));
+        self.resize_terminal(self.view.terminal.rows, self.view.terminal.columns);
         self.render_component(ctx, |workbench| workbench.editor(ctx));
         self.render_component(ctx, |workbench| workbench.palette(ctx));
         self.render_component(ctx, |workbench| workbench.navigation_palette(ctx));
@@ -92,6 +97,7 @@ impl eframe::App for LumenApp {
         self.poll_workspace_search(ctx);
         self.poll_file_index(ctx);
         self.poll_source_control(ctx);
+        self.poll_terminal(ctx);
     }
 }
 

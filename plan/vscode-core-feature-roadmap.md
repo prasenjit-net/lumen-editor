@@ -179,17 +179,35 @@ tabbed working diff layout and tab switching; Windows runtime remains untested.
   commit subject.
 - [x] Add confirmed per-file and bulk discard for HEAD-backed tracked changes;
   it restores index and worktree state without deleting untracked files.
-- [ ] Add push/pull, merge handling and history only after their
-  independent workflows have error/cancellation coverage.
+- [x] Add explicit Push and fast-forward-only Pull actions with asynchronous
+  execution and retained status/error feedback. Pull refuses to run while a
+  workspace document has unsaved editor text, and never starts an implicit
+  merge workflow.
+- [ ] Harden successful Pull handling: reload or explicitly flag clean open
+  workspace documents whose on-disk contents changed, while preserving dirty
+  buffers and keeping the status snapshot coherent.
+- [ ] Add a read-only history browser: bounded recent commit list, subject,
+  author, date and short SHA; empty/detached-HEAD/shallow-clone/error states;
+  and commit/file comparison tabs that never alter the worktree.
+- [ ] Add explicit non-fast-forward Pull and merge-conflict handling only after
+  history comparisons have independent error/cancellation coverage. Keep merge
+  state visible, preserve dirty buffers, and provide deliberate abort/continue
+  actions rather than attempting automatic conflict resolution.
 - [ ] Reuse the comparison component from item 1 where practical.
 
-Exit gate: a dirty editor buffer, external Git changes and repository errors
-cannot silently replace user content.
+Exit gate: a dirty editor buffer, external Git changes, Pull-updated clean
+buffers, repository errors and merge state cannot silently replace user
+content.
 
 ## 8. Add an integrated terminal, then split editor groups
 
-- [ ] Add a workspace-rooted terminal with platform-native shell selection,
-  process lifecycle, keyboard focus, output limits and safe close behavior.
+- [x] Add an initial resizable bottom terminal panel with a workspace-rooted
+  platform-native shell, bounded output, focused command input, PTY resize,
+  clear/close controls, bounded command history, hide-without-stopping behavior
+  and child-process shutdown on close.
+- [ ] Complete terminal-emulator interaction: ANSI rendering, full keyboard/IME
+  and clipboard transport, selection semantics, multiple
+  terminals, task/debug integration, and live macOS/Windows acceptance.
 - [ ] Add split editor groups only after document identity, focus, scroll,
   recovery and Save/Close semantics work across multiple views of a file.
 

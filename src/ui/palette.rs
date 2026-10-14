@@ -123,6 +123,10 @@ impl Workbench<'_> {
                         format!("{}  Search: Find in Files", icon::MAGNIFYING_GLASS),
                         Command::ShowWorkspaceSearch,
                     ),
+                    (
+                        format!("{}  Terminal: Toggle Terminal", icon::TERMINAL),
+                        Command::ToggleTerminal,
+                    ),
                 ] {
                     if ui.selectable_label(false, label).clicked() {
                         self.command(action);
