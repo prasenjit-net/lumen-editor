@@ -122,6 +122,42 @@ impl LumenApp {
         });
     }
 
+    /// Pulls only when Lumen has no unsaved workspace buffers. A fast-forward
+    /// pull may replace files on disk, so an in-memory dirty buffer must never
+    /// be left silently diverged from the repository.
+    pub(crate) fn pull_source_control(&mut self, ctx: &egui::Context) {
+        let Some(root) = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.root.clone())
+        else {
+            return;
+        };
+        if self.editor.files.iter().any(|file| {
+            file.dirty
+                && file
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| path.starts_with(&root))
+        }) {
+            self.view.source_control.error = Some(
+                "Save or discard unsaved workspace edits before pulling remote changes".into(),
+            );
+            return;
+        }
+        self.run_source_remote_operation(ctx, "Pulled latest changes", |service, root| {
+            service.pull(root)
+        });
+    }
+
+    pub(crate) fn push_source_control(&mut self, ctx: &egui::Context) {
+        self.run_source_remote_operation(ctx, "Pushed local commits", |service, root| {
+            service.push(root)
+        });
+    }
+
     pub(crate) fn request_source_revert(&mut self, paths: Vec<PathBuf>) {
         let Some(snapshot) = &self.view.source_control.snapshot else {
             return;
@@ -287,6 +323,42 @@ impl LumenApp {
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let result = operation(service.as_ref(), &root, &paths).map(|_| success.into());
+            let _ = sender.send(GitResult::Operation(result));
+            worker_ctx.request_repaint();
+        });
+        self.source_control_job = Some(SourceControlJob { receiver });
+    }
+
+    fn run_source_remote_operation<F>(
+        &mut self,
+        ctx: &egui::Context,
+        success: &'static str,
+        operation: F,
+    ) where
+        F: FnOnce(
+                &dyn crate::services::source_control::SourceControlService,
+                &std::path::Path,
+            ) -> Result<(), String>
+            + Send
+            + 'static,
+    {
+        let Some(root) = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.root.clone())
+        else {
+            return;
+        };
+        self.source_control_job = None;
+        self.view.source_control.loading = true;
+        self.view.source_control.error = None;
+        let service = self.source_control_service.clone();
+        let worker_ctx = ctx.clone();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = operation(service.as_ref(), &root).map(|_| success.into());
             let _ = sender.send(GitResult::Operation(result));
             worker_ctx.request_repaint();
         });
@@ -594,6 +666,24 @@ mod tests {
         app.view.source_control.commit_focused = false;
         app.ensure_source_control(&ctx);
         assert!(app.source_control_job.is_some());
+    }
+
+    #[test]
+    fn pull_rejects_unsaved_workspace_documents() {
+        let root = std::path::Path::new("/workspace");
+        let mut app = app_with_change(root, std::path::Path::new("src/main.rs"));
+        let mut document = Document::from_path(root.join("src/main.rs"), "saved".into());
+        document.text = "unsaved".into();
+        document.record_text_change();
+        app.editor.files.push(document);
+
+        app.pull_source_control(&egui::Context::default());
+
+        assert!(app.source_control_job.is_none());
+        assert_eq!(
+            app.view.source_control.error.as_deref(),
+            Some("Save or discard unsaved workspace edits before pulling remote changes")
+        );
     }
 
     #[test]

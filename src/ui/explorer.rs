@@ -192,12 +192,28 @@ impl Workbench<'_> {
                             enabled: self.editor.workspace.is_some(),
                         },
                     ];
-                    let source_actions = [HeaderAction {
-                        glyph: icon::REFRESH,
-                        tooltip: "Refresh source control",
-                        command: Command::RefreshSourceControl,
-                        enabled: self.editor.workspace.is_some(),
-                    }];
+                    let source_actions = [
+                        HeaderAction {
+                            glyph: icon::REPO_PULL,
+                            tooltip: "Pull remote changes (fast-forward only)",
+                            command: Command::PullSourceControl,
+                            enabled: self.view.source_control.snapshot.is_some()
+                                && !self.view.source_control.loading,
+                        },
+                        HeaderAction {
+                            glyph: icon::REPO_PUSH,
+                            tooltip: "Push local commits",
+                            command: Command::PushSourceControl,
+                            enabled: self.view.source_control.snapshot.is_some()
+                                && !self.view.source_control.loading,
+                        },
+                        HeaderAction {
+                            glyph: icon::REFRESH,
+                            tooltip: "Refresh source control",
+                            command: Command::RefreshSourceControl,
+                            enabled: self.editor.workspace.is_some(),
+                        },
+                    ];
                     let actions = if self.view.activity == Activity::Explorer {
                         &explorer_actions[..]
                     } else if self.view.activity == Activity::SourceControl {

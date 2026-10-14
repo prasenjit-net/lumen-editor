@@ -20,6 +20,8 @@ pub(crate) enum Command {
     CancelWorkspaceSearch,
     ClearWorkspaceSearch,
     RefreshSourceControl,
+    PullSourceControl,
+    PushSourceControl,
     ShowSourceDiff(PathBuf, DiffSide),
     StagePaths(Vec<PathBuf>),
     UnstagePaths(Vec<PathBuf>),

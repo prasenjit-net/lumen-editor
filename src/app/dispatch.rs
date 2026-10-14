@@ -50,6 +50,8 @@ impl LumenApp {
             Command::CancelWorkspaceSearch => self.cancel_workspace_search(),
             Command::ClearWorkspaceSearch => self.clear_workspace_search(),
             Command::RefreshSourceControl => self.refresh_source_control(ctx),
+            Command::PullSourceControl => self.pull_source_control(ctx),
+            Command::PushSourceControl => self.push_source_control(ctx),
             Command::ShowSourceDiff(path, side) => self.show_source_diff(path, side, ctx),
             Command::StagePaths(paths) => self.stage_source_paths(paths, ctx),
             Command::UnstagePaths(paths) => self.unstage_source_paths(paths, ctx),

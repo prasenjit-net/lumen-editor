@@ -56,6 +56,8 @@ pub(crate) trait SourceControlService: Send + Sync {
     /// excludes untracked files: source control must never emulate `git clean`.
     fn revert(&self, root: &Path, paths: &[PathBuf]) -> Result<(), String>;
     fn commit(&self, root: &Path, message: &str, amend: bool) -> Result<(), String>;
+    fn pull(&self, root: &Path) -> Result<(), String>;
+    fn push(&self, root: &Path) -> Result<(), String>;
     fn stage_hunk(&self, root: &Path, path: &Path, hunk: usize) -> Result<(), String>;
 }
 
@@ -265,6 +267,14 @@ impl SourceControlService for LocalGit {
         }
     }
 
+    fn pull(&self, root: &Path) -> Result<(), String> {
+        git_remote_command(root, ["pull", "--ff-only"], "pull")
+    }
+
+    fn push(&self, root: &Path) -> Result<(), String> {
+        git_remote_command(root, ["push"], "push")
+    }
+
     fn stage_hunk(&self, root: &Path, path: &Path, hunk: usize) -> Result<(), String> {
         let patch = self.diff(root, path, DiffSide::Working)?;
         let Some(patch) = patch_hunks(&patch).into_iter().nth(hunk) else {
@@ -345,6 +355,23 @@ fn git_paths<const N: usize>(
         .args(["--no-optional-locks"])
         .args(args)
         .args(paths)
+        .output()
+        .map_err(|error| format!("Could not start Git {action}: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(git_failure(&format!("Git {action} failed"), &output.stderr))
+    }
+}
+
+fn git_remote_command<const N: usize>(
+    root: &Path,
+    args: [&str; N],
+    action: &str,
+) -> Result<(), String> {
+    let output = git_command(root)
+        .args(["--no-optional-locks"])
+        .args(args)
         .output()
         .map_err(|error| format!("Could not start Git {action}: {error}"))?;
     if output.status.success() {
