@@ -108,21 +108,28 @@ Bracket/quote completion wraps selections and inserts paired delimiters as one
 core undo step, while IME commits stay literal. Bracket matching uses syntax
 spans to skip recognized comments and strings and paints from the shared text
 geometry. Native interaction acceptance remains pending.
-Read-only fold-range discovery now covers bracket-delimited code and
-indentation-based Python/YAML blocks. Collapsing rows and gutter controls are
-not exposed yet: they require a common source/display projection so editing,
-accessibility, IME, caret movement, hit testing and line numbers stay aligned.
+Code folding now covers bracket-delimited code and indentation-based
+Python/YAML blocks in the default shared editor. Gutter chevrons collapse rows
+through one source/display projection for text, accessibility, caret movement,
+hit testing and original line numbers. Collapse state is per tab and follows
+unchanged fold headers when lines are inserted above them. A hidden selection or
+Find/Go-to target opens its containing fold; IME preedit temporarily shows all
+rows. Automated geometry and interaction coverage plus a macOS live-app smoke
+test pass. Windows runtime validation and broader native editing acceptance
+remain pending; the optional legacy TextEdit fallback has no folding.
 
 - [x] Add auto-indent and configurable indentation detection/size to the default shared editor.
 - [ ] Validate bracket/quote completion and syntax-aware matching in native
   multi-cursor, selection, IME and undo workflows. Automated coverage is in place.
-- [ ] Add code folding with gutter affordances and persistent per-tab fold state.
-  Fold-range discovery is implemented; visual collapsing remains pending.
+- [x] Add code folding with gutter affordances and persistent per-tab fold state
+  in the default shared editor.
 
 Exit gate: all editing operations remain one coherent history owner, preserve
 grapheme boundaries and keep gutter/text hit testing aligned.
 
-## 5. Extend document Find/Replace
+## 5. Extend document Find/Replace — deferred
+
+Deferred by user direction while roadmap item 7 is pursued.
 
 - [ ] Add regular expressions, capture-group replacement, multiline queries,
   Find in Selection and preserve-case options in measured increments.
@@ -133,7 +140,9 @@ Exit gate: single and Replace All operations are undoable and respect the
 accepted grapheme-safe rejection rule. See the existing
 [editor plan](text-editor-improvement-plan.md) for detailed cases.
 
-## 6. Add language services in stages
+## 6. Add language services in stages — deferred
+
+Deferred by user direction while roadmap item 7 is pursued.
 
 - [ ] Define a language-server boundary and lifecycle (open/change/save/close,
   process failures, cancellation and document revision checks).

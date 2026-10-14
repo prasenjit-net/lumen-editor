@@ -138,7 +138,11 @@ line range. Holding a gutter drag above/below the viewport scrolls vertically
 and extends selection at the visible edge. Speed increases with distance from
 the edge; release or a blocking dialog stops the drag. Document bounds clamp
 scrolling, and reversing direction responds immediately. Unicode and existing
-line endings are preserved. Multi-cursor editing remains planned. See
+line endings are preserved. The default shared editor also has gutter code-fold
+chevrons for bracket-delimited and Python/YAML indentation blocks. Folded rows
+retain original line numbers; Find/Go-to and caret entry reveal hidden targets.
+Fold state is per open tab and does not alter document text or undo history.
+Folding is not available in the optional legacy TextEdit fallback. See
 [the editor plan](plan/text-editor-improvement-plan.md) for the remaining work.
 
 Run from source:

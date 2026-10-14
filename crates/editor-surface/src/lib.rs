@@ -251,12 +251,14 @@ impl EditorSurface {
             #[cfg(feature = "shaped")]
             self.shape_cache.borrow_mut().take();
             buffer.break_undo_group();
+            if self.composition.is_some() {
+                self.notice = Some("Composition cancelled: editor identity changed".into());
+            }
             self.composition = None;
             self.composition_cancelled = true;
             self.drag_anchor = None;
             self.vertical_goals = None;
             self.gutter_drag = None;
-            self.notice = Some("Composition cancelled: editor identity changed".into());
         }
         self.widget = Some(id);
         let viewport_origin = ui.cursor().min;

@@ -1,5 +1,22 @@
 # Native editor validation
 
+## 2026-10-13 partial native pass (default shared editor)
+
+Environment: macOS 26.5.2 (25F84), debug `target/Lumen.app`, default shared
+editor. Input method was not recorded. The automated live-app check on the
+preceding build confirmed gutter folding, original source line numbers and
+per-tab fold persistence. A false "Composition cancelled" status on an ordinary
+tab switch was reproduced, fixed with a regression test, and bundled again.
+The rebuilt app launched, but Computer Use timed out in the native file chooser,
+so the fix was **not** reverified in the rebuilt live app. Unit tests confirm
+ordinary identity changes have no notice and an active preedit still rejects a
+late commit. Do not count this as a completed full-workbench acceptance pass.
+
+Checklist status: IME/dead keys, VoiceOver, native clipboard/CRLF, bidi, full
+multi-cursor/history, and file lifecycle are **not tested** on this build. The
+user could not perform the manual portion at this time. Windows live acceptance
+also remains pending; Windows cross-compilation is not runtime validation.
+
 ## Current workbench acceptance (2026-10-12)
 
 Default promotion was explicitly requested after this checklist was prepared.

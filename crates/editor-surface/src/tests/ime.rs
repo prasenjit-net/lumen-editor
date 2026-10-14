@@ -299,6 +299,23 @@ fn changing_widget_identity_rejects_a_previous_widgets_commit() {
     );
     assert_eq!(buffer.text(), "abc");
     assert!(surface.composition.is_none());
+    assert_eq!(
+        surface.notice.as_deref(),
+        Some("Composition cancelled: editor identity changed")
+    );
+}
+
+#[test]
+fn changing_widget_identity_without_preedit_does_not_report_cancellation() {
+    let (mut surface, mut buffer, ctx) = fixture("abc");
+    frame(&mut surface, &mut buffer, &ctx, Vec::new(), 500.0);
+    let _ = ctx.run(RawInput::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            surface.show(ui, Id::new("new_document"), &mut buffer);
+        });
+    });
+    assert_eq!(buffer.text(), "abc");
+    assert!(surface.notice.is_none());
 }
 
 #[test]
