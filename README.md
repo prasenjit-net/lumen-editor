@@ -252,14 +252,21 @@ differs from the Git snapshot. Refresh the Source Control panel after external
 changes, or reopen a comparison to update its snapshot.
 The Source Control panel also supports staging and unstaging individual changes
 or their visible groups, then committing staged changes with an explicit
-message. Git work runs outside the UI thread and refreshes the snapshot after
-completion. Explorer shows compact `M`, `S`, `U`, and `D` badges from that
-snapshot; Source Control refreshes while its panel is visible to detect external
-Git changes. A working diff with multiple independent hunks offers a Stage button
-for each hunk; Git applies that patch only to the index and leaves other edits
-in the working tree. Hunk staging is disabled while the diff editor has unsaved
-text, and untracked files use whole-file staging. Amend, push/pull, merge
-resolution, and a history browser are not implemented yet.
+message. Its compact discard controls restore one file or all eligible tracked
+files, including their index state, from `HEAD` after confirmation. Discarding
+never removes untracked files or invokes `git clean`; newly added files that do
+not exist in `HEAD` must be removed through an intentional filesystem workflow.
+Git work runs outside the UI thread and refreshes the snapshot after completion.
+Explorer shows compact `M`, `S`, `U`, and `D` badges from that snapshot; Source
+Control refreshes while its panel is visible to detect external Git changes. A
+working diff with multiple independent hunks offers a Stage button for each
+hunk; Git applies that patch only to the index and leaves other edits in the
+working tree. Hunk staging is disabled while the diff editor has unsaved text,
+and untracked files use whole-file staging. Push/pull, merge resolution, and a
+history browser are not implemented yet. Enable **Amend** in the commit row to
+amend the latest local commit; an empty message retains its existing subject,
+while a supplied message replaces it. Amending rewrites local history and never
+pushes automatically.
 
 ### Default shared editor and legacy fallback
 

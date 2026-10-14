@@ -42,6 +42,10 @@ enum GitResult {
         result: Result<GitComparison, String>,
     },
     Operation(Result<String, String>),
+    Revert {
+        paths: Vec<PathBuf>,
+        result: Result<String, String>,
+    },
 }
 
 impl LumenApp {
@@ -108,6 +112,62 @@ impl LumenApp {
         });
     }
 
+    pub(crate) fn request_source_revert(&mut self, paths: Vec<PathBuf>) {
+        let Some(snapshot) = &self.view.source_control.snapshot else {
+            return;
+        };
+        let paths: Vec<_> = paths
+            .into_iter()
+            .filter(|path| source_path_is_revertible(snapshot, path))
+            .collect();
+        if paths.is_empty() {
+            self.view.source_control.error = Some(
+                "Only tracked files already present in HEAD can be discarded. Untracked files are kept."
+                    .into(),
+            );
+            return;
+        }
+        self.view.source_control.revert_prompt =
+            Some(super::view_state::SourceRevertPrompt { paths, error: None });
+    }
+
+    pub(crate) fn confirm_source_revert(&mut self, ctx: &egui::Context) {
+        let Some(prompt) = &mut self.view.source_control.revert_prompt else {
+            return;
+        };
+        let Some(snapshot) = &self.view.source_control.snapshot else {
+            prompt.error =
+                Some("Repository status is no longer available; refresh and try again".into());
+            return;
+        };
+        let paths = prompt.paths.clone();
+        if self.editor.files.iter().any(|file| {
+            file.dirty
+                && file.path.as_ref().is_some_and(|path| {
+                    path.strip_prefix(&snapshot.root)
+                        .is_ok_and(|relative| paths.contains(&relative.to_path_buf()))
+                })
+        }) {
+            prompt.error =
+                Some("Save or discard the open editor changes before discarding this file".into());
+            return;
+        }
+        let root = snapshot.root.clone();
+        self.source_control_job = None;
+        self.view.source_control.loading = true;
+        let service = self.source_control_service.clone();
+        let worker_ctx = ctx.clone();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = service
+                .revert(&root, &paths)
+                .map(|_| "Discarded source-control changes".into());
+            let _ = sender.send(GitResult::Revert { paths, result });
+            worker_ctx.request_repaint();
+        });
+        self.source_control_job = Some(SourceControlJob { receiver });
+    }
+
     pub(crate) fn stage_source_hunk(&mut self, path: PathBuf, hunk: usize, ctx: &egui::Context) {
         let Some(root) = self
             .view
@@ -150,7 +210,8 @@ impl LumenApp {
 
     pub(crate) fn commit_source_control(&mut self, ctx: &egui::Context) {
         let message = self.view.source_control.commit_message.trim().to_owned();
-        if message.is_empty() {
+        let amend = self.view.source_control.amend_commit;
+        if message.is_empty() && !amend {
             self.view.source_control.commit_error = Some("Enter a commit message".into());
             self.view.source_control.commit_focus = true;
             return;
@@ -171,9 +232,13 @@ impl LumenApp {
         let worker_ctx = ctx.clone();
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
-            let result = service
-                .commit(&root, &message)
-                .map(|_| "Committed changes".into());
+            let result = service.commit(&root, &message, amend).map(|_| {
+                if amend {
+                    "Amended last commit".into()
+                } else {
+                    "Committed changes".into()
+                }
+            });
             let _ = sender.send(GitResult::Operation(result));
             worker_ctx.request_repaint();
         });
@@ -283,12 +348,33 @@ impl LumenApp {
                     Ok(status) => {
                         self.view.status = status;
                         self.view.source_control.commit_message.clear();
+                        self.view.source_control.amend_commit = false;
                         self.view.source_control.commit_error = None;
                         self.refresh_source_control(ctx);
                     }
                     Err(error) => {
                         self.view.source_control.error = Some(error.clone());
                         self.view.source_control.commit_error = Some(error);
+                    }
+                }
+            }
+            Ok(GitResult::Revert { paths, result }) => {
+                self.view.source_control.loading = false;
+                self.source_control_job = None;
+                match result {
+                    Ok(status) => {
+                        self.reload_reverted_documents(&paths);
+                        close_diff_preview(&mut self.editor, &mut self.view);
+                        self.view.source_control.revert_prompt = None;
+                        self.view.status = status;
+                        self.refresh_source_control(ctx);
+                    }
+                    Err(error) => {
+                        if let Some(prompt) = &mut self.view.source_control.revert_prompt {
+                            prompt.error = Some(error);
+                        } else {
+                            self.view.source_control.error = Some(error);
+                        }
                     }
                 }
             }
@@ -374,6 +460,45 @@ impl LumenApp {
         }
         self.view.source_control.loading = false;
     }
+
+    fn reload_reverted_documents(&mut self, paths: &[PathBuf]) {
+        let Some(root) = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .map(|snapshot| &snapshot.root)
+        else {
+            return;
+        };
+        for file in &mut self.editor.files {
+            let Some(path) = &file.path else { continue };
+            let Ok(relative) = path.strip_prefix(root) else {
+                continue;
+            };
+            if !paths.contains(&relative.to_path_buf()) {
+                continue;
+            }
+            match self.file_system.read_text(path) {
+                Ok(text) => file.reload_from_disk(text),
+                Err(error) => {
+                    self.view.status = format!(
+                        "Discarded changes, but could not reload {}: {error}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn source_path_is_revertible(snapshot: &GitSnapshot, path: &std::path::Path) -> bool {
+    snapshot.changes.iter().any(|change| {
+        change.path == path
+            && change.index != '?'
+            && change.index != 'A'
+            && (change.index != ' ' || change.worktree != ' ')
+    })
 }
 
 #[cfg(test)]
@@ -409,6 +534,53 @@ mod tests {
             }],
         });
         app
+    }
+
+    #[test]
+    fn only_head_backed_tracked_changes_can_be_discarded() {
+        let root = tempfile::tempdir().unwrap();
+        let snapshot = GitSnapshot {
+            root: root.path().to_path_buf(),
+            branch: "main".into(),
+            changes: vec![
+                GitChange {
+                    path: "modified.rs".into(),
+                    index: ' ',
+                    worktree: 'M',
+                },
+                GitChange {
+                    path: "staged.rs".into(),
+                    index: 'M',
+                    worktree: ' ',
+                },
+                GitChange {
+                    path: "added.rs".into(),
+                    index: 'A',
+                    worktree: ' ',
+                },
+                GitChange {
+                    path: "new.rs".into(),
+                    index: '?',
+                    worktree: '?',
+                },
+            ],
+        };
+        assert!(source_path_is_revertible(
+            &snapshot,
+            std::path::Path::new("modified.rs")
+        ));
+        assert!(source_path_is_revertible(
+            &snapshot,
+            std::path::Path::new("staged.rs")
+        ));
+        assert!(!source_path_is_revertible(
+            &snapshot,
+            std::path::Path::new("added.rs")
+        ));
+        assert!(!source_path_is_revertible(
+            &snapshot,
+            std::path::Path::new("new.rs")
+        ));
     }
 
     #[test]

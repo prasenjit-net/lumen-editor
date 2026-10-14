@@ -52,7 +52,10 @@ pub(crate) trait SourceControlService: Send + Sync {
     -> Result<GitComparison, String>;
     fn stage(&self, root: &Path, paths: &[PathBuf]) -> Result<(), String>;
     fn unstage(&self, root: &Path, paths: &[PathBuf]) -> Result<(), String>;
-    fn commit(&self, root: &Path, message: &str) -> Result<(), String>;
+    /// Restore tracked paths and their index entries from HEAD. Deliberately
+    /// excludes untracked files: source control must never emulate `git clean`.
+    fn revert(&self, root: &Path, paths: &[PathBuf]) -> Result<(), String>;
+    fn commit(&self, root: &Path, message: &str, amend: bool) -> Result<(), String>;
     fn stage_hunk(&self, root: &Path, path: &Path, hunk: usize) -> Result<(), String>;
 }
 
@@ -225,19 +228,33 @@ impl SourceControlService for LocalGit {
         }
     }
 
-    fn commit(&self, root: &Path, message: &str) -> Result<(), String> {
+    fn revert(&self, root: &Path, paths: &[PathBuf]) -> Result<(), String> {
+        git_paths(
+            root,
+            ["restore", "--source=HEAD", "--staged", "--worktree", "--"],
+            paths,
+            "discard changes to",
+        )
+    }
+
+    fn commit(&self, root: &Path, message: &str, amend: bool) -> Result<(), String> {
         let message = message.trim();
-        if message.is_empty() {
+        if message.is_empty() && !amend {
             return Err("Enter a commit message".into());
         }
-        let output = git_command(root)
-            .args([
-                "--no-optional-locks",
-                "commit",
-                "--no-verify",
-                "-m",
-                message,
-            ])
+        let mut command = git_command(root);
+        command.args(["--no-optional-locks", "commit", "--no-verify"]);
+        if amend {
+            command.arg("--amend");
+            if message.is_empty() {
+                command.arg("--no-edit");
+            } else {
+                command.args(["-m", message]);
+            }
+        } else {
+            command.args(["-m", message]);
+        }
+        let output = command
             .output()
             .map_err(|error| format!("Could not start Git commit: {error}"))?;
         if output.status.success() {
@@ -719,13 +736,75 @@ mod tests {
                 .all(|change| change.index != 'A')
         );
         service.stage(root, &[PathBuf::from("one.rs")]).unwrap();
-        service.commit(root, "add one").unwrap();
+        service.commit(root, "add one", false).unwrap();
         let snapshot = service.snapshot(root).unwrap().unwrap();
         assert!(
             snapshot
                 .changes
                 .iter()
                 .any(|change| change.path == Path::new("two.rs") && change.index == '?')
+        );
+        assert!(
+            snapshot
+                .changes
+                .iter()
+                .all(|change| change.path != Path::new("one.rs"))
+        );
+    }
+
+    #[test]
+    fn revert_restores_only_requested_tracked_paths_and_keeps_untracked_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "--quiet"]);
+        git(&["config", "user.name", "Test"]);
+        git(&["config", "user.email", "test@example.invalid"]);
+        fs::write(root.join("one.rs"), "one\n").unwrap();
+        fs::write(root.join("two.rs"), "two\n").unwrap();
+        git(&["add", "--", "one.rs", "two.rs"]);
+        git(&["commit", "--quiet", "-m", "initial"]);
+
+        fs::write(root.join("one.rs"), "changed once\n").unwrap();
+        fs::write(root.join("two.rs"), "changed twice\n").unwrap();
+        git(&["add", "--", "one.rs"]);
+        fs::write(root.join("new.rs"), "untracked\n").unwrap();
+
+        LocalGit.revert(root, &[PathBuf::from("one.rs")]).unwrap();
+
+        assert_eq!(fs::read_to_string(root.join("one.rs")).unwrap(), "one\n");
+        assert_eq!(
+            fs::read_to_string(root.join("two.rs")).unwrap(),
+            "changed twice\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("new.rs")).unwrap(),
+            "untracked\n"
+        );
+        let snapshot = LocalGit.snapshot(root).unwrap().unwrap();
+        assert!(
+            snapshot
+                .changes
+                .iter()
+                .any(|change| change.path == Path::new("two.rs"))
+        );
+        assert!(
+            snapshot
+                .changes
+                .iter()
+                .any(|change| change.path == Path::new("new.rs") && change.index == '?')
         );
         assert!(
             snapshot
@@ -780,5 +859,48 @@ mod tests {
             .unwrap();
         assert!(working.contains("+FIFTEEN"));
         assert!(!working.contains("+ONE"));
+    }
+
+    #[test]
+    fn amend_keeps_or_replaces_the_latest_commit_message() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output
+        };
+        git(&["init", "--quiet"]);
+        git(&["config", "user.name", "Test"]);
+        git(&["config", "user.email", "test@example.invalid"]);
+        fs::write(root.join("file.txt"), "first\n").unwrap();
+        let service = LocalGit;
+        service.stage(root, &[PathBuf::from("file.txt")]).unwrap();
+        service.commit(root, "initial", false).unwrap();
+        fs::write(root.join("file.txt"), "second\n").unwrap();
+        service.stage(root, &[PathBuf::from("file.txt")]).unwrap();
+        service.commit(root, "", true).unwrap();
+        assert_eq!(
+            String::from_utf8(git(&["log", "-1", "--pretty=%s"]).stdout)
+                .unwrap()
+                .trim(),
+            "initial"
+        );
+        service.commit(root, "renamed", true).unwrap();
+        assert_eq!(
+            String::from_utf8(git(&["log", "-1", "--pretty=%s"]).stdout)
+                .unwrap()
+                .trim(),
+            "renamed"
+        );
     }
 }

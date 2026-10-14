@@ -60,34 +60,48 @@ fn source_heading(ui: &mut egui::Ui, title: &str, count: usize) {
     );
 }
 
+/// Source-control labels must never contribute their natural width to the
+/// resizable SidePanel. Git branch names and failures routinely contain long
+/// remote paths, so every ordinary text row is clipped to the current pane.
+fn source_label(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width().max(0.0), 22.0),
+        egui::Sense::hover(),
+    );
+    ui.painter()
+        .with_clip_rect(rect.intersect(ui.clip_rect()))
+        .text(
+            rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            text,
+            FontId::proportional(13.0),
+            color,
+        );
+    response
+}
+
 impl Workbench<'_> {
     pub(crate) fn source_control_panel(&mut self, ui: &mut egui::Ui) {
         let Some(workspace) = &self.editor.workspace else {
-            ui.label(RichText::new("Open a folder to view source control").color(theme::MUTED));
+            source_label(ui, "Open a folder to view source control", theme::MUTED);
             return;
         };
         if self.view.source_control.loading && self.view.source_control.snapshot.is_none() {
-            ui.label(RichText::new("Reading Git status…").color(theme::MUTED));
+            source_label(ui, "Reading Git status…", theme::MUTED);
             return;
         }
         if let Some(error) = &self.view.source_control.error {
-            ui.label(RichText::new(error).color(theme::DIFF_REMOVED_TEXT));
+            source_label(ui, error, theme::DIFF_REMOVED_TEXT);
             return;
         }
         let Some(snapshot) = self.view.source_control.snapshot.clone() else {
-            ui.label(RichText::new("No Git repository found").color(theme::MUTED));
-            ui.label(
-                RichText::new(workspace.display().to_string())
-                    .small()
-                    .color(theme::MUTED),
-            );
+            source_label(ui, "No Git repository found", theme::MUTED);
+            source_label(ui, &workspace.display().to_string(), theme::MUTED);
             return;
         };
-        ui.label(
-            RichText::new(format!("{}  {}", crate::icon::GIT_BRANCH, snapshot.branch))
-                .color(theme::TEXT),
-        )
-        .on_hover_text(snapshot.root.display().to_string());
+        let branch_text = format!("{}  {}", crate::icon::GIT_BRANCH, snapshot.branch);
+        let branch = source_label(ui, &branch_text, theme::TEXT);
+        branch.on_hover_text(snapshot.root.display().to_string());
         let staged_paths: Vec<_> = snapshot
             .changes
             .iter()
@@ -100,41 +114,81 @@ impl Workbench<'_> {
             .filter(|change| change.worktree != ' ')
             .map(|change| change.path.clone())
             .collect();
+        let revertible_paths: Vec<_> = snapshot
+            .changes
+            .iter()
+            .filter(|change| change.index != '?' && change.index != 'A')
+            .map(|change| change.path.clone())
+            .collect();
         ui.horizontal(|ui| {
             ui.label(RichText::new("SOURCE CONTROL").small().color(theme::MUTED));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .small_button(format!("{} Stage All", crate::icon::PLUS))
+                    .add_sized(
+                        [22.0, 22.0],
+                        egui::Button::new(crate::icon::PLUS).frame(false),
+                    )
                     .on_hover_text("Stage all working changes")
                     .clicked()
                 {
                     self.command(Command::StagePaths(working_paths.clone()));
                 }
                 if ui
-                    .small_button(format!("{} Unstage All", crate::icon::X))
+                    .add_sized([22.0, 22.0], egui::Button::new(crate::icon::X).frame(false))
                     .on_hover_text("Unstage all staged changes")
                     .clicked()
                 {
                     self.command(Command::UnstagePaths(staged_paths.clone()));
                 }
+                if ui
+                    .add_enabled(
+                        !revertible_paths.is_empty(),
+                        egui::Button::new(crate::icon::REFRESH).frame(false),
+                    )
+                    .on_hover_text("Discard all tracked changes")
+                    .clicked()
+                {
+                    self.command(Command::RequestSourceRevert(revertible_paths.clone()));
+                }
             });
         });
         let has_staged = !staged_paths.is_empty();
         ui.horizontal(|ui| {
-            let response = ui.add_enabled(
-                has_staged && !self.view.source_control.loading,
-                TextEdit::singleline(&mut self.view.source_control.commit_message)
-                    .id_salt("source_control_commit_message")
-                    .hint_text("Message (press Commit to submit)"),
-            );
+            ui.checkbox(&mut self.view.source_control.amend_commit, "Amend")
+                .on_hover_text(
+                    "Amend the most recent commit; an empty message keeps its current message",
+                );
+            let commit_label = if self.view.source_control.amend_commit {
+                "Amend"
+            } else {
+                "Commit"
+            };
+            // Never let a TextEdit's natural width raise the SidePanel's
+            // minimum width. The input yields space first at narrow widths.
+            let message_width = (ui.available_width() - 58.0).max(24.0);
+            let response = ui
+                .add_enabled_ui(
+                    (has_staged || self.view.source_control.amend_commit)
+                        && !self.view.source_control.loading,
+                    |ui| {
+                        ui.add_sized(
+                            [message_width, 22.0],
+                            TextEdit::singleline(&mut self.view.source_control.commit_message)
+                                .id_salt("source_control_commit_message")
+                                .hint_text("Message"),
+                        )
+                    },
+                )
+                .inner;
             if self.view.source_control.commit_focus {
                 response.request_focus();
                 self.view.source_control.commit_focus = false;
             }
             if ui
                 .add_enabled(
-                    has_staged && !self.view.source_control.loading,
-                    egui::Button::new("Commit"),
+                    (has_staged || self.view.source_control.amend_commit)
+                        && !self.view.source_control.loading,
+                    egui::Button::new(commit_label),
                 )
                 .clicked()
             {
@@ -142,10 +196,10 @@ impl Workbench<'_> {
             }
         });
         if let Some(error) = &self.view.source_control.commit_error {
-            ui.label(RichText::new(error).small().color(theme::DIFF_REMOVED_TEXT));
+            source_label(ui, error, theme::DIFF_REMOVED_TEXT);
         }
         if snapshot.changes.is_empty() {
-            ui.label(RichText::new("No changes").color(theme::MUTED));
+            source_label(ui, "No changes", theme::MUTED);
             return;
         }
         let rows = source_rows(&snapshot);
@@ -182,6 +236,18 @@ impl Workbench<'_> {
                     } else {
                         crate::icon::PLUS
                     };
+                    let revertible = change.index != '?' && change.index != 'A';
+                    let revert_clicked = revertible
+                        && ui
+                            .put(
+                                egui::Rect::from_min_size(
+                                    response.rect.right_top() - egui::vec2(44.0, 0.0),
+                                    egui::vec2(22.0, response.rect.height()),
+                                ),
+                                egui::Button::new(crate::icon::REFRESH).frame(false),
+                            )
+                            .on_hover_text("Discard changes to this file")
+                            .clicked();
                     let action_clicked = ui
                         .put(
                             egui::Rect::from_min_size(
@@ -198,6 +264,8 @@ impl Workbench<'_> {
                         .clicked();
                     if action_clicked {
                         self.command(action);
+                    } else if revert_clicked {
+                        self.command(Command::RequestSourceRevert(vec![change.path.clone()]));
                     } else if response.clicked() {
                         requested = Some((change.path.clone(), side));
                     }
@@ -205,6 +273,43 @@ impl Workbench<'_> {
             });
         if let Some((path, side)) = requested {
             self.command(Command::ShowSourceDiff(path, side));
+        }
+    }
+
+    pub(crate) fn source_revert_dialog(&mut self, ctx: &egui::Context) {
+        let Some(prompt) = &self.view.source_control.revert_prompt else {
+            return;
+        };
+        let paths = prompt.paths.clone();
+        let error = prompt.error.clone();
+        let mut confirm = false;
+        let mut cancel = false;
+        let modal = egui::Modal::new(egui::Id::new("source_control_revert")).show(ctx, |ui| {
+            ui.set_width(400.0);
+            let count = paths.len();
+            ui.heading(if count == 1 { "Discard changes to this file?" } else { "Discard changes to these files?" });
+            ui.label(RichText::new("This restores the tracked file and its staged state from HEAD. This cannot be undone in Lumen.").color(theme::MUTED));
+            ui.label(RichText::new("Untracked files are not removed.").color(theme::MUTED));
+            ui.add_space(6.0);
+            for path in paths.iter().take(4) {
+                ui.label(path.display().to_string());
+            }
+            if count > 4 {
+                ui.label(RichText::new(format!("…and {} more", count - 4)).color(theme::MUTED));
+            }
+            if let Some(error) = &error {
+                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                confirm = ui.add_enabled(!self.view.source_control.loading, egui::Button::new("Discard Changes")).clicked();
+                cancel = ui.button("Cancel").clicked();
+            });
+        });
+        if cancel || modal.should_close() {
+            self.view.source_control.revert_prompt = None;
+        } else if confirm {
+            self.command(Command::ConfirmSourceRevert);
         }
     }
 
@@ -385,14 +490,90 @@ fn read_only_source(
 mod tests {
     use super::*;
     use crate::{
-        app::view_state::{SourceDiffView, ViewState},
+        app::{
+            LumenApp,
+            view_state::{Activity, SourceDiffView, ViewState},
+        },
         model::EditorState,
         services::{
             LocalFileSystem,
             source_control::{GitChange, GitComparison, GitHunk, GitSnapshot},
         },
     };
-    use std::path::PathBuf;
+    use std::{cell::Cell, path::PathBuf};
+
+    fn source_sidebar_width(
+        app: &mut LumenApp,
+        ctx: &egui::Context,
+        requested: f32,
+        pointer: egui::Pos2,
+    ) -> f32 {
+        ctx.data_mut(|data| {
+            data.insert_persisted(
+                egui::Id::new("explorer"),
+                egui::containers::panel::PanelState {
+                    rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(requested, 600.0)),
+                },
+            );
+        });
+        let width = Cell::new(0.0);
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 600.0),
+                )),
+                events: vec![egui::Event::PointerMoved(pointer)],
+                ..Default::default()
+            },
+            |ctx| {
+                app.render_component(ctx, |workbench| workbench.sidebar(ctx));
+                width.set(ctx.available_rect().left());
+            },
+        );
+        width.get()
+    }
+
+    #[test]
+    fn source_control_content_and_hover_never_expand_the_sidebar() {
+        let mut app = LumenApp::default();
+        app.view.activity = Activity::SourceControl;
+        app.editor.workspace = Some(PathBuf::from("/workspace"));
+        app.view.source_control.snapshot = Some(GitSnapshot {
+            root: PathBuf::from("/workspace"),
+            branch: "feature/a-branch-name-long-enough-to-previously-grow-the-sidebar".into(),
+            changes: vec![GitChange {
+                path: PathBuf::from("src/a-very-long-file-name-that-must-stay-clipped.rs"),
+                index: ' ',
+                worktree: 'M',
+            }],
+        });
+        let ctx = egui::Context::default();
+        theme::configure_ui(&ctx);
+        for requested in [180.0, 240.0, 600.0] {
+            // The shared canvas frame contributes its fixed 2px gutters on
+            // both sides; only drift beyond that outer width is a regression.
+            let expected = requested + 4.0;
+            let widths = [
+                source_sidebar_width(&mut app, &ctx, requested, egui::pos2(850.0, 400.0)),
+                source_sidebar_width(&mut app, &ctx, requested, egui::pos2(120.0, 95.0)),
+                source_sidebar_width(&mut app, &ctx, requested, egui::pos2(120.0, 180.0)),
+            ];
+            assert!(
+                widths.iter().all(|width| (*width - expected).abs() < 2.0),
+                "source content widened sidebar {requested}: {widths:?}"
+            );
+        }
+        app.view.source_control.snapshot = None;
+        app.view.source_control.error = Some(
+            "Git status failed because an unusually long error must remain inside the pane".into(),
+        );
+        let width = source_sidebar_width(&mut app, &ctx, 180.0, egui::pos2(120.0, 95.0));
+        assert!(
+            (180.0..=186.0).contains(&width),
+            "source error widened sidebar: {width}"
+        );
+    }
 
     #[test]
     fn source_rows_stay_left_aligned_at_panel_widths() {
@@ -436,7 +617,9 @@ mod tests {
                     }
                     _ => None,
                 });
-                assert!(x.is_some_and(|x| x < 30.0), "{width}: {expected} at {x:?}");
+                // The branch text follows its Codicon; both labels still begin
+                // in the left portion of the panel rather than being centred.
+                assert!(x.is_some_and(|x| x < 80.0), "{width}: {expected} at {x:?}");
             }
         }
     }

@@ -175,7 +175,11 @@ tabbed working diff layout and tab switching; Windows runtime remains untested.
 - [x] Add file-level staging/unstaging and commits with explicit error feedback
   and no implicit modification of unrelated worktree files.
 - [x] Add targeted working-diff hunk staging, without touching unrelated edits.
-- [ ] Add amend, push/pull, merge handling and history only after their
+- [x] Add explicit local amend with a no-message path that preserves the prior
+  commit subject.
+- [x] Add confirmed per-file and bulk discard for HEAD-backed tracked changes;
+  it restores index and worktree state without deleting untracked files.
+- [ ] Add push/pull, merge handling and history only after their
   independent workflows have error/cancellation coverage.
 - [ ] Reuse the comparison component from item 1 where practical.
 

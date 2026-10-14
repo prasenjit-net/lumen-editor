@@ -117,9 +117,18 @@ pub(crate) struct SourceControlView {
     pub(crate) error: Option<String>,
     pub(crate) diff: Option<SourceDiffView>,
     pub(crate) commit_message: String,
+    pub(crate) amend_commit: bool,
     pub(crate) commit_error: Option<String>,
     pub(crate) commit_focus: bool,
+    pub(crate) revert_prompt: Option<SourceRevertPrompt>,
     pub(crate) last_refresh: Option<std::time::Instant>,
+}
+
+/// Confirmation state stays in the app layer; the UI only presents it and
+/// emits typed commands, while the Git service performs the operation.
+pub(crate) struct SourceRevertPrompt {
+    pub(crate) paths: Vec<PathBuf>,
+    pub(crate) error: Option<String>,
 }
 
 pub(crate) struct SourceDiffView {
