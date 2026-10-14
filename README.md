@@ -239,6 +239,19 @@ Workspace files rank ahead of external recents when searching. The workspace ind
 refresh it after changes made outside Lumen. The native Open File dialog remains
 available through Cmd/Ctrl+O.
 
+The Source Control activity shows Git status for the repository containing the
+opened folder. Selecting a staged, working, or untracked change opens a diff
+editor tab. The Git version on the left is read-only; the working file on the
+right is a normal editable document with the usual save and undo behavior.
+Staged comparisons are read-only on both sides. An already-open dirty buffer is
+reused without replacing its text. A file opened solely for a diff has no
+separate file tab until opened from Explorer; closing a clean diff drops that
+preview buffer, while closing a dirty diff reveals its file tab. Change markers
+are hidden when its text
+differs from the Git snapshot. Refresh the Source Control panel after external
+changes, or reopen a comparison to update its snapshot. The current milestone
+does not stage, commit, or show Explorer status badges.
+
 ### Default shared editor and legacy fallback
 
 The default workbench uses the shared core for typing, clipboard, IME,

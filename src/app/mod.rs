@@ -13,6 +13,7 @@ mod folding;
 mod navigation;
 mod safety;
 pub(crate) mod settings;
+pub(crate) mod source_control;
 #[cfg(test)]
 mod tests;
 pub(crate) mod view_state;
@@ -37,6 +38,9 @@ pub(crate) struct LumenApp {
     pub(crate) safety: safety::SafetyState,
     pub(crate) search_job: Option<workspace_search::SearchJob>,
     pub(crate) file_index_job: Option<navigation::FileIndexJob>,
+    pub(crate) source_control_job: Option<source_control::SourceControlJob>,
+    pub(crate) source_control_service:
+        std::sync::Arc<dyn crate::services::source_control::SourceControlService>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
 }
@@ -54,6 +58,8 @@ impl Default for LumenApp {
             safety: safety::SafetyState::default(),
             search_job: None,
             file_index_job: None,
+            source_control_job: None,
+            source_control_service: std::sync::Arc::new(crate::services::source_control::LocalGit),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
         }
@@ -69,6 +75,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.title_bar(ctx));
         self.render_component(ctx, |workbench| workbench.status_bar(ctx));
         self.render_component(ctx, |workbench| workbench.activity_bar(ctx));
+        self.ensure_source_control(ctx);
         self.render_component(ctx, |workbench| workbench.sidebar(ctx));
         self.render_component(ctx, |workbench| workbench.editor(ctx));
         self.render_component(ctx, |workbench| workbench.palette(ctx));
@@ -83,6 +90,7 @@ impl eframe::App for LumenApp {
         self.maintain_documents(ctx);
         self.poll_workspace_search(ctx);
         self.poll_file_index(ctx);
+        self.poll_source_control(ctx);
     }
 }
 

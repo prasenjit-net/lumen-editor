@@ -49,6 +49,8 @@ impl LumenApp {
             Command::StartWorkspaceSearch => self.start_workspace_search(ctx),
             Command::CancelWorkspaceSearch => self.cancel_workspace_search(),
             Command::ClearWorkspaceSearch => self.clear_workspace_search(),
+            Command::RefreshSourceControl => self.refresh_source_control(ctx),
+            Command::ShowSourceDiff(path, side) => self.show_source_diff(path, side, ctx),
             Command::PreviewWorkspaceReplace => self.preview_workspace_replace(),
             Command::PreviewWorkspaceReplaceScope(scope) => {
                 self.preview_workspace_replace_scope(scope)
@@ -128,6 +130,16 @@ impl LumenApp {
                 if self.view.settings.open {
                     self.view.settings.tab_open = false;
                     self.view.settings.open = false;
+                    return;
+                }
+                if self
+                    .view
+                    .source_control
+                    .diff
+                    .as_ref()
+                    .is_some_and(|diff| diff.active)
+                {
+                    super::source_control::close_diff_preview(&mut self.editor, &mut self.view);
                     return;
                 }
                 if let Some(index) = self.editor.active_file {

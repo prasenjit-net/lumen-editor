@@ -22,6 +22,16 @@ impl Workbench<'_> {
                         self.settings_page(ui);
                         return;
                     }
+                    if self
+                        .view
+                        .source_control
+                        .diff
+                        .as_ref()
+                        .is_some_and(|diff| diff.active)
+                    {
+                        self.source_diff_editor(ui);
+                        return;
+                    }
                     let Some(index) = self.editor.active_file else {
                         ui.vertical_centered(|ui| {
                             ui.add_space(130.0);

@@ -10,7 +10,9 @@ mod input;
 mod shaping;
 mod visual_navigation;
 
-use egui::{Align2, FontId, Id, Pos2, Rect, Response, ScrollArea, Sense, Stroke, Ui, vec2};
+use egui::{
+    Align2, Color32, FontId, Id, Pos2, Rect, Response, ScrollArea, Sense, Stroke, Ui, vec2,
+};
 use geometry::LayoutConfig;
 pub use geometry::TextGeometry;
 use lumen_editor_core::syntax::{Kind, Language};
@@ -47,6 +49,7 @@ pub struct EditorSurface {
     fold_icons: Option<(&'static str, &'static str)>,
     folds_changed: bool,
     fold_suspended: bool,
+    diff_lines: Option<(BTreeSet<usize>, Color32)>,
     pub notice: Option<String>,
     #[cfg(feature = "shaped")]
     shaper: Option<Shaper>,
@@ -146,6 +149,9 @@ pub struct SurfaceOutput {
 }
 
 impl EditorSurface {
+    pub fn set_diff_lines(&mut self, lines: Option<&BTreeSet<usize>>, color: Color32) {
+        self.diff_lines = lines.map(|lines| (lines.clone(), color));
+    }
     pub fn set_language(&mut self, language: Language) {
         self.language = (language != Language::Plain).then_some(language);
     }
@@ -330,6 +336,20 @@ impl EditorSurface {
                     self.geometry(ui, buffer.text(), origin, self.composition.as_ref())
                 };
                 let painter = ui.painter().with_clip_rect(text_clip);
+                if let Some((lines, color)) = &self.diff_lines {
+                    for (row, rect) in geometry.row_rects().into_iter().enumerate() {
+                        if lines.contains(&geometry.source_line_for_row(row)) {
+                            painter.rect_filled(
+                                Rect::from_min_max(
+                                    egui::pos2(text_clip.left(), rect.top()),
+                                    egui::pos2(text_clip.right(), rect.bottom()),
+                                ),
+                                0.0,
+                                *color,
+                            );
+                        }
+                    }
+                }
                 for (index, selection) in buffer.selections().selections().iter().enumerate() {
                     if geometry.preedit_rects().is_some()
                         && index == buffer.selections().primary_index()

@@ -1,5 +1,9 @@
 use super::*;
 use crate::{app::LumenApp, model::Document};
+use crate::{
+    app::view_state::SourceDiffView,
+    services::source_control::{DiffSide, GitComparison},
+};
 fn fixture(count: usize) -> (LumenApp, egui::Context) {
     let mut app = LumenApp::default();
     for index in 0..count {
@@ -184,4 +188,54 @@ fn settings_is_revealed_in_overflow_and_dirty_markers_keep_close_confirmation() 
     assert_eq!(app.editor.files.len(), 30);
     assert!(app.editor.files[0].dirty);
     assert_eq!(app.editor.files[0].text, "untouched");
+}
+
+#[test]
+fn diff_only_document_has_one_visible_tab_until_explorer_reveals_it() {
+    let (mut app, ctx) = fixture(1);
+    let id = app.editor.files[0].id;
+    app.view.source_control.diff = Some(SourceDiffView {
+        root: "/workspace".into(),
+        path: "file_0.rs".into(),
+        side: DiffSide::Working,
+        comparison: Ok(std::sync::Arc::new(GitComparison {
+            base: String::new(),
+            changed: Some("untouched".into()),
+            old_lines: Default::default(),
+            new_lines: Default::default(),
+        })),
+        document: Some(id),
+        diff_only_document: Some(id),
+        opened_revision: Some(0),
+        active: true,
+    });
+    let (_, output) = frame(&mut app, &ctx, 800.0, vec![]);
+    let labels: Vec<_> = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text().contains("file_0.rs") => {
+                Some(text.galley.text().to_owned())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(labels.len(), 1, "{labels:?}");
+    assert!(labels[0].contains("(Diff)"));
+
+    app.view
+        .source_control
+        .diff
+        .as_mut()
+        .unwrap()
+        .diff_only_document = None;
+    let (_, output) = frame(&mut app, &ctx, 800.0, vec![]);
+    assert_eq!(
+        output
+            .shapes
+            .iter()
+            .filter(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().contains("file_0.rs")))
+            .count(),
+        2
+    );
 }

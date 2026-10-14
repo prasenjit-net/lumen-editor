@@ -79,6 +79,15 @@ impl Workbench<'_> {
             bundled_font: self.view.settings.font_family(path) == "Hack",
         });
         surface.set_language(self.editor.files[index].language);
+        let diff_lines = self.view.source_control.diff.as_ref().and_then(|diff| {
+            (diff.active
+                && diff.document == Some(document)
+                && diff.opened_revision == Some(self.editor.files[index].revision))
+            .then_some(&diff.comparison)
+            .and_then(|result| result.as_ref().ok())
+            .map(|comparison| &comparison.new_lines)
+        });
+        surface.set_diff_lines(diff_lines, super::theme::DIFF_ADDED_BG);
         surface.set_syntax(
             self.view
                 .settings

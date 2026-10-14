@@ -30,12 +30,16 @@ impl LumenApp {
 
     pub(crate) fn choose_folder(&mut self) {
         if let Some(folder) = self.dialogs.open_folder() {
+            super::source_control::close_diff_preview(&mut self.editor, &mut self.view);
             self.cancel_file_index();
             self.view.navigation.indexed_root = None;
             self.cancel_workspace_search();
             self.view.workspace_search.results = None;
             self.view.workspace_search.completed_request = None;
             self.editor.workspace = Some(folder.clone());
+            // A comparison belongs to the repository it was opened from.
+            self.source_control_job = None;
+            self.view.source_control = Default::default();
             self.view.expanded_dirs.clear();
             self.view.expanded_dirs.insert(folder.clone());
             self.view.explorer_selection = Some(ExplorerSelection::Directory(folder.clone()));
@@ -49,6 +53,17 @@ impl LumenApp {
 
     pub(crate) fn open_file(&mut self, path: PathBuf) {
         self.view.settings.open = false;
+        if let Some(diff) = &mut self.view.source_control.diff {
+            diff.active = false;
+            if diff.diff_only_document.is_some_and(|id| {
+                self.editor
+                    .files
+                    .iter()
+                    .any(|file| file.id == id && file.path.as_deref() == Some(path.as_path()))
+            }) {
+                diff.diff_only_document = None;
+            }
+        }
         if let Some(index) = self
             .editor
             .files

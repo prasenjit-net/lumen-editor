@@ -155,8 +155,16 @@ impl Workbench<'_> {
                             enabled: self.editor.workspace.is_some(),
                         },
                     ];
+                    let source_actions = [HeaderAction {
+                        glyph: icon::REFRESH,
+                        tooltip: "Refresh source control",
+                        command: Command::RefreshSourceControl,
+                        enabled: self.editor.workspace.is_some(),
+                    }];
                     let actions = if self.view.activity == Activity::Explorer {
                         &explorer_actions[..]
+                    } else if self.view.activity == Activity::SourceControl {
+                        &source_actions[..]
                     } else {
                         &[]
                     };
@@ -173,8 +181,7 @@ impl Workbench<'_> {
                             self.workspace_search_panel(ui);
                         }
                         Activity::SourceControl => {
-                            ui.label(RichText::new("Source Control").size(18.0));
-                            ui.label(RichText::new("Git integration is coming next.").color(MUTED));
+                            self.source_control_panel(ui);
                         }
                         Activity::RunDebug => {
                             ui.label(RichText::new("Run and Debug").size(18.0));

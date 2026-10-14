@@ -18,6 +18,7 @@ const ACTION_SIZE: f32 = 22.0;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TabTarget {
     Document(DocumentId),
+    Diff,
     Settings,
 }
 
@@ -89,10 +90,23 @@ impl TabSizing {
 
 impl Workbench<'_> {
     pub(crate) fn editor_tabs(&mut self, ui: &mut egui::Ui) -> egui::Rect {
-        let titles: Vec<_> = self
+        let hidden_document = self
+            .view
+            .source_control
+            .diff
+            .as_ref()
+            .and_then(|diff| diff.diff_only_document);
+        let visible_files: Vec<_> = self
             .editor
             .files
             .iter()
+            .enumerate()
+            .filter(|(_, file)| Some(file.id) != hidden_document)
+            .map(|(index, _)| index)
+            .collect();
+        let titles: Vec<_> = visible_files
+            .iter()
+            .map(|&index| &self.editor.files[index])
             .map(|file| {
                 let path = file.path.as_deref().unwrap_or(Path::new(&file.name));
                 format!(
@@ -102,6 +116,14 @@ impl Workbench<'_> {
                     if file.disk_changed { " !" } else { "" }
                 )
             })
+            .chain(self.view.source_control.diff.as_ref().map(|diff| {
+                let name = diff
+                    .path
+                    .file_name()
+                    .unwrap_or(diff.path.as_os_str())
+                    .to_string_lossy();
+                format!("{} {} (Diff)", icon::GIT_BRANCH, name)
+            }))
             .chain(
                 self.view
                     .settings
@@ -123,17 +145,28 @@ impl Workbench<'_> {
                 .clamp(MIN_WIDTH, MAX_WIDTH)
             })
             .collect();
+        let diff_active = self
+            .view
+            .source_control
+            .diff
+            .as_ref()
+            .is_some_and(|diff| diff.active);
         let active_index = if self.view.settings.open {
-            self.view
-                .settings
-                .tab_open
-                .then_some(self.editor.files.len())
+            self.view.settings.tab_open.then_some(
+                visible_files.len() + usize::from(self.view.source_control.diff.is_some()),
+            )
+        } else if diff_active {
+            Some(visible_files.len())
         } else {
-            self.editor.active_file
+            self.editor
+                .active_file
+                .and_then(|index| visible_files.iter().position(|visible| *visible == index))
         };
         let sizing = TabSizing::new(ui.available_width(), &natural, active_index);
         let active = if self.view.settings.open {
             Some(TabTarget::Settings)
+        } else if diff_active {
+            Some(TabTarget::Diff)
         } else {
             self.active().map(|file| TabTarget::Document(file.id))
         };
@@ -154,6 +187,8 @@ impl Workbench<'_> {
         let mut close = None;
         let mut open_settings = false;
         let mut close_settings = false;
+        let mut open_diff = false;
+        let mut close_diff = false;
         let strip = ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             ui.allocate_ui_with_layout(
@@ -169,12 +204,13 @@ impl Workbench<'_> {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = GAP;
-                                for (index, file) in self.editor.files.iter().enumerate() {
+                                for (tab_index, &file_index) in visible_files.iter().enumerate() {
+                                    let file = &self.editor.files[file_index];
                                     let selected = active == Some(TabTarget::Document(file.id));
                                     let response = tab(
                                         ui,
-                                        &titles[index],
-                                        sizing.widths[index],
+                                        &titles[tab_index],
+                                        sizing.widths[tab_index],
                                         selected,
                                         &file.path.as_ref().map_or_else(
                                             || file.name.clone(),
@@ -184,17 +220,42 @@ impl Workbench<'_> {
                                         file.dirty,
                                     );
                                     if response.select {
-                                        select = Some(index);
+                                        select = Some(file_index);
                                     }
                                     if response.close {
-                                        close = Some(index);
+                                        close = Some(file_index);
                                     }
                                     if selected && reveal {
                                         ui.scroll_to_rect(response.rect, None);
                                     }
                                 }
+                                if let Some(diff) = &self.view.source_control.diff {
+                                    let index = visible_files.len();
+                                    let selected = active == Some(TabTarget::Diff);
+                                    let dirty = diff.document.is_some_and(|document| {
+                                        self.editor
+                                            .files
+                                            .iter()
+                                            .any(|file| file.id == document && file.dirty)
+                                    });
+                                    let response = tab(
+                                        ui,
+                                        &titles[index],
+                                        sizing.widths[index],
+                                        selected,
+                                        &diff.path.display().to_string(),
+                                        "Close diff editor",
+                                        dirty,
+                                    );
+                                    open_diff = response.select;
+                                    close_diff = response.close;
+                                    if selected && reveal {
+                                        ui.scroll_to_rect(response.rect, None);
+                                    }
+                                }
                                 if self.view.settings.tab_open {
-                                    let index = self.editor.files.len();
+                                    let index = visible_files.len()
+                                        + usize::from(self.view.source_control.diff.is_some());
                                     let selected = active == Some(TabTarget::Settings);
                                     let response = tab(
                                         ui,
@@ -221,9 +282,13 @@ impl Workbench<'_> {
                 ui.menu_button(icon::CARET_DOWN, |ui| {
                     ui.set_max_width(360.0);
                     ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                        for (index, file) in self.editor.files.iter().enumerate() {
-                            let title =
-                                format!("{}{}", titles[index], if file.dirty { " ●" } else { "" });
+                        for (tab_index, &file_index) in visible_files.iter().enumerate() {
+                            let file = &self.editor.files[file_index];
+                            let title = format!(
+                                "{}{}",
+                                titles[tab_index],
+                                if file.dirty { " ●" } else { "" }
+                            );
                             if ui
                                 .selectable_label(
                                     active == Some(TabTarget::Document(file.id)),
@@ -235,9 +300,20 @@ impl Workbench<'_> {
                                 ))
                                 .clicked()
                             {
-                                select = Some(index);
+                                select = Some(file_index);
                                 ui.close();
                             }
+                        }
+                        if let Some(diff) = &self.view.source_control.diff
+                            && ui
+                                .selectable_label(
+                                    active == Some(TabTarget::Diff),
+                                    format!("{} (Diff)", diff.path.display()),
+                                )
+                                .clicked()
+                        {
+                            open_diff = true;
+                            ui.close();
                         }
                         if self.view.settings.tab_open
                             && ui
@@ -269,11 +345,26 @@ impl Workbench<'_> {
             ui.ctx()
                 .data_mut(|data| data.remove::<RevealSignature>(reveal_id));
             self.view.settings.open = false;
+            if let Some(diff) = &mut self.view.source_control.diff {
+                diff.active = false;
+            }
             self.editor.active_file = Some(index);
             self.view.focus_editor = true;
         }
         if let Some(index) = close {
             self.command(Command::RequestClose(index));
+        }
+        if close_diff {
+            crate::app::source_control::close_diff_preview(self.editor, self.view);
+        } else if open_diff {
+            self.view.settings.open = false;
+            if let Some(diff) = &mut self.view.source_control.diff {
+                diff.active = true;
+                self.view.focus_editor = diff.document.is_some();
+                self.editor.active_file = diff
+                    .document
+                    .and_then(|id| self.editor.files.iter().position(|file| file.id == id));
+            }
         }
         if close_settings {
             self.view.settings.tab_open = false;

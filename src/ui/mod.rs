@@ -16,6 +16,7 @@ mod explorer_edit;
 mod navigation;
 mod palette;
 mod settings;
+mod source_control;
 pub(crate) mod theme;
 mod widgets;
 mod workspace_search;

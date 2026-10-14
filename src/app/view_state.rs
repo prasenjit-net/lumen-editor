@@ -109,6 +109,28 @@ pub(crate) struct WorkspaceSearchView {
     pub(crate) replaced_files: usize,
 }
 
+#[derive(Default)]
+pub(crate) struct SourceControlView {
+    pub(crate) workspace: Option<PathBuf>,
+    pub(crate) snapshot: Option<crate::services::source_control::GitSnapshot>,
+    pub(crate) loading: bool,
+    pub(crate) error: Option<String>,
+    pub(crate) diff: Option<SourceDiffView>,
+}
+
+pub(crate) struct SourceDiffView {
+    pub(crate) root: PathBuf,
+    pub(crate) path: PathBuf,
+    pub(crate) side: crate::services::source_control::DiffSide,
+    pub(crate) comparison:
+        Result<std::sync::Arc<crate::services::source_control::GitComparison>, String>,
+    pub(crate) document: Option<crate::model::DocumentId>,
+    /// Document opened solely for this diff; its ordinary tab stays hidden.
+    pub(crate) diff_only_document: Option<crate::model::DocumentId>,
+    pub(crate) opened_revision: Option<u64>,
+    pub(crate) active: bool,
+}
+
 impl ExplorerEdit {
     pub(crate) fn new(directory: PathBuf) -> Self {
         Self {
@@ -175,6 +197,7 @@ pub(crate) struct ViewState {
         std::collections::HashMap<crate::model::DocumentId, super::folding::FoldTabState>,
     pub(crate) search: String,
     pub(crate) workspace_search: WorkspaceSearchView,
+    pub(crate) source_control: SourceControlView,
     pub(crate) sidebar_visible: bool,
     pub(crate) status: String,
     pub(crate) safety_notices: Vec<String>,
@@ -234,6 +257,7 @@ impl Default for ViewState {
             fold_tabs: Default::default(),
             search: String::new(),
             workspace_search: WorkspaceSearchView::default(),
+            source_control: SourceControlView::default(),
             sidebar_visible: true,
             status: "Ready".into(),
             safety_notices: Vec::new(),

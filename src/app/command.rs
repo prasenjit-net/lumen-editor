@@ -2,6 +2,7 @@ use super::editor_action::EditorAction;
 use super::view_state::{Activity, ExplorerEdit, ViewState};
 use super::workspace_search::ReplaceScope;
 use crate::model::{DocumentId, EditorState};
+use crate::services::source_control::DiffSide;
 use std::ops::Range;
 use std::path::PathBuf;
 
@@ -18,6 +19,8 @@ pub(crate) enum Command {
     StartWorkspaceSearch,
     CancelWorkspaceSearch,
     ClearWorkspaceSearch,
+    RefreshSourceControl,
+    ShowSourceDiff(PathBuf, DiffSide),
     PreviewWorkspaceReplace,
     PreviewWorkspaceReplaceScope(ReplaceScope),
     ApplyWorkspaceReplace,
@@ -98,6 +101,9 @@ impl Command {
             }
             Self::NewUntitled => {
                 view.settings.open = false;
+                if let Some(diff) = &mut view.source_control.diff {
+                    diff.active = false;
+                }
                 editor.new_file();
                 view.focus_editor = true;
                 view.status = "New untitled file".into();
@@ -119,6 +125,9 @@ impl Command {
                     }
                 } else {
                     view.settings.open = false;
+                    if let Some(diff) = &mut view.source_control.diff {
+                        diff.active = false;
+                    }
                     editor.new_file();
                     view.focus_editor = true;
                     view.status = "New untitled file".into();
@@ -133,6 +142,15 @@ impl Command {
             }
             Self::CloseFile(index) => {
                 if index < editor.files.len() {
+                    if view
+                        .source_control
+                        .diff
+                        .as_ref()
+                        .and_then(|diff| diff.document)
+                        == Some(editor.files[index].id)
+                    {
+                        view.source_control.diff = None;
+                    }
                     view.find.remove(&editor.files[index].id);
                     editor.close_file(index);
                     view.status = "Closed file".into();

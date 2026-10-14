@@ -154,9 +154,23 @@ Deferred by user direction while roadmap item 7 is pursued.
 Exit gate: at least one language has end-to-end native workflows, with server
 absence/failure and stale-response regression tests.
 
-## 7. Add Git source control and diff views
+## 7. Add Git source control and diff views — in progress
 
-- [ ] Start with repository discovery, status badges and working-tree diffs.
+The first read-only milestone discovers the repository containing the opened
+folder, lists staged/working/untracked paths in the Source Control activity,
+and opens a staged, working, or untracked comparison in an editor tab. Git runs
+off the UI thread; status is refreshed on workspace change or via the panel
+action. The Git side is read-only, while the working side reuses a normal
+editable document, including any unsaved buffer. Diff output is bounded to
+256 KiB (128 KiB for untracked files). Markers are hidden if that buffer no
+longer matches the captured disk snapshot. A macOS live-app check confirmed the
+tabbed working diff layout and tab switching; Windows runtime remains untested.
+
+- [x] Add read-only repository discovery, changed-file list and staged/working
+  patch preview with bounded output and explicit error states.
+- [x] Add a tabbed side-by-side diff for staged, working, and untracked files,
+  with editable working content and dirty-buffer preservation.
+- [ ] Add Explorer status badges and automatic external-change refresh.
 - [ ] Then add staging/unstaging and commit, with explicit error feedback and
   no implicit modification of unrelated worktree files.
 - [ ] Reuse the comparison component from item 1 where practical.

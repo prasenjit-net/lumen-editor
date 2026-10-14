@@ -8,6 +8,7 @@ pub(crate) mod recent_files;
 pub(crate) mod recovery;
 mod reveal;
 pub(crate) mod settings;
+pub(crate) mod source_control;
 pub(crate) mod workspace_search;
 pub(crate) use clipboard::{ClipboardRead, ClipboardRequestId, ClipboardService, NativeClipboard};
 pub(crate) use dialogs::{FileDialogs, NativeDialogs};
