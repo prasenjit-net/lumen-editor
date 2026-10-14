@@ -249,8 +249,14 @@ separate file tab until opened from Explorer; closing a clean diff drops that
 preview buffer, while closing a dirty diff reveals its file tab. Change markers
 are hidden when its text
 differs from the Git snapshot. Refresh the Source Control panel after external
-changes, or reopen a comparison to update its snapshot. The current milestone
-does not stage, commit, or show Explorer status badges.
+changes, or reopen a comparison to update its snapshot.
+The Source Control panel also supports staging and unstaging individual changes
+or their visible groups, then committing staged changes with an explicit
+message. Git work runs outside the UI thread and refreshes the snapshot after
+completion. Explorer shows compact `M`, `S`, `U`, and `D` badges from that
+snapshot; Source Control refreshes while its panel is visible to detect external
+Git changes. This is intentionally file-level only: there is no hunk staging,
+amend, push/pull, merge resolution, or history browser yet.
 
 ### Default shared editor and legacy fallback
 

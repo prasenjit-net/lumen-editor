@@ -51,6 +51,9 @@ impl LumenApp {
             Command::ClearWorkspaceSearch => self.clear_workspace_search(),
             Command::RefreshSourceControl => self.refresh_source_control(ctx),
             Command::ShowSourceDiff(path, side) => self.show_source_diff(path, side, ctx),
+            Command::StagePaths(paths) => self.stage_source_paths(paths, ctx),
+            Command::UnstagePaths(paths) => self.unstage_source_paths(paths, ctx),
+            Command::CommitSourceControl => self.commit_source_control(ctx),
             Command::PreviewWorkspaceReplace => self.preview_workspace_replace(),
             Command::PreviewWorkspaceReplaceScope(scope) => {
                 self.preview_workspace_replace_scope(scope)

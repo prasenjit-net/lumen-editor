@@ -170,9 +170,12 @@ tabbed working diff layout and tab switching; Windows runtime remains untested.
   patch preview with bounded output and explicit error states.
 - [x] Add a tabbed side-by-side diff for staged, working, and untracked files,
   with editable working content and dirty-buffer preservation.
-- [ ] Add Explorer status badges and automatic external-change refresh.
-- [ ] Then add staging/unstaging and commit, with explicit error feedback and
-  no implicit modification of unrelated worktree files.
+- [x] Add Explorer status badges and periodic visible-panel refresh for external
+  changes.
+- [x] Add file-level staging/unstaging and commits with explicit error feedback
+  and no implicit modification of unrelated worktree files.
+- [ ] Add hunk staging, amend, push/pull, merge handling and history only after
+  their independent workflows have error/cancellation coverage.
 - [ ] Reuse the comparison component from item 1 where practical.
 
 Exit gate: a dirty editor buffer, external Git changes and repository errors

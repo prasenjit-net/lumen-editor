@@ -41,6 +41,7 @@ enum GitResult {
         side: DiffSide,
         result: Result<GitComparison, String>,
     },
+    Operation(Result<String, String>),
 }
 
 impl LumenApp {
@@ -49,6 +50,16 @@ impl LumenApp {
             return;
         }
         if self.view.source_control.workspace != self.editor.workspace {
+            self.refresh_source_control(ctx);
+        } else if self
+            .view
+            .source_control
+            .last_refresh
+            .is_none_or(|last| last.elapsed() >= Duration::from_secs(3))
+            && self.source_control_job.is_none()
+        {
+            // Poll while the panel is visible: Git has no portable filesystem
+            // notification for index and external worktree changes.
             self.refresh_source_control(ctx);
         }
     }
@@ -62,6 +73,7 @@ impl LumenApp {
         view.workspace = self.editor.workspace.clone();
         view.snapshot = None;
         view.error = None;
+        view.last_refresh = Some(std::time::Instant::now());
         let Some(workspace) = view.workspace.clone() else {
             view.loading = false;
             return;
@@ -77,6 +89,88 @@ impl LumenApp {
         });
         self.source_control_job = Some(SourceControlJob { receiver });
         ctx.request_repaint_after(Duration::from_millis(100));
+    }
+
+    pub(crate) fn stage_source_paths(&mut self, paths: Vec<PathBuf>, ctx: &egui::Context) {
+        self.run_source_operation(paths, ctx, "Staged changes", |service, root, paths| {
+            service.stage(root, paths)
+        });
+    }
+
+    pub(crate) fn unstage_source_paths(&mut self, paths: Vec<PathBuf>, ctx: &egui::Context) {
+        self.run_source_operation(paths, ctx, "Unstaged changes", |service, root, paths| {
+            service.unstage(root, paths)
+        });
+    }
+
+    pub(crate) fn commit_source_control(&mut self, ctx: &egui::Context) {
+        let message = self.view.source_control.commit_message.trim().to_owned();
+        if message.is_empty() {
+            self.view.source_control.commit_error = Some("Enter a commit message".into());
+            self.view.source_control.commit_focus = true;
+            return;
+        }
+        let Some(root) = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.root.clone())
+        else {
+            return;
+        };
+        self.source_control_job = None;
+        self.view.source_control.loading = true;
+        self.view.source_control.commit_error = None;
+        let service = self.source_control_service.clone();
+        let worker_ctx = ctx.clone();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = service
+                .commit(&root, &message)
+                .map(|_| "Committed changes".into());
+            let _ = sender.send(GitResult::Operation(result));
+            worker_ctx.request_repaint();
+        });
+        self.source_control_job = Some(SourceControlJob { receiver });
+    }
+
+    fn run_source_operation<F>(
+        &mut self,
+        paths: Vec<PathBuf>,
+        ctx: &egui::Context,
+        success: &'static str,
+        operation: F,
+    ) where
+        F: FnOnce(
+                &dyn crate::services::source_control::SourceControlService,
+                &std::path::Path,
+                &[PathBuf],
+            ) -> Result<(), String>
+            + Send
+            + 'static,
+    {
+        let Some(root) = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.root.clone())
+        else {
+            return;
+        };
+        self.source_control_job = None;
+        self.view.source_control.loading = true;
+        self.view.source_control.error = None;
+        let service = self.source_control_service.clone();
+        let worker_ctx = ctx.clone();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = operation(service.as_ref(), &root, &paths).map(|_| success.into());
+            let _ = sender.send(GitResult::Operation(result));
+            worker_ctx.request_repaint();
+        });
+        self.source_control_job = Some(SourceControlJob { receiver });
     }
 
     pub(crate) fn show_source_diff(&mut self, path: PathBuf, side: DiffSide, ctx: &egui::Context) {
@@ -136,6 +230,22 @@ impl LumenApp {
             }) => {
                 self.finish_source_diff(root, path, side, result);
                 self.source_control_job = None;
+            }
+            Ok(GitResult::Operation(result)) => {
+                self.view.source_control.loading = false;
+                self.source_control_job = None;
+                match result {
+                    Ok(status) => {
+                        self.view.status = status;
+                        self.view.source_control.commit_message.clear();
+                        self.view.source_control.commit_error = None;
+                        self.refresh_source_control(ctx);
+                    }
+                    Err(error) => {
+                        self.view.source_control.error = Some(error.clone());
+                        self.view.source_control.commit_error = Some(error);
+                    }
+                }
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.view.source_control.loading = false;

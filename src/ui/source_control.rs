@@ -3,7 +3,7 @@ use crate::{
     app::command::Command,
     services::source_control::{DiffSide, GitChange, GitSnapshot},
 };
-use eframe::egui::{self, FontId, RichText, ScrollArea};
+use eframe::egui::{self, FontId, RichText, ScrollArea, TextEdit};
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy)]
@@ -62,20 +62,19 @@ fn source_heading(ui: &mut egui::Ui, title: &str, count: usize) {
 
 impl Workbench<'_> {
     pub(crate) fn source_control_panel(&mut self, ui: &mut egui::Ui) {
-        let view = &self.view.source_control;
         let Some(workspace) = &self.editor.workspace else {
             ui.label(RichText::new("Open a folder to view source control").color(theme::MUTED));
             return;
         };
-        if view.loading && view.snapshot.is_none() {
+        if self.view.source_control.loading && self.view.source_control.snapshot.is_none() {
             ui.label(RichText::new("Reading Git status…").color(theme::MUTED));
             return;
         }
-        if let Some(error) = &view.error {
+        if let Some(error) = &self.view.source_control.error {
             ui.label(RichText::new(error).color(theme::DIFF_REMOVED_TEXT));
             return;
         }
-        let Some(snapshot) = &view.snapshot else {
+        let Some(snapshot) = self.view.source_control.snapshot.clone() else {
             ui.label(RichText::new("No Git repository found").color(theme::MUTED));
             ui.label(
                 RichText::new(workspace.display().to_string())
@@ -89,11 +88,67 @@ impl Workbench<'_> {
                 .color(theme::TEXT),
         )
         .on_hover_text(snapshot.root.display().to_string());
+        let staged_paths: Vec<_> = snapshot
+            .changes
+            .iter()
+            .filter(|change| change.index != ' ' && change.index != '?')
+            .map(|change| change.path.clone())
+            .collect();
+        let working_paths: Vec<_> = snapshot
+            .changes
+            .iter()
+            .filter(|change| change.worktree != ' ')
+            .map(|change| change.path.clone())
+            .collect();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("SOURCE CONTROL").small().color(theme::MUTED));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .small_button(format!("{} Stage All", crate::icon::PLUS))
+                    .on_hover_text("Stage all working changes")
+                    .clicked()
+                {
+                    self.command(Command::StagePaths(working_paths.clone()));
+                }
+                if ui
+                    .small_button(format!("{} Unstage All", crate::icon::X))
+                    .on_hover_text("Unstage all staged changes")
+                    .clicked()
+                {
+                    self.command(Command::UnstagePaths(staged_paths.clone()));
+                }
+            });
+        });
+        let has_staged = !staged_paths.is_empty();
+        ui.horizontal(|ui| {
+            let response = ui.add_enabled(
+                has_staged && !self.view.source_control.loading,
+                TextEdit::singleline(&mut self.view.source_control.commit_message)
+                    .id_salt("source_control_commit_message")
+                    .hint_text("Message (press Commit to submit)"),
+            );
+            if self.view.source_control.commit_focus {
+                response.request_focus();
+                self.view.source_control.commit_focus = false;
+            }
+            if ui
+                .add_enabled(
+                    has_staged && !self.view.source_control.loading,
+                    egui::Button::new("Commit"),
+                )
+                .clicked()
+            {
+                self.command(Command::CommitSourceControl);
+            }
+        });
+        if let Some(error) = &self.view.source_control.commit_error {
+            ui.label(RichText::new(error).small().color(theme::DIFF_REMOVED_TEXT));
+        }
         if snapshot.changes.is_empty() {
             ui.label(RichText::new("No changes").color(theme::MUTED));
             return;
         }
-        let rows = source_rows(snapshot);
+        let rows = source_rows(&snapshot);
         let mut requested = None;
         ScrollArea::vertical()
             .id_salt("source_control_changes")
@@ -116,7 +171,34 @@ impl Workbench<'_> {
                     let response = explorer_row(ui, label, 4, false)
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .on_hover_text(change.path.display().to_string());
-                    if response.clicked() {
+                    let action = match side {
+                        DiffSide::Staged => Command::UnstagePaths(vec![change.path.clone()]),
+                        DiffSide::Working | DiffSide::Untracked => {
+                            Command::StagePaths(vec![change.path.clone()])
+                        }
+                    };
+                    let action_label = if side == DiffSide::Staged {
+                        crate::icon::X
+                    } else {
+                        crate::icon::PLUS
+                    };
+                    let action_clicked = ui
+                        .put(
+                            egui::Rect::from_min_size(
+                                response.rect.right_top() - egui::vec2(22.0, 0.0),
+                                egui::vec2(22.0, response.rect.height()),
+                            ),
+                            egui::Button::new(action_label).frame(false),
+                        )
+                        .on_hover_text(if side == DiffSide::Staged {
+                            "Unstage change"
+                        } else {
+                            "Stage change"
+                        })
+                        .clicked();
+                    if action_clicked {
+                        self.command(action);
+                    } else if response.clicked() {
                         requested = Some((change.path.clone(), side));
                     }
                 }

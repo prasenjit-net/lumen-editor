@@ -116,6 +116,10 @@ pub(crate) struct SourceControlView {
     pub(crate) loading: bool,
     pub(crate) error: Option<String>,
     pub(crate) diff: Option<SourceDiffView>,
+    pub(crate) commit_message: String,
+    pub(crate) commit_error: Option<String>,
+    pub(crate) commit_focus: bool,
+    pub(crate) last_refresh: Option<std::time::Instant>,
 }
 
 pub(crate) struct SourceDiffView {

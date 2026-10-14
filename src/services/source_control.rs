@@ -44,6 +44,9 @@ pub(crate) trait SourceControlService: Send + Sync {
     fn diff(&self, root: &Path, path: &Path, side: DiffSide) -> Result<String, String>;
     fn comparison(&self, root: &Path, path: &Path, side: DiffSide)
     -> Result<GitComparison, String>;
+    fn stage(&self, root: &Path, paths: &[PathBuf]) -> Result<(), String>;
+    fn unstage(&self, root: &Path, paths: &[PathBuf]) -> Result<(), String>;
+    fn commit(&self, root: &Path, message: &str) -> Result<(), String>;
 }
 
 pub(crate) struct LocalGit;
@@ -186,6 +189,84 @@ impl SourceControlService for LocalGit {
             old_lines,
             new_lines,
         })
+    }
+
+    fn stage(&self, root: &Path, paths: &[PathBuf]) -> Result<(), String> {
+        git_paths(root, ["add", "--"], paths, "stage")
+    }
+
+    fn unstage(&self, root: &Path, paths: &[PathBuf]) -> Result<(), String> {
+        match git_paths(root, ["restore", "--staged", "--"], paths, "unstage") {
+            Ok(()) => Ok(()),
+            // In a repository without an initial commit, `restore --staged`
+            // cannot name HEAD. Removing only the index entries has the same
+            // unstage result while leaving the worktree untouched.
+            Err(error) if error.contains("could not resolve HEAD") => {
+                git_paths(root, ["rm", "--cached", "--"], paths, "unstage")
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn commit(&self, root: &Path, message: &str) -> Result<(), String> {
+        let message = message.trim();
+        if message.is_empty() {
+            return Err("Enter a commit message".into());
+        }
+        let output = git_command(root)
+            .args([
+                "--no-optional-locks",
+                "commit",
+                "--no-verify",
+                "-m",
+                message,
+            ])
+            .output()
+            .map_err(|error| format!("Could not start Git commit: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(git_failure("Git commit failed", &output.stderr))
+        }
+    }
+}
+
+fn git_paths<const N: usize>(
+    root: &Path,
+    args: [&str; N],
+    paths: &[PathBuf],
+    action: &str,
+) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err(format!("No files to {action}"));
+    }
+    if paths.iter().any(|path| {
+        path.as_os_str().is_empty()
+            || !path
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+    }) {
+        return Err(format!("Cannot {action} a path outside the repository"));
+    }
+    let output = git_command(root)
+        .args(["--no-optional-locks"])
+        .args(args)
+        .args(paths)
+        .output()
+        .map_err(|error| format!("Could not start Git {action}: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(git_failure(&format!("Git {action} failed"), &output.stderr))
+    }
+}
+
+fn git_failure(prefix: &str, stderr: &[u8]) -> String {
+    let detail = String::from_utf8_lossy(stderr).trim().to_owned();
+    if detail.is_empty() {
+        prefix.into()
+    } else {
+        format!("{prefix}: {detail}")
     }
 }
 
@@ -512,6 +593,70 @@ mod tests {
                 .diff(&root, &root.join("../outside"), DiffSide::Untracked)
                 .unwrap_err()
                 .contains("not a repository file")
+        );
+    }
+
+    #[test]
+    fn stage_unstage_and_commit_are_scoped_to_requested_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "--quiet"]);
+        git(&["config", "user.name", "Test"]);
+        git(&["config", "user.email", "test@example.invalid"]);
+        fs::write(root.join("one.rs"), "one\n").unwrap();
+        fs::write(root.join("two.rs"), "two\n").unwrap();
+        let service = LocalGit;
+        service.stage(root, &[PathBuf::from("one.rs")]).unwrap();
+        let snapshot = service.snapshot(root).unwrap().unwrap();
+        assert!(
+            snapshot
+                .changes
+                .iter()
+                .any(|change| change.path == Path::new("one.rs") && change.index == 'A')
+        );
+        assert!(
+            snapshot
+                .changes
+                .iter()
+                .any(|change| change.path == Path::new("two.rs") && change.index == '?')
+        );
+        service.unstage(root, &[PathBuf::from("one.rs")]).unwrap();
+        assert!(
+            service
+                .snapshot(root)
+                .unwrap()
+                .unwrap()
+                .changes
+                .iter()
+                .all(|change| change.index != 'A')
+        );
+        service.stage(root, &[PathBuf::from("one.rs")]).unwrap();
+        service.commit(root, "add one").unwrap();
+        let snapshot = service.snapshot(root).unwrap().unwrap();
+        assert!(
+            snapshot
+                .changes
+                .iter()
+                .any(|change| change.path == Path::new("two.rs") && change.index == '?')
+        );
+        assert!(
+            snapshot
+                .changes
+                .iter()
+                .all(|change| change.path != Path::new("one.rs"))
         );
     }
 }

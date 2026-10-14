@@ -9,6 +9,33 @@ use crate::model::display_name;
 use eframe::egui::{self, RichText, ScrollArea, TextEdit};
 use std::path::Path;
 impl Workbench<'_> {
+    fn git_badge(&self, path: &Path, directory: bool) -> Option<char> {
+        let snapshot = self.view.source_control.snapshot.as_ref()?;
+        let relative = path.strip_prefix(&snapshot.root).ok()?;
+        snapshot
+            .changes
+            .iter()
+            .filter(|change| {
+                if directory {
+                    change.path.starts_with(relative)
+                } else {
+                    change.path == relative
+                }
+            })
+            .map(|change| {
+                if change.index == '?' {
+                    'U'
+                } else if change.worktree == 'D' || change.index == 'D' {
+                    'D'
+                } else if change.index != ' ' {
+                    'S'
+                } else {
+                    change.worktree
+                }
+            })
+            .next()
+    }
+
     pub(crate) fn explorer(&mut self, ui: &mut egui::Ui) {
         let Some(root) = self.editor.workspace.clone() else {
             ui.add_space(28.0);
@@ -53,7 +80,7 @@ impl Workbench<'_> {
             let response = explorer_row(
                 ui,
                 format!(
-                    "{}  {}  {}",
+                    "{}  {}  {}{}",
                     if expanded {
                         icon::CARET_DOWN
                     } else {
@@ -64,7 +91,10 @@ impl Workbench<'_> {
                     } else {
                         icon::FOLDER
                     },
-                    display_name(path)
+                    display_name(path),
+                    self.git_badge(path, true)
+                        .map(|badge| format!("  {badge}"))
+                        .unwrap_or_default()
                 ),
                 depth * 14 + 4,
                 self.view
@@ -102,7 +132,14 @@ impl Workbench<'_> {
             };
             let response = explorer_row(
                 ui,
-                format!("{}  {}", widgets::file_icon(path), display_name(path)),
+                format!(
+                    "{}  {}{}",
+                    widgets::file_icon(path),
+                    display_name(path),
+                    self.git_badge(path, false)
+                        .map(|badge| format!("  {badge}"))
+                        .unwrap_or_default()
+                ),
                 depth * 14 + 20,
                 open,
             );
