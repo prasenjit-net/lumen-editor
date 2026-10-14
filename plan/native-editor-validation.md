@@ -7,13 +7,19 @@ editor. Input method was not recorded. The automated live-app check on the
 preceding build confirmed gutter folding, original source line numbers and
 per-tab fold persistence. A false "Composition cancelled" status on an ordinary
 tab switch was reproduced, fixed with a regression test, and bundled again.
-The rebuilt app launched, but Computer Use timed out in the native file chooser,
-so the fix was **not** reverified in the rebuilt live app. Unit tests confirm
-ordinary identity changes have no notice and an active preedit still rejects a
-late commit. Do not count this as a completed full-workbench acceptance pass.
+Computer Use timed out in the native file chooser on the first rebuilt app, but
+the separate rebuilt experimental bundle was then inspected successfully. In
+that bundle, switching between two clean untitled tabs did not show the false
+notice. A disposable buffer passed typed-text undo, Cmd+D creating two
+selections, two-location replacement and undo, plus external Unicode paste
+(`漢字 👩‍💻`) into both selections and undo. The Source Control panel and a
+working-tree diff also rendered in the live app. Unit tests confirm ordinary
+identity changes have no notice and an active preedit still rejects a late
+commit. Do not count this as a completed full-workbench acceptance pass.
 
-Checklist status: IME/dead keys, VoiceOver, native clipboard/CRLF, bidi, full
-multi-cursor/history, and file lifecycle are **not tested** on this build. The
+Checklist status: IME/dead keys, VoiceOver, exact native clipboard/CRLF, bidi,
+the broader multi-cursor/history matrix, and file lifecycle are **not tested**
+on this build. The
 user could not perform the manual portion at this time. Windows live acceptance
 also remains pending; Windows cross-compilation is not runtime validation.
 
