@@ -16,6 +16,7 @@ pub const FOLDER: &str = "\u{ea83}";
 pub const FOLDER_OPEN: &str = "\u{eaf7}";
 pub const NEW_FOLDER: &str = "\u{ea80}";
 pub const REFRESH: &str = "\u{eb37}";
+pub const DISCARD: &str = "\u{eae2}";
 pub const REPLACE_ALL: &str = "\u{eb3c}";
 pub const COLLAPSE_ALL: &str = "\u{eac5}";
 pub const GEAR: &str = "\u{eb51}";

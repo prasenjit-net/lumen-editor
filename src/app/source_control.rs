@@ -13,6 +13,8 @@ pub(crate) struct SourceControlJob {
     receiver: Receiver<GitResult>,
 }
 
+const SOURCE_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
+
 /// Closing a diff discards only a clean document opened just for that preview.
 /// A dirty document becomes a regular tab so unsaved work stays reachable.
 pub(crate) fn close_diff_preview(editor: &mut EditorState, view: &mut ViewState) {
@@ -42,6 +44,10 @@ enum GitResult {
         result: Result<GitComparison, String>,
     },
     Operation(Result<String, String>),
+    Commit {
+        result: Result<String, String>,
+        message: String,
+    },
     Revert {
         paths: Vec<PathBuf>,
         result: Result<String, String>,
@@ -51,20 +57,24 @@ enum GitResult {
 impl LumenApp {
     pub(crate) fn ensure_source_control(&mut self, ctx: &egui::Context) {
         if self.view.activity != Activity::SourceControl || !self.view.sidebar_visible {
+            self.view.source_control.commit_focused = false;
             return;
         }
         if self.view.source_control.workspace != self.editor.workspace {
             self.refresh_source_control(ctx);
-        } else if self
-            .view
-            .source_control
-            .last_refresh
-            .is_none_or(|last| last.elapsed() >= Duration::from_secs(3))
-            && self.source_control_job.is_none()
-        {
-            // Poll while the panel is visible: Git has no portable filesystem
-            // notification for index and external worktree changes.
-            self.refresh_source_control(ctx);
+        } else if !self.view.source_control.commit_focused && self.source_control_job.is_none() {
+            // Git has no portable notification for external index and worktree
+            // changes. Poll only while this pane is visible and not being edited.
+            let elapsed = self
+                .view
+                .source_control
+                .last_refresh
+                .map_or(SOURCE_REFRESH_INTERVAL, |last| last.elapsed());
+            if elapsed >= SOURCE_REFRESH_INTERVAL {
+                self.refresh_source_control(ctx);
+            } else {
+                ctx.request_repaint_after(SOURCE_REFRESH_INTERVAL - elapsed);
+            }
         }
     }
 
@@ -239,7 +249,7 @@ impl LumenApp {
                     "Committed changes".into()
                 }
             });
-            let _ = sender.send(GitResult::Operation(result));
+            let _ = sender.send(GitResult::Commit { result, message });
             worker_ctx.request_repaint();
         });
         self.source_control_job = Some(SourceControlJob { receiver });
@@ -347,15 +357,27 @@ impl LumenApp {
                 match result {
                     Ok(status) => {
                         self.view.status = status;
-                        self.view.source_control.commit_message.clear();
-                        self.view.source_control.amend_commit = false;
-                        self.view.source_control.commit_error = None;
                         self.refresh_source_control(ctx);
                     }
                     Err(error) => {
-                        self.view.source_control.error = Some(error.clone());
-                        self.view.source_control.commit_error = Some(error);
+                        self.view.source_control.error = Some(error);
                     }
+                }
+            }
+            Ok(GitResult::Commit { result, message }) => {
+                self.view.source_control.loading = false;
+                self.source_control_job = None;
+                match result {
+                    Ok(status) => {
+                        self.view.status = status;
+                        if self.view.source_control.commit_message.trim() == message {
+                            self.view.source_control.commit_message.clear();
+                            self.view.source_control.amend_commit = false;
+                        }
+                        self.view.source_control.commit_error = None;
+                        self.refresh_source_control(ctx);
+                    }
+                    Err(error) => self.view.source_control.commit_error = Some(error),
                 }
             }
             Ok(GitResult::Revert { paths, result }) => {
@@ -534,6 +556,117 @@ mod tests {
             }],
         });
         app
+    }
+
+    #[test]
+    fn staging_does_not_clear_commit_draft() {
+        let mut app = app_with_change(
+            std::path::Path::new("/workspace"),
+            std::path::Path::new("src/main.rs"),
+        );
+        app.view.source_control.commit_message = "Keep this draft".into();
+        app.view.source_control.amend_commit = true;
+        let (sender, receiver) = mpsc::channel();
+        sender
+            .send(GitResult::Operation(Ok("Staged changes".into())))
+            .unwrap();
+        app.source_control_job = Some(SourceControlJob { receiver });
+        app.poll_source_control(&egui::Context::default());
+        assert_eq!(app.view.source_control.commit_message, "Keep this draft");
+        assert!(app.view.source_control.amend_commit);
+    }
+
+    #[test]
+    fn automatic_refresh_waits_while_commit_message_is_focused() {
+        let mut app = app_with_change(
+            std::path::Path::new("/workspace"),
+            std::path::Path::new("src/main.rs"),
+        );
+        app.view.activity = Activity::SourceControl;
+        app.view.sidebar_visible = true;
+        app.view.source_control.last_refresh =
+            Some(std::time::Instant::now() - SOURCE_REFRESH_INTERVAL);
+        app.view.source_control.commit_focused = true;
+        let ctx = egui::Context::default();
+        app.ensure_source_control(&ctx);
+        assert!(app.source_control_job.is_none());
+
+        app.view.source_control.commit_focused = false;
+        app.ensure_source_control(&ctx);
+        assert!(app.source_control_job.is_some());
+    }
+
+    #[test]
+    fn unstage_all_keeps_working_changes_visible() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "--quiet"]);
+        std::fs::write(root.join("one.rs"), "original\n").unwrap();
+        git(&["add", "--", "one.rs"]);
+        git(&[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "initial",
+        ]);
+        std::fs::write(root.join("one.rs"), "changed\n").unwrap();
+        std::fs::write(root.join("two.rs"), "new\n").unwrap();
+        git(&["add", "--", "one.rs", "two.rs"]);
+
+        let mut app = LumenApp::default();
+        app.editor.workspace = Some(root.to_path_buf());
+        app.view.source_control.workspace = Some(root.to_path_buf());
+        app.view.source_control.snapshot = app.source_control_service.snapshot(root).unwrap();
+        app.view.source_control.commit_message = "Draft stays here".into();
+        let paths = app
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .changes
+            .iter()
+            .map(|change| change.path.clone())
+            .collect();
+        let ctx = egui::Context::default();
+        app.unstage_source_paths(paths, &ctx);
+        for _ in 0..100 {
+            app.poll_source_control(&ctx);
+            if app.source_control_job.is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(app.source_control_job.is_none(), "Git operation timed out");
+        assert!(app.view.source_control.error.is_none());
+        let snapshot = app.view.source_control.snapshot.as_ref().unwrap();
+        assert_eq!(snapshot.changes.len(), 2);
+        assert!(
+            snapshot
+                .changes
+                .iter()
+                .all(|change| change.index == ' ' || change.index == '?')
+        );
+        assert!(snapshot.changes.iter().any(|change| change.worktree == 'M'));
+        assert!(snapshot.changes.iter().any(|change| change.index == '?'));
+        assert_eq!(app.view.source_control.commit_message, "Draft stays here");
     }
 
     #[test]

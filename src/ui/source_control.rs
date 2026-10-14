@@ -82,6 +82,7 @@ fn source_label(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> egui::Re
 
 impl Workbench<'_> {
     pub(crate) fn source_control_panel(&mut self, ui: &mut egui::Ui) {
+        self.view.source_control.commit_focused = false;
         let Some(workspace) = &self.editor.workspace else {
             source_label(ui, "Open a folder to view source control", theme::MUTED);
             return;
@@ -92,7 +93,9 @@ impl Workbench<'_> {
         }
         if let Some(error) = &self.view.source_control.error {
             source_label(ui, error, theme::DIFF_REMOVED_TEXT);
-            return;
+            if self.view.source_control.snapshot.is_none() {
+                return;
+            }
         }
         let Some(snapshot) = self.view.source_control.snapshot.clone() else {
             source_label(ui, "No Git repository found", theme::MUTED);
@@ -143,7 +146,7 @@ impl Workbench<'_> {
                 if ui
                     .add_enabled(
                         !revertible_paths.is_empty(),
-                        egui::Button::new(crate::icon::REFRESH).frame(false),
+                        egui::Button::new(crate::icon::DISCARD).frame(false),
                     )
                     .on_hover_text("Discard all tracked changes")
                     .clicked()
@@ -168,24 +171,17 @@ impl Workbench<'_> {
             // SidePanel then persists that overflow as its next frame's width.
             const COMMIT_BUTTON_AND_SPACING: f32 = 70.0;
             let message_width = (ui.available_width() - COMMIT_BUTTON_AND_SPACING).max(24.0);
-            let response = ui
-                .add_enabled_ui(
-                    (has_staged || self.view.source_control.amend_commit)
-                        && !self.view.source_control.loading,
-                    |ui| {
-                        ui.add_sized(
-                            [message_width, 22.0],
-                            TextEdit::singleline(&mut self.view.source_control.commit_message)
-                                .id_salt("source_control_commit_message")
-                                .hint_text("Message"),
-                        )
-                    },
-                )
-                .inner;
+            let response = ui.add_sized(
+                [message_width, 22.0],
+                TextEdit::singleline(&mut self.view.source_control.commit_message)
+                    .id_salt("source_control_commit_message")
+                    .hint_text("Message"),
+            );
             if self.view.source_control.commit_focus {
                 response.request_focus();
                 self.view.source_control.commit_focus = false;
             }
+            self.view.source_control.commit_focused = response.has_focus();
             if ui
                 .add_enabled(
                     (has_staged || self.view.source_control.amend_commit)
@@ -246,7 +242,7 @@ impl Workbench<'_> {
                                     response.rect.right_top() - egui::vec2(44.0, 0.0),
                                     egui::vec2(22.0, response.rect.height()),
                                 ),
-                                egui::Button::new(crate::icon::REFRESH).frame(false),
+                                egui::Button::new(crate::icon::DISCARD).frame(false),
                             )
                             .on_hover_text("Discard changes to this file")
                             .clicked();
@@ -636,6 +632,50 @@ mod tests {
         assert!(
             retained.iter().all(|width| (*width - narrow).abs() < 2.0),
             "narrow width drifted: {narrow} -> {retained:?}"
+        );
+    }
+
+    #[test]
+    fn commit_message_keeps_focus_during_background_refresh_and_error() {
+        let mut app = LumenApp::default();
+        app.view.activity = Activity::SourceControl;
+        app.editor.workspace = Some(PathBuf::from("/workspace"));
+        app.view.source_control.snapshot = Some(GitSnapshot {
+            root: PathBuf::from("/workspace"),
+            branch: "main".into(),
+            changes: vec![GitChange {
+                path: PathBuf::from("src/main.rs"),
+                index: 'M',
+                worktree: ' ',
+            }],
+        });
+        let ctx = egui::Context::default();
+        theme::configure_ui(&ctx);
+        app.view.source_control.commit_focus = true;
+        source_sidebar_frame(&mut app, &ctx, vec![]);
+        assert!(app.view.source_control.commit_focused);
+
+        app.view.source_control.loading = true;
+        source_sidebar_frame(&mut app, &ctx, vec![]);
+        assert!(app.view.source_control.commit_focused);
+
+        app.view.source_control.loading = false;
+        app.view.source_control.error = Some("Git status temporarily failed".into());
+        source_sidebar_frame(&mut app, &ctx, vec![]);
+        assert!(app.view.source_control.commit_focused);
+
+        app.view.source_control.error = None;
+        app.view
+            .source_control
+            .snapshot
+            .as_mut()
+            .unwrap()
+            .changes
+            .clear();
+        source_sidebar_frame(&mut app, &ctx, vec![]);
+        assert!(
+            app.view.source_control.commit_focused,
+            "an empty staged list must not disable the message field"
         );
     }
 

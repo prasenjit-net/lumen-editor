@@ -120,6 +120,7 @@ pub(crate) struct SourceControlView {
     pub(crate) amend_commit: bool,
     pub(crate) commit_error: Option<String>,
     pub(crate) commit_focus: bool,
+    pub(crate) commit_focused: bool,
     pub(crate) revert_prompt: Option<SourceRevertPrompt>,
     pub(crate) last_refresh: Option<std::time::Instant>,
 }
