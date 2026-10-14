@@ -213,6 +213,7 @@ impl Workbench<'_> {
             return;
         };
         let side = diff.side;
+        let relative_path = diff.path.clone();
         let document = diff.document;
         let opened_revision = diff.opened_revision;
         let comparison = diff.comparison.clone();
@@ -232,6 +233,37 @@ impl Workbench<'_> {
         };
         match &comparison {
             Ok(comparison) => {
+                if side == DiffSide::Working && !comparison.hunks.is_empty() {
+                    let editable_is_dirty =
+                        document_index.is_some_and(|index| self.editor.files[index].dirty);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("Hunks").small().color(theme::MUTED));
+                        for (index, hunk) in comparison.hunks.iter().enumerate() {
+                            if ui
+                                .add_enabled(
+                                    !editable_is_dirty && !self.view.source_control.loading,
+                                    egui::Button::new(format!(
+                                        "{} Stage {}",
+                                        crate::icon::PLUS,
+                                        index + 1
+                                    ))
+                                    .small(),
+                                )
+                                .on_hover_text(format!("Stage only this hunk\n{}", hunk.header))
+                                .clicked()
+                            {
+                                self.command(Command::StageHunk(relative_path.clone(), index));
+                            }
+                        }
+                        if editable_is_dirty {
+                            ui.label(
+                                RichText::new("Save or discard editor edits before staging a hunk")
+                                    .small()
+                                    .color(theme::MUTED),
+                            );
+                        }
+                    });
+                }
                 ui.columns(2, |columns| {
                     columns[0].label(
                         RichText::new(match side {
@@ -357,7 +389,7 @@ mod tests {
         model::EditorState,
         services::{
             LocalFileSystem,
-            source_control::{GitChange, GitComparison, GitSnapshot},
+            source_control::{GitChange, GitComparison, GitHunk, GitSnapshot},
         },
     };
     use std::path::PathBuf;
@@ -451,6 +483,7 @@ mod tests {
                     changed: Some("after\n".into()),
                     old_lines: [1].into(),
                     new_lines: [1].into(),
+                    hunks: Vec::new(),
                 })),
                 document: None,
                 diff_only_document: None,
@@ -500,5 +533,52 @@ mod tests {
                 "{width}: {positions:?}"
             );
         }
+    }
+
+    #[test]
+    fn working_diff_exposes_compact_stage_buttons_for_each_hunk() {
+        let ctx = egui::Context::default();
+        theme::configure_ui(&ctx);
+        let mut editor = EditorState::default();
+        let mut view = ViewState::default();
+        view.source_control.diff = Some(SourceDiffView {
+            root: PathBuf::from("/workspace"),
+            path: PathBuf::from("file.rs"),
+            side: DiffSide::Working,
+            comparison: Ok(std::sync::Arc::new(GitComparison {
+                base: "before\n".into(),
+                changed: Some("after\n".into()),
+                old_lines: [1].into(),
+                new_lines: [1].into(),
+                hunks: vec![
+                    GitHunk {
+                        header: "@@ -1 +1 @@".into(),
+                    },
+                    GitHunk {
+                        header: "@@ -8 +8 @@".into(),
+                    },
+                ],
+            })),
+            document: None,
+            diff_only_document: None,
+            opened_revision: None,
+            active: true,
+        });
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let mut workbench = Workbench::new(&mut editor, &mut view, &LocalFileSystem);
+                workbench.source_diff_editor(ui);
+            });
+        });
+        let labels: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect();
+        assert!(labels.iter().any(|text| text.contains("Stage 1")));
+        assert!(labels.iter().any(|text| text.contains("Stage 2")));
     }
 }

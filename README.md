@@ -255,8 +255,11 @@ or their visible groups, then committing staged changes with an explicit
 message. Git work runs outside the UI thread and refreshes the snapshot after
 completion. Explorer shows compact `M`, `S`, `U`, and `D` badges from that
 snapshot; Source Control refreshes while its panel is visible to detect external
-Git changes. This is intentionally file-level only: there is no hunk staging,
-amend, push/pull, merge resolution, or history browser yet.
+Git changes. A working diff with multiple independent hunks offers a Stage button
+for each hunk; Git applies that patch only to the index and leaves other edits
+in the working tree. Hunk staging is disabled while the diff editor has unsaved
+text, and untracked files use whole-file staging. Amend, push/pull, merge
+resolution, and a history browser are not implemented yet.
 
 ### Default shared editor and legacy fallback
 

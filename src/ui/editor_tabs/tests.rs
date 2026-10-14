@@ -203,6 +203,7 @@ fn diff_only_document_has_one_visible_tab_until_explorer_reveals_it() {
             changed: Some("untouched".into()),
             old_lines: Default::default(),
             new_lines: Default::default(),
+            hunks: Vec::new(),
         })),
         document: Some(id),
         diff_only_document: Some(id),

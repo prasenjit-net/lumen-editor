@@ -66,12 +66,17 @@ impl LumenApp {
 
     pub(crate) fn refresh_source_control(&mut self, ctx: &egui::Context) {
         self.source_control_job = None;
-        if self.view.source_control.workspace != self.editor.workspace {
+        let workspace_changed = self.view.source_control.workspace != self.editor.workspace;
+        if workspace_changed {
             close_diff_preview(&mut self.editor, &mut self.view);
         }
         let view = &mut self.view.source_control;
         view.workspace = self.editor.workspace.clone();
-        view.snapshot = None;
+        // Periodic refresh must not blank the panel while Git runs. Keeping the
+        // last coherent snapshot also keeps virtual rows and hover state stable.
+        if workspace_changed {
+            view.snapshot = None;
+        }
         view.error = None;
         view.last_refresh = Some(std::time::Instant::now());
         let Some(workspace) = view.workspace.clone() else {
@@ -101,6 +106,46 @@ impl LumenApp {
         self.run_source_operation(paths, ctx, "Unstaged changes", |service, root, paths| {
             service.unstage(root, paths)
         });
+    }
+
+    pub(crate) fn stage_source_hunk(&mut self, path: PathBuf, hunk: usize, ctx: &egui::Context) {
+        let Some(root) = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.root.clone())
+        else {
+            return;
+        };
+        let Some(diff) = self.view.source_control.diff.as_ref() else {
+            return;
+        };
+        if diff.path != path || diff.side != DiffSide::Working {
+            return;
+        }
+        if diff.document.is_some_and(|id| {
+            self.editor
+                .files
+                .iter()
+                .any(|file| file.id == id && file.dirty)
+        }) {
+            self.view.status = "Save or discard editor edits before staging a hunk".into();
+            return;
+        }
+        self.source_control_job = None;
+        self.view.source_control.loading = true;
+        let service = self.source_control_service.clone();
+        let worker_ctx = ctx.clone();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = service
+                .stage_hunk(&root, &root.join(&path), hunk)
+                .map(|_| "Staged hunk".into());
+            let _ = sender.send(GitResult::Operation(result));
+            worker_ctx.request_repaint();
+        });
+        self.source_control_job = Some(SourceControlJob { receiver });
     }
 
     pub(crate) fn commit_source_control(&mut self, ctx: &egui::Context) {
@@ -346,6 +391,7 @@ mod tests {
             changed: None,
             old_lines: [1].into(),
             new_lines: [1].into(),
+            hunks: Vec::new(),
         }
     }
 
@@ -421,8 +467,13 @@ mod tests {
             DiffSide::Staged,
             Ok(comparison()),
         );
+        let previous = app.view.source_control.snapshot.clone().unwrap();
         app.refresh_source_control(&egui::Context::default());
         assert!(app.view.source_control.diff.is_some());
+        assert_eq!(
+            app.view.source_control.snapshot.as_ref().unwrap().changes,
+            previous.changes
+        );
     }
 
     #[test]

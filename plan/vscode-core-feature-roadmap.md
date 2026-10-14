@@ -174,8 +174,9 @@ tabbed working diff layout and tab switching; Windows runtime remains untested.
   changes.
 - [x] Add file-level staging/unstaging and commits with explicit error feedback
   and no implicit modification of unrelated worktree files.
-- [ ] Add hunk staging, amend, push/pull, merge handling and history only after
-  their independent workflows have error/cancellation coverage.
+- [x] Add targeted working-diff hunk staging, without touching unrelated edits.
+- [ ] Add amend, push/pull, merge handling and history only after their
+  independent workflows have error/cancellation coverage.
 - [ ] Reuse the comparison component from item 1 where practical.
 
 Exit gate: a dirty editor buffer, external Git changes and repository errors

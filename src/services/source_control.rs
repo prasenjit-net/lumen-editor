@@ -2,7 +2,7 @@
 use std::{
     collections::BTreeSet,
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -37,6 +37,12 @@ pub(crate) struct GitComparison {
     pub(crate) changed: Option<String>,
     pub(crate) old_lines: BTreeSet<usize>,
     pub(crate) new_lines: BTreeSet<usize>,
+    pub(crate) hunks: Vec<GitHunk>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct GitHunk {
+    pub(crate) header: String,
 }
 
 pub(crate) trait SourceControlService: Send + Sync {
@@ -47,6 +53,7 @@ pub(crate) trait SourceControlService: Send + Sync {
     fn stage(&self, root: &Path, paths: &[PathBuf]) -> Result<(), String>;
     fn unstage(&self, root: &Path, paths: &[PathBuf]) -> Result<(), String>;
     fn commit(&self, root: &Path, message: &str) -> Result<(), String>;
+    fn stage_hunk(&self, root: &Path, path: &Path, hunk: usize) -> Result<(), String>;
 }
 
 pub(crate) struct LocalGit;
@@ -188,6 +195,16 @@ impl SourceControlService for LocalGit {
             changed,
             old_lines,
             new_lines,
+            hunks: patch_hunks(&patch)
+                .into_iter()
+                .map(|patch| GitHunk {
+                    header: patch
+                        .lines()
+                        .find(|line| line.starts_with("@@"))
+                        .unwrap_or_default()
+                        .to_owned(),
+                })
+                .collect(),
         })
     }
 
@@ -229,6 +246,64 @@ impl SourceControlService for LocalGit {
             Err(git_failure("Git commit failed", &output.stderr))
         }
     }
+
+    fn stage_hunk(&self, root: &Path, path: &Path, hunk: usize) -> Result<(), String> {
+        let patch = self.diff(root, path, DiffSide::Working)?;
+        let Some(patch) = patch_hunks(&patch).into_iter().nth(hunk) else {
+            return Err("That change hunk is no longer available; refresh the diff".into());
+        };
+        let mut child = git_command(root)
+            .args(["--no-optional-locks", "apply", "--cached", "--recount"])
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("Could not start Git hunk stage: {error}"))?;
+        child
+            .stdin
+            .take()
+            .expect("piped stdin")
+            .write_all(patch.as_bytes())
+            .map_err(|error| format!("Could not send hunk to Git: {error}"))?;
+        let output = child
+            .wait_with_output()
+            .map_err(|error| format!("Could not finish Git hunk stage: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(git_failure("Git hunk stage failed", &output.stderr))
+        }
+    }
+}
+
+fn patch_hunks(patch: &str) -> Vec<String> {
+    let mut header = Vec::new();
+    let mut hunks = Vec::new();
+    let mut current: Option<Vec<&str>> = None;
+    for line in patch.lines() {
+        if line.starts_with("@@") {
+            if let Some(lines) = current.take() {
+                hunks.push(lines);
+            }
+            current = Some(
+                header
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(line))
+                    .collect(),
+            );
+        } else if let Some(lines) = &mut current {
+            lines.push(line);
+        } else {
+            header.push(line);
+        }
+    }
+    if let Some(lines) = current {
+        hunks.push(lines);
+    }
+    hunks
+        .into_iter()
+        .map(|lines| format!("{}\n", lines.join("\n")))
+        .collect()
 }
 
 fn git_paths<const N: usize>(
@@ -658,5 +733,52 @@ mod tests {
                 .iter()
                 .all(|change| change.path != Path::new("one.rs"))
         );
+    }
+
+    #[test]
+    fn stage_hunk_only_updates_the_requested_hunk_in_the_index() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "--quiet"]);
+        git(&["config", "user.name", "Test"]);
+        git(&["config", "user.email", "test@example.invalid"]);
+        let initial = "one\n2\n3\n4\n5\n6\n7\n8\n9\nten\n11\n12\n13\n14\n15\n";
+        fs::write(root.join("file.txt"), initial).unwrap();
+        git(&["add", "--", "file.txt"]);
+        git(&["commit", "--quiet", "-m", "initial"]);
+        let changed = "ONE\n2\n3\n4\n5\n6\n7\n8\n9\nten\n11\n12\n13\n14\nFIFTEEN\n";
+        fs::write(root.join("file.txt"), changed).unwrap();
+        let service = LocalGit;
+        let root = fs::canonicalize(root).unwrap();
+        let comparison = service
+            .comparison(&root, &root.join("file.txt"), DiffSide::Working)
+            .unwrap();
+        assert_eq!(comparison.hunks.len(), 2);
+        service
+            .stage_hunk(&root, &root.join("file.txt"), 0)
+            .unwrap();
+        let staged = service
+            .diff(&root, &root.join("file.txt"), DiffSide::Staged)
+            .unwrap();
+        assert!(staged.contains("+ONE"));
+        assert!(!staged.contains("+FIFTEEN"));
+        let working = service
+            .diff(&root, &root.join("file.txt"), DiffSide::Working)
+            .unwrap();
+        assert!(working.contains("+FIFTEEN"));
+        assert!(!working.contains("+ONE"));
     }
 }

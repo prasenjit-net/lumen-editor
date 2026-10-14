@@ -23,6 +23,7 @@ pub(crate) enum Command {
     ShowSourceDiff(PathBuf, DiffSide),
     StagePaths(Vec<PathBuf>),
     UnstagePaths(Vec<PathBuf>),
+    StageHunk(PathBuf, usize),
     CommitSourceControl,
     PreviewWorkspaceReplace,
     PreviewWorkspaceReplaceScope(ReplaceScope),

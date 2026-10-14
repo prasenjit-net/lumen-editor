@@ -53,6 +53,7 @@ impl LumenApp {
             Command::ShowSourceDiff(path, side) => self.show_source_diff(path, side, ctx),
             Command::StagePaths(paths) => self.stage_source_paths(paths, ctx),
             Command::UnstagePaths(paths) => self.unstage_source_paths(paths, ctx),
+            Command::StageHunk(path, hunk) => self.stage_source_hunk(path, hunk, ctx),
             Command::CommitSourceControl => self.commit_source_control(ctx),
             Command::PreviewWorkspaceReplace => self.preview_workspace_replace(),
             Command::PreviewWorkspaceReplaceScope(scope) => {
