@@ -9,6 +9,7 @@ use std::{ops::Range, path::Path};
 pub mod capabilities;
 pub mod diagnostics;
 pub mod highlight;
+pub mod incoming;
 pub mod lsp;
 pub mod protocol;
 pub mod session;

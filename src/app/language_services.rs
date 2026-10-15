@@ -131,7 +131,7 @@ impl LumenApp {
                 }
                 ServerEvent::ProtocolError(error) => self.stop_language_server(&error),
                 ServerEvent::Exited => self.stop_language_server("Language server exited"),
-                ServerEvent::Message(_) => {}
+                ServerEvent::Message(message) => self.accept_diagnostics(message),
             }
         }
         self.sync_active_language_document();
@@ -142,6 +142,7 @@ impl LumenApp {
         self.language_server_workspace = None;
         self.language_server_language = None;
         self.language_server_document = None;
+        self.language_server_diagnostics.clear();
         self.view.language_server_status = Some(LanguageServerStatus::Error(error.to_owned()));
     }
 
@@ -175,6 +176,31 @@ impl LumenApp {
         {
             self.language_server_document = Some((document.id, document.revision));
         }
+    }
+
+    fn accept_diagnostics(&mut self, message: serde_json::Value) {
+        let Some(document) = self.editor.active() else {
+            return;
+        };
+        let Some(path) = document.path.as_ref() else {
+            return;
+        };
+        let uri = file_uri(path);
+        let Ok(published) =
+            lumen_language_services::incoming::parse_publish_diagnostics(&message, &document.text)
+        else {
+            return;
+        };
+        if published.uri != uri {
+            return;
+        }
+        if let Some(version) = published.version
+            && version != document.revision.saturating_add(1)
+        {
+            return;
+        }
+        self.language_server_diagnostics
+            .insert(document.id, published.diagnostics);
     }
 }
 

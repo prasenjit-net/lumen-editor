@@ -310,7 +310,8 @@ specified by a project unless the user’s server-command policy permits it.
   non-blocking events.
 - Implement server lifecycle in `app/` and evolve the compact Language Status
   view from availability into session state.
-- Add Rust diagnostics with `rust-analyzer`, then Go diagnostics with `gopls`.
+- [x] Decode `publishDiagnostics` through UTF-16/UTF-8-safe typed contracts.
+- Apply Rust diagnostics with `rust-analyzer`, then Go diagnostics with `gopls`.
 - Test missing executable, initialization failure, server crash/restart, malformed
   messages, workspace switch, stale diagnostics, dirty buffer, Save As and close.
 
