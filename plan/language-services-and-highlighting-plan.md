@@ -296,6 +296,8 @@ specified by a project unless the user’s server-command policy permits it.
   unsupported status without starting a process.
 - [x] Add generation-safe session lifecycle contracts for stopped, starting,
   ready and failed server states. A restart always receives a new generation.
+- [x] Add validated diagnostics snapshots tied to exact request/session stamps;
+  stale snapshots are rejected by the existing stamp gate before rendering.
 - Implement stdio JSON-RPC in `services/`, capability negotiation in the new
   crate, server lifecycle in `app/`, and a compact Language Status view.
 - Add Rust diagnostics with `rust-analyzer`, then Go diagnostics with `gopls`.
