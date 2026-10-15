@@ -1,6 +1,9 @@
 # Language services and syntax-highlighting design
 
-Status: Phase 1 parser-backed Rust/Go rendering underway. Updated: 2026-10-15.
+Status: Phase 2 in progress — transport, initialization, active-document full
+sync, and typed diagnostic intake are implemented; diagnostics painting,
+restart policy, complete document lifecycle, and navigation remain. Updated:
+2026-10-15.
 
 ## What this adds, and why syntax and LSP must remain separate
 
@@ -254,7 +257,7 @@ specified by a project unless the user’s server-command policy permits it.
 
 ## Implementation phases
 
-### Phase 0 — contracts and spike
+### Phase 0 — contracts and spike — In progress
 
 - [x] Create the crate, `LanguageId`, Rust/Go descriptor registry, document
   versions, UTF-16/UTF-8 range conversion and ordered token-snapshot tests.
@@ -274,7 +277,7 @@ specified by a project unless the user’s server-command policy permits it.
   system (Lumen Dark, Light and High Contrast).
 - [ ] Add visual fixtures for code, config/resource and build files in each scheme.
 
-### Phase 1 — parser-backed baseline highlighting
+### Phase 1 — parser-backed baseline highlighting — In progress
 
 - [x] Move parser capability metadata into language contributions; the renderer
   requests a registered parser by editor language label and retains lexical fallback.
@@ -287,7 +290,7 @@ specified by a project unless the user’s server-command policy permits it.
   single viewport/layout authority. Compare old/new screenshots before expanding
   parser coverage to further languages.
 
-### Phase 2 — generic LSP transport and diagnostics
+### Phase 2 — generic LSP transport and diagnostics — In progress
 
 - [x] Add bounded, fragmented JSON-RPC `Content-Length` framing in the language
   crate. It owns no process or JSON serialization and is ready for a service adapter.
@@ -308,26 +311,32 @@ specified by a project unless the user’s server-command policy permits it.
 - [x] Implement bounded stdio JSON-RPC in `services/`; it accepts only a
   registry-discovered executable path and reports parsed messages/errors through
   non-blocking events.
-- Implement server lifecycle in `app/` and evolve the compact Language Status
-  view from availability into session state.
+- [x] Implement initial app lifecycle: lazy per-language/workspace process
+  startup, initialize/initialized negotiation, active-document full sync, and
+  starting/ready/error status. Complete open/close/rename/session generation
+  handling remains outstanding.
 - [x] Decode `publishDiagnostics` through UTF-16/UTF-8-safe typed contracts.
-- Apply Rust diagnostics with `rust-analyzer`, then Go diagnostics with `gopls`.
-- Test missing executable, initialization failure, server crash/restart, malformed
-  messages, workspace switch, stale diagnostics, dirty buffer, Save As and close.
+- [ ] Render validated diagnostics in the shared editor viewport and Problems UI;
+  retain parser highlighting and editor geometry when no server is available.
+- [ ] Apply and live-validate Rust diagnostics with `rust-analyzer`, then Go
+  diagnostics with `gopls`.
+- [ ] Add restart backoff plus fake-server coverage for initialization failure,
+  crash/restart, malformed messages, workspace switch, stale diagnostics, dirty
+  buffers, Save As, rename and close.
 
-### Phase 3 — semantic tokens and navigation
+### Phase 3 — semantic tokens and navigation — Planned
 
-- Add semantic-token full responses, legend decoding, token-overlay precedence
+- [ ] Add semantic-token full responses, legend decoding, token-overlay precedence
   and revision gating for Rust and Go.
-- Add hover, symbols and definition through the common request interface. Render
+- [ ] Add hover, symbols and definition through the common request interface. Render
   failures as non-blocking status feedback and preserve editor focus/selection.
 
-### Phase 4 — editing services and hardening
+### Phase 4 — editing services and hardening — Planned
 
-- Add completion/signature help, then references, rename preview, code-action and
+- [ ] Add completion/signature help, then references, rename preview, code-action and
   formatting transactions. Each mutating edit goes through the app’s existing
   save/conflict/document identity protections.
-- Add native acceptance on macOS and Windows, representative large workspaces,
+- [ ] Add native acceptance on macOS and Windows, representative large workspaces,
   offline/missing toolchains, multiple roots, project settings precedence, screen
   reader behavior and all color schemes.
 
