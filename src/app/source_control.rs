@@ -737,12 +737,15 @@ mod tests {
             .collect();
         let ctx = egui::Context::default();
         app.unstage_source_paths(paths, &ctx);
-        for _ in 0..100 {
+        // Completing an operation schedules a second asynchronous status refresh.
+        // Windows Git process startup is slower than the old one-second polling
+        // window, so wait for the complete operation within a bounded deadline.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while app.source_control_job.is_some() && std::time::Instant::now() < deadline {
             app.poll_source_control(&ctx);
-            if app.source_control_job.is_none() {
-                break;
+            if app.source_control_job.is_some() {
+                std::thread::sleep(Duration::from_millis(10));
             }
-            std::thread::sleep(Duration::from_millis(10));
         }
         assert!(app.source_control_job.is_none(), "Git operation timed out");
         assert!(app.view.source_control.error.is_none());

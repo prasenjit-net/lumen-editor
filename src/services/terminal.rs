@@ -145,7 +145,11 @@ mod tests {
     fn shell_runs_in_the_requested_directory_and_streams_output() {
         let directory = tempfile::tempdir().unwrap();
         let mut terminal = TerminalSession::start(directory.path(), 12, 80).unwrap();
-        terminal.write(b"printf lumen-terminal-ok\r").unwrap();
+        #[cfg(windows)]
+        let command = b"echo lumen-terminal-ok\r\n";
+        #[cfg(not(windows))]
+        let command = b"printf lumen-terminal-ok\r";
+        terminal.write(command).unwrap();
         let mut output = Vec::new();
         for _ in 0..50 {
             output.extend(terminal.drain_output().into_iter().flatten());
