@@ -258,8 +258,9 @@ specified by a project unless the user’s server-command policy permits it.
 
 - [x] Create the crate, `LanguageId`, Rust/Go descriptor registry, document
   versions, UTF-16/UTF-8 range conversion and ordered token-snapshot tests.
-- [ ] Add URI identity, semantic-token legend decoding and stale session/revision
-  rejection contracts before any LSP transport is introduced.
+- [x] Add URI identity and stale session/revision rejection contracts before any
+  LSP transport is introduced.
+- [x] Add semantic-token legend decoding contracts before LSP transport.
 - [x] Add a Rust/Go parser-query spike that emits disjoint UTF-8 token snapshots
   for ordinary, incomplete, Unicode and CRLF source. It uses the grammars'
   embedded highlight queries and preserves comments, strings, numbers, keywords,

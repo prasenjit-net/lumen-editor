@@ -125,6 +125,89 @@ impl DocumentVersion {
     }
 }
 
+/// Stable identity supplied by Lumen's document model. It survives tab
+/// reordering; a path or tab index is never sufficient for LSP routing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DocumentId(pub u64);
+
+/// A canonical document URI supplied by the app/service boundary. This crate
+/// intentionally does not canonicalize paths or touch the filesystem.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DocumentUri(String);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocumentUriError {
+    Empty,
+    ContainsControlCharacter,
+}
+
+impl DocumentUri {
+    pub fn new(uri: impl Into<String>) -> Result<Self, DocumentUriError> {
+        let uri = uri.into();
+        if uri.is_empty() {
+            return Err(DocumentUriError::Empty);
+        }
+        if uri.chars().any(char::is_control) {
+            return Err(DocumentUriError::ContainsControlCharacter);
+        }
+        Ok(Self(uri))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The stable local document identity together with the URI advertised to a
+/// server. A rename produces a new key so delayed responses for the old URI
+/// cannot decorate the renamed document.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DocumentKey {
+    pub id: DocumentId,
+    pub uri: DocumentUri,
+}
+
+/// Increments whenever a server session is replaced for a workspace.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SessionGeneration(pub u64);
+
+impl SessionGeneration {
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+}
+
+/// Version assigned by the LSP session to full-text `didOpen`/`didChange`
+/// synchronization. It is distinct from Lumen's local document revision.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ServerDocumentVersion(pub u64);
+
+impl ServerDocumentVersion {
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+}
+
+/// Identity captured when sending a request. Replies are accepted only when
+/// every field still matches the document/session currently displayed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequestStamp {
+    pub document: DocumentKey,
+    pub document_version: DocumentVersion,
+    pub server_version: ServerDocumentVersion,
+    pub session: SessionGeneration,
+}
+
+impl RequestStamp {
+    #[must_use]
+    pub fn is_current_for(&self, active: &Self) -> bool {
+        self == active
+    }
+}
+
 /// A protocol position. LSP uses zero-based UTF-16 code-unit columns.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Position {
@@ -278,6 +361,105 @@ pub struct TokenSnapshot {
     pub spans: Vec<TokenSpan>,
 }
 
+/// Server-advertised semantic-token names. The transport layer obtains this
+/// during `initialize`; this pure representation is safe to test without a
+/// running language server.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SemanticTokenLegend {
+    pub token_types: Vec<String>,
+    pub token_modifiers: Vec<String>,
+}
+
+/// A semantic token decoded into the editor's UTF-8 source coordinate space.
+/// Modifiers retain the LSP bitset so later UI policy can use them without
+/// reparsing a server message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SemanticToken {
+    pub range: Range<usize>,
+    pub class: TokenClass,
+    pub modifiers: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SemanticTokenError {
+    InvalidDataLength,
+    ArithmeticOverflow,
+    UnknownTokenType,
+    InvalidPosition(PositionError),
+    EmptyRange,
+}
+
+/// Decode LSP's delta-encoded semantic token payload. Ranges are converted
+/// immediately so no UI component needs to interpret UTF-16 columns.
+pub fn decode_semantic_tokens(
+    text: &str,
+    legend: &SemanticTokenLegend,
+    data: &[u32],
+) -> Result<Vec<SemanticToken>, SemanticTokenError> {
+    if !data.len().is_multiple_of(5) {
+        return Err(SemanticTokenError::InvalidDataLength);
+    }
+    let mut line = 0_u32;
+    let mut character = 0_u32;
+    let mut tokens = Vec::with_capacity(data.len() / 5);
+    for chunk in data.as_chunks::<5>().0 {
+        line = line
+            .checked_add(chunk[0])
+            .ok_or(SemanticTokenError::ArithmeticOverflow)?;
+        character = if chunk[0] == 0 {
+            character
+                .checked_add(chunk[1])
+                .ok_or(SemanticTokenError::ArithmeticOverflow)?
+        } else {
+            chunk[1]
+        };
+        let start = Position { line, character };
+        let end = Position {
+            line,
+            character: character
+                .checked_add(chunk[2])
+                .ok_or(SemanticTokenError::ArithmeticOverflow)?,
+        };
+        let range = position_to_byte(text, start)
+            .and_then(|start| position_to_byte(text, end).map(|end| start..end))
+            .map_err(SemanticTokenError::InvalidPosition)?;
+        if range.is_empty() {
+            return Err(SemanticTokenError::EmptyRange);
+        }
+        let token_type = legend
+            .token_types
+            .get(usize::try_from(chunk[3]).map_err(|_| SemanticTokenError::UnknownTokenType)?)
+            .ok_or(SemanticTokenError::UnknownTokenType)?;
+        tokens.push(SemanticToken {
+            range,
+            class: semantic_class(token_type),
+            modifiers: chunk[4],
+        });
+    }
+    Ok(tokens)
+}
+
+fn semantic_class(token_type: &str) -> TokenClass {
+    match token_type {
+        "namespace" => TokenClass::Namespace,
+        "type" | "class" | "enum" | "interface" | "struct" | "typeParameter" => TokenClass::Type,
+        "parameter" => TokenClass::Parameter,
+        "variable" => TokenClass::Variable,
+        "property" => TokenClass::Property,
+        "enumMember" | "enum_member" => TokenClass::Constant,
+        "function" => TokenClass::Function,
+        "method" => TokenClass::Method,
+        "macro" => TokenClass::Macro,
+        "keyword" => TokenClass::Keyword,
+        "string" | "regexp" => TokenClass::String,
+        "number" => TokenClass::Number,
+        "comment" => TokenClass::Comment,
+        "operator" => TokenClass::Operator,
+        "decorator" => TokenClass::Attribute,
+        _ => TokenClass::Variable,
+    }
+}
+
 impl TokenSnapshot {
     /// Reject invalid or overlapping ranges before they reach the renderer.
     pub fn new(
@@ -324,6 +506,106 @@ mod tests {
                 .expect("Go has a server descriptor")
                 .executable_candidates,
             &["gopls"]
+        );
+    }
+
+    #[test]
+    fn request_stamps_reject_renamed_and_stale_responses() {
+        let document = DocumentKey {
+            id: DocumentId(17),
+            uri: DocumentUri::new("file:///workspace/src/main.rs").unwrap(),
+        };
+        let current = RequestStamp {
+            document: document.clone(),
+            document_version: DocumentVersion(4),
+            server_version: ServerDocumentVersion(6),
+            session: SessionGeneration(2),
+        };
+        assert!(current.is_current_for(&current));
+
+        let renamed = RequestStamp {
+            document: DocumentKey {
+                id: document.id,
+                uri: DocumentUri::new("file:///workspace/src/lib.rs").unwrap(),
+            },
+            ..current.clone()
+        };
+        assert!(!renamed.is_current_for(&current));
+        assert!(
+            !RequestStamp {
+                document_version: DocumentVersion(5),
+                ..current.clone()
+            }
+            .is_current_for(&current)
+        );
+        assert!(
+            !RequestStamp {
+                server_version: ServerDocumentVersion(7),
+                ..current.clone()
+            }
+            .is_current_for(&current)
+        );
+        assert!(
+            !RequestStamp {
+                session: SessionGeneration(3),
+                ..current.clone()
+            }
+            .is_current_for(&current)
+        );
+    }
+
+    #[test]
+    fn document_uri_rejects_empty_and_control_values() {
+        assert_eq!(DocumentUri::new(""), Err(DocumentUriError::Empty));
+        assert_eq!(
+            DocumentUri::new("file:///workspace/\nmain.rs"),
+            Err(DocumentUriError::ContainsControlCharacter)
+        );
+    }
+
+    #[test]
+    fn semantic_tokens_decode_utf16_crlf_deltas_and_modifiers() {
+        let text = "fn 🌍\r\nvalue";
+        let legend = SemanticTokenLegend {
+            token_types: vec!["keyword".into(), "variable".into()],
+            token_modifiers: vec!["declaration".into()],
+        };
+        let tokens = decode_semantic_tokens(
+            text,
+            &legend,
+            &[
+                0, 0, 2, 0, 0, // `fn`
+                1, 0, 5, 1, 1, // `value`, after CRLF and emoji on line zero
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            tokens,
+            vec![
+                SemanticToken {
+                    range: 0..2,
+                    class: TokenClass::Keyword,
+                    modifiers: 0,
+                },
+                SemanticToken {
+                    range: text.find("value").unwrap()..text.len(),
+                    class: TokenClass::Variable,
+                    modifiers: 1,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn semantic_tokens_reject_malformed_payloads_and_unknown_types() {
+        let legend = SemanticTokenLegend::default();
+        assert_eq!(
+            decode_semantic_tokens("text", &legend, &[0, 0, 4]),
+            Err(SemanticTokenError::InvalidDataLength)
+        );
+        assert_eq!(
+            decode_semantic_tokens("text", &legend, &[0, 0, 4, 0, 0]),
+            Err(SemanticTokenError::UnknownTokenType)
         );
     }
 
