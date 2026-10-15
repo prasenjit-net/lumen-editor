@@ -102,18 +102,26 @@ jobs:
         run: cargo run --locked --package xtask -- set-version $env:RELEASE_VERSION
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked
-      - name: Install WiX Toolset
+      - name: Locate or install WiX Toolset
         shell: pwsh
-        run: choco install wixtoolset --version=3.11.2 --yes --no-progress
+        run: |
+          $candle = Get-ChildItem -Path "${env:ProgramFiles(x86)}\WiX Toolset v3.*\bin\candle.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $candle) {
+            choco install wixtoolset --yes --no-progress
+            $candle = Get-ChildItem -Path "${env:ProgramFiles(x86)}\WiX Toolset v3.*\bin\candle.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if ($null -eq $candle) {
+            throw "WiX Toolset candle.exe was not found after installation"
+          }
+          "WIX_BIN=$($candle.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Package MSI
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          $wix = "${env:ProgramFiles(x86)}\WiX Toolset v3.11\bin"
-          & "$wix\candle.exe" -nologo "-dSourceDir=$PWD\target\release" "-dVersion=$env:RELEASE_VERSION" packaging\windows\Lumen.wxs -out dist\Lumen.wixobj
-          & "$wix\light.exe" -nologo -out "dist\Lumen-v$env:RELEASE_VERSION-windows-$env:RUNNER_ARCH.msi" dist\Lumen.wixobj
+          & "$env:WIX_BIN\candle.exe" -nologo "-dSourceDir=$PWD\target\release" "-dVersion=$env:RELEASE_VERSION" packaging\windows\Lumen.wxs -out dist\Lumen.wixobj
+          & "$env:WIX_BIN\light.exe" -nologo -out "dist\Lumen-v$env:RELEASE_VERSION-windows-$env:RUNNER_ARCH.msi" dist\Lumen.wixobj
       - uses: actions/upload-artifact@v7
         with:
           name: lumen-windows
