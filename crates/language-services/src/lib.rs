@@ -8,6 +8,7 @@ use std::{ops::Range, path::Path};
 
 pub mod highlight;
 pub mod protocol;
+pub mod session;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageId(&'static str);
