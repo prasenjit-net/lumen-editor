@@ -3,8 +3,16 @@ use super::command::Command;
 use eframe::egui;
 impl LumenApp {
     pub(crate) fn handle_events(&mut self, ctx: &egui::Context) {
+        let terminal_focused = self.view.terminal.open
+            && ctx.memory(|memory| memory.has_focus(egui::Id::new("terminal_canvas")));
+        // VS Code uses Ctrl+` on every desktop platform. Keep it available
+        // while the terminal owns focus so the same shortcut can also close it.
+        let terminal = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Backtick);
+        if ctx.input_mut(|input| input.consume_shortcut(&terminal)) {
+            self.execute(Command::ToggleTerminal, ctx);
+        }
         let settings = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Comma);
-        if ctx.input_mut(|input| input.consume_shortcut(&settings)) {
+        if !terminal_focused && ctx.input_mut(|input| input.consume_shortcut(&settings)) {
             self.execute(Command::Settings, ctx);
         }
         super::editor_action::validate_paste(&mut self.view, self.editor.active(), ctx);
@@ -13,7 +21,7 @@ impl LumenApp {
         let editor_focused = self.editor.active().is_some_and(|file| {
             ctx.memory(|memory| memory.has_focus(super::editor_action::text_widget_id(file.id)))
         });
-        if !editor_focused {
+        if !editor_focused && !terminal_focused {
             #[cfg(feature = "shared-editor")]
             if ctx.input(|input| {
                 input
@@ -40,9 +48,15 @@ impl LumenApp {
                 egui::Key::H
             },
         );
-        if !self.view.settings.open && ctx.input_mut(|input| input.consume_shortcut(&replace)) {
+        if !terminal_focused
+            && !self.view.settings.open
+            && ctx.input_mut(|input| input.consume_shortcut(&replace))
+        {
             self.execute(Command::Replace, ctx);
-        } else if !self.view.settings.open && ctx.input_mut(|input| input.consume_shortcut(&find)) {
+        } else if !terminal_focused
+            && !self.view.settings.open
+            && ctx.input_mut(|input| input.consume_shortcut(&find))
+        {
             self.execute(Command::Find, ctx);
         }
         if ctx.input(|input| input.viewport().close_requested())
@@ -84,55 +98,95 @@ impl LumenApp {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let palette = egui::KeyboardShortcut::new(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::P,
-            );
-            if ctx.input_mut(|input| input.consume_shortcut(&palette)) {
-                self.execute(Command::Palette, ctx);
-            }
-            let quick_open = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::P);
-            if ctx.input_mut(|input| input.consume_shortcut(&quick_open)) {
-                self.execute(Command::QuickOpen, ctx);
-            }
-            let go_to_line = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::G);
-            if ctx.input_mut(|input| input.consume_shortcut(&go_to_line)) {
-                self.execute(Command::GoToLine, ctx);
-            }
-            let workspace_search = egui::KeyboardShortcut::new(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::F,
-            );
-            if ctx.input_mut(|input| input.consume_shortcut(&workspace_search)) {
-                self.execute(Command::ShowWorkspaceSearch, ctx);
-            }
-            if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::B)) {
-                self.execute(Command::ToggleSidebar, ctx);
-            }
-            if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::N)) {
-                self.execute(Command::NewUntitled, ctx);
-            }
-            if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::O)) {
-                if ctx.input(|i| i.modifiers.shift) {
-                    self.execute(Command::OpenFolder, ctx);
-                } else {
-                    self.execute(Command::OpenFile, ctx);
+            if !terminal_focused {
+                let palette = egui::KeyboardShortcut::new(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::P,
+                );
+                if ctx.input_mut(|input| input.consume_shortcut(&palette)) {
+                    self.execute(Command::Palette, ctx);
                 }
-            }
-            if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
-                if ctx.input(|i| i.modifiers.shift) {
-                    self.execute(Command::SaveAs, ctx);
-                } else {
-                    self.execute(Command::Save, ctx);
+                let quick_open =
+                    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::P);
+                if ctx.input_mut(|input| input.consume_shortcut(&quick_open)) {
+                    self.execute(Command::QuickOpen, ctx);
                 }
-            }
-            if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::W)) {
-                self.execute(Command::CloseEditor, ctx);
+                let go_to_line =
+                    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::G);
+                if ctx.input_mut(|input| input.consume_shortcut(&go_to_line)) {
+                    self.execute(Command::GoToLine, ctx);
+                }
+                let workspace_search = egui::KeyboardShortcut::new(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::F,
+                );
+                if ctx.input_mut(|input| input.consume_shortcut(&workspace_search)) {
+                    self.execute(Command::ShowWorkspaceSearch, ctx);
+                }
+                if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::B)) {
+                    self.execute(Command::ToggleSidebar, ctx);
+                }
+                if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::N)) {
+                    self.execute(Command::NewUntitled, ctx);
+                }
+                if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::O)) {
+                    if ctx.input(|i| i.modifiers.shift) {
+                        self.execute(Command::OpenFolder, ctx);
+                    } else {
+                        self.execute(Command::OpenFile, ctx);
+                    }
+                }
+                if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
+                    if ctx.input(|i| i.modifiers.shift) {
+                        self.execute(Command::SaveAs, ctx);
+                    } else {
+                        self.execute(Command::Save, ctx);
+                    }
+                }
+                if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::W)) {
+                    self.execute(Command::CloseEditor, ctx);
+                }
             }
         }
-        self.route_platform_paste(ctx);
-        self.start_clipboard_read(ctx);
-        self.poll_clipboard(ctx);
+        if !terminal_focused {
+            self.route_platform_paste(ctx);
+            self.start_clipboard_read(ctx);
+            self.poll_clipboard(ctx);
+        }
         super::editor_action::finish_paste_validation(&mut self.view, self.editor.active(), ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn control_backtick_toggles_the_terminal_even_when_its_canvas_is_focused() {
+        let ctx = egui::Context::default();
+        let mut app = LumenApp::default();
+        app.view.terminal.open = true;
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("terminal_canvas")));
+        let _ = ctx.run(
+            egui::RawInput {
+                modifiers: egui::Modifiers {
+                    ctrl: true,
+                    ..Default::default()
+                },
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Backtick,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        ctrl: true,
+                        ..Default::default()
+                    },
+                }],
+                ..Default::default()
+            },
+            |ctx| app.handle_events(ctx),
+        );
+        assert!(!app.view.terminal.open);
     }
 }

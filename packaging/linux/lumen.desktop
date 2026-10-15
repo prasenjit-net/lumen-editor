@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Lumen
+Comment=A focused native file editor
+Exec=lumen %F
+Icon=lumen
+Terminal=false
+Categories=Development;TextEditor;
+MimeType=text/plain;

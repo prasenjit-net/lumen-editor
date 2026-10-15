@@ -21,7 +21,7 @@ pub(crate) enum Command {
     ClearWorkspaceSearch,
     RefreshSourceControl,
     ToggleTerminal,
-    SubmitTerminalInput,
+    SendTerminalInput(Vec<u8>),
     CloseTerminal,
     ClearTerminal,
     PullSourceControl,

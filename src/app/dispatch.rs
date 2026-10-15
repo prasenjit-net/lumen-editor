@@ -51,7 +51,7 @@ impl LumenApp {
             Command::ClearWorkspaceSearch => self.clear_workspace_search(),
             Command::RefreshSourceControl => self.refresh_source_control(ctx),
             Command::ToggleTerminal => self.toggle_terminal(ctx),
-            Command::SubmitTerminalInput => self.submit_terminal_input(ctx),
+            Command::SendTerminalInput(bytes) => self.send_terminal_input(&bytes, ctx),
             Command::CloseTerminal => self.close_terminal(),
             Command::ClearTerminal => self.clear_terminal(),
             Command::PullSourceControl => self.pull_source_control(ctx),

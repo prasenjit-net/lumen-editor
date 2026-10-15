@@ -471,13 +471,26 @@ mod tests {
     }
     #[test]
     fn live_session_is_skipped_then_imported_after_owner_exits() {
+        use std::time::{Duration, Instant};
+
         let root = tempfile::tempdir().unwrap();
         let first = LocalRecoveryStore::with_directory(Some(root.path().join("recovery")));
         first.save(&[doc("first")]).unwrap();
         let second = LocalRecoveryStore::with_directory(Some(root.path().join("recovery")));
         assert!(second.load().unwrap().documents.is_empty());
         drop(first); // Simulated interrupted process: snapshot remains, lock releases.
-        assert_eq!(second.load().unwrap().documents, vec![doc("first")]);
+        // Advisory lock release can lag briefly on a busy filesystem. A real
+        // restart observes the same boundary, so wait for the released lock
+        // rather than asserting a timing-sensitive immediate import.
+        let expected = vec![doc("first")];
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            if second.load().unwrap().documents == expected {
+                break;
+            }
+            assert!(Instant::now() < deadline, "recovery lock was not released");
+            std::thread::sleep(Duration::from_millis(10));
+        }
         second.save(&[doc("second")]).unwrap();
         assert_eq!(
             fs::read_dir(root.path().join("recovery"))

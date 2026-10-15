@@ -2,6 +2,26 @@
 name = "lumen-editor"
 version = "0.1.2"
 edition = "2024"
+description = "A focused native file editor"
+
+[package.metadata.deb]
+maintainer = "Lumen contributors"
+section = "devel"
+priority = "optional"
+assets = [
+    ["target/release/lumen-editor", "usr/bin/lumen", "755"],
+    ["assets/icons/lumen.png", "usr/share/icons/hicolor/1024x1024/apps/lumen.png", "644"],
+    ["packaging/linux/lumen.desktop", "usr/share/applications/lumen.desktop", "644"],
+]
+
+[package.metadata.generate-rpm]
+summary = "A focused native file editor"
+license = "Proprietary"
+assets = [
+    { source = "target/release/lumen-editor", dest = "/usr/bin/lumen", mode = "755" },
+    { source = "assets/icons/lumen.png", dest = "/usr/share/icons/hicolor/1024x1024/apps/lumen.png", mode = "644" },
+    { source = "packaging/linux/lumen.desktop", dest = "/usr/share/applications/lumen.desktop", mode = "644" },
+]
 
 [workspace]
 members = ["xtask", "crates/editor-core", "crates/editor-surface", "crates/settings-core", "crates/terminal-core"]

@@ -8,6 +8,7 @@ mod editor;
 mod explorer;
 mod files;
 mod search;
+mod terminal;
 mod workbench;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -79,6 +80,7 @@ pub const SECTIONS: &[SectionSchema] = &[
     workbench::SCHEMA,
     explorer::SCHEMA,
     search::SCHEMA,
+    terminal::SCHEMA,
 ];
 pub fn catalog() -> impl Iterator<Item = &'static Setting> {
     SECTIONS.iter().flat_map(|section| section.settings.iter())
@@ -221,5 +223,10 @@ mod tests {
         assert!(validate_layers(&user, None).is_err());
         let project = Layer::from([("editor.line_height".into(), Value::Number(30.0))]);
         assert!(validate_layers(&user, Some(&project)).is_ok());
+        let terminal = Layer::from([
+            ("terminal.font_size".into(), Value::Number(20.0)),
+            ("terminal.line_height".into(), Value::Number(18.0)),
+        ]);
+        assert!(validate_layers(&terminal, None).is_err());
     }
 }

@@ -76,10 +76,9 @@ impl TerminalSession {
         })
     }
 
-    pub(crate) fn write_line(&mut self, input: &str) -> Result<(), String> {
+    pub(crate) fn write(&mut self, input: &[u8]) -> Result<(), String> {
         self.writer
-            .write_all(input.as_bytes())
-            .and_then(|_| self.writer.write_all(b"\n"))
+            .write_all(input)
             .and_then(|_| self.writer.flush())
             .map_err(|error| format!("Could not send terminal input: {error}"))
     }
@@ -146,7 +145,7 @@ mod tests {
     fn shell_runs_in_the_requested_directory_and_streams_output() {
         let directory = tempfile::tempdir().unwrap();
         let mut terminal = TerminalSession::start(directory.path(), 12, 80).unwrap();
-        terminal.write_line("printf lumen-terminal-ok").unwrap();
+        terminal.write(b"printf lumen-terminal-ok\r").unwrap();
         let mut output = Vec::new();
         for _ in 0..50 {
             output.extend(terminal.drain_output().into_iter().flatten());

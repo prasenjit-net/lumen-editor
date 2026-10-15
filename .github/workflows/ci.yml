@@ -28,6 +28,9 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace --locked
+      - name: Verify integrated terminal PTY
+        if: runner.os == 'Linux'
+        run: cargo test --locked services::terminal::tests
       - name: Test legacy editor
         if: runner.os == 'macOS'
         run: cargo test --workspace --no-default-features --locked

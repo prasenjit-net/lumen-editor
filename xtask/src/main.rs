@@ -112,16 +112,41 @@ fn bundle(release: bool, offline: bool, editor: BundleEditor) -> Result<(), Box<
     let app = target.join(bundle_name(editor));
     let contents = app.join("Contents");
     let macos = contents.join("MacOS");
+    let resources = contents.join("Resources");
     fs::create_dir_all(&macos)?;
+    fs::create_dir_all(&resources)?;
     // Replace by rename rather than truncating an executable that may be running.
     let staged = macos.join("lumen-editor.bundle-tmp");
     fs::copy(&executable, &staged)?;
     fs::rename(&staged, macos.join("lumen-editor"))?;
+    fs::write(
+        resources.join("Lumen.icns"),
+        icns_from_png(&fs::read(root.join("assets/icons/lumen.png"))?)?,
+    )?;
     let plist = fs::read_to_string(root.join("assets/macos/Info.plist"))?;
     let plist = bundle_plist(&plist, editor);
     fs::write(contents.join("Info.plist"), plist)?;
     println!("Built {} ({profile})", app.display());
     Ok(())
+}
+
+/// The modern ICNS `ic10` representation contains a complete PNG image.
+/// Keeping the source PNG in the repository makes one authored icon serve the
+/// runtime window icon on every platform and the macOS application bundle.
+fn icns_from_png(png: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
+    const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+    if !png.starts_with(PNG_SIGNATURE) {
+        return Err("The bundled application icon is not a PNG.".into());
+    }
+    let chunk_length = u32::try_from(png.len() + 8)?;
+    let total_length = chunk_length.checked_add(8).ok_or("Icon is too large.")?;
+    let mut icon = Vec::with_capacity(total_length as usize);
+    icon.extend_from_slice(b"icns");
+    icon.extend_from_slice(&total_length.to_be_bytes());
+    icon.extend_from_slice(b"ic10");
+    icon.extend_from_slice(&chunk_length.to_be_bytes());
+    icon.extend_from_slice(png);
+    Ok(icon)
 }
 
 fn workspace_root() -> Result<PathBuf, Box<dyn Error>> {
@@ -198,5 +223,17 @@ mod tests {
         assert_eq!(bundle_name(BundleEditor::Legacy), "Lumen Legacy.app");
         assert!(legacy.contains("<string>dev.lumen.editor.legacy</string>"));
         assert!(legacy.contains("<key>CFBundleExecutable</key><string>lumen-editor</string>"));
+    }
+    #[test]
+    fn macos_icon_wraps_the_shared_png_as_an_icns_chunk() {
+        let png = include_bytes!("../../assets/icons/lumen.png");
+        let icon = icns_from_png(png).unwrap();
+        assert_eq!(&icon[..4], b"icns");
+        assert_eq!(&icon[8..12], b"ic10");
+        assert_eq!(&icon[16..], png);
+        assert_eq!(
+            u32::from_be_bytes(icon[4..8].try_into().unwrap()) as usize,
+            icon.len()
+        );
     }
 }

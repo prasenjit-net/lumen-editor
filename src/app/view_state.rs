@@ -128,13 +128,8 @@ pub(crate) struct SourceControlView {
 #[derive(Default)]
 pub(crate) struct TerminalView {
     pub(crate) open: bool,
-    pub(crate) input: String,
-    pub(crate) history: Vec<String>,
-    pub(crate) history_index: Option<usize>,
-    pub(crate) history_draft: String,
     pub(crate) emulator: Option<lumen_terminal_core::Terminal>,
     pub(crate) error: Option<String>,
-    pub(crate) focus_input: bool,
     pub(crate) scroll_to_bottom: bool,
     pub(crate) rows: u16,
     pub(crate) columns: u16,

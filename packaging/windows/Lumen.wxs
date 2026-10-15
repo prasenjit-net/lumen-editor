@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+      Id="*"
+      Name="Lumen"
+      Language="1033"
+      Version="$(var.Version)"
+      Manufacturer="Lumen contributors"
+      UpgradeCode="E4AD629A-5FE3-4E3E-80E9-2BEA82A3B452">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Lumen is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="Lumen">
+          <Component Id="LumenExecutable" Guid="*">
+            <File Id="lumenEditor" Source="$(var.SourceDir)\lumen-editor.exe" KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="Lumen" Title="Lumen" Level="1">
+      <ComponentRef Id="LumenExecutable" />
+    </Feature>
+  </Product>
+</Wix>

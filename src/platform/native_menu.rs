@@ -122,11 +122,11 @@ impl NativeMenu {
         // Windows as well as from the status bar, mirroring VS Code's panel
         // toggle shortcut.
         let terminal = Submenu::new("Terminal", true);
-        terminal.append(&item(
-            Command::ToggleTerminal,
+        terminal.append(&MenuItem::with_id(
+            Command::ToggleTerminal.menu_id().expect("native command"),
             "Toggle Terminal",
-            Code::KeyJ,
-            false,
+            true,
+            Some(Accelerator::new(Modifiers::CONTROL, Code::Backquote)),
         ))?;
         let window = Submenu::new("Window", true);
         #[cfg(target_os = "macos")]

@@ -432,6 +432,10 @@ mod tests {
             let mut app = crate::app::LumenApp::default();
             app.view.settings.open = true;
             app.view.settings.query = "text size".into();
+            let result_count = catalog()
+                .filter(|setting| matches(&app.view.settings, setting))
+                .count();
+            let result_label = format!("{result_count} settings found");
             let output = ctx.run(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
@@ -442,7 +446,7 @@ mod tests {
                 },
                 |ctx| app.render_component(ctx, |workbench| workbench.editor(ctx)),
             );
-            for label in ["Apply", "Cancel", "1 settings found", "Font Size"] {
+            for label in ["Apply", "Cancel", result_label.as_str(), "Font Size"] {
                 let shape = output
                     .shapes
                     .iter()

@@ -72,13 +72,13 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo test --workspace --no-default-features --locked
       - run: cargo xtask bundle --release
-      - name: Package app bundle
+      - name: Package signed-ready DMG
         shell: bash
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           mkdir -p dist
-          ditto -c -k --sequesterRsrc --keepParent target/Lumen.app "dist/Lumen-v${RELEASE_VERSION}-macos-${RUNNER_ARCH}.zip"
+          hdiutil create -volname Lumen -srcfolder target/Lumen.app -ov -format UDZO "dist/Lumen-v${RELEASE_VERSION}-macos-${RUNNER_ARCH}.dmg"
       - uses: actions/upload-artifact@v7
         with:
           name: lumen-macos
@@ -102,13 +102,18 @@ jobs:
         run: cargo run --locked --package xtask -- set-version $env:RELEASE_VERSION
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked
-      - name: Package executable
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: choco install wixtoolset --version=3.11.2 --yes --no-progress
+      - name: Package MSI
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path target/release/lumen-editor.exe -DestinationPath "dist/Lumen-v$env:RELEASE_VERSION-windows-$env:RUNNER_ARCH.zip"
+          $wix = "${env:ProgramFiles(x86)}\WiX Toolset v3.11\bin"
+          & "$wix\candle.exe" -nologo "-dSourceDir=$PWD\target\release" "-dVersion=$env:RELEASE_VERSION" packaging\windows\Lumen.wxs -out dist\Lumen.wixobj
+          & "$wix\light.exe" -nologo -out "dist\Lumen-v$env:RELEASE_VERSION-windows-$env:RUNNER_ARCH.msi" dist\Lumen.wixobj
       - uses: actions/upload-artifact@v7
         with:
           name: lumen-windows
@@ -131,13 +136,18 @@ jobs:
         run: cargo run --locked --package xtask -- set-version "$RELEASE_VERSION"
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked
-      - name: Package executable
+      - name: Install Linux package builders
+        run: |
+          cargo install --locked cargo-deb --version 3.8.0
+          cargo install --locked cargo-generate-rpm --version 0.21.0
+      - name: Package DEB and RPM
         shell: bash
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           mkdir -p dist
-          tar -C target/release -czf "dist/Lumen-v${RELEASE_VERSION}-linux-${RUNNER_ARCH}.tar.gz" lumen-editor
+          cargo deb --no-build --output "dist/Lumen-v${RELEASE_VERSION}-linux-${RUNNER_ARCH}.deb"
+          cargo generate-rpm -o "dist/Lumen-v${RELEASE_VERSION}-linux-${RUNNER_ARCH}.rpm"
       - uses: actions/upload-artifact@v7
         with:
           name: lumen-linux

@@ -4,7 +4,11 @@ use std::path::PathBuf;
 pub(crate) fn run() -> eframe::Result<()> {
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size([1280.0, 760.0])
-        .with_min_inner_size([900.0, 560.0]);
+        .with_min_inner_size([900.0, 560.0])
+        .with_icon(
+            eframe::icon_data::from_png_bytes(include_bytes!("../assets/icons/lumen.png"))
+                .expect("bundled Lumen application icon must be a valid PNG"),
+        );
     #[cfg(target_os = "macos")]
     let viewport = viewport
         .with_fullsize_content_view(true)
