@@ -302,6 +302,9 @@ specified by a project unless the user’s server-command policy permits it.
   Process I/O and lifecycle remain service-owned.
 - [x] Add a tested JSON-RPC `Content-Length` encoder paired with the bounded
   decoder. Process I/O and child lifetime remain outside this crate.
+- [x] Parse initialize responses into a narrow typed capability contract. The
+  app will only enable a feature after both this contract and its UI workflow
+  support it.
 - Implement stdio JSON-RPC in `services/`, capability negotiation in the new
   crate, server lifecycle in `app/`, and a compact Language Status view.
 - Add Rust diagnostics with `rust-analyzer`, then Go diagnostics with `gopls`.

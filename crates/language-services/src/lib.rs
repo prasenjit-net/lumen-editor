@@ -6,6 +6,7 @@
 //! positions, token snapshots, and language registration consistent.
 use std::{ops::Range, path::Path};
 
+pub mod capabilities;
 pub mod diagnostics;
 pub mod highlight;
 pub mod lsp;
