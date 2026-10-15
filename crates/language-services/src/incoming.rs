@@ -29,6 +29,64 @@ pub struct HoverContents {
     pub text: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocumentSymbol {
+    pub name: String,
+    pub kind: u64,
+    pub start: Position,
+    pub end: Position,
+    pub children: Vec<DocumentSymbol>,
+}
+
+pub fn parse_document_symbols_response(
+    message: &Value,
+) -> Result<Vec<DocumentSymbol>, IncomingError> {
+    let Some(result) = message.get("result") else {
+        return Err(IncomingError::InvalidPayload);
+    };
+    if result.is_null() {
+        return Ok(Vec::new());
+    }
+    result
+        .as_array()
+        .ok_or(IncomingError::InvalidPayload)?
+        .iter()
+        .map(parse_symbol)
+        .collect()
+}
+
+fn parse_symbol(value: &Value) -> Result<DocumentSymbol, IncomingError> {
+    let object = value.as_object().ok_or(IncomingError::InvalidPayload)?;
+    let name = object
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .ok_or(IncomingError::InvalidPayload)?
+        .to_owned();
+    let kind = object
+        .get("kind")
+        .and_then(Value::as_u64)
+        .ok_or(IncomingError::InvalidPayload)?;
+    let range = object
+        .get("selectionRange")
+        .or_else(|| object.get("range"))
+        .and_then(Value::as_object)
+        .ok_or(IncomingError::InvalidPayload)?;
+    let children = object
+        .get("children")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(parse_symbol).collect())
+        .transpose()?
+        .unwrap_or_default();
+    Ok(DocumentSymbol {
+        name,
+        kind,
+        start: parse_position(range.get("start"))?,
+        end: parse_position(range.get("end"))?,
+        children,
+    })
+}
+
 /// Decode plain-text and MarkedString hover forms. Rich markup is retained as
 /// text until a deliberately designed renderer is added.
 pub fn parse_hover_response(message: &Value) -> Result<Option<HoverContents>, IncomingError> {
@@ -229,5 +287,12 @@ mod tests {
             parse_hover_response(&message).unwrap().unwrap().text,
             "fn main()\ndocs"
         );
+    }
+
+    #[test]
+    fn symbols_preserve_nesting_and_selection_ranges() {
+        let message = json!({"id":4,"result":[{"name":"Thing","kind":5,"selectionRange":{"start":{"line":1,"character":0},"end":{"line":1,"character":5}},"children":[{"name":"run","kind":6,"range":{"start":{"line":2,"character":2},"end":{"line":2,"character":5}}}]}]});
+        let symbols = parse_document_symbols_response(&message).unwrap();
+        assert_eq!(symbols[0].children[0].name, "run");
     }
 }

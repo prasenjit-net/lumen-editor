@@ -12,6 +12,7 @@ pub mod highlight;
 pub mod incoming;
 pub mod lsp;
 pub mod protocol;
+pub mod requests;
 pub mod session;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
