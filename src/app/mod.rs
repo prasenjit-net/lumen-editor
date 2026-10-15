@@ -49,6 +49,7 @@ pub(crate) struct LumenApp {
     pub(crate) language_server_workspace: Option<std::path::PathBuf>,
     pub(crate) language_server_language: Option<lumen_language_services::LanguageId>,
     pub(crate) language_server_generation: lumen_language_services::SessionGeneration,
+    pub(crate) language_server_initialized: bool,
     pub(crate) language_server_capabilities:
         Option<lumen_language_services::capabilities::ServerCapabilities>,
     pub(crate) language_server_requests: lumen_language_services::requests::RequestTracker,
@@ -86,6 +87,7 @@ impl Default for LumenApp {
             language_server_workspace: None,
             language_server_language: None,
             language_server_generation: Default::default(),
+            language_server_initialized: false,
             language_server_capabilities: None,
             language_server_requests: Default::default(),
             language_server_request_kinds: Default::default(),
@@ -122,6 +124,9 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.delete_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.source_revert_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.save_conflict_dialog(ctx));
+        self.render_component(ctx, |workbench| {
+            workbench.language_server_details_dialog(ctx)
+        });
         self.render_component(ctx, |workbench| workbench.safety_details_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.workspace_replace_preview(ctx));
         self.maintain_documents(ctx);

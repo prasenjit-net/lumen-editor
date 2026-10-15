@@ -13,6 +13,7 @@ pub struct NativeMenu {
     save: MenuItem,
     save_as: MenuItem,
     close: MenuItem,
+    close_folder: MenuItem,
     edits: Vec<MenuItem>,
     find: Vec<MenuItem>,
 }
@@ -46,11 +47,13 @@ impl NativeMenu {
         let file = Submenu::new("File", true);
         let save = item(Command::Save, "Save", Code::KeyS, false);
         let save_as = item(Command::SaveAs, "Save As…", Code::KeyS, true);
-        let close = item(Command::CloseEditor, "Close Editor", Code::KeyW, false);
+        let close = item(Command::CloseEditor, "Close Document", Code::KeyW, false);
+        let close_folder = plain_item(Command::CloseFolder, "Close Folder");
         file.append_items(&[
             &item(Command::NewUntitled, "New Text File", Code::KeyN, false),
             &item(Command::OpenFile, "Open File…", Code::KeyO, false),
             &item(Command::OpenFolder, "Open Folder…", Code::KeyO, true),
+            &close_folder,
             &PredefinedMenuItem::separator(),
             &save,
             &save_as,
@@ -180,6 +183,7 @@ impl NativeMenu {
             save,
             save_as,
             close,
+            close_folder,
             edits,
             find,
         })
@@ -215,6 +219,7 @@ impl NativeMenu {
         explorer: bool,
         settings: bool,
         pending: bool,
+        folder_open: bool,
     ) {
         for item in &self.find {
             item.set_enabled(open && !settings);
@@ -222,6 +227,7 @@ impl NativeMenu {
         self.save.set_enabled(if settings { pending } else { open });
         self.save_as.set_enabled(open && !settings);
         self.close.set_enabled(open || settings);
+        self.close_folder.set_enabled(folder_open);
         for item in &self.edits {
             let clipboard = matches!(
                 Command::from_menu_id(&item.id().0),
@@ -248,5 +254,14 @@ fn item(command: Command, title: &str, code: Code, shift: bool) -> MenuItem {
         title,
         true,
         Some(Accelerator::new(modifiers, code)),
+    )
+}
+
+fn plain_item(command: Command, title: &str) -> MenuItem {
+    MenuItem::with_id(
+        command.menu_id().expect("native command"),
+        title,
+        true,
+        None,
     )
 }

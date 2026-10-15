@@ -256,6 +256,31 @@ fn edit_active(app: &mut LumenApp, text: &str) {
 }
 
 #[test]
+fn close_folder_clears_project_state_without_closing_documents() {
+    let (mut app, _) = test_app(TestDialogs::default());
+    app.editor.workspace = Some("project".into());
+    app.editor.files.push(crate::model::Document::from_path(
+        "project/src/main.rs".into(),
+        "fn main() {}".into(),
+    ));
+    app.editor.active_file = Some(0);
+    app.editor.files[0].text.push_str("\n// unsaved");
+    app.editor.files[0].record_text_change();
+    app.view.expanded_dirs.insert("project/src".into());
+    app.view.explorer_selection = Some(ExplorerSelection::Directory("project/src".into()));
+
+    app.execute(Command::CloseFolder, &egui::Context::default());
+
+    assert!(app.editor.workspace.is_none());
+    assert_eq!(app.editor.files.len(), 1);
+    assert!(app.editor.files[0].dirty);
+    assert!(app.view.expanded_dirs.is_empty());
+    assert!(app.view.explorer_selection.is_none());
+    assert!(app.view.source_control.workspace.is_none());
+    assert!(app.view.status.contains("Closed folder project"));
+}
+
+#[test]
 fn workspace_explorer_edits_at_root_without_creating_a_buffer_or_file() {
     let (mut app, storage) = test_app(TestDialogs::default());
     app.editor.workspace = Some("project".into());

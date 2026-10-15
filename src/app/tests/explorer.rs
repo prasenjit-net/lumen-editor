@@ -32,6 +32,10 @@ fn native_new_text_file_stays_untitled_even_in_a_workspace() {
     assert!(app.editor.active().unwrap().path.is_none());
     assert!(app.view.explorer_edit.is_none());
     assert_eq!(Command::from_menu_id("new"), Some(Command::NewUntitled));
+    assert_eq!(
+        Command::from_menu_id("close_folder"),
+        Some(Command::CloseFolder)
+    );
 }
 
 #[test]

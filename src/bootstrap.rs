@@ -56,6 +56,7 @@ pub(crate) fn run() -> eframe::Result<()> {
                     false,
                     false,
                     false,
+                    app.editor.workspace.is_some(),
                 );
                 app.native_menu = Some(menu);
             }

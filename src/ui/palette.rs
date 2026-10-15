@@ -28,6 +28,16 @@ impl Workbench<'_> {
                 self.command(Command::OpenFolder);
                 ui.close();
             }
+            if ui
+                .add_enabled(
+                    self.editor.workspace.is_some(),
+                    egui::Button::new(format!("{}  Close Folder", icon::X)),
+                )
+                .clicked()
+            {
+                self.command(Command::CloseFolder);
+                ui.close();
+            }
             ui.separator();
             if ui
                 .add_enabled(
@@ -47,6 +57,17 @@ impl Workbench<'_> {
                 .clicked()
             {
                 self.command(Command::SaveAs);
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .add_enabled(
+                    self.editor.active_file.is_some() || self.view.settings.open,
+                    egui::Button::new(format!("{}  Close Document     ⌘W", icon::X)),
+                )
+                .clicked()
+            {
+                self.command(Command::CloseEditor);
                 ui.close();
             }
         });
@@ -119,7 +140,15 @@ impl Workbench<'_> {
                         format!("{}  File: Open Folder", icon::FOLDER_OPEN),
                         Command::OpenFolder,
                     ),
+                    (
+                        format!("{}  File: Close Folder", icon::X),
+                        Command::CloseFolder,
+                    ),
                     (format!("{}  File: Save", icon::FLOPPY_DISK), Command::Save),
+                    (
+                        format!("{}  File: Close Document", icon::X),
+                        Command::CloseEditor,
+                    ),
                     (
                         format!("{}  Editor: Find", icon::MAGNIFYING_GLASS),
                         Command::Find,

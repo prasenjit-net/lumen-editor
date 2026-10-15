@@ -108,6 +108,7 @@ impl LumenApp {
                     explorer,
                     self.view.settings.open,
                     self.view.settings.selected().pending() > 0,
+                    self.editor.workspace.is_some(),
                 );
             }
         }

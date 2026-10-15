@@ -51,6 +51,31 @@ impl LumenApp {
         }
     }
 
+    pub(crate) fn close_folder(&mut self) {
+        let Some(folder) = self.editor.workspace.take() else {
+            self.view.status = "No folder is open".into();
+            return;
+        };
+        super::source_control::close_diff_preview(&mut self.editor, &mut self.view);
+        self.cancel_file_index();
+        self.view.navigation.indexed_root = None;
+        self.view.navigation.paths.clear();
+        self.view.navigation.mode = None;
+        self.cancel_workspace_search();
+        self.view.workspace_search = Default::default();
+        self.source_control_job = None;
+        self.view.source_control = Default::default();
+        self.view.expanded_dirs.clear();
+        self.view.explorer_selection = None;
+        self.view.explorer_edit = None;
+        self.view.delete_prompt = None;
+        self.view.explorer_clipboard = None;
+        self.view.explorer_focused = false;
+        self.close_terminal();
+        self.close_workspace_language_server();
+        self.view.status = format!("Closed folder {}", display_name(&folder));
+    }
+
     pub(crate) fn open_file(&mut self, path: PathBuf) {
         self.view.settings.open = false;
         if let Some(diff) = &mut self.view.source_control.diff {

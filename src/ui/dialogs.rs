@@ -1,8 +1,49 @@
 use super::Workbench;
 use super::theme::MUTED;
-use crate::app::command::Command;
+use crate::app::{command::Command, view_state::LanguageServerStatus};
 use eframe::egui::{self, RichText, Vec2};
 impl Workbench<'_> {
+    pub(crate) fn language_server_details_dialog(&mut self, ctx: &egui::Context) {
+        if !self.view.language_server_details_open {
+            return;
+        }
+        let Some(LanguageServerStatus::Error(message)) = self.view.language_server_status.as_ref()
+        else {
+            self.view.language_server_details_open = false;
+            return;
+        };
+        let message = message.clone();
+        egui::Window::new("Language Server Error")
+            .open(&mut self.view.language_server_details_open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(640.0)
+            .default_height(320.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new("The language server stopped. The diagnostic below is selectable and can be copied for troubleshooting.")
+                        .color(MUTED),
+                );
+                ui.add_space(6.0);
+                egui::ScrollArea::both()
+                    .id_salt("language_server_error_details")
+                    .auto_shrink([false, false])
+                    .max_height(260.0)
+                    .show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.add(
+                            egui::Label::new(RichText::new(&message).monospace())
+                                .selectable(true),
+                        );
+                    });
+                ui.add_space(6.0);
+                if ui.button("Copy Error").clicked() {
+                    ui.ctx().copy_text(message.clone());
+                    self.view.status = "Language server error copied".into();
+                }
+            });
+    }
+
     pub(crate) fn safety_details_dialog(&mut self, ctx: &egui::Context) {
         if !self.view.safety_details_open {
             return;

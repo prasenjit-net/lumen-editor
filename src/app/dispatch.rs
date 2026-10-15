@@ -122,6 +122,7 @@ impl LumenApp {
             Command::CommitExplorerEdit => self.commit_explorer_edit(),
             Command::OpenFile => self.choose_file(),
             Command::OpenFolder => self.choose_folder(),
+            Command::CloseFolder => self.close_folder(),
             Command::OpenPath(path) => self.open_file(path),
             Command::Save if self.view.settings.open => {
                 if self.view.settings.selected().pending() > 0 {

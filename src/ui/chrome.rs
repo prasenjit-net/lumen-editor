@@ -189,8 +189,24 @@ impl Workbench<'_> {
                                         message.as_str(),
                                     ),
                                 };
-                                ui.label(RichText::new(label).size(11.0).color(Color32::WHITE))
-                                    .on_hover_text(tooltip);
+                                let response = ui
+                                    .add(
+                                        egui::Label::new(
+                                            RichText::new(label).size(11.0).color(Color32::WHITE),
+                                        )
+                                        .sense(egui::Sense::click()),
+                                    )
+                                    .on_hover_text(match status {
+                                        LanguageServerStatus::Error(_) => {
+                                            "Language server failed. Click to view and copy details."
+                                        }
+                                        _ => tooltip,
+                                    });
+                                if response.clicked()
+                                    && matches!(status, LanguageServerStatus::Error(_))
+                                {
+                                    self.view.language_server_details_open = true;
+                                }
                             }
                             ui.label(
                                 RichText::new(format!(

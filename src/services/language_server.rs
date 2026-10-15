@@ -1,22 +1,27 @@
-//! Safe discovery boundary for optional language-server executables.
+//! Process boundary for optional language-server executables.
 //!
-//! This service does not start a child process yet. It resolves only candidates
-//! declared by Lumen's built-in language registry; workspace configuration is
-//! never interpreted as an executable command.
+//! Only candidates declared by Lumen's built-in language registry can be
+//! discovered and started; workspace configuration is never interpreted as an
+//! executable command. Stdio is consumed off the UI thread and server stderr is
+//! retained in a bounded buffer for actionable failure reporting.
 use lumen_language_services::{
     LanguageDescriptor, ServerDescriptor, lsp::encode_message, protocol::ContentLengthDecoder,
 };
 use serde_json::Value;
 use std::{
     env,
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
-    sync::mpsc::{self, Receiver, Sender},
+    sync::{
+        Arc, Mutex,
+        mpsc::{self, Receiver, Sender},
+    },
     thread,
 };
 
 const MAX_LSP_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_SERVER_STDERR_BYTES: usize = 8 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ServerAvailability {
@@ -46,6 +51,7 @@ pub(crate) struct ServerProcess {
     child: Child,
     input: ChildStdin,
     events: Receiver<ServerEvent>,
+    stderr: Arc<Mutex<Vec<u8>>>,
 }
 
 impl ServerProcess {
@@ -54,7 +60,7 @@ impl ServerProcess {
             .current_dir(workspace)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| format!("Could not start language server: {error}"))?;
         let input = child
@@ -65,33 +71,76 @@ impl ServerProcess {
             .stdout
             .take()
             .ok_or_else(|| "Language server did not provide stdout".to_owned())?;
+        let error_output = child
+            .stderr
+            .take()
+            .ok_or_else(|| "Language server did not provide stderr".to_owned())?;
+        let stderr = Arc::new(Mutex::new(Vec::new()));
+        let stderr_reader = Arc::clone(&stderr);
+        thread::spawn(move || read_server_stderr(error_output, stderr_reader));
         let (sender, events) = mpsc::channel();
         thread::spawn(move || read_server_output(output, sender));
         Ok(Self {
             child,
             input,
             events,
+            stderr,
         })
     }
 
     pub(crate) fn send(&mut self, message: &Value) -> Result<(), String> {
         let framed = encode_message(message)
             .map_err(|error| format!("Could not encode language-server message: {error}"))?;
-        self.input
+        let result = self
+            .input
             .write_all(&framed)
-            .and_then(|_| self.input.flush())
-            .map_err(|error| format!("Could not send language-server message: {error}"))
+            .and_then(|_| self.input.flush());
+        result.map_err(|error| {
+            let detail = self.stderr_text();
+            if detail.is_empty() {
+                format!("Could not send language-server message: {error}")
+            } else {
+                format!("Could not send language-server message: {error}: {detail}")
+            }
+        })
     }
 
     pub(crate) fn drain_events(&self) -> Vec<ServerEvent> {
         self.events.try_iter().collect()
     }
 
-    pub(crate) fn has_exited(&mut self) -> Result<bool, String> {
-        self.child
+    pub(crate) fn exit_reason(&mut self) -> Result<Option<String>, String> {
+        let status = self
+            .child
             .try_wait()
-            .map(|status| status.is_some())
-            .map_err(|error| format!("Could not inspect language server: {error}"))
+            .map_err(|error| format!("Could not inspect language server: {error}"))?;
+        Ok(status.map(|status| {
+            let detail = self.stderr_text();
+            if detail.is_empty() {
+                format!("Language server exited with {status}")
+            } else {
+                format!("Language server exited with {status}: {detail}")
+            }
+        }))
+    }
+
+    pub(crate) fn output_closed_reason(&mut self) -> String {
+        if let Ok(Some(reason)) = self.exit_reason() {
+            return reason;
+        }
+        let detail = self.stderr_text();
+        if detail.is_empty() {
+            "Language server closed its output stream".into()
+        } else {
+            format!("Language server closed its output stream: {detail}")
+        }
+    }
+
+    fn stderr_text(&self) -> String {
+        self.stderr
+            .lock()
+            .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_owned())
+            .unwrap_or_default()
     }
 }
 
@@ -106,7 +155,14 @@ fn read_server_output(mut output: impl Read, sender: Sender<ServerEvent>) {
     let mut buffer = [0; 4096];
     loop {
         let count = match output.read(&mut buffer) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error) => {
+                let _ = sender.send(ServerEvent::ProtocolError(format!(
+                    "Could not read language-server output: {error}"
+                )));
+                return;
+            }
             Ok(count) => count,
         };
         let payloads = match decoder.push(&buffer[..count]) {
@@ -133,6 +189,26 @@ fn read_server_output(mut output: impl Read, sender: Sender<ServerEvent>) {
         }
     }
     let _ = sender.send(ServerEvent::Exited);
+}
+
+fn read_server_stderr(mut output: impl Read, retained: Arc<Mutex<Vec<u8>>>) {
+    let mut buffer = [0; 1024];
+    loop {
+        let count = match output.read(&mut buffer) {
+            Ok(0) => return,
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(_) => return,
+            Ok(count) => count,
+        };
+        let Ok(mut bytes) = retained.lock() else {
+            return;
+        };
+        bytes.extend_from_slice(&buffer[..count]);
+        if bytes.len() > MAX_SERVER_STDERR_BYTES {
+            let excess = bytes.len() - MAX_SERVER_STDERR_BYTES;
+            bytes.drain(..excess);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -176,6 +252,22 @@ fn discover(server: ServerDescriptor, path: Option<&std::ffi::OsStr>) -> ServerA
 mod tests {
     use super::*;
     use lumen_language_services::LanguageRegistry;
+    use std::io;
+
+    struct InterruptedOnce {
+        interrupted: bool,
+        remaining: io::Cursor<Vec<u8>>,
+    }
+
+    impl Read for InterruptedOnce {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(io::Error::from(ErrorKind::Interrupted));
+            }
+            self.remaining.read(buffer)
+        }
+    }
 
     #[test]
     fn discovery_finds_only_registered_candidates() {
@@ -225,5 +317,23 @@ mod tests {
             receiver.try_iter().next(),
             Some(ServerEvent::ProtocolError(_))
         ));
+    }
+
+    #[test]
+    fn stdio_reader_retries_interrupted_reads() {
+        let message = serde_json::json!({"jsonrpc": "2.0", "method": "ready"});
+        let framed = encode_message(&message).unwrap();
+        let input = InterruptedOnce {
+            interrupted: false,
+            remaining: io::Cursor::new(framed),
+        };
+        let (sender, receiver) = mpsc::channel();
+
+        read_server_output(input, sender);
+
+        assert_eq!(
+            receiver.try_iter().collect::<Vec<_>>(),
+            vec![ServerEvent::Message(message), ServerEvent::Exited]
+        );
     }
 }
