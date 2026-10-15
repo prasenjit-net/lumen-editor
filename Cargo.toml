@@ -24,7 +24,7 @@ assets = [
 ]
 
 [workspace]
-members = ["xtask", "crates/editor-core", "crates/editor-surface", "crates/settings-core", "crates/terminal-core"]
+members = ["xtask", "crates/editor-core", "crates/editor-surface", "crates/language-services", "crates/settings-core", "crates/terminal-core"]
 default-members = ["."]
 resolver = "3"
 

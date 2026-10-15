@@ -1,6 +1,6 @@
 # VS Code-inspired core feature roadmap
 
-Updated: 2026-10-13. This is Lumen's recommended implementation order, not an
+Updated: 2026-10-15. This is Lumen's recommended implementation order, not an
 official VS Code ranking. Preserve existing editor, Explorer, settings, native
 menu and file workflows while adding each feature. The broader native/editor
 acceptance backlog remains in [pending-activities.md](pending-activities.md).
@@ -36,7 +36,7 @@ tests. Native results must be recorded separately from compilation. Backups
 contain unencrypted document text. The remaining unchecked item is a native
 acceptance gate, not an invitation to claim Windows runtime validation.
 
-## 2. Search and replace across the open folder — in progress
+## 2. Search and replace across the open folder — implemented; native acceptance pending
 
 Implemented so far: a Search activity panel with literal query, Match Case/Whole
 Word, include/exclude glob fields, grouped file/line results and keyboard-openable
@@ -140,11 +140,15 @@ Exit gate: single and Replace All operations are undoable and respect the
 accepted grapheme-safe rejection rule. See the existing
 [editor plan](text-editor-improvement-plan.md) for detailed cases.
 
-## 6. Add language services in stages — deferred
+## 6. Add language services in stages — Phase 0 in progress
 
-Deferred by user direction while roadmap item 7 is pursued.
+The standalone `lumen-language-services` crate now provides the initial Rust/Go
+registry, document-version and UTF-16/UTF-8 position contracts, and validated
+token snapshots. It has no process, UI or parser dependency yet; the existing
+highlighter remains active. See the dedicated
+[language-services plan](language-services-and-highlighting-plan.md).
 
-- [ ] Define a language-server boundary and lifecycle (open/change/save/close,
+- [ ] Complete the language-server boundary and lifecycle (open/change/save/close,
   process failures, cancellation and document revision checks).
 - [ ] First show diagnostics in the editor and a Problems panel; then add
   completion/parameter help, hover, definition/references, rename and format.
@@ -199,20 +203,46 @@ Exit gate: a dirty editor buffer, external Git changes, Pull-updated clean
 buffers, repository errors and merge state cannot silently replace user
 content.
 
-## 8. Add an integrated terminal, then split editor groups
+## 8. Add an integrated terminal, then split editor groups — terminal implementation in progress
 
-- [x] Add an initial resizable bottom terminal panel with a workspace-rooted
-  platform-native shell, bounded output, focused command input, PTY resize,
-  clear/close controls, bounded command history, hide-without-stopping behavior
-  and child-process shutdown on close.
-- [ ] Complete terminal-emulator interaction: ANSI rendering, full keyboard/IME
-  and clipboard transport, selection semantics, multiple
-  terminals, task/debug integration, and live macOS/Windows acceptance.
+- [x] Add a resizable bottom terminal panel with an inline native-shell session,
+  workspace-rooted working directory (or the user's home directory without a
+  workspace), bounded output/history, PTY resize, clear/close controls,
+  hide-without-stopping behavior, Ctrl/Cmd+` routing, and child-process shutdown
+  on close.
+- [x] Add ANSI screen emulation/rendering, color cells, cursor state and
+  configurable terminal typography, line height, cursor, color scheme,
+  auto-scroll and panel divider settings.
+- [ ] Complete terminal-emulator interaction: reliable native Windows ConPTY
+  output validation, full keyboard/IME and clipboard transport, selection
+  semantics, multiple terminals, task/debug integration, and live macOS/Windows
+  acceptance. The Unix raw-PTY stream assertion is intentionally excluded on
+  Windows CI because hosted ConPTY does not reliably deliver interactive shell
+  output; Windows compilation and the platform-independent terminal-core tests
+  still run.
 - [ ] Add split editor groups only after document identity, focus, scroll,
   recovery and Save/Close semantics work across multiple views of a file.
 
 Exit gate: terminal shutdown cannot hang app exit; split panes resize and retain
 independent view state without duplicating document edits or recovery snapshots.
+
+## 9. Deliver reproducible native downloads — implemented; end-to-end release pending
+
+- [x] Run push/PR CI for formatting, Clippy and workspace tests on Linux, macOS
+  and Windows; keep macOS bundle validation and native Windows test execution in
+  the verification path.
+- [x] Provide a manually triggered release workflow that bumps the selected
+  major/minor/patch version, tests each platform, tags the tested default-branch
+  commit and publishes GitHub Release assets.
+- [x] Build platform-native installers: macOS DMG, Windows MSI, Linux DEB and
+  RPM. The Windows workflow discovers an installed WiX 3.x toolset and only
+  installs it when absent, avoiding runner-image downgrade failures.
+- [x] Publish direct executable downloads beside installers: a raw macOS
+  executable, Windows `.exe`, and raw Linux executable. The release gate checks
+  all seven assets before it writes checksums, tags or creates a release.
+- [ ] Trigger and record one successful end-to-end manual release after the
+  seven-asset gate change. macOS code signing/notarization remains intentionally
+  out of scope until signing credentials and distribution authority are supplied.
 
 ## Sources and sequencing
 

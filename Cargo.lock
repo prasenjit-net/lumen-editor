@@ -2201,6 +2201,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "lumen-language-services"
+version = "0.1.0"
+
+[[package]]
 name = "lumen-settings-core"
 version = "0.1.0"
 dependencies = [
