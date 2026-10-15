@@ -182,7 +182,13 @@ jobs:
       - name: Verify assets and generate checksums
         shell: bash
         run: |
-          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 3
+          shopt -s nullglob
+          assets=(dist/Lumen-*.dmg dist/Lumen-*.msi dist/Lumen-*.deb dist/Lumen-*.rpm)
+          test "${#assets[@]}" -eq 4
+          for extension in dmg msi deb rpm; do
+            packages=(dist/Lumen-*.$extension)
+            test "${#packages[@]}" -eq 1
+          done
           (cd dist && sha256sum Lumen-* > SHA256SUMS)
       - name: Commit and tag the tested version
         id: tag
