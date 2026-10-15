@@ -16,6 +16,20 @@ pub enum FrameError {
     MessageTooLarge,
 }
 
+impl std::fmt::Display for FrameError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let message = match self {
+            Self::HeaderTooLarge => "header exceeds the configured limit",
+            Self::InvalidHeaderEncoding => "header is malformed",
+            Self::MissingContentLength => "header has no Content-Length",
+            Self::DuplicateContentLength => "header has duplicate Content-Length values",
+            Self::InvalidContentLength => "Content-Length is invalid",
+            Self::MessageTooLarge => "message exceeds the configured limit",
+        };
+        formatter.write_str(message)
+    }
+}
+
 /// Incremental decoder for LSP's `Content-Length: <bytes>\r\n\r\n<payload>`
 /// framing. A single append may yield zero, one or many complete payloads.
 #[derive(Debug)]

@@ -305,8 +305,11 @@ specified by a project unless the user’s server-command policy permits it.
 - [x] Parse initialize responses into a narrow typed capability contract. The
   app will only enable a feature after both this contract and its UI workflow
   support it.
-- Implement stdio JSON-RPC in `services/`, capability negotiation in the new
-  crate, server lifecycle in `app/`, and a compact Language Status view.
+- [x] Implement bounded stdio JSON-RPC in `services/`; it accepts only a
+  registry-discovered executable path and reports parsed messages/errors through
+  non-blocking events.
+- Implement server lifecycle in `app/` and evolve the compact Language Status
+  view from availability into session state.
 - Add Rust diagnostics with `rust-analyzer`, then Go diagnostics with `gopls`.
 - Test missing executable, initialization failure, server crash/restart, malformed
   messages, workspace switch, stale diagnostics, dirty buffer, Save As and close.

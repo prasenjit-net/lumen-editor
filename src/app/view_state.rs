@@ -84,8 +84,11 @@ pub(crate) struct SaveConflict {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum LanguageServerStatus {
+    Starting(String),
+    Ready(String),
     Available(String),
     Missing(String),
+    Error(String),
 }
 
 #[derive(Default)]

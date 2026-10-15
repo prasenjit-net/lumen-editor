@@ -45,6 +45,10 @@ pub(crate) struct LumenApp {
         std::sync::Arc<dyn crate::services::source_control::SourceControlService>,
     pub(crate) language_server_service:
         std::sync::Arc<dyn crate::services::language_server::LanguageServerService>,
+    pub(crate) language_server_process: Option<crate::services::language_server::ServerProcess>,
+    pub(crate) language_server_workspace: Option<std::path::PathBuf>,
+    pub(crate) language_server_language: Option<lumen_language_services::LanguageId>,
+    pub(crate) language_server_document: Option<(crate::model::DocumentId, u64)>,
     pub(crate) terminal_session: Option<crate::services::terminal::TerminalSession>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
@@ -68,6 +72,10 @@ impl Default for LumenApp {
             language_server_service: std::sync::Arc::new(
                 crate::services::language_server::LocalLanguageServer,
             ),
+            language_server_process: None,
+            language_server_workspace: None,
+            language_server_language: None,
+            language_server_document: None,
             terminal_session: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
@@ -79,6 +87,7 @@ impl eframe::App for LumenApp {
         self.sync_project_settings();
         self.apply_workbench_settings(ctx);
         self.refresh_language_server_status();
+        self.poll_language_server();
         self.handle_events(ctx);
         // Apply actions after each component, retaining the original frame order:
         // an explorer click can still open a file in the editor this same frame.

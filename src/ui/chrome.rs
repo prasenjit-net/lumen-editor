@@ -169,12 +169,24 @@ impl Workbench<'_> {
                             let cursors = String::new();
                             if let Some(status) = &self.view.language_server_status {
                                 let (label, tooltip) = match status {
+                                    LanguageServerStatus::Starting(name) => (
+                                        format!("LSP: {name} starting"),
+                                        "Language server is initializing",
+                                    ),
+                                    LanguageServerStatus::Ready(name) => (
+                                        format!("LSP: {name}"),
+                                        "Language server is ready",
+                                    ),
                                     LanguageServerStatus::Available(name) => {
                                         (format!("LSP: {name}"), "Language server available")
                                     }
                                     LanguageServerStatus::Missing(name) => (
                                         format!("LSP: {name} missing"),
                                         "Language server is not installed; editing and parser highlighting remain available",
+                                    ),
+                                    LanguageServerStatus::Error(message) => (
+                                        "LSP: unavailable".to_owned(),
+                                        message.as_str(),
                                     ),
                                 };
                                 ui.label(RichText::new(label).size(11.0).color(Color32::WHITE))

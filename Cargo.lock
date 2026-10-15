@@ -2181,6 +2181,7 @@ dependencies = [
  "portable-pty",
  "raw-window-handle",
  "rfd",
+ "serde_json",
  "tempfile",
  "toml_edit",
  "trash",
