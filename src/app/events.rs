@@ -3,6 +3,21 @@ use super::command::Command;
 use eframe::egui;
 impl LumenApp {
     pub(crate) fn handle_events(&mut self, ctx: &egui::Context) {
+        let editor_has_focus = self.editor.active().is_some_and(|document| {
+            ctx.memory(|memory| memory.has_focus(super::editor_action::text_widget_id(document.id)))
+        });
+        if editor_has_focus
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F12))
+        {
+            self.execute(Command::GoToDefinition, ctx);
+        }
+        let symbols = egui::KeyboardShortcut::new(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::O,
+        );
+        if editor_has_focus && ctx.input_mut(|input| input.consume_shortcut(&symbols)) {
+            self.execute(Command::ShowDocumentSymbols, ctx);
+        }
         let terminal_focused = self.view.terminal.open
             && ctx.memory(|memory| memory.has_focus(egui::Id::new("terminal_canvas")));
         // VS Code uses Ctrl+` on every desktop platform. Keep it available

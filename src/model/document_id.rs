@@ -10,4 +10,21 @@ impl DocumentId {
         static NEXT_DOCUMENT: AtomicU64 = AtomicU64::new(1);
         Self(NEXT_DOCUMENT.fetch_add(1, Ordering::Relaxed))
     }
+
+    /// Stable language-service identity. UI code continues to use the opaque
+    /// model ID, while the app adapter converts it at the service boundary.
+    pub(crate) const fn language_service_id(self) -> lumen_language_services::DocumentId {
+        lumen_language_services::DocumentId(self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn language_service_adapter_preserves_the_stable_identity() {
+        let id = DocumentId::allocate();
+        assert!(id.language_service_id().0 > 0);
+    }
 }

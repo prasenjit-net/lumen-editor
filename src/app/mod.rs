@@ -48,6 +48,12 @@ pub(crate) struct LumenApp {
     pub(crate) language_server_process: Option<crate::services::language_server::ServerProcess>,
     pub(crate) language_server_workspace: Option<std::path::PathBuf>,
     pub(crate) language_server_language: Option<lumen_language_services::LanguageId>,
+    pub(crate) language_server_generation: lumen_language_services::SessionGeneration,
+    pub(crate) language_server_capabilities:
+        Option<lumen_language_services::capabilities::ServerCapabilities>,
+    pub(crate) language_server_requests: lumen_language_services::requests::RequestTracker,
+    pub(crate) language_server_request_kinds:
+        std::collections::HashMap<u64, language_services::LanguageRequestKind>,
     pub(crate) language_server_document: Option<(
         crate::model::DocumentId,
         u64,
@@ -79,6 +85,10 @@ impl Default for LumenApp {
             language_server_process: None,
             language_server_workspace: None,
             language_server_language: None,
+            language_server_generation: Default::default(),
+            language_server_capabilities: None,
+            language_server_requests: Default::default(),
+            language_server_request_kinds: Default::default(),
             language_server_document: None,
             terminal_session: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -105,6 +115,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.editor(ctx));
         self.render_component(ctx, |workbench| workbench.palette(ctx));
         self.render_component(ctx, |workbench| workbench.navigation_palette(ctx));
+        self.render_component(ctx, |workbench| workbench.language_navigation(ctx));
         self.render_component(ctx, |workbench| workbench.unsaved_changes_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.quit_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.settings_quit_dialog(ctx));

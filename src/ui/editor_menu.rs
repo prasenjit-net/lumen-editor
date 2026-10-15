@@ -131,6 +131,13 @@ impl Workbench<'_> {
                         "Ctrl+H".into()
                     },
                 ),
+                (Command::GoToDefinition, "Go to Definition", "F12".into()),
+                (Command::ShowHover, "Show Hover", String::new()),
+                (
+                    Command::ShowDocumentSymbols,
+                    "Go to Symbol in Editor",
+                    format!("Shift+{command_key}O"),
+                ),
             ] {
                 if ui
                     .add(egui::Button::new(title).shortcut_text(shortcut))

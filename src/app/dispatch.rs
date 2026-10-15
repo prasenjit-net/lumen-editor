@@ -71,6 +71,10 @@ impl LumenApp {
             Command::OpenWorkspaceHit(path, range) => self.open_workspace_hit(path, range),
             Command::QuickOpen => self.open_quick_open(ctx),
             Command::GoToLine => self.open_go_to_line(),
+            Command::GoToDefinition => self.request_language_definition(),
+            Command::ShowHover => self.request_language_hover(),
+            Command::ShowDocumentSymbols => self.request_document_symbols(),
+            Command::OpenLanguageLocation(index) => self.open_language_location(index),
             Command::OpenQuickPath(path) => self.open_quick_path(path),
             Command::NavigateTo(document, input) => self.go_to_line(document, &input),
             Command::EditorAction(document, action) => {

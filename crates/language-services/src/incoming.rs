@@ -129,27 +129,49 @@ fn hover_text(value: &Value) -> Option<String> {
 pub fn parse_definition_response(
     message: &Value,
 ) -> Result<Option<DefinitionLocation>, IncomingError> {
+    let locations = parse_definition_locations_response(message)?;
+    match locations.len() {
+        0 => Ok(None),
+        1 => Ok(locations.into_iter().next()),
+        _ => Err(IncomingError::InvalidPayload),
+    }
+}
+
+pub fn parse_definition_locations_response(
+    message: &Value,
+) -> Result<Vec<DefinitionLocation>, IncomingError> {
     let Some(result) = message.get("result") else {
         return Err(IncomingError::InvalidPayload);
     };
     if result.is_null() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
-    let location = result.as_object().ok_or(IncomingError::InvalidPayload)?;
+    let locations = match result {
+        Value::Object(_) => std::slice::from_ref(result),
+        Value::Array(locations) => locations.as_slice(),
+        _ => return Err(IncomingError::InvalidPayload),
+    };
+    locations.iter().map(parse_definition_location).collect()
+}
+
+fn parse_definition_location(value: &Value) -> Result<DefinitionLocation, IncomingError> {
+    let location = value.as_object().ok_or(IncomingError::InvalidPayload)?;
     let uri = location
         .get("uri")
+        .or_else(|| location.get("targetUri"))
         .and_then(Value::as_str)
         .ok_or(IncomingError::InvalidPayload)?
         .to_owned();
     let range = location
         .get("range")
+        .or_else(|| location.get("targetSelectionRange"))
         .and_then(Value::as_object)
         .ok_or(IncomingError::InvalidPayload)?;
-    Ok(Some(DefinitionLocation {
+    Ok(DefinitionLocation {
         uri,
         start: parse_position(range.get("start"))?,
         end: parse_position(range.get("end"))?,
-    }))
+    })
 }
 
 /// Decode `textDocument/publishDiagnostics` against the exact synchronized
@@ -275,6 +297,22 @@ mod tests {
             Position {
                 line: 2,
                 character: 4
+            }
+        );
+        let one = json!({"id":3,"result":[{"uri":"file:///x.rs","range":{"start":{"line":2,"character":4},"end":{"line":2,"character":6}}}]});
+        assert!(parse_definition_response(&one).unwrap().is_some());
+        let many = json!({"id":3,"result":[{"uri":"file:///a","range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}},{"uri":"file:///b","range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}}]});
+        assert_eq!(
+            parse_definition_response(&many),
+            Err(IncomingError::InvalidPayload)
+        );
+        assert_eq!(parse_definition_locations_response(&many).unwrap().len(), 2);
+        let link = json!({"id":3,"result":{"targetUri":"file:///x.rs","targetSelectionRange":{"start":{"line":1,"character":2},"end":{"line":1,"character":3}}}});
+        assert_eq!(
+            parse_definition_locations_response(&link).unwrap()[0].start,
+            Position {
+                line: 1,
+                character: 2
             }
         );
     }

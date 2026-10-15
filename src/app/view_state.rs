@@ -91,6 +91,23 @@ pub(crate) enum LanguageServerStatus {
     Error(String),
 }
 
+#[derive(Clone)]
+pub(crate) struct LanguageLocation {
+    pub(crate) label: String,
+    pub(crate) path: PathBuf,
+    pub(crate) position: lumen_language_services::Position,
+}
+
+#[derive(Default)]
+pub(crate) struct LanguageNavigationView {
+    pub(crate) open: bool,
+    pub(crate) title: String,
+    pub(crate) query: String,
+    pub(crate) focus: bool,
+    pub(crate) selected: usize,
+    pub(crate) locations: Vec<LanguageLocation>,
+}
+
 #[derive(Default)]
 pub(crate) struct WorkspaceSearchView {
     pub(crate) query: String,
@@ -236,6 +253,8 @@ pub(crate) struct ViewState {
     pub(crate) terminal: TerminalView,
     pub(crate) language_server_document: Option<crate::model::DocumentId>,
     pub(crate) language_server_status: Option<LanguageServerStatus>,
+    pub(crate) language_hover: Option<String>,
+    pub(crate) language_navigation: LanguageNavigationView,
     pub(crate) language_server_diagnostics: std::collections::HashMap<
         crate::model::DocumentId,
         Vec<lumen_language_services::diagnostics::Diagnostic>,
@@ -303,6 +322,8 @@ impl Default for ViewState {
             terminal: TerminalView::default(),
             language_server_document: None,
             language_server_status: None,
+            language_hover: None,
+            language_navigation: Default::default(),
             language_server_diagnostics: std::collections::HashMap::new(),
             sidebar_visible: true,
             status: "Ready".into(),

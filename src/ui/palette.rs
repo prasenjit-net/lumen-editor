@@ -109,6 +109,12 @@ impl Workbench<'_> {
                     ),
                     (format!("{}  Go to File", icon::FILE), Command::QuickOpen),
                     ("Go to Line/Column".into(), Command::GoToLine),
+                    ("Go to Definition".into(), Command::GoToDefinition),
+                    ("Show Hover".into(), Command::ShowHover),
+                    (
+                        "Go to Symbol in Editor".into(),
+                        Command::ShowDocumentSymbols,
+                    ),
                     (
                         format!("{}  File: Open Folder", icon::FOLDER_OPEN),
                         Command::OpenFolder,

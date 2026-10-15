@@ -324,12 +324,14 @@ specified by a project unless the user’s server-command policy permits it.
   crash/restart, malformed messages, workspace switch, stale diagnostics, dirty
   buffers, Save As, rename and close.
 
-### Phase 3 — semantic tokens and navigation — Planned
+### Phase 3 — semantic tokens and navigation — In progress
 
 - [ ] Add semantic-token full responses, legend decoding, token-overlay precedence
   and revision gating for Rust and Go.
-- [ ] Add hover, symbols and definition through the common request interface. Render
-  failures as non-blocking status feedback and preserve editor focus/selection.
+- [x] Add capability-gated, revision/session-correlated hover, document symbols
+  and definition requests. Hover uses a compact floating surface; nested symbols
+  and multi-location definitions use a searchable keyboard-accessible picker.
+  Failures are non-blocking and editor focus is restored after navigation.
 
 ### Phase 4 — editing services and hardening — Planned
 

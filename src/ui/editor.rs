@@ -85,7 +85,41 @@ impl Workbench<'_> {
                         });
                     }
                     self.editor_find_bar(ui, document_id);
+                    let hover_position = ui.cursor().min + egui::vec2(56.0, 22.0);
                     self.editor_viewport(ui, index);
+                    if let Some(hover) = self.view.language_hover.clone() {
+                        egui::Area::new(egui::Id::new("language_server_hover"))
+                            .order(egui::Order::Foreground)
+                            .fixed_pos(hover_position)
+                            .show(ui.ctx(), |ui| {
+                                egui::Frame::new()
+                                    .fill(super::theme::PANEL)
+                                    .stroke(egui::Stroke::new(1.0_f32, super::theme::BORDER))
+                                    .corner_radius(3)
+                                    .inner_margin(egui::Margin::symmetric(8, 5))
+                                    .show(ui, |ui| {
+                                        ui.set_max_width(520.0);
+                                        ui.horizontal(|ui| {
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(hover)
+                                                        .monospace()
+                                                        .size(11.0)
+                                                        .color(super::theme::TEXT),
+                                                )
+                                                .wrap(),
+                                            );
+                                            if ui
+                                                .small_button(icon::X)
+                                                .on_hover_text("Close hover")
+                                                .clicked()
+                                            {
+                                                self.view.language_hover = None;
+                                            }
+                                        });
+                                    });
+                            });
+                    }
                 });
             });
     }
