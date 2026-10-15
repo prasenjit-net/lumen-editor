@@ -49,6 +49,50 @@ fn syntax_colors_keep_editor_geometry_and_document_unchanged() {
 }
 
 #[test]
+fn parser_tokens_color_go_without_changing_editor_geometry() {
+    let (mut surface, mut buffer, ctx) =
+        fixture("// note\r\npackage main\r\nfunc main() { println(\"ok\", 42) }");
+    let plain = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    let plain_caret = plain.geometry.caret_rect(9);
+    let revision = buffer.revision();
+    surface.set_syntax(Some((
+        lumen_editor_core::syntax::Language::Go,
+        test_syntax_palette(),
+    )));
+    let colored = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    let job = &colored.geometry.galley.job;
+    for (source, color) in [
+        ("// note", egui::Color32::GREEN),
+        ("package", egui::Color32::RED),
+        ("\"ok\"", egui::Color32::YELLOW),
+        ("42", egui::Color32::LIGHT_BLUE),
+    ] {
+        assert!(job.sections.iter().any(|section| {
+            &job.text[section.byte_range.clone()] == source && section.format.color == color
+        }));
+    }
+    assert_eq!(colored.geometry.caret_rect(9), plain_caret);
+    assert_eq!(buffer.revision(), revision);
+    assert!(!buffer.is_dirty());
+}
+
+#[test]
+fn unsupported_parser_languages_keep_lexical_coloring() {
+    let (mut surface, mut buffer, ctx) = fixture("set(PROJECT ON)");
+    surface.set_syntax(Some((
+        lumen_editor_core::syntax::Language::CMake,
+        test_syntax_palette(),
+    )));
+    let colored = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
+    let job = &colored.geometry.galley.job;
+    assert!(job.sections.iter().any(|section| {
+        &job.text[section.byte_range.clone()] == "ON" && section.format.color == egui::Color32::RED
+    }));
+    assert_eq!(buffer.revision(), 0);
+    assert!(!buffer.is_dirty());
+}
+
+#[test]
 fn bracket_matching_uses_syntax_spans_after_crlf_projection() {
     let text = "fn main() { // }\r\n  let x = \"}\";\r\n}";
     let (mut surface, mut buffer, ctx) = fixture(text);

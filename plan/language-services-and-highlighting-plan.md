@@ -1,6 +1,6 @@
 # Language services and syntax-highlighting design
 
-Status: Phase 0 contracts underway. Updated: 2026-10-15.
+Status: Phase 1 parser-backed Rust/Go rendering underway. Updated: 2026-10-15.
 
 ## What this adds, and why syntax and LSP must remain separate
 
@@ -261,12 +261,14 @@ specified by a project unless the user’s server-command policy permits it.
 - [ ] Add URI identity, semantic-token legend decoding and stale session/revision
   rejection contracts before any LSP transport is introduced.
 - [x] Add a Rust/Go parser-query spike that emits disjoint UTF-8 token snapshots
-  for ordinary and incomplete source. It uses the grammars' embedded highlight
-  queries and preserves comments, strings, numbers, keywords, types and function
-  categories without renderer integration.
-- [ ] Extend the spike with malformed, Unicode and CRLF fixture coverage; measure
-  incremental edit and shaping interactions before selecting it as the default
-  highlighter. Do not replace the current highlighter wholesale in the spike.
+  for ordinary, incomplete, Unicode and CRLF source. It uses the grammars'
+  embedded highlight queries and preserves comments, strings, numbers, keywords,
+  types and function categories.
+- [x] Route Rust/Go parser spans through `editor-surface`, including the shaped
+  renderer, while preserving its single viewport/layout authority. The legacy
+  lexer remains the fallback for all other languages and parser errors.
+- [ ] Measure incremental edit and shaping interactions before adding a snapshot
+  cache or selecting parser highlighting as the default for further languages.
 - [ ] Define token classes and three palettes in the existing theme system; add visual
   fixtures for code, config/resource and build files in dark/light/contrast modes.
 
@@ -275,8 +277,9 @@ specified by a project unless the user’s server-command policy permits it.
 - Move language detection and embedded syntax resources into contributions.
 - Ship Rust, Go, CMake, Makefile, Dockerfile, TOML, YAML and JSON parser/query
   resources first; retain fallback definitions for the remaining current formats.
-- Route parsed spans through `editor-surface` without changing its single
-  viewport/layout authority. Compare old/new screenshots and token fixtures.
+- [x] Route parsed Rust/Go spans through `editor-surface` without changing its
+  single viewport/layout authority. Compare old/new screenshots before expanding
+  parser coverage to further languages.
 
 ### Phase 2 — generic LSP transport and diagnostics
 

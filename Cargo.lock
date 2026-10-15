@@ -2203,6 +2203,7 @@ dependencies = [
  "egui 0.33.3",
  "egui 0.36.2",
  "lumen-editor-core",
+ "lumen-language-services",
  "unicode-segmentation",
 ]
 

@@ -14,6 +14,7 @@ egui = { version = "0.33", features = ["accesskit"] }
 egui-shaping = { package = "egui", version = "=0.36.2", optional = true }
 cosmic-text = { version = "=0.19.0", optional = true, default-features = false, features = ["std"] }
 lumen-editor-core = { path = "../editor-core" }
+lumen-language-services = { path = "../language-services" }
 unicode-segmentation = "1.13"
 
 [dev-dependencies]

@@ -348,7 +348,7 @@ impl ShapedLayout {
         ui: &Ui,
         painter: &Painter,
         origin: Pos2,
-        spans: &[lumen_editor_core::syntax::Span],
+        spans: &[crate::geometry::SyntaxSpan],
         palette: Option<crate::SyntaxPalette>,
     ) {
         let scale = ui.ctx().pixels_per_point();
@@ -454,7 +454,7 @@ impl ShapedLayout {
 }
 
 fn syntax_color(
-    spans: &[lumen_editor_core::syntax::Span],
+    spans: &[crate::geometry::SyntaxSpan],
     palette: Option<crate::SyntaxPalette>,
     byte: usize,
     default: Color32,
@@ -468,7 +468,7 @@ fn syntax_color(
                         .checked_sub(1)?,
                 )
                 .filter(|span| byte < span.range.end)
-                .map(|span| palette.color(span.kind))
+                .map(|span| span.color(palette))
         })
         .unwrap_or(default)
 }
@@ -479,10 +479,8 @@ mod syntax_tests {
     #[test]
     fn glyph_color_tracks_visual_byte_spans_and_defaults() {
         let palette = crate::tests::test_syntax_palette();
-        let spans = lumen_editor_core::syntax::highlight(
-            "fn main()",
-            lumen_editor_core::syntax::Language::Rust,
-        );
+        let spans =
+            crate::geometry::highlight("fn main()", lumen_editor_core::syntax::Language::Rust);
         assert_eq!(
             syntax_color(&spans, Some(palette), 0, Color32::WHITE),
             palette.keyword

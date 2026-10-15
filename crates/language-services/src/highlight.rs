@@ -237,4 +237,22 @@ mod tests {
                     && text.is_char_boundary(span.range.end))
         );
     }
+
+    #[test]
+    fn crlf_and_unicode_source_preserves_safe_parser_ranges() {
+        let text = "// 🌍\r\nfn café() { let value = \"e\u{301}\"; }";
+        let snapshot =
+            highlight(text, LanguageId::RUST, DocumentVersion(4)).expect("Unicode Rust parses");
+        assert!(snapshot.spans.iter().any(|span| {
+            span.class == TokenClass::Comment && text[span.range.clone()].starts_with("// 🌍")
+        }));
+        assert!(snapshot.spans.iter().any(|span| {
+            span.class == TokenClass::String && text[span.range.clone()].contains("e\u{301}")
+        }));
+        assert!(snapshot.spans.iter().all(|span| {
+            text.is_char_boundary(span.range.start)
+                && text.is_char_boundary(span.range.end)
+                && span.range.start < span.range.end
+        }));
+    }
 }

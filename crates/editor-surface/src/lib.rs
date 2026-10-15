@@ -19,6 +19,7 @@ use lumen_editor_core::syntax::{Kind, Language};
 use lumen_editor_core::{
     CaretAffinity, Composition, EditorBuffer, FoldRange, Indentation, SelectionClipboard,
 };
+use lumen_language_services::TokenClass;
 #[cfg(feature = "shaped")]
 pub use shaping::Shaper;
 #[cfg(feature = "shaped")]
@@ -564,6 +565,25 @@ impl SyntaxPalette {
             Kind::Function => self.function,
             Kind::Property => self.property,
             Kind::Tag => self.tag,
+        }
+    }
+
+    pub(crate) fn language_token_color(self, class: TokenClass) -> egui::Color32 {
+        match class {
+            TokenClass::Comment => self.comment,
+            TokenClass::String | TokenClass::Escape => self.string,
+            TokenClass::Number | TokenClass::Boolean | TokenClass::Constant => self.number,
+            TokenClass::Keyword
+            | TokenClass::Operator
+            | TokenClass::Punctuation
+            | TokenClass::Attribute
+            | TokenClass::Macro => self.keyword,
+            TokenClass::Type | TokenClass::Namespace => self.type_name,
+            TokenClass::Function | TokenClass::Method => self.function,
+            TokenClass::Parameter | TokenClass::Variable | TokenClass::Property => self.property,
+            TokenClass::Tag | TokenClass::Selector | TokenClass::Heading | TokenClass::Invalid => {
+                self.tag
+            }
         }
     }
 }

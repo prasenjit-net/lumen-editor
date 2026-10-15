@@ -1,6 +1,7 @@
 use egui::{Galley, Pos2, Rect, Ui, Vec2, text::CCursor};
 use lumen_editor_core::syntax;
 use lumen_editor_core::{CaretAffinity, Composition};
+use lumen_language_services::{DocumentVersion, LanguageId, TokenClass};
 use std::ops::Range;
 use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
@@ -11,6 +12,82 @@ pub(crate) struct LayoutConfig {
     pub(crate) syntax: Option<(syntax::Language, crate::SyntaxPalette)>,
 }
 
+/// Syntax spans consumed by the renderer. Rust and Go use parser-backed
+/// language-service tokens; the existing lightweight lexer remains the safe
+/// fallback for every other language and for parser failures.
+#[derive(Clone, Debug)]
+pub(crate) struct SyntaxSpan {
+    pub(crate) range: Range<usize>,
+    class: SyntaxClass,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SyntaxClass {
+    Legacy(syntax::Kind),
+    Language(TokenClass),
+}
+
+impl SyntaxSpan {
+    fn legacy(span: syntax::Span) -> Self {
+        Self {
+            range: span.range,
+            class: SyntaxClass::Legacy(span.kind),
+        }
+    }
+
+    fn language(range: Range<usize>, class: TokenClass) -> Self {
+        Self {
+            range,
+            class: SyntaxClass::Language(class),
+        }
+    }
+
+    pub(crate) fn color(&self, palette: crate::SyntaxPalette) -> egui::Color32 {
+        match self.class {
+            SyntaxClass::Legacy(kind) => palette.color(kind),
+            SyntaxClass::Language(class) => palette.language_token_color(class),
+        }
+    }
+
+    fn excludes_bracket_matching(&self) -> bool {
+        matches!(
+            self.class,
+            SyntaxClass::Legacy(syntax::Kind::Comment | syntax::Kind::String)
+                | SyntaxClass::Language(
+                    TokenClass::Comment | TokenClass::String | TokenClass::Escape
+                )
+        )
+    }
+}
+
+fn parser_language(language: syntax::Language) -> Option<LanguageId> {
+    match language {
+        syntax::Language::Rust => Some(LanguageId::RUST),
+        syntax::Language::Go => Some(LanguageId::GO),
+        _ => None,
+    }
+}
+
+pub(crate) fn highlight(visual: &str, language: syntax::Language) -> Vec<SyntaxSpan> {
+    if let Some(language_id) = parser_language(language)
+        && let Ok(snapshot) = lumen_language_services::highlight::highlight(
+            visual,
+            language_id,
+            DocumentVersion::default(),
+        )
+    {
+        return snapshot
+            .spans
+            .into_iter()
+            .map(|span| SyntaxSpan::language(span.range, span.class))
+            .collect();
+    }
+    syntax::highlight(visual, language)
+        .into_iter()
+        .map(SyntaxSpan::legacy)
+        .collect()
+}
+
 /// One source-to-layout mapping for painting and pointer/caret geometry.
 /// CRLF projects to one visual newline without altering the stored document.
 pub struct TextGeometry {
@@ -19,7 +96,7 @@ pub struct TextGeometry {
     byte_offsets: Vec<usize>,
     graphemes: Vec<usize>,
     preedit: Option<(Range<usize>, usize)>,
-    syntax_spans: Vec<syntax::Span>,
+    syntax_spans: Vec<SyntaxSpan>,
     #[cfg(feature = "shaped")]
     syntax_palette: Option<crate::SyntaxPalette>,
     #[cfg(feature = "shaped")]
@@ -106,7 +183,7 @@ impl TextGeometry {
             .collect();
         let syntax_spans = language
             .or_else(|| syntax.map(|(language, _)| language))
-            .map_or_else(Vec::new, |language| syntax::highlight(&visual, language));
+            .map_or_else(Vec::new, |language| highlight(&visual, language));
         let galley = ui.fonts_mut(|fonts| {
             let mut job = egui::text::LayoutJob::simple(
                 visual,
@@ -128,7 +205,7 @@ impl TextGeometry {
                         });
                     }
                     let mut format = base.clone();
-                    format.color = palette.color(span.kind);
+                    format.color = span.color(palette);
                     job.sections.push(egui::text::LayoutSection {
                         leading_space: 0.0,
                         byte_range: span.range.clone(),
@@ -406,10 +483,7 @@ impl TextGeometry {
             self.syntax_spans
                 .partition_point(|span| span.range.end <= visual),
         );
-        !span.is_some_and(|span| {
-            span.range.contains(&visual)
-                && matches!(span.kind, syntax::Kind::Comment | syntax::Kind::String)
-        })
+        !span.is_some_and(|span| span.range.contains(&visual) && span.excludes_bracket_matching())
     }
 
     pub(crate) fn paint(&self, ui: &Ui, painter: &egui::Painter) {
