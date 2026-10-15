@@ -1,6 +1,7 @@
 //! Parser-backed baseline syntax tokens for bundled language contributions.
 use crate::{
-    DocumentVersion, LanguageId, TokenClass, TokenSnapshot, TokenSnapshotError, TokenSpan,
+    DocumentVersion, LanguageId, LanguageRegistry, ParserKind, TokenClass, TokenSnapshot,
+    TokenSnapshotError, TokenSpan,
 };
 use std::ops::Range;
 use streaming_iterator::StreamingIterator;
@@ -27,17 +28,36 @@ struct Grammar {
 }
 
 fn grammar_for(language: LanguageId) -> Result<Grammar, HighlightError> {
-    match language {
-        LanguageId::RUST => Ok(Grammar {
+    match LanguageRegistry::by_id(language).and_then(|descriptor| descriptor.parser) {
+        Some(parser) => grammar_for_kind(parser.kind),
+        None => Err(HighlightError::UnsupportedLanguage(language)),
+    }
+}
+
+fn grammar_for_kind(kind: ParserKind) -> Result<Grammar, HighlightError> {
+    match kind {
+        ParserKind::TreeSitterRust => Ok(Grammar {
             language: tree_sitter_rust::LANGUAGE.into(),
             highlights: tree_sitter_rust::HIGHLIGHTS_QUERY,
         }),
-        LanguageId::GO => Ok(Grammar {
+        ParserKind::TreeSitterGo => Ok(Grammar {
             language: tree_sitter_go::LANGUAGE.into(),
             highlights: tree_sitter_go::HIGHLIGHTS_QUERY,
         }),
-        _ => Err(HighlightError::UnsupportedLanguage(language)),
     }
+}
+
+/// Resolve a parser contribution by the editor's language label. Unregistered
+/// labels deliberately return `None` so callers can retain lexical fallback.
+pub fn highlight_registered(
+    text: &str,
+    label: &str,
+    version: DocumentVersion,
+) -> Result<Option<TokenSnapshot>, HighlightError> {
+    let Some(descriptor) = LanguageRegistry::by_label(label) else {
+        return Ok(None);
+    };
+    highlight(text, descriptor.id, version).map(Some)
 }
 
 #[derive(Clone)]
@@ -235,6 +255,20 @@ mod tests {
                 .iter()
                 .all(|span| text.is_char_boundary(span.range.start)
                     && text.is_char_boundary(span.range.end))
+        );
+    }
+
+    #[test]
+    fn registered_labels_select_parsers_without_renderer_language_matches() {
+        assert!(
+            highlight_registered("fn main() {}", "Rust", DocumentVersion(1))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            highlight_registered("CMakeLists", "CMake", DocumentVersion(1))
+                .unwrap()
+                .is_none()
         );
     }
 

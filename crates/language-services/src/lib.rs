@@ -28,6 +28,17 @@ pub struct ServerDescriptor {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParserKind {
+    TreeSitterRust,
+    TreeSitterGo,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParserDescriptor {
+    pub kind: ParserKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LanguageDescriptor {
     pub id: LanguageId,
     pub label: &'static str,
@@ -36,6 +47,7 @@ pub struct LanguageDescriptor {
     pub filename_prefixes: &'static [&'static str],
     pub extensions: &'static [&'static str],
     pub workspace_markers: &'static [&'static str],
+    pub parser: Option<ParserDescriptor>,
     pub server: Option<ServerDescriptor>,
 }
 
@@ -57,6 +69,9 @@ const RUST: LanguageDescriptor = LanguageDescriptor {
     filename_prefixes: &[],
     extensions: &["rs"],
     workspace_markers: &["Cargo.toml"],
+    parser: Some(ParserDescriptor {
+        kind: ParserKind::TreeSitterRust,
+    }),
     server: Some(RUST_SERVER),
 };
 
@@ -68,6 +83,9 @@ const GO: LanguageDescriptor = LanguageDescriptor {
     filename_prefixes: &[],
     extensions: &["go"],
     workspace_markers: &["go.work", "go.mod"],
+    parser: Some(ParserDescriptor {
+        kind: ParserKind::TreeSitterGo,
+    }),
     server: Some(GO_SERVER),
 };
 
@@ -88,6 +106,13 @@ impl LanguageRegistry {
         Self::builtins()
             .iter()
             .find(|descriptor| descriptor.id == id)
+    }
+
+    #[must_use]
+    pub fn by_label(label: &str) -> Option<&'static LanguageDescriptor> {
+        Self::builtins()
+            .iter()
+            .find(|descriptor| descriptor.label == label)
     }
 
     /// Full filenames take priority over prefixes, which take priority over an

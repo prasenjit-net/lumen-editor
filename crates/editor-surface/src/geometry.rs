@@ -1,7 +1,7 @@
 use egui::{Galley, Pos2, Rect, Ui, Vec2, text::CCursor};
 use lumen_editor_core::syntax;
 use lumen_editor_core::{CaretAffinity, Composition};
-use lumen_language_services::{DocumentVersion, LanguageId, TokenClass};
+use lumen_language_services::{DocumentVersion, TokenClass};
 use std::ops::Range;
 use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
@@ -60,22 +60,12 @@ impl SyntaxSpan {
     }
 }
 
-fn parser_language(language: syntax::Language) -> Option<LanguageId> {
-    match language {
-        syntax::Language::Rust => Some(LanguageId::RUST),
-        syntax::Language::Go => Some(LanguageId::GO),
-        _ => None,
-    }
-}
-
 pub(crate) fn highlight(visual: &str, language: syntax::Language) -> Vec<SyntaxSpan> {
-    if let Some(language_id) = parser_language(language)
-        && let Ok(snapshot) = lumen_language_services::highlight::highlight(
-            visual,
-            language_id,
-            DocumentVersion::default(),
-        )
-    {
+    if let Ok(Some(snapshot)) = lumen_language_services::highlight::highlight_registered(
+        visual,
+        language.label(),
+        DocumentVersion::default(),
+    ) {
         return snapshot
             .spans
             .into_iter()

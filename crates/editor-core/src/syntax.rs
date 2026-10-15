@@ -26,6 +26,23 @@ pub enum Language {
     Sql,
 }
 
+impl Language {
+    /// Display label from the embedded format definition. Consumers that bridge
+    /// to optional language contributions should use this stable label rather
+    /// than duplicate per-language match arms.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        if self == Self::Plain {
+            "Plain Text"
+        } else {
+            definitions()
+                .iter()
+                .find(|definition| definition.language == self)
+                .map_or("Plain Text", |definition| definition.label)
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Lexer {
     Code,
@@ -895,6 +912,14 @@ mod tests {
                 .any(|s| &text[s.range.clone()] == "/* let */" && s.kind == Kind::Comment)
         );
         assert_eq!(highlight("let x", Language::Plain), Vec::<Span>::new());
+    }
+
+    #[test]
+    fn language_labels_are_stable_for_optional_contribution_lookup() {
+        assert_eq!(Language::Rust.label(), "Rust");
+        assert_eq!(Language::Go.label(), "Go");
+        assert_eq!(Language::CMake.label(), "CMake");
+        assert_eq!(Language::Plain.label(), "Plain Text");
     }
 
     #[test]

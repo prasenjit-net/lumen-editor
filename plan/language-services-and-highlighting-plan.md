@@ -276,7 +276,9 @@ specified by a project unless the user’s server-command policy permits it.
 
 ### Phase 1 — parser-backed baseline highlighting
 
-- Move language detection and embedded syntax resources into contributions.
+- [x] Move parser capability metadata into language contributions; the renderer
+  requests a registered parser by editor language label and retains lexical fallback.
+- [ ] Move all language detection and embedded lexical resources into contributions.
 - Ship Rust, Go, CMake, Makefile, Dockerfile, TOML, YAML and JSON parser/query
   resources first; retain fallback definitions for the remaining current formats.
 - [x] Route parsed Rust/Go spans through `editor-surface` without changing its
