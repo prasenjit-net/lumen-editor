@@ -21,16 +21,59 @@ pub(crate) const DIFF_REMOVED_HIGHLIGHT: Color32 = Color32::from_rgb(105, 45, 45
 pub(crate) const DIFF_ADDED_HIGHLIGHT: Color32 = Color32::from_rgb(46, 91, 57);
 
 #[cfg(feature = "shared-editor")]
-pub(crate) fn syntax_palette() -> lumen_editor_surface::SyntaxPalette {
-    lumen_editor_surface::SyntaxPalette {
-        comment: Color32::from_rgb(106, 153, 85),
-        string: Color32::from_rgb(206, 145, 120),
-        number: Color32::from_rgb(181, 206, 168),
-        keyword: Color32::from_rgb(197, 134, 192),
-        type_name: Color32::from_rgb(78, 201, 176),
-        function: Color32::from_rgb(220, 220, 170),
-        property: Color32::from_rgb(156, 220, 254),
-        tag: Color32::from_rgb(86, 156, 214),
+pub(crate) fn syntax_palette(scheme: &str) -> lumen_editor_surface::SyntaxPalette {
+    match scheme {
+        "lumen-light" => lumen_editor_surface::SyntaxPalette {
+            comment: Color32::from_rgb(0, 128, 0),
+            string: Color32::from_rgb(163, 21, 21),
+            number: Color32::from_rgb(9, 134, 88),
+            keyword: Color32::from_rgb(0, 0, 255),
+            type_name: Color32::from_rgb(38, 127, 153),
+            function: Color32::from_rgb(121, 94, 38),
+            property: Color32::from_rgb(0, 0, 0),
+            tag: Color32::from_rgb(128, 0, 0),
+        },
+        "lumen-high-contrast" => lumen_editor_surface::SyntaxPalette {
+            comment: Color32::from_rgb(127, 255, 0),
+            string: Color32::from_rgb(255, 255, 0),
+            number: Color32::from_rgb(0, 255, 255),
+            keyword: Color32::from_rgb(255, 128, 255),
+            type_name: Color32::from_rgb(0, 255, 255),
+            function: Color32::from_rgb(255, 255, 255),
+            property: Color32::from_rgb(255, 255, 0),
+            tag: Color32::from_rgb(255, 128, 0),
+        },
+        _ => lumen_editor_surface::SyntaxPalette {
+            comment: Color32::from_rgb(106, 153, 85),
+            string: Color32::from_rgb(206, 145, 120),
+            number: Color32::from_rgb(181, 206, 168),
+            keyword: Color32::from_rgb(197, 134, 192),
+            type_name: Color32::from_rgb(78, 201, 176),
+            function: Color32::from_rgb(220, 220, 170),
+            property: Color32::from_rgb(156, 220, 254),
+            tag: Color32::from_rgb(86, 156, 214),
+        },
+    }
+}
+
+#[cfg(all(test, feature = "shared-editor"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn named_code_schemes_have_distinct_keyword_colors_and_safe_default() {
+        assert_ne!(
+            syntax_palette("lumen-dark").keyword,
+            syntax_palette("lumen-light").keyword
+        );
+        assert_ne!(
+            syntax_palette("lumen-light").keyword,
+            syntax_palette("lumen-high-contrast").keyword
+        );
+        assert_eq!(
+            syntax_palette("unknown").keyword,
+            syntax_palette("lumen-dark").keyword
+        );
     }
 }
 

@@ -84,6 +84,16 @@ pub(crate) const SCHEMA: SectionSchema = SectionSchema {
             document: true,
         },
         Setting {
+            id: "editor.color_scheme",
+            default: DefaultValue::Choice("lumen-dark"),
+            name: "Code Color Scheme",
+            category: "Editor",
+            help: "Token colors for syntax-highlighted code. Does not change editor behavior or document content.",
+            aliases: "theme syntax highlight colors dark light contrast",
+            control: Control::Choice(&["lumen-dark", "lumen-light", "lumen-high-contrast"]),
+            document: true,
+        },
+        Setting {
             id: "editor.font_family",
             default: DefaultValue::Choice("platform"),
             name: "Font Family",

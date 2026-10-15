@@ -270,8 +270,9 @@ specified by a project unless the user’s server-command policy permits it.
   lexer remains the fallback for all other languages and parser errors.
 - [ ] Measure incremental edit and shaping interactions before adding a snapshot
   cache or selecting parser highlighting as the default for further languages.
-- [ ] Define token classes and three palettes in the existing theme system; add visual
-  fixtures for code, config/resource and build files in dark/light/contrast modes.
+- [x] Define token classes and three selectable palettes in the existing theme
+  system (Lumen Dark, Light and High Contrast).
+- [ ] Add visual fixtures for code, config/resource and build files in each scheme.
 
 ### Phase 1 — parser-backed baseline highlighting
 

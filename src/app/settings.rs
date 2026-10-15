@@ -103,6 +103,12 @@ impl SettingsState {
             _ => unreachable!(),
         }
     }
+    pub(crate) fn document_choice(&self, id: &str, document: Option<&Path>) -> String {
+        match self.effective(setting(id), document).0 {
+            Value::Choice(value) => value,
+            _ => unreachable!(),
+        }
+    }
     pub(crate) fn choice(&self, id: &str) -> String {
         match self.effective(setting(id), None).0 {
             Value::Choice(value) => value,

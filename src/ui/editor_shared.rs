@@ -95,7 +95,12 @@ impl Workbench<'_> {
                 .then(|| {
                     (
                         self.editor.files[index].language,
-                        super::theme::syntax_palette(),
+                        super::theme::syntax_palette(
+                            &self
+                                .view
+                                .settings
+                                .document_choice("editor.color_scheme", path),
+                        ),
                     )
                 }),
         );
