@@ -44,6 +44,10 @@ fn grammar_for_kind(kind: ParserKind) -> Result<Grammar, HighlightError> {
             language: tree_sitter_go::LANGUAGE.into(),
             highlights: tree_sitter_go::HIGHLIGHTS_QUERY,
         }),
+        ParserKind::TreeSitterJson => Ok(Grammar {
+            language: tree_sitter_json::LANGUAGE.into(),
+            highlights: tree_sitter_json::HIGHLIGHTS_QUERY,
+        }),
     }
 }
 
@@ -106,13 +110,16 @@ pub fn highlight(
 }
 
 fn classify_capture(capture: &str, node_kind: &str) -> Option<(TokenClass, u16)> {
-    let class = if matches!(
+    if capture.starts_with("string.special.key") {
+        return Some((TokenClass::Property, 750));
+    }
+    let class = if matches!(node_kind, "true" | "false" | "boolean_literal") {
+        TokenClass::Boolean
+    } else if matches!(
         node_kind,
         "integer_literal" | "float_literal" | "imaginary_literal"
     ) {
         TokenClass::Number
-    } else if node_kind == "boolean_literal" {
-        TokenClass::Boolean
     } else if capture.starts_with("comment") {
         TokenClass::Comment
     } else if capture.starts_with("string.escape") || capture.starts_with("character.special") {
@@ -269,6 +276,20 @@ mod tests {
             highlight_registered("CMakeLists", "CMake", DocumentVersion(1))
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn json_highlighting_uses_the_registered_parser_without_a_server() {
+        let text = "{\"name\": \"Lumen\", \"enabled\": true, \"size\": 12}";
+        let snapshot = highlight(text, LanguageId::JSON, DocumentVersion(5)).expect("JSON parses");
+        assert!(has_class(text, &snapshot, "\"name\"", TokenClass::Property));
+        assert!(has_class(text, &snapshot, "\"Lumen\"", TokenClass::String));
+        assert!(has_class(text, &snapshot, "true", TokenClass::Boolean));
+        assert!(has_class(text, &snapshot, "12", TokenClass::Number));
+        assert!(
+            LanguageRegistry::by_id(LanguageId::JSON)
+                .is_some_and(|descriptor| descriptor.server.is_none())
         );
     }
 

@@ -14,6 +14,7 @@ pub struct LanguageId(&'static str);
 impl LanguageId {
     pub const RUST: Self = Self("rust");
     pub const GO: Self = Self("go");
+    pub const JSON: Self = Self("json");
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -31,6 +32,7 @@ pub struct ServerDescriptor {
 pub enum ParserKind {
     TreeSitterRust,
     TreeSitterGo,
+    TreeSitterJson,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,7 +91,21 @@ const GO: LanguageDescriptor = LanguageDescriptor {
     server: Some(GO_SERVER),
 };
 
-const BUILTIN_LANGUAGES: &[LanguageDescriptor] = &[RUST, GO];
+const JSON: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::JSON,
+    label: "JSON",
+    aliases: &[],
+    filenames: &[],
+    filename_prefixes: &[],
+    extensions: &["json"],
+    workspace_markers: &[],
+    parser: Some(ParserDescriptor {
+        kind: ParserKind::TreeSitterJson,
+    }),
+    server: None,
+};
+
+const BUILTIN_LANGUAGES: &[LanguageDescriptor] = &[RUST, GO, JSON];
 
 /// Static language catalog. Language contributions will extend this catalog in
 /// one location, instead of scattering file-type checks throughout the app.
@@ -523,6 +539,10 @@ mod tests {
         assert_eq!(
             LanguageRegistry::detect(Path::new("cmd/server.go")).map(|item| item.id),
             Some(LanguageId::GO)
+        );
+        assert_eq!(
+            LanguageRegistry::detect(Path::new("settings.json")).map(|item| item.id),
+            Some(LanguageId::JSON)
         );
         assert!(LanguageRegistry::detect(Path::new("CMakeLists.txt")).is_none());
         assert_eq!(

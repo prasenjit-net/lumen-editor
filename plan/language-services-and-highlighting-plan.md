@@ -279,8 +279,10 @@ specified by a project unless the user’s server-command policy permits it.
 - [x] Move parser capability metadata into language contributions; the renderer
   requests a registered parser by editor language label and retains lexical fallback.
 - [ ] Move all language detection and embedded lexical resources into contributions.
-- Ship Rust, Go, CMake, Makefile, Dockerfile, TOML, YAML and JSON parser/query
-  resources first; retain fallback definitions for the remaining current formats.
+- [x] Ship Rust, Go and JSON parser/query resources; JSON deliberately has no
+  language-server descriptor.
+- [ ] Ship CMake, Makefile, Dockerfile, TOML and YAML parser/query resources;
+  retain fallback definitions for the remaining current formats.
 - [x] Route parsed Rust/Go spans through `editor-surface` without changing its
   single viewport/layout authority. Compare old/new screenshots before expanding
   parser coverage to further languages.
