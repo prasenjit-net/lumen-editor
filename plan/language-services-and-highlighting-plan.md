@@ -260,9 +260,13 @@ specified by a project unless the user’s server-command policy permits it.
   versions, UTF-16/UTF-8 range conversion and ordered token-snapshot tests.
 - [ ] Add URI identity, semantic-token legend decoding and stale session/revision
   rejection contracts before any LSP transport is introduced.
-- [ ] Spike parser/query integration for Rust and Go against malformed, Unicode and
-  CRLF fixtures. Choose it only after measuring incremental edit and shaping
-  interactions; do not replace the current highlighter wholesale in the spike.
+- [x] Add a Rust/Go parser-query spike that emits disjoint UTF-8 token snapshots
+  for ordinary and incomplete source. It uses the grammars' embedded highlight
+  queries and preserves comments, strings, numbers, keywords, types and function
+  categories without renderer integration.
+- [ ] Extend the spike with malformed, Unicode and CRLF fixture coverage; measure
+  incremental edit and shaping interactions before selecting it as the default
+  highlighter. Do not replace the current highlighter wholesale in the spike.
 - [ ] Define token classes and three palettes in the existing theme system; add visual
   fixtures for code, config/resource and build files in dark/light/contrast modes.
 

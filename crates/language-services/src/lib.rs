@@ -6,6 +6,8 @@
 //! positions, token snapshots, and language registration consistent.
 use std::{ops::Range, path::Path};
 
+pub mod highlight;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageId(&'static str);
 
