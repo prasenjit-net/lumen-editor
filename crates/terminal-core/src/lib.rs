@@ -18,6 +18,7 @@ pub struct Cell {
     pub character: char,
     pub foreground: TerminalColor,
     pub background: TerminalColor,
+    pub cursor: bool,
 }
 
 /// Portable color information from the terminal's ANSI state.
@@ -106,6 +107,7 @@ impl Terminal {
         let grid = self.term.grid();
         let history = grid.history_size();
         let rows = grid.total_lines();
+        let cursor = grid.cursor.point;
         let mut cells = Vec::with_capacity(rows * columns);
         for row in 0..rows {
             for column in 0..columns {
@@ -114,6 +116,8 @@ impl Terminal {
                     character: cell.c,
                     foreground: terminal_color(cell.fg),
                     background: terminal_color(cell.bg),
+                    cursor: cursor.line == Line(row as i32 - history as i32)
+                        && cursor.column == Column(column),
                 });
             }
         }
