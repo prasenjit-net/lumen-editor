@@ -46,6 +46,7 @@ toml_edit = "0.25"
 lumen-settings-core = { path = "crates/settings-core" }
 lumen-editor-core = { path = "crates/editor-core" }
 lumen-editor-surface = { path = "crates/editor-surface", optional = true }
+lumen-language-services = { path = "crates/language-services" }
 lumen-terminal-core = { path = "crates/terminal-core" }
 
 [target.'cfg(unix)'.dependencies]

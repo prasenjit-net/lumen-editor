@@ -4,6 +4,7 @@ use super::theme::MUTED;
 use super::theme::STATUS;
 #[cfg(not(target_os = "windows"))]
 use super::theme::{TEXT, TITLE};
+use crate::app::view_state::LanguageServerStatus;
 use crate::{app::command::Command, icon};
 use eframe::egui::{self, Color32, Frame, Margin, RichText, TopBottomPanel};
 #[cfg(target_os = "macos")]
@@ -166,6 +167,19 @@ impl Workbench<'_> {
                                 .unwrap_or_default();
                             #[cfg(not(feature = "shared-editor"))]
                             let cursors = String::new();
+                            if let Some(status) = &self.view.language_server_status {
+                                let (label, tooltip) = match status {
+                                    LanguageServerStatus::Available(name) => {
+                                        (format!("LSP: {name}"), "Language server available")
+                                    }
+                                    LanguageServerStatus::Missing(name) => (
+                                        format!("LSP: {name} missing"),
+                                        "Language server is not installed; editing and parser highlighting remain available",
+                                    ),
+                                };
+                                ui.label(RichText::new(label).size(11.0).color(Color32::WHITE))
+                                    .on_hover_text(tooltip);
+                            }
                             ui.label(
                                 RichText::new(format!(
                                     "{cursors}{}   UTF-8   LF",

@@ -10,6 +10,7 @@ mod events;
 mod explorer_ops;
 pub(crate) mod find;
 mod folding;
+mod language_services;
 mod navigation;
 mod safety;
 pub(crate) mod settings;
@@ -42,6 +43,8 @@ pub(crate) struct LumenApp {
     pub(crate) source_control_job: Option<source_control::SourceControlJob>,
     pub(crate) source_control_service:
         std::sync::Arc<dyn crate::services::source_control::SourceControlService>,
+    pub(crate) language_server_service:
+        std::sync::Arc<dyn crate::services::language_server::LanguageServerService>,
     pub(crate) terminal_session: Option<crate::services::terminal::TerminalSession>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
@@ -62,6 +65,9 @@ impl Default for LumenApp {
             file_index_job: None,
             source_control_job: None,
             source_control_service: std::sync::Arc::new(crate::services::source_control::LocalGit),
+            language_server_service: std::sync::Arc::new(
+                crate::services::language_server::LocalLanguageServer,
+            ),
             terminal_session: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
@@ -72,6 +78,7 @@ impl eframe::App for LumenApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.sync_project_settings();
         self.apply_workbench_settings(ctx);
+        self.refresh_language_server_status();
         self.handle_events(ctx);
         // Apply actions after each component, retaining the original frame order:
         // an explorer click can still open a file in the editor this same frame.

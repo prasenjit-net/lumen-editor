@@ -2174,6 +2174,7 @@ dependencies = [
  "libc",
  "lumen-editor-core",
  "lumen-editor-surface",
+ "lumen-language-services",
  "lumen-settings-core",
  "lumen-terminal-core",
  "muda",

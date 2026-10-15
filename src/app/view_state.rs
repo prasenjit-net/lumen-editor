@@ -82,6 +82,12 @@ pub(crate) struct SaveConflict {
     pub(crate) show_comparison: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LanguageServerStatus {
+    Available(String),
+    Missing(String),
+}
+
 #[derive(Default)]
 pub(crate) struct WorkspaceSearchView {
     pub(crate) query: String,
@@ -225,6 +231,8 @@ pub(crate) struct ViewState {
     pub(crate) workspace_search: WorkspaceSearchView,
     pub(crate) source_control: SourceControlView,
     pub(crate) terminal: TerminalView,
+    pub(crate) language_server_document: Option<crate::model::DocumentId>,
+    pub(crate) language_server_status: Option<LanguageServerStatus>,
     pub(crate) sidebar_visible: bool,
     pub(crate) status: String,
     pub(crate) safety_notices: Vec<String>,
@@ -286,6 +294,8 @@ impl Default for ViewState {
             workspace_search: WorkspaceSearchView::default(),
             source_control: SourceControlView::default(),
             terminal: TerminalView::default(),
+            language_server_document: None,
+            language_server_status: None,
             sidebar_visible: true,
             status: "Ready".into(),
             safety_notices: Vec::new(),

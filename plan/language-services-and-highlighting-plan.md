@@ -291,6 +291,9 @@ specified by a project unless the user’s server-command policy permits it.
 
 - [x] Add bounded, fragmented JSON-RPC `Content-Length` framing in the language
   crate. It owns no process or JSON serialization and is ready for a service adapter.
+- [x] Add service-layer discovery for registry-declared server candidates. It
+  never executes workspace-provided commands and reports available, missing or
+  unsupported status without starting a process.
 - Implement stdio JSON-RPC in `services/`, capability negotiation in the new
   crate, server lifecycle in `app/`, and a compact Language Status view.
 - Add Rust diagnostics with `rust-analyzer`, then Go diagnostics with `gopls`.
