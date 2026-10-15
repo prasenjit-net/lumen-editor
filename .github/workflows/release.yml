@@ -72,12 +72,13 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo test --workspace --no-default-features --locked
       - run: cargo xtask bundle --release
-      - name: Package signed-ready DMG
+      - name: Package macOS downloads
         shell: bash
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           mkdir -p dist
+          cp target/Lumen.app/Contents/MacOS/lumen-editor "dist/Lumen-v${RELEASE_VERSION}-macos-${RUNNER_ARCH}"
           hdiutil create -volname Lumen -srcfolder target/Lumen.app -ov -format UDZO "dist/Lumen-v${RELEASE_VERSION}-macos-${RUNNER_ARCH}.dmg"
       - uses: actions/upload-artifact@v7
         with:
@@ -114,12 +115,13 @@ jobs:
             throw "WiX Toolset candle.exe was not found after installation"
           }
           "WIX_BIN=$($candle.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Package MSI
+      - name: Package Windows downloads
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\lumen-editor.exe "dist\Lumen-v$env:RELEASE_VERSION-windows-$env:RUNNER_ARCH.exe"
           & "$env:WIX_BIN\candle.exe" -nologo "-dSourceDir=$PWD\target\release" "-dVersion=$env:RELEASE_VERSION" packaging\windows\Lumen.wxs -out dist\Lumen.wixobj
           & "$env:WIX_BIN\light.exe" -nologo -out "dist\Lumen-v$env:RELEASE_VERSION-windows-$env:RUNNER_ARCH.msi" dist\Lumen.wixobj
       - uses: actions/upload-artifact@v7
@@ -148,12 +150,13 @@ jobs:
         run: |
           cargo install --locked cargo-deb --version 3.8.0
           cargo install --locked cargo-generate-rpm --version 0.21.0
-      - name: Package DEB and RPM
+      - name: Package Linux downloads
         shell: bash
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           mkdir -p dist
+          cp target/release/lumen-editor "dist/Lumen-v${RELEASE_VERSION}-linux-${RUNNER_ARCH}"
           cargo deb --no-build --output "dist/Lumen-v${RELEASE_VERSION}-linux-${RUNNER_ARCH}.deb"
           cargo generate-rpm -o "dist/Lumen-v${RELEASE_VERSION}-linux-${RUNNER_ARCH}.rpm"
       - uses: actions/upload-artifact@v7
@@ -184,11 +187,15 @@ jobs:
         run: |
           shopt -s nullglob
           assets=(dist/Lumen-*.dmg dist/Lumen-*.msi dist/Lumen-*.deb dist/Lumen-*.rpm)
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 7
           test "${#assets[@]}" -eq 4
           for extension in dmg msi deb rpm; do
             packages=(dist/Lumen-*.$extension)
             test "${#packages[@]}" -eq 1
           done
+          test "$(find dist -maxdepth 1 -type f -name 'Lumen-*-macos-*' ! -name '*.dmg' | wc -l)" -eq 1
+          test "$(find dist -maxdepth 1 -type f -name 'Lumen-*-linux-*' ! -name '*.deb' ! -name '*.rpm' | wc -l)" -eq 1
+          test "$(find dist -maxdepth 1 -type f -name 'Lumen-*-windows-*.exe' | wc -l)" -eq 1
           (cd dist && sha256sum Lumen-* > SHA256SUMS)
       - name: Commit and tag the tested version
         id: tag
