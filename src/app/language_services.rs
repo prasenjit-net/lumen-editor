@@ -142,7 +142,7 @@ impl LumenApp {
         self.language_server_workspace = None;
         self.language_server_language = None;
         self.language_server_document = None;
-        self.language_server_diagnostics.clear();
+        self.view.language_server_diagnostics.clear();
         self.view.language_server_status = Some(LanguageServerStatus::Error(error.to_owned()));
     }
 
@@ -163,18 +163,26 @@ impl LumenApp {
         let Ok(uri) = DocumentUri::new(file_uri(path)) else {
             return;
         };
-        let message = match self.language_server_document {
+        let message = match &self.language_server_document {
             None => lsp::did_open(&uri, language, version, &document.text),
-            Some((id, revision)) if id == document.id && revision != document.revision => {
+            Some((id, revision, _)) if *id == document.id && *revision != document.revision => {
                 lsp::did_change(&uri, version, &document.text)
             }
-            Some((id, _)) if id == document.id => return,
-            Some(_) => lsp::did_open(&uri, language, version, &document.text),
+            Some((id, _, _)) if *id == document.id => return,
+            Some((_, _, previous_uri)) => {
+                if let Some(process) = &mut self.language_server_process {
+                    if process.send(&lsp::did_close(previous_uri)).is_err() {
+                        self.stop_language_server("Could not close language-server document");
+                        return;
+                    }
+                }
+                lsp::did_open(&uri, language, version, &document.text)
+            }
         };
         if let Some(process) = &mut self.language_server_process
             && process.send(&message).is_ok()
         {
-            self.language_server_document = Some((document.id, document.revision));
+            self.language_server_document = Some((document.id, document.revision, uri));
         }
     }
 
@@ -199,7 +207,8 @@ impl LumenApp {
         {
             return;
         }
-        self.language_server_diagnostics
+        self.view
+            .language_server_diagnostics
             .insert(document.id, published.diagnostics);
     }
 }

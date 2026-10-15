@@ -2,7 +2,7 @@
 //!
 //! The service adapter frames and writes these values; app code supplies stable
 //! document identity/version data; UI code never constructs protocol JSON.
-use crate::{DocumentUri, LanguageId, ServerDocumentVersion};
+use crate::{DocumentUri, LanguageId, Position, ServerDocumentVersion};
 use serde_json::{Value, json};
 
 #[must_use]
@@ -79,6 +79,30 @@ pub fn did_close(uri: &DocumentUri) -> Value {
     })
 }
 
+#[must_use]
+pub fn hover_request(request_id: u64, uri: &DocumentUri, position: Position) -> Value {
+    text_position_request(request_id, "textDocument/hover", uri, position)
+}
+
+#[must_use]
+pub fn definition_request(request_id: u64, uri: &DocumentUri, position: Position) -> Value {
+    text_position_request(request_id, "textDocument/definition", uri, position)
+}
+
+#[must_use]
+pub fn document_symbols_request(request_id: u64, uri: &DocumentUri) -> Value {
+    json!({"jsonrpc":"2.0", "id": request_id, "method":"textDocument/documentSymbol", "params":{"textDocument":{"uri":uri.as_str()}}})
+}
+
+fn text_position_request(
+    request_id: u64,
+    method: &str,
+    uri: &DocumentUri,
+    position: Position,
+) -> Value {
+    json!({"jsonrpc":"2.0", "id":request_id, "method":method, "params":{"textDocument":{"uri":uri.as_str()},"position":{"line":position.line,"character":position.character}}})
+}
+
 /// Encode a JSON-RPC message for the service-owned stdio transport.
 ///
 /// This stays in the language crate so outbound framing is testable alongside
@@ -135,6 +159,27 @@ mod tests {
         assert_eq!(
             decoder.push(&framed).unwrap(),
             vec![serde_json::to_vec(&message).unwrap()]
+        );
+    }
+
+    #[test]
+    fn navigation_requests_use_lsp_utf16_positions() {
+        let uri = DocumentUri::new("file:///workspace/src/main.rs").unwrap();
+        let position = crate::Position {
+            line: 2,
+            character: 5,
+        };
+        assert_eq!(
+            hover_request(2, &uri, position)["method"],
+            "textDocument/hover"
+        );
+        assert_eq!(
+            definition_request(3, &uri, position)["params"]["position"]["character"],
+            5
+        );
+        assert_eq!(
+            document_symbols_request(4, &uri)["method"],
+            "textDocument/documentSymbol"
         );
     }
 }

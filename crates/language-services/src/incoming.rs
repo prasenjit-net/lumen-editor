@@ -17,6 +17,83 @@ pub enum IncomingError {
     InvalidRange,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DefinitionLocation {
+    pub uri: String,
+    pub start: Position,
+    pub end: Position,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HoverContents {
+    pub text: String,
+}
+
+/// Decode plain-text and MarkedString hover forms. Rich markup is retained as
+/// text until a deliberately designed renderer is added.
+pub fn parse_hover_response(message: &Value) -> Result<Option<HoverContents>, IncomingError> {
+    let Some(result) = message.get("result") else {
+        return Err(IncomingError::InvalidPayload);
+    };
+    if result.is_null() {
+        return Ok(None);
+    }
+    let contents = result
+        .get("contents")
+        .ok_or(IncomingError::InvalidPayload)?;
+    let text = match contents {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(hover_text)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Value::Object(_) => hover_text(contents).unwrap_or_default(),
+        _ => return Err(IncomingError::InvalidPayload),
+    };
+    (!text.trim().is_empty())
+        .then_some(HoverContents { text })
+        .ok_or(IncomingError::InvalidPayload)
+        .map(Some)
+}
+
+fn hover_text(value: &Value) -> Option<String> {
+    value.as_str().map(str::to_owned).or_else(|| {
+        value
+            .get("value")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    })
+}
+
+/// Decode the single-location form of a definition response. Multi-location
+/// navigation remains a future picker workflow rather than an arbitrary choice.
+pub fn parse_definition_response(
+    message: &Value,
+) -> Result<Option<DefinitionLocation>, IncomingError> {
+    let Some(result) = message.get("result") else {
+        return Err(IncomingError::InvalidPayload);
+    };
+    if result.is_null() {
+        return Ok(None);
+    }
+    let location = result.as_object().ok_or(IncomingError::InvalidPayload)?;
+    let uri = location
+        .get("uri")
+        .and_then(Value::as_str)
+        .ok_or(IncomingError::InvalidPayload)?
+        .to_owned();
+    let range = location
+        .get("range")
+        .and_then(Value::as_object)
+        .ok_or(IncomingError::InvalidPayload)?;
+    Ok(Some(DefinitionLocation {
+        uri,
+        start: parse_position(range.get("start"))?,
+        end: parse_position(range.get("end"))?,
+    }))
+}
+
 /// Decode `textDocument/publishDiagnostics` against the exact synchronized
 /// text. Invalid UTF-16 or UTF-8 boundaries reject the whole notification.
 pub fn parse_publish_diagnostics(
@@ -129,6 +206,28 @@ mod tests {
         assert_eq!(
             parse_publish_diagnostics(&message, "😀"),
             Err(IncomingError::InvalidRange)
+        );
+    }
+
+    #[test]
+    fn definition_response_preserves_utf16_positions_for_the_app_mapper() {
+        let message = json!({"id":3,"result":{"uri":"file:///x.rs","range":{"start":{"line":2,"character":4},"end":{"line":2,"character":6}}}});
+        assert_eq!(
+            parse_definition_response(&message).unwrap().unwrap().start,
+            Position {
+                line: 2,
+                character: 4
+            }
+        );
+    }
+
+    #[test]
+    fn hover_decodes_common_marked_string_forms() {
+        let message =
+            json!({"id":2,"result":{"contents":[{"language":"rust","value":"fn main()"},"docs"]}});
+        assert_eq!(
+            parse_hover_response(&message).unwrap().unwrap().text,
+            "fn main()\ndocs"
         );
     }
 }

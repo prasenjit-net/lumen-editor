@@ -48,11 +48,11 @@ pub(crate) struct LumenApp {
     pub(crate) language_server_process: Option<crate::services::language_server::ServerProcess>,
     pub(crate) language_server_workspace: Option<std::path::PathBuf>,
     pub(crate) language_server_language: Option<lumen_language_services::LanguageId>,
-    pub(crate) language_server_document: Option<(crate::model::DocumentId, u64)>,
-    pub(crate) language_server_diagnostics: std::collections::HashMap<
+    pub(crate) language_server_document: Option<(
         crate::model::DocumentId,
-        Vec<lumen_language_services::diagnostics::Diagnostic>,
-    >,
+        u64,
+        lumen_language_services::DocumentUri,
+    )>,
     pub(crate) terminal_session: Option<crate::services::terminal::TerminalSession>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
@@ -80,7 +80,6 @@ impl Default for LumenApp {
             language_server_workspace: None,
             language_server_language: None,
             language_server_document: None,
-            language_server_diagnostics: std::collections::HashMap::new(),
             terminal_session: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,

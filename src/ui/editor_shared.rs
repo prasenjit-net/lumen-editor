@@ -5,7 +5,7 @@ use super::{
 };
 use crate::app::editor_action::{blocked, prepare_action, text_widget_id};
 use crate::icon;
-use eframe::egui::{self, Frame, Stroke, StrokeKind};
+use eframe::egui::{self, Color32, Frame, Stroke, StrokeKind};
 
 impl Workbench<'_> {
     pub(super) fn editor_shared(&mut self, ui: &mut egui::Ui, index: usize) {
@@ -151,6 +151,29 @@ impl Workbench<'_> {
         }
         if let Some(notice) = &surface.notice {
             self.view.status = notice.clone();
+        }
+        if let Some(diagnostics) = self.view.language_server_diagnostics.get(&document) {
+            let painter = ui.painter_at(output.text_clip);
+            for diagnostic in diagnostics {
+                let color = match diagnostic.severity {
+                    lumen_language_services::diagnostics::DiagnosticSeverity::Error => {
+                        Color32::from_rgb(241, 76, 76)
+                    }
+                    lumen_language_services::diagnostics::DiagnosticSeverity::Warning => {
+                        Color32::from_rgb(204, 167, 0)
+                    }
+                    _ => Color32::from_rgb(117, 190, 255),
+                };
+                for rect in output.geometry.selection_rects(diagnostic.range.clone()) {
+                    painter.line_segment(
+                        [
+                            egui::pos2(rect.left(), rect.bottom() - 1.0),
+                            egui::pos2(rect.right(), rect.bottom() - 1.0),
+                        ],
+                        Stroke::new(1.0_f32, color),
+                    );
+                }
+            }
         }
         self.view.shared_surface = Some(surface);
         if let Some(find) = self.view.find.get_mut(&document) {

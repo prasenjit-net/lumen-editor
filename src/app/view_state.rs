@@ -236,6 +236,10 @@ pub(crate) struct ViewState {
     pub(crate) terminal: TerminalView,
     pub(crate) language_server_document: Option<crate::model::DocumentId>,
     pub(crate) language_server_status: Option<LanguageServerStatus>,
+    pub(crate) language_server_diagnostics: std::collections::HashMap<
+        crate::model::DocumentId,
+        Vec<lumen_language_services::diagnostics::Diagnostic>,
+    >,
     pub(crate) sidebar_visible: bool,
     pub(crate) status: String,
     pub(crate) safety_notices: Vec<String>,
@@ -299,6 +303,7 @@ impl Default for ViewState {
             terminal: TerminalView::default(),
             language_server_document: None,
             language_server_status: None,
+            language_server_diagnostics: std::collections::HashMap::new(),
             sidebar_visible: true,
             status: "Ready".into(),
             safety_notices: Vec::new(),
