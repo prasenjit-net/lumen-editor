@@ -298,6 +298,10 @@ specified by a project unless the user’s server-command policy permits it.
   ready and failed server states. A restart always receives a new generation.
 - [x] Add validated diagnostics snapshots tied to exact request/session stamps;
   stale snapshots are rejected by the existing stamp gate before rendering.
+- [x] Add pure JSON-RPC builders for initialization and full-text document sync.
+  Process I/O and lifecycle remain service-owned.
+- [x] Add a tested JSON-RPC `Content-Length` encoder paired with the bounded
+  decoder. Process I/O and child lifetime remain outside this crate.
 - Implement stdio JSON-RPC in `services/`, capability negotiation in the new
   crate, server lifecycle in `app/`, and a compact Language Status view.
 - Add Rust diagnostics with `rust-analyzer`, then Go diagnostics with `gopls`.

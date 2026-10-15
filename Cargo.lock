@@ -2212,6 +2212,7 @@ dependencies = [
 name = "lumen-language-services"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "streaming-iterator",
  "tree-sitter",
  "tree-sitter-go",
