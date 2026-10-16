@@ -5,7 +5,7 @@ use crate::app::view_state::ExplorerEditKind;
 use crate::app::view_state::{Activity, ExplorerSelection};
 use crate::icon;
 use crate::model::display_name;
-use eframe::egui::{self, RichText, ScrollArea, TextEdit};
+use eframe::egui::{self, RichText, ScrollArea};
 use std::path::Path;
 impl Workbench<'_> {
     fn git_badge(&self, path: &Path, directory: bool) -> Option<char> {
@@ -54,13 +54,17 @@ impl Workbench<'_> {
         self.explorer_keyboard(ui, &root);
     }
 
-    pub(crate) fn explorer_entry(&mut self, ui: &mut egui::Ui, path: &Path, depth: usize) {
-        if depth > 0
-            && !self.view.settings.boolean("explorer.show_hidden")
+    /// One rule for drawing and keyboard traversal: a hidden child is neither
+    /// shown nor selectable. The workspace root is never hidden.
+    pub(crate) fn explorer_entry_hidden(&self, path: &Path) -> bool {
+        !self.view.settings.boolean("explorer.show_hidden")
             && path
                 .file_name()
                 .is_some_and(|name| name.to_string_lossy().starts_with('.'))
-        {
+    }
+
+    pub(crate) fn explorer_entry(&mut self, ui: &mut egui::Ui, path: &Path, depth: usize) {
+        if depth > 0 && self.explorer_entry_hidden(path) {
             return;
         }
         let renaming = self.view.explorer_edit.as_ref().is_some_and(
@@ -102,6 +106,7 @@ impl Workbench<'_> {
                     .as_ref()
                     .is_some_and(|selection| selection.path() == path),
             );
+            let response = response.on_hover_text(path.display().to_string());
             self.explorer_row_actions(&response, path, true);
             if response.clicked() {
                 self.view.explorer_selection =
@@ -143,6 +148,7 @@ impl Workbench<'_> {
                 depth * 14 + 20,
                 open,
             );
+            let response = response.on_hover_text(path.display().to_string());
             self.explorer_row_actions(&response, path, false);
             if response.clicked() {
                 self.view.explorer_selection = Some(ExplorerSelection::File(path.to_path_buf()));
@@ -238,22 +244,84 @@ impl Workbench<'_> {
                             self.source_control_panel(ui);
                         }
                         Activity::RunDebug => {
-                            ui.label(RichText::new("Run and Debug").size(18.0));
-                            ui.add_sized(
-                                [ui.available_width(), 32.0],
-                                egui::Button::new(format!("{}  Run project", icon::PLAY)),
+                            unavailable_panel(
+                                ui,
+                                "Run and Debug",
+                                "Running and debugging projects is not available yet. Use the integrated terminal to run commands in the meantime.",
+                                Some(format!("{}  Run project", icon::PLAY)),
                             );
                         }
                         Activity::Extensions => {
-                            ui.label(RichText::new("Extensions").size(18.0));
-                            ui.add(
-                                TextEdit::singleline(&mut self.view.search)
-                                    .hint_text("Search extensions")
-                                    .desired_width(f32::INFINITY),
+                            unavailable_panel(
+                                ui,
+                                "Extensions",
+                                "Extensions are not supported yet. Language support is built in; see Settings for language servers.",
+                                None,
                             );
                         }
                     }
                 });
             });
+    }
+}
+
+/// An honest placeholder for an activity that is not built yet: say so, and keep
+/// any control it would have had visibly disabled with the reason on hover.
+fn unavailable_panel(ui: &mut egui::Ui, title: &str, message: &str, action: Option<String>) {
+    let colors = crate::ui::theme::palette(ui.visuals());
+    ui.label(RichText::new(title).size(18.0));
+    ui.add_space(4.0);
+    ui.add(egui::Label::new(RichText::new(message).size(12.0).color(colors.muted)).wrap());
+    if let Some(action) = action {
+        ui.add_space(8.0);
+        ui.add_enabled_ui(false, |ui| {
+            ui.add_sized([ui.available_width(), 32.0], egui::Button::new(action))
+                .on_disabled_hover_text("Not available yet");
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app::{LumenApp, view_state::Activity};
+    use eframe::egui;
+
+    #[test]
+    fn unfinished_activities_explain_themselves_and_offer_no_live_controls() {
+        for (activity, phrase) in [
+            (Activity::RunDebug, "not available yet"),
+            (Activity::Extensions, "not supported yet"),
+        ] {
+            let mut app = LumenApp::default();
+            app.view.activity = activity;
+            app.view.sidebar_visible = true;
+            let ctx = egui::Context::default();
+            crate::ui::theme::configure_ui(&ctx);
+            let mut output = None;
+            for _ in 0..3 {
+                output = Some(ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(900.0, 600.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| app.render_component(ctx, |workbench| workbench.sidebar(ctx)),
+                ));
+            }
+            let text: String = output
+                .unwrap()
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(text.contains(phrase), "{activity:?}: {text}");
+            assert!(!text.contains("Search extensions"));
+        }
     }
 }

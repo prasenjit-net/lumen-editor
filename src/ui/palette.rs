@@ -493,9 +493,8 @@ mod tests {
     }
 
     #[test]
-    fn typing_filters_then_enter_executes_once_without_changing_extension_search() {
+    fn typing_filters_then_enter_executes_once() {
         let (mut app, ctx) = opened();
-        app.view.search = "extension query".into();
         frame(&mut app, &ctx, vec![egui::Event::Text("new text".into())]);
         assert_eq!(app.view.palette_query, "new text");
         frame(&mut app, &ctx, vec![key(egui::Key::Enter)]);
@@ -503,7 +502,6 @@ mod tests {
         assert_eq!(app.editor.files.len(), 1);
         frame(&mut app, &ctx, vec![key(egui::Key::Enter)]);
         assert_eq!(app.editor.files.len(), 1);
-        assert_eq!(app.view.search, "extension query");
     }
 
     #[test]

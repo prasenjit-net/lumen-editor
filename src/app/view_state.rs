@@ -326,7 +326,6 @@ pub(crate) struct ViewState {
         Option<(crate::model::DocumentId, std::ops::Range<usize>)>,
     pub(crate) fold_tabs:
         std::collections::HashMap<crate::model::DocumentId, super::folding::FoldTabState>,
-    pub(crate) search: String,
     pub(crate) workspace_search: WorkspaceSearchView,
     pub(crate) source_control: SourceControlView,
     pub(crate) terminal: TerminalView,
@@ -417,7 +416,6 @@ impl Default for ViewState {
             pending_goto: None,
             pending_problem_selection: None,
             fold_tabs: Default::default(),
-            search: String::new(),
             workspace_search: WorkspaceSearchView::default(),
             source_control: SourceControlView::default(),
             terminal: TerminalView::default(),

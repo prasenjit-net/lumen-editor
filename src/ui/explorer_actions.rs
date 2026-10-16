@@ -177,8 +177,53 @@ impl Workbench<'_> {
         entries.push(path.into());
         if self.file_system.is_directory(path) && self.view.expanded_dirs.contains(path) {
             for child in self.file_system.children(path) {
-                self.visible_explorer_entries(&child, entries);
+                if !self.explorer_entry_hidden(&child) {
+                    self.visible_explorer_entries(&child, entries);
+                }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app::LumenApp;
+    use lumen_settings_core::Value;
+
+    #[test]
+    fn keyboard_traversal_skips_hidden_entries_unless_they_are_shown() {
+        let root = std::env::temp_dir().join(format!("lumen-hidden-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".secret")).unwrap();
+        std::fs::write(root.join(".env"), "K=1").unwrap();
+        std::fs::write(root.join("a.txt"), "a").unwrap();
+        let mut app = LumenApp::default();
+        app.editor.workspace = Some(root.clone());
+        app.view.expanded_dirs.insert(root.clone());
+        app.view.expanded_dirs.insert(root.join(".secret"));
+        let names = |app: &mut LumenApp| {
+            let mut entries = Vec::new();
+            app.render_component(&eframe::egui::Context::default(), |workbench| {
+                workbench.visible_explorer_entries(&root, &mut entries)
+            });
+            entries
+                .iter()
+                .map(|path| {
+                    path.strip_prefix(&root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect::<Vec<_>>()
+        };
+        let shown = names(&mut app);
+        assert!(shown.contains(&".env".to_string()) && shown.contains(&".secret".to_string()));
+        app.view
+            .settings
+            .user
+            .persisted
+            .insert("explorer.show_hidden".into(), Value::Bool(false));
+        assert_eq!(names(&mut app), ["", "a.txt"]);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

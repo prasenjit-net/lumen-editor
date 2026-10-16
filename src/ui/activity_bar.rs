@@ -31,14 +31,6 @@ impl Workbench<'_> {
                                 true,
                                 activity.title(),
                             );
-                            if glyph == icon::AGENT && self.view.agents.needs_attention() {
-                                // An agent is blocked on a permission request.
-                                ui.painter().circle_filled(
-                                    response.rect.right_top() + egui::vec2(-12.0, 12.0),
-                                    4.5,
-                                    colors.warning,
-                                );
-                            }
                             if selected {
                                 ui.painter().vline(
                                     response.rect.left(),
@@ -77,11 +69,26 @@ impl Workbench<'_> {
                         .into_iter()
                         .filter(|(glyph, ..)| agents_enabled || *glyph != icon::AGENT)
                         {
+                            let waiting =
+                                glyph == icon::AGENT && self.view.agents.needs_attention();
+                            let name = if waiting {
+                                format!("{tooltip} - waiting for your approval")
+                            } else {
+                                tooltip.clone()
+                            };
                             let response = widgets::named(
-                                widgets::icon_button(ui, glyph, selected).on_hover_text(&tooltip),
+                                widgets::icon_button(ui, glyph, selected).on_hover_text(&name),
                                 true,
-                                &tooltip,
+                                &name,
                             );
+                            if waiting {
+                                // An agent is blocked on a permission request.
+                                ui.painter().circle_filled(
+                                    response.rect.right_top() + egui::vec2(-12.0, 12.0),
+                                    4.5,
+                                    colors.warning,
+                                );
+                            }
                             if selected {
                                 ui.painter().vline(
                                     response.rect.left(),
@@ -332,5 +339,46 @@ mod tests {
         app.execute(Command::ToggleAgentPanel, &ctx);
         assert!(!app.view.agents.open);
         assert!(app.view.status.contains("turned off"));
+    }
+
+    #[test]
+    fn a_pending_agent_permission_shows_a_badge_on_the_closed_agent_button() {
+        use crate::app::{agent::AgentKind, agent_permission::PendingPermission};
+        let mut app = LumenApp::default();
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let warning = crate::ui::theme::Theme::Dark.palette().warning;
+        let badges = |output: &egui::FullOutput| {
+            output
+                .shapes
+                .iter()
+                .filter(|shape| {
+                    matches!(&shape.shape,
+                    egui::Shape::Circle(circle) if circle.fill == warning)
+                })
+                .count()
+        };
+        assert!(!app.view.agents.open);
+        assert_eq!(badges(&frame(&mut app, &ctx, 900.0, vec![])), 0);
+        let params = serde_json::json!({"sessionId":"s1",
+            "toolCall":{"toolCallId":"t1","title":"Write","kind":"edit"},
+            "options":[{"optionId":"o","name":"Yes","kind":"allow_once"}]});
+        let request = lumen_agent_protocol::types::parse_permission_request(&params).unwrap();
+        app.view
+            .agents
+            .session_mut(AgentKind::Claude)
+            .pending_permissions
+            .push(PendingPermission {
+                id: lumen_agent_protocol::rpc::RequestId::Number(1),
+                request,
+                warnings: vec![],
+            });
+        assert_eq!(badges(&frame(&mut app, &ctx, 900.0, vec![])), 1);
+        app.view
+            .agents
+            .session_mut(AgentKind::Claude)
+            .pending_permissions
+            .clear();
+        assert_eq!(badges(&frame(&mut app, &ctx, 900.0, vec![])), 0);
     }
 }
