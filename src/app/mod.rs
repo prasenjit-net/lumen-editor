@@ -16,6 +16,7 @@ mod language_services;
 mod navigation;
 pub(crate) mod output;
 mod safety;
+pub(crate) mod scroll_sync;
 pub(crate) mod settings;
 pub(crate) mod source_control;
 pub(crate) mod terminal;

@@ -367,6 +367,13 @@ impl Workbench<'_> {
                         }
                     });
                 }
+                let key = (relative_path.clone(), side);
+                if self.view.source_control.diff_scroll_key.as_ref() != Some(&key) {
+                    self.view.source_control.diff_scroll =
+                        crate::app::scroll_sync::ScrollSync::at_top();
+                    self.view.source_control.diff_scroll_key = Some(key);
+                }
+                let mut sync = self.view.source_control.diff_scroll;
                 ui.columns(2, |columns| {
                     columns[0].label(
                         RichText::new(match side {
@@ -377,15 +384,19 @@ impl Workbench<'_> {
                         .small()
                         .color(theme::MUTED),
                     );
-                    read_only_source(
+                    let observed = read_only_source(
                         &mut columns[0],
-                        &comparison.base,
-                        &comparison.old_lines,
-                        theme::DIFF_REMOVED_BG,
-                        "git_diff_base",
-                        &font,
-                        line_height,
+                        &ReadOnlySource {
+                            text: &comparison.base,
+                            changed: &comparison.old_lines,
+                            changed_background: theme::DIFF_REMOVED_BG,
+                            id: "git_diff_base",
+                            font: &font,
+                            line_height,
+                        },
+                        sync.take_pending(0),
                     );
+                    sync.observe(0, observed);
                     if let Some(index) = document_index {
                         let dirty = self.editor.files[index].dirty;
                         let changed_since_open =
@@ -403,7 +414,13 @@ impl Workbench<'_> {
                         );
                         let document = self.editor.files[index].id;
                         self.editor_find_bar(&mut columns[1], document);
+                        // The editor pane takes and reports its scroll position
+                        // through the shared sync state while this flag is set.
+                        self.view.source_control.diff_scroll = sync;
+                        self.view.source_control.diff_scroll_hook = true;
                         self.editor_viewport(&mut columns[1], index);
+                        self.view.source_control.diff_scroll_hook = false;
+                        sync = self.view.source_control.diff_scroll;
                     } else {
                         columns[1].label(
                             RichText::new(if side == DiffSide::Staged {
@@ -414,17 +431,26 @@ impl Workbench<'_> {
                             .small()
                             .color(theme::MUTED),
                         );
-                        read_only_source(
+                        let observed = read_only_source(
                             &mut columns[1],
-                            comparison.changed.as_deref().unwrap_or_default(),
-                            &comparison.new_lines,
-                            theme::DIFF_ADDED_BG,
-                            "git_diff_changed",
-                            &font,
-                            line_height,
+                            &ReadOnlySource {
+                                text: comparison.changed.as_deref().unwrap_or_default(),
+                                changed: &comparison.new_lines,
+                                changed_background: theme::DIFF_ADDED_BG,
+                                id: "git_diff_changed",
+                                font: &font,
+                                line_height,
+                            },
+                            sync.take_pending(1),
                         );
+                        sync.observe(1, observed);
                     }
                 });
+                let needs_frame = sync.finish_frame();
+                self.view.source_control.diff_scroll = sync;
+                if needs_frame {
+                    ui.ctx().request_repaint();
+                }
             }
             Err(error) => {
                 ui.label(RichText::new(error).color(theme::DIFF_REMOVED_TEXT));
@@ -433,15 +459,31 @@ impl Workbench<'_> {
     }
 }
 
+/// One read-only side of a diff.
+struct ReadOnlySource<'a> {
+    text: &'a str,
+    changed: &'a BTreeSet<usize>,
+    changed_background: egui::Color32,
+    id: &'a str,
+    font: &'a FontId,
+    line_height: f32,
+}
+
+/// Draws the pane, first jumping to `scroll_to_line` when given, and returns
+/// the line now at the top of the viewport.
 fn read_only_source(
     ui: &mut egui::Ui,
-    text: &str,
-    changed: &BTreeSet<usize>,
-    changed_background: egui::Color32,
-    id: &str,
-    font: &FontId,
-    line_height: f32,
-) {
+    source: &ReadOnlySource,
+    scroll_to_line: Option<f32>,
+) -> f32 {
+    let ReadOnlySource {
+        text,
+        changed,
+        changed_background,
+        id,
+        font,
+        line_height,
+    } = *source;
     let lines: Vec<_> = text.split('\n').collect();
     let width = lines
         .iter()
@@ -452,36 +494,39 @@ fn read_only_source(
         * 0.65
         + 70.0;
     let height = line_height.max(16.0);
-    ScrollArea::both()
-        .id_salt(id)
-        .auto_shrink([false, false])
-        .show_rows(ui, height, lines.len(), |ui, rows| {
-            ui.set_min_width(width.max(ui.available_width()));
-            for index in rows {
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(width.max(ui.available_width()), height),
-                    egui::Sense::hover(),
-                );
-                if changed.contains(&(index + 1)) {
-                    ui.painter().rect_filled(rect, 0.0, changed_background);
-                }
-                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                    ui.horizontal(|ui| {
-                        ui.set_min_height(height);
-                        ui.label(
-                            RichText::new(format!("{:>4}", index + 1))
-                                .font(font.clone())
-                                .color(theme::MUTED),
-                        );
-                        ui.label(
-                            RichText::new(lines[index])
-                                .font(font.clone())
-                                .color(theme::TEXT),
-                        );
-                    });
-                });
+    let mut area = ScrollArea::both().id_salt(id).auto_shrink([false, false]);
+    if let Some(line) = scroll_to_line {
+        area = area.vertical_scroll_offset(line * (height + ui.spacing().item_spacing.y));
+    }
+    let output = area.show_rows(ui, height, lines.len(), |ui, rows| {
+        ui.set_min_width(width.max(ui.available_width()));
+        for index in rows {
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(width.max(ui.available_width()), height),
+                egui::Sense::hover(),
+            );
+            if changed.contains(&(index + 1)) {
+                ui.painter().rect_filled(rect, 0.0, changed_background);
             }
-        });
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                ui.horizontal(|ui| {
+                    ui.set_min_height(height);
+                    ui.label(
+                        RichText::new(format!("{:>4}", index + 1))
+                            .font(font.clone())
+                            .color(theme::MUTED),
+                    );
+                    ui.label(
+                        RichText::new(lines[index])
+                            .font(font.clone())
+                            .color(theme::TEXT),
+                    );
+                });
+            });
+        }
+    });
+    // Report the position in lines so differently sized panes can be compared.
+    output.state.offset.y / (height + ui.spacing().item_spacing.y)
 }
 
 #[cfg(test)]
@@ -905,5 +950,183 @@ mod tests {
             .collect();
         assert!(labels.iter().any(|text| text.contains("Stage 1")));
         assert!(labels.iter().any(|text| text.contains("Stage 2")));
+    }
+
+    fn numbered_text(prefix: &str, count: usize) -> String {
+        (1..=count).map(|n| format!("{prefix}{n}\n")).collect()
+    }
+
+    struct DiffHarness {
+        ctx: egui::Context,
+        editor: EditorState,
+        view: ViewState,
+    }
+
+    impl DiffHarness {
+        fn staged(lines: usize) -> Self {
+            let ctx = egui::Context::default();
+            theme::configure_ui(&ctx);
+            let mut view = ViewState::default();
+            view.source_control.diff = Some(SourceDiffView {
+                root: PathBuf::from("/workspace"),
+                path: PathBuf::from("file.rs"),
+                side: DiffSide::Staged,
+                comparison: Ok(std::sync::Arc::new(GitComparison {
+                    base: numbered_text("old", lines),
+                    changed: Some(numbered_text("new", lines)),
+                    old_lines: Default::default(),
+                    new_lines: Default::default(),
+                    hunks: Vec::new(),
+                })),
+                document: None,
+                diff_only_document: None,
+                opened_revision: None,
+                active: true,
+            });
+            Self {
+                ctx,
+                editor: EditorState::default(),
+                view,
+            }
+        }
+
+        fn frame(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
+            let (editor, view) = (&mut self.editor, &mut self.view);
+            self.ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1000.0, 400.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let mut workbench = Workbench::new(editor, view, &LocalFileSystem);
+                        workbench.source_diff_editor(ui);
+                    });
+                },
+            )
+        }
+
+        fn settle(&mut self) {
+            // Wheel scrolling is smoothed over several frames; let it finish.
+            for _ in 0..40 {
+                self.frame(vec![]);
+            }
+        }
+
+        fn wheel(&mut self, x: f32, lines: f32) {
+            let pos = egui::pos2(x, 200.0);
+            self.frame(vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Line,
+                    delta: egui::vec2(0.0, -lines),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+            self.settle();
+        }
+
+        /// Smallest visible line number in the left and right pane.
+        fn first_lines(&mut self) -> (usize, usize) {
+            let output = self.frame(vec![]);
+            let (mut left, mut right) = (usize::MAX, usize::MAX);
+            for shape in &output.shapes {
+                if let egui::Shape::Text(text) = &shape.shape
+                    && let Some(number) = text
+                        .galley
+                        .text()
+                        .strip_prefix("old")
+                        .map(|n| (n, true))
+                        .or_else(|| text.galley.text().strip_prefix("new").map(|n| (n, false)))
+                    && let Ok(n) = number.0.trim().parse::<usize>()
+                {
+                    if number.1 {
+                        left = left.min(n);
+                    } else {
+                        right = right.min(n);
+                    }
+                }
+            }
+            (left, right)
+        }
+    }
+
+    #[test]
+    fn scrolling_either_diff_pane_moves_the_other_to_the_same_line() {
+        let mut diff = DiffHarness::staged(400);
+        diff.settle();
+        assert_eq!(diff.first_lines(), (1, 1));
+
+        diff.wheel(250.0, 30.0);
+        let (left, right) = diff.first_lines();
+        assert!(left > 5, "left pane scrolled: {left}");
+        assert_eq!(left, right, "right pane follows the left");
+
+        let before = left;
+        diff.wheel(750.0, -12.0);
+        let (left, right) = diff.first_lines();
+        assert!(
+            left < before,
+            "scrolling the right pane moved the left: {left}"
+        );
+        assert_eq!(left, right, "left pane follows the right");
+    }
+
+    #[test]
+    fn a_different_diff_resets_the_sync_memory() {
+        let mut diff = DiffHarness::staged(400);
+        diff.settle();
+        diff.wheel(250.0, 40.0);
+        assert!(diff.view.source_control.diff_scroll.positions()[0] > 5.0);
+        diff.view.source_control.diff.as_mut().unwrap().path = PathBuf::from("other.rs");
+        diff.settle();
+        assert_eq!(
+            diff.view.source_control.diff_scroll_key,
+            Some((PathBuf::from("other.rs"), DiffSide::Staged))
+        );
+        assert_eq!(
+            diff.first_lines(),
+            (1, 1),
+            "a different file's diff opens at the top, not at the old scroll position"
+        );
+    }
+
+    #[cfg(feature = "shared-editor")]
+    #[test]
+    fn the_editable_working_tree_pane_follows_the_base_pane_too() {
+        let mut diff = DiffHarness::staged(400);
+        let text = numbered_text("new", 400);
+        let mut document =
+            crate::model::Document::from_path(PathBuf::from("/workspace/file.rs"), text.clone());
+        document.enable_shared_editing();
+        let id = document.id;
+        diff.editor.files.push(document);
+        diff.editor.active_file = Some(0);
+        let state = diff.view.source_control.diff.as_mut().unwrap();
+        state.side = DiffSide::Working;
+        state.document = Some(id);
+        state.opened_revision = Some(0);
+        diff.settle();
+
+        diff.wheel(250.0, 35.0);
+        let [left, right] = diff.view.source_control.diff_scroll.positions();
+        assert!(left > 5.0, "base pane scrolled: {left}");
+        assert!(
+            (left - right).abs() < 0.5,
+            "editor pane at line {right}, base pane at line {left}"
+        );
+
+        // And the other way: wheel over the editor, base pane follows.
+        diff.wheel(750.0, -20.0);
+        let [left_after, right_after] = diff.view.source_control.diff_scroll.positions();
+        assert!(
+            left_after < left,
+            "base pane followed the editor: {left_after}"
+        );
+        assert!((left_after - right_after).abs() < 1.0);
     }
 }
