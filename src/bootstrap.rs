@@ -1,7 +1,23 @@
 use crate::{app::LumenApp, platform, ui::theme::configure_ui};
 use eframe::egui;
-use std::path::PathBuf;
 pub(crate) fn run() -> eframe::Result<()> {
+    use crate::cli::{Invocation, USAGE, parse};
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let targets = match parse(std::env::args_os().skip(1), &cwd, |path| path.exists()) {
+        Invocation::Help => {
+            println!("Lumen {}\n\n{USAGE}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Invocation::Version => {
+            println!("Lumen {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Invocation::Invalid(message) => {
+            eprintln!("lumen: {message}\n\n{USAGE}");
+            std::process::exit(2);
+        }
+        Invocation::Open(targets) => targets,
+    };
     install_panic_log();
     crate::services::logger::info(
         "editor",
@@ -42,17 +58,10 @@ pub(crate) fn run() -> eframe::Result<()> {
                 ));
             }
             app.initialize_recent_files(crate::services::settings::user_path());
-            for argument in std::env::args_os().skip(1) {
-                let path = PathBuf::from(argument);
-                let path = std::path::absolute(&path).unwrap_or(path);
-                if path.is_dir() {
-                    app.open_folder_path(path);
-                } else {
-                    app.open_file(path);
-                }
-            }
+            let opened_something = !targets.is_empty();
+            app.open_command_line_targets(targets);
             app.initialize_settings(crate::services::settings::user_path());
-            if std::env::args_os().len() <= 1 {
+            if !opened_something {
                 app.reopen_last_folder_if_enabled();
             }
             app.restore_recovery();
