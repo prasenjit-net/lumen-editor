@@ -1,4 +1,4 @@
-use super::{LumenApp, command::Command};
+use super::{LumenApp, command::Command, tab_close::TabCloseScope, tab_commands::TabMove};
 use eframe::egui;
 
 impl LumenApp {
@@ -191,6 +191,12 @@ impl LumenApp {
             Command::CloseFolder => self.close_folder(),
             Command::OpenPath(path) => self.open_file(path),
             Command::RevealInExplorer(path) => self.reveal_in_explorer(path),
+            Command::OpenRecentFolder(path) => {
+                self.view.navigation.mode = None;
+                self.open_folder_path(path);
+            }
+            Command::ShowRecentFolders => self.open_recent_folder_picker(),
+            Command::ClearRecentHistory => self.clear_recent_history(),
             Command::Save if self.view.settings.open => {
                 if self.view.settings.selected().pending() > 0 {
                     self.apply_settings();
@@ -208,9 +214,39 @@ impl LumenApp {
             Command::SaveConflictAs(document) => self.save_conflict_as(document),
             Command::ReviewDiskChange(document) => self.review_disk_change(document),
             Command::DismissConflict => self.view.save_conflict = None,
-            Command::RequestClose(index) => self.request_close(index),
-            Command::CloseFile(index) => self.close_file(index),
+            Command::RequestClose(id) => self.request_close(id),
+            Command::CloseFile(id) => self.close_file(id),
             Command::CloseTabs(scope) => self.begin_bulk_close(scope),
+            Command::CloseOtherTabs => self.close_tabs_relative(TabCloseScope::Others),
+            Command::CloseTabsToLeft => self.close_tabs_relative(TabCloseScope::ToTheLeft),
+            Command::CloseTabsToRight => self.close_tabs_relative(TabCloseScope::ToTheRight),
+            Command::CloseSavedTabs => self.begin_bulk_close(TabCloseScope::Saved),
+            Command::CloseAllTabs => self.begin_bulk_close(TabCloseScope::All),
+            Command::NextTab => self.cycle_tab(1),
+            Command::PreviousTab => self.cycle_tab(-1),
+            Command::ReopenClosedTab => self.reopen_closed_tab(),
+            Command::MoveTab(id, movement) => self.move_tab(id, movement),
+            Command::MoveActiveTabLeft => self.move_active_tab(TabMove::Left),
+            Command::MoveActiveTabRight => self.move_active_tab(TabMove::Right),
+            Command::SplitEditor => self.split_editor(),
+            Command::MoveTabToGroup(id) => self.move_tab_to_group(id),
+            Command::MoveTabToGroupAt(id, group, position) => {
+                self.move_tab_to_group_at(id, group, position)
+            }
+            Command::FocusNextGroup => self.focus_next_group(),
+            Command::ToggleSplitOrientation => {
+                if self.editor.group_count() < 2 {
+                    self.view.status = "The editor is not split".into();
+                } else {
+                    self.view.split_vertical = !self.view.split_vertical;
+                    self.view.status = if self.view.split_vertical {
+                        "Editor groups stacked".into()
+                    } else {
+                        "Editor groups side by side".into()
+                    };
+                }
+            }
+            Command::FocusGroup(group) => self.focus_group_command(group),
             Command::CloseEditor => {
                 if self.view.settings.open {
                     self.view.settings.tab_open = false;
@@ -227,8 +263,8 @@ impl LumenApp {
                     super::source_control::close_diff_preview(&mut self.editor, &mut self.view);
                     return;
                 }
-                if let Some(index) = self.editor.active_file {
-                    self.request_close(index);
+                if let Some(id) = self.editor.active_id() {
+                    self.request_close(id);
                 }
             }
             Command::Quit => self.request_quit(ctx),
@@ -273,26 +309,34 @@ impl LumenApp {
             Command::Undo => super::editor_action::EditorAction::Undo.send(ctx),
             Command::Redo => super::editor_action::EditorAction::Redo.send(ctx),
             Command::SelectAll => super::editor_action::EditorAction::SelectAll.send(ctx),
-            Command::SaveAndClose(index) => {
-                // Preserve the current dialog's active-buffer save semantics.
-                self.save_active();
+            Command::SaveAndClose(id) => {
                 self.view.pending_close = None;
-                if self.editor.files.get(index).is_some_and(|file| !file.dirty) {
-                    self.close_file(index);
+                // Save the document the prompt is about, not whichever tab
+                // happens to be active. It stays active if the save is cancelled
+                // or fails, so the user lands on the file that is still unsaved.
+                if self.editor.activate(id) {
+                    self.save_active();
+                    if self
+                        .editor
+                        .index_of(id)
+                        .is_some_and(|index| !self.editor.files[index].dirty)
+                    {
+                        self.close_file(id);
+                    }
                 }
             }
             Command::SaveAllAndQuit => {
-                let active = self.editor.active_file;
+                let active = self.editor.active_index();
                 for index in 0..self.editor.files.len() {
                     if self.editor.files[index].dirty {
-                        self.editor.active_file = Some(index);
+                        self.editor.set_active_index(Some(index));
                         self.save_active();
                         if self.editor.files[index].dirty {
                             break;
                         }
                     }
                 }
-                self.editor.active_file = active;
+                self.editor.set_active_index(active);
                 if !self.editor.has_unsaved_changes() {
                     self.finish_quit(ctx);
                 }

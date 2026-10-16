@@ -364,7 +364,7 @@ fn delay_autosave_is_opt_in_and_skips_untitled_buffers() {
     assert!(!app.editor.files[0].dirty);
     assert_eq!(storage.0.borrow().writes.len(), 1);
     app.editor.new_file();
-    let file = app.editor.active_file.unwrap();
+    let file = app.editor.active_index().unwrap();
     app.editor.files[file].text = "untitled edit".into();
     app.editor.files[file].record_text_change();
     app.maintain_documents(&ctx);

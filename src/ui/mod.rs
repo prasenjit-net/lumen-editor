@@ -12,6 +12,7 @@ mod editor_gutter;
 mod editor_menu;
 #[cfg(feature = "shared-editor")]
 mod editor_shared;
+mod editor_split;
 mod editor_tabs;
 mod editor_viewport;
 mod explorer;
@@ -28,6 +29,7 @@ mod problems;
 mod settings;
 pub(crate) mod shortcut;
 mod source_control;
+mod tab_drag;
 mod terminal;
 pub(crate) mod theme;
 pub(crate) mod transcript_layout;

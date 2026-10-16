@@ -181,7 +181,7 @@ impl LumenApp {
             self.view.status = "The problem's document is no longer open.".into();
             return;
         };
-        self.editor.active_file = Some(index);
+        self.editor.set_active_index(Some(index));
         self.view.settings.open = false;
         if let Some(diff) = &mut self.view.source_control.diff {
             diff.active = false;
@@ -1604,7 +1604,7 @@ mod tests {
             "/workspace/src/main.rs".into(),
             String::new(),
         ));
-        app.editor.active_file = Some(0);
+        app.editor.set_active_index(Some(0));
         let rust_id = app.editor.files[0].id;
         app.refresh_language_server_status(&eframe::egui::Context::default());
         assert_eq!(app.view.language_server_document, Some(rust_id));
@@ -1614,7 +1614,7 @@ mod tests {
             "/workspace/settings.json".into(),
             String::new(),
         ));
-        app.editor.active_file = Some(1);
+        app.editor.set_active_index(Some(1));
         app.refresh_language_server_status(&eframe::egui::Context::default());
         assert!(app.view.language_server_status.is_none());
     }
@@ -1644,7 +1644,7 @@ mod tests {
             "/workspace/main.rs".into(),
             "fn main() {}".into(),
         ));
-        app.editor.active_file = Some(0);
+        app.editor.set_active_index(Some(0));
         app.request_language_definition();
         assert!(app.view.status.contains("does not provide"));
         assert!(app.view.pending_goto.is_none());
@@ -1658,7 +1658,7 @@ mod tests {
             "/workspace/main.rs".into(),
             "fn main() {}".into(),
         ));
-        app.editor.active_file = Some(0);
+        app.editor.set_active_index(Some(0));
         app.language_server_language = Some(LanguageId::RUST);
 
         app.sync_language_documents();
@@ -1678,7 +1678,7 @@ mod tests {
             "/workspace/b.rs".into(),
             "fn b() {}".into(),
         ));
-        app.editor.active_file = Some(0);
+        app.editor.set_active_index(Some(0));
         let first = app.editor.files[0].id;
         let second = app.editor.files[1].id;
         let ctx = eframe::egui::Context::default();
@@ -1748,7 +1748,7 @@ mod tests {
             "/workspace/a.rs".into(),
             "fn a() {}".into(),
         ));
-        app.editor.active_file = Some(0);
+        app.editor.set_active_index(Some(0));
         let document = app.editor.files[0].id;
         let ctx = eframe::egui::Context::default();
         app.refresh_language_server_status(&ctx);
@@ -1783,7 +1783,7 @@ mod tests {
             "/workspace/a.rs".into(),
             "fn a() {}".into(),
         ));
-        app.editor.active_file = Some(0);
+        app.editor.set_active_index(Some(0));
         let ctx = eframe::egui::Context::default();
         app.refresh_language_server_status(&ctx);
         events.lock().unwrap().push(initialized());
@@ -1820,7 +1820,7 @@ mod tests {
         ));
         let document = app.editor.files[0].id;
         app.open_problem(document, 1..4);
-        assert_eq!(app.editor.active_file, Some(0));
+        assert_eq!(app.editor.active_index(), Some(0));
         assert_eq!(app.view.pending_goto, Some((document, 1)));
         assert_eq!(app.view.pending_problem_selection, Some((document, 1..4)));
     }
@@ -1850,7 +1850,7 @@ mod tests {
             "/workspace/main.rs".into(),
             "struct Thing;".into(),
         ));
-        app.editor.active_file = Some(0);
+        app.editor.set_active_index(Some(0));
         let message = serde_json::json!({"result":[{
             "name":"Thing","kind":23,
             "selectionRange":{"start":{"line":0,"character":7},"end":{"line":0,"character":12}},
@@ -1872,7 +1872,7 @@ mod tests {
             "/workspace/a.rs".into(),
             "fn a() {}".into(),
         ));
-        app.editor.active_file = Some(0);
+        app.editor.set_active_index(Some(0));
         (app, messages, events)
     }
 
@@ -1941,7 +1941,7 @@ mod tests {
                 .files
                 .push(crate::model::Document::from_path(path, "package a".into()));
         }
-        app.editor.active_file = Some(0);
+        app.editor.set_active_index(Some(0));
         let ctx = eframe::egui::Context::default();
         app.refresh_language_server_status(&ctx);
         assert_eq!(
@@ -2315,7 +2315,7 @@ mod tests {
             base.join("a.rs"),
             "fn foo() {}\nfn a() { foo(); }\n".into(),
         ));
-        app.editor.active_file = Some(0);
+        app.editor.set_active_index(Some(0));
         app.editor.files[0].enable_shared_editing();
         let ctx = eframe::egui::Context::default();
         app.refresh_language_server_status(&ctx);

@@ -250,7 +250,8 @@ impl ClipboardService for TestClipboard {
 }
 
 fn edit_active(app: &mut LumenApp, text: &str) {
-    let file = &mut app.editor.files[app.editor.active_file.unwrap()];
+    let active = app.editor.active_index().unwrap();
+    let file = &mut app.editor.files[active];
     file.text = text.into();
     file.dirty = true;
 }
@@ -263,7 +264,7 @@ fn close_folder_clears_project_state_without_closing_documents() {
         "project/src/main.rs".into(),
         "fn main() {}".into(),
     ));
-    app.editor.active_file = Some(0);
+    app.editor.set_active_index(Some(0));
     app.editor.files[0].text.push_str("\n// unsaved");
     app.editor.files[0].record_text_change();
     app.view.expanded_dirs.insert("project/src".into());
@@ -502,10 +503,10 @@ fn new_buffers_have_unique_names_and_closing_selects_a_remaining_tab() {
     app.new_file();
     assert_eq!(app.editor.files[0].name, "untitled-1.txt");
     assert_eq!(app.editor.active().unwrap().name, "untitled-2.txt");
-    app.close_file(1);
-    assert_eq!(app.editor.active_file, Some(0));
-    app.close_file(0);
-    assert_eq!(app.editor.active_file, None);
+    app.close_file(app.editor.files[1].id);
+    assert_eq!(app.editor.active_index(), Some(0));
+    app.close_file(app.editor.files[0].id);
+    assert_eq!(app.editor.active_index(), None);
     app.new_file();
     assert_eq!(app.editor.active().unwrap().name, "untitled-3.txt");
 }
@@ -528,7 +529,7 @@ fn opening_an_existing_tab_preserves_edits_without_rereading() {
     app.new_file();
     app.open_file(path);
     assert_eq!(app.editor.files.len(), 2);
-    assert_eq!(app.editor.active_file, Some(0));
+    assert_eq!(app.editor.active_index(), Some(0));
     assert_eq!(app.editor.active().unwrap().text, "edited");
     assert!(app.editor.active().unwrap().dirty);
     assert_eq!(storage.0.borrow().reads, 1);
@@ -612,10 +613,11 @@ fn failed_save_as_preserves_original_path_and_dirty_content() {
 #[test]
 fn opening_a_folder_resets_explorer_state_but_keeps_buffers() {
     let folder = PathBuf::from("project");
-    let (mut app, _) = test_app(TestDialogs {
+    let (mut app, storage) = test_app(TestDialogs {
         folder: Some(folder.clone()),
         ..Default::default()
     });
+    storage.0.borrow_mut().directories.insert(folder.clone());
     app.new_file();
     app.view.sidebar_visible = false;
     app.view.activity = Activity::Search;
@@ -633,13 +635,13 @@ fn dirty_close_requires_a_decision_and_clean_close_does_not() {
     let (mut app, _) = test_app(TestDialogs::default());
     app.new_file();
     edit_active(&mut app, "unsaved");
-    app.request_close(0);
-    assert_eq!(app.view.pending_close, Some(0));
+    app.request_close(app.editor.files[0].id);
+    assert_eq!(app.view.pending_close, Some(app.editor.files[0].id));
     assert_eq!(app.editor.files.len(), 1);
     app.new_file();
-    app.request_close(1);
+    app.request_close(app.editor.files[1].id);
     assert_eq!(app.editor.files.len(), 1);
-    assert_eq!(app.editor.active_file, Some(0));
+    assert_eq!(app.editor.active_index(), Some(0));
 }
 
 #[test]
@@ -651,7 +653,7 @@ fn save_all_stops_on_cancellation_and_restores_selection() {
     edit_active(&mut app, "second");
     app.view.pending_quit = true;
     app.execute(Command::SaveAllAndQuit, &egui::Context::default());
-    assert_eq!(app.editor.active_file, Some(1));
+    assert_eq!(app.editor.active_index(), Some(1));
     assert!(app.editor.files.iter().all(|file| file.dirty));
     assert!(app.view.pending_quit);
     assert!(!app.view.allow_quit);
@@ -672,7 +674,7 @@ fn save_all_writes_dirty_files_before_allowing_quit() {
     }
     app.view.pending_quit = true;
     app.execute(Command::SaveAllAndQuit, &egui::Context::default());
-    assert_eq!(app.editor.active_file, Some(1));
+    assert_eq!(app.editor.active_index(), Some(1));
     assert!(!app.editor.has_unsaved_changes());
     assert!(app.view.allow_quit);
     assert!(!app.view.pending_quit);
@@ -688,8 +690,11 @@ fn save_and_close_writes_the_buffer_before_removing_it() {
     });
     app.new_file();
     edit_active(&mut app, "keep this text");
-    app.request_close(0);
-    app.execute(Command::SaveAndClose(0), &egui::Context::default());
+    app.request_close(app.editor.files[0].id);
+    app.execute(
+        Command::SaveAndClose(app.editor.files[0].id),
+        &egui::Context::default(),
+    );
     assert_eq!(storage.0.borrow().files[&path], "keep this text");
     assert!(app.editor.files.is_empty());
     assert_eq!(app.view.pending_close, None);
@@ -700,8 +705,11 @@ fn save_and_close_cancellation_keeps_the_dirty_buffer() {
     let (mut app, _) = test_app(TestDialogs::default());
     app.new_file();
     edit_active(&mut app, "unsaved");
-    app.request_close(0);
-    app.execute(Command::SaveAndClose(0), &egui::Context::default());
+    app.request_close(app.editor.files[0].id);
+    app.execute(
+        Command::SaveAndClose(app.editor.files[0].id),
+        &egui::Context::default(),
+    );
     assert_eq!(app.editor.files.len(), 1);
     assert_eq!(app.editor.active().unwrap().text, "unsaved");
     assert!(app.editor.active().unwrap().dirty);
@@ -724,7 +732,7 @@ fn save_all_stops_on_write_failure_without_quitting() {
     storage.0.borrow_mut().fail_writes = true;
     app.view.pending_quit = true;
     app.execute(Command::SaveAllAndQuit, &egui::Context::default());
-    assert_eq!(app.editor.active_file, Some(1));
+    assert_eq!(app.editor.active_index(), Some(1));
     assert!(app.editor.files.iter().all(|file| file.dirty));
     assert!(app.view.pending_quit);
     assert!(!app.view.allow_quit);
@@ -815,4 +823,62 @@ fn explorer_sash_resizes_both_ways_and_retains_width() {
         narrower < wider - 70.0,
         "drag should shrink sidebar: {wider} -> {narrower}"
     );
+}
+
+#[test]
+fn a_pending_close_prompt_keeps_its_document_when_tabs_move_or_others_close() {
+    let (mut app, _) = test_app(TestDialogs::default());
+    for _ in 0..3 {
+        app.new_file();
+    }
+    let target = app.editor.files[0].id;
+    app.editor.files[0].dirty = true;
+    app.request_close(target);
+    assert_eq!(app.view.pending_close, Some(target));
+    // Tabs are shuffled and another tab closes while the prompt is open.
+    app.editor.files.swap(0, 2);
+    let other = app.editor.files[0].id;
+    app.close_file(other);
+    assert_eq!(app.view.pending_close, Some(target));
+    assert!(app.editor.index_of(target).is_some());
+    assert!(app.editor.files[app.editor.index_of(target).unwrap()].dirty);
+}
+
+#[test]
+fn save_and_close_saves_the_prompted_document_not_the_active_tab() {
+    let path = PathBuf::from("prompted.txt");
+    let (mut app, storage) = test_app(TestDialogs {
+        save_path: Some(path.clone()),
+        ..Default::default()
+    });
+    app.new_file();
+    edit_active(&mut app, "prompted text");
+    app.new_file();
+    edit_active(&mut app, "active text");
+    let prompted = app.editor.files[0].id;
+    let active = app.editor.files[1].id;
+    assert_eq!(app.editor.active_id(), Some(active));
+    app.request_close(prompted);
+    assert_eq!(app.view.pending_close, Some(prompted));
+    app.execute(Command::SaveAndClose(prompted), &egui::Context::default());
+    assert_eq!(storage.0.borrow().files[&path], "prompted text");
+    assert_eq!(app.editor.files.len(), 1);
+    assert_eq!(app.editor.files[0].id, active);
+    assert!(app.editor.files[0].dirty, "the other tab was not saved");
+    assert_eq!(app.editor.files[0].text, "active text");
+}
+
+#[test]
+fn a_cancelled_save_leaves_the_prompted_document_open_and_active() {
+    let (mut app, _) = test_app(TestDialogs::default());
+    app.new_file();
+    edit_active(&mut app, "first");
+    app.new_file();
+    edit_active(&mut app, "second");
+    let prompted = app.editor.files[0].id;
+    app.request_close(prompted);
+    app.execute(Command::SaveAndClose(prompted), &egui::Context::default());
+    assert_eq!(app.editor.files.len(), 2);
+    assert_eq!(app.editor.active_id(), Some(prompted));
+    assert!(app.editor.files.iter().all(|file| file.dirty));
 }

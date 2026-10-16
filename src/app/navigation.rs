@@ -6,7 +6,7 @@ use super::{
 use crate::{
     model::DocumentId,
     services::file_index::{self, FileIndex},
-    services::recent_files::{LocalRecentFilesStore, RecentFilesStore},
+    services::recent_files::{LocalRecentFilesStore, RecentFilesStore, RecentHistory},
 };
 use eframe::egui;
 use std::{
@@ -23,6 +23,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 const MAX_RESULTS: usize = 60;
 const MAX_RECENT: usize = 30;
+const MAX_RECENT_FOLDERS: usize = 15;
 
 pub(crate) struct FileIndexJob {
     root: PathBuf,
@@ -37,10 +38,15 @@ impl LumenApp {
         };
         let store = Box::new(LocalRecentFilesStore::new(&settings_path));
         match store.load() {
-            Ok(paths) => {
-                for path in paths.into_iter().rev() {
+            Ok(history) => {
+                for path in history.files.into_iter().rev() {
                     if path.is_absolute() {
                         self.view.navigation.remember(&path);
+                    }
+                }
+                for path in history.folders.into_iter().rev() {
+                    if path.is_absolute() {
+                        self.view.navigation.remember_folder(&path);
                     }
                 }
             }
@@ -59,7 +65,11 @@ impl LumenApp {
 
     pub(crate) fn save_recent_files(&mut self) {
         if let Some(store) = &self.recent_files_store {
-            match store.save(&self.view.navigation.recent) {
+            let history = RecentHistory {
+                files: self.view.navigation.recent.clone(),
+                folders: self.view.navigation.recent_folders.clone(),
+            };
+            match store.save(&history) {
                 Ok(()) => self.view.navigation.recent_warning = None,
                 Err(error) => {
                     self.view.navigation.recent_warning =
@@ -110,6 +120,30 @@ impl LumenApp {
         self.view
             .navigation
             .refresh(self.editor.workspace.as_deref());
+    }
+
+    /// Startup behaviour behind `workbench.reopen_last_folder` (off by default).
+    /// The caller decides when it applies; a missing folder is reported and
+    /// pruned by `open_folder_path` and leaves no workspace open.
+    pub(crate) fn reopen_last_folder_if_enabled(&mut self) {
+        if self.editor.workspace.is_some()
+            || !self.view.settings.boolean("workbench.reopen_last_folder")
+        {
+            return;
+        }
+        if let Some(folder) = self.view.navigation.recent_folders.first().cloned() {
+            self.open_folder_path(folder);
+        }
+    }
+
+    pub(crate) fn open_recent_folder_picker(&mut self) {
+        self.view.command_palette = false;
+        let navigation = &mut self.view.navigation;
+        navigation.mode = Some(NavigationMode::RecentFolders);
+        navigation.query.clear();
+        navigation.error = None;
+        navigation.selected = 0;
+        navigation.focus = true;
     }
 
     pub(crate) fn open_go_to_line(&mut self) {
@@ -211,6 +245,16 @@ impl NavigationView {
         self.matched_query = None;
     }
 
+    pub(crate) fn remember_folder(&mut self, folder: &Path) {
+        self.recent_folders.retain(|item| item != folder);
+        self.recent_folders.insert(0, folder.to_path_buf());
+        self.recent_folders.truncate(MAX_RECENT_FOLDERS);
+    }
+
+    pub(crate) fn forget_folder(&mut self, folder: &Path) {
+        self.recent_folders.retain(|item| item != folder);
+    }
+
     pub(crate) fn add_workspace_path(&mut self, path: &Path) {
         if self
             .indexed_root
@@ -224,7 +268,12 @@ impl NavigationView {
     }
 
     pub(crate) fn relocate(&mut self, source: &Path, target: &Path) {
-        for path in self.recent.iter_mut().chain(self.paths.iter_mut()) {
+        for path in self
+            .recent
+            .iter_mut()
+            .chain(self.recent_folders.iter_mut())
+            .chain(self.paths.iter_mut())
+        {
             if let Ok(suffix) = path.strip_prefix(source) {
                 *path = target.join(suffix);
             }
@@ -234,6 +283,8 @@ impl NavigationView {
 
     pub(crate) fn forget_deleted(&mut self, path: &Path) {
         self.recent.retain(|candidate| !candidate.starts_with(path));
+        self.recent_folders
+            .retain(|candidate| !candidate.starts_with(path));
         self.paths.retain(|candidate| !candidate.starts_with(path));
         self.matched_query = None;
     }

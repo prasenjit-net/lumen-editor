@@ -400,7 +400,7 @@ fn tabs_keep_independent_scroll_offsets_in_the_shared_viewport() {
     editor_frame(&mut app, &ctx, vec![]);
     let output = editor_frame(&mut app, &ctx, vec![]);
     assert!(text_shape(&output, &text).pos.y > first_y + 50.0);
-    app.editor.active_file = Some(0);
+    app.editor.set_active_index(Some(0));
     app.view.focus_editor = true;
     let output = editor_frame(&mut app, &ctx, vec![]);
     assert!((text_shape(&output, &text).pos.y - first_y).abs() < 1.0);

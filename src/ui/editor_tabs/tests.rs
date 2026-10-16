@@ -12,7 +12,7 @@ fn fixture(count: usize) -> (LumenApp, egui::Context) {
             "untouched".into(),
         ));
     }
-    app.editor.active_file = count.checked_sub(1);
+    app.editor.set_active_index(count.checked_sub(1));
     let ctx = egui::Context::default();
     crate::ui::theme::configure_ui(&ctx);
     (app, ctx)
@@ -146,7 +146,7 @@ fn dropdown_opens_hidden_editor_and_new_file_button_keeps_its_behavior() {
         })
         .expect("hidden editor is available in dropdown");
     click(&mut app, &ctx, 300.0, position);
-    assert_eq!(app.editor.active_file, Some(0));
+    assert_eq!(app.editor.active_index(), Some(0));
     for _ in 0..3 {
         frame(&mut app, &ctx, 300.0, vec![]);
     }
@@ -176,7 +176,7 @@ fn settings_is_revealed_in_overflow_and_dirty_markers_keep_close_confirmation() 
     app.execute(Command::CloseEditor, &ctx);
     app.editor.files[0].name = "a_very_long_filename_that_must_not_expand_the_editor_tab.rs".into();
     app.editor.files[0].dirty = true;
-    app.editor.active_file = Some(0);
+    app.editor.set_active_index(Some(0));
     for _ in 0..3 {
         frame(&mut app, &ctx, 300.0, vec![]);
     }
@@ -184,7 +184,7 @@ fn settings_is_revealed_in_overflow_and_dirty_markers_keep_close_confirmation() 
     let dirty = label_rect(&output, "●");
     assert!(dirty.left() >= 0.0 && dirty.right() <= 248.0);
     click(&mut app, &ctx, 300.0, dirty.center());
-    assert_eq!(app.view.pending_close, Some(0));
+    assert_eq!(app.view.pending_close, Some(app.editor.files[0].id));
     assert_eq!(app.editor.files.len(), 30);
     assert!(app.editor.files[0].dirty);
     assert_eq!(app.editor.files[0].text, "untouched");
@@ -286,14 +286,20 @@ fn right_click_opens_a_tab_menu_without_activating_the_tab_or_changing_content()
     for entry in [
         "Close",
         "Close Others",
+        "Close to the Left",
         "Close to the Right",
+        "Close Saved",
         "Close All",
         "Copy Path",
         "Copy Relative Path",
     ] {
         label_rect(&output, entry);
     }
-    assert_eq!(app.editor.active_file, Some(2), "menu must not switch tabs");
+    assert_eq!(
+        app.editor.active_index(),
+        Some(2),
+        "menu must not switch tabs"
+    );
     assert_eq!(app.editor.files[0].text, "untouched");
     assert_eq!(app.editor.files.len(), 3);
 }
@@ -319,7 +325,11 @@ fn close_others_from_the_menu_prompts_for_a_dirty_tab_and_keeps_its_text() {
     let others = label_rect(&output, "Close Others");
     click(&mut app, &ctx, 900.0, others.center());
     app.advance_bulk_close();
-    assert_eq!(app.view.pending_close, Some(0), "dirty tab is not dropped");
+    assert_eq!(
+        app.view.pending_close,
+        Some(app.editor.files[0].id),
+        "dirty tab is not dropped"
+    );
     assert_eq!(app.editor.files[0].text, "precious");
     assert_eq!(app.editor.files.len(), 2, "the clean other tab closed");
 }
@@ -340,7 +350,7 @@ fn middle_click_closes_a_clean_tab_and_prompts_for_a_dirty_one() {
         dirty.center(),
         egui::PointerButton::Middle,
     );
-    assert_eq!(app.view.pending_close, Some(1));
+    assert_eq!(app.view.pending_close, Some(app.editor.files[1].id));
     app.view.pending_close = None;
     let clean = label_rect(&output, "file_0.rs");
     button(
@@ -351,4 +361,180 @@ fn middle_click_closes_a_clean_tab_and_prompts_for_a_dirty_one() {
         egui::PointerButton::Middle,
     );
     assert_eq!(app.editor.files.len(), 1);
+}
+
+fn pointer(pos: egui::Pos2) -> egui::Event {
+    egui::Event::PointerMoved(pos)
+}
+
+fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {
+    egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+fn order(app: &LumenApp) -> Vec<String> {
+    app.editor
+        .files
+        .iter()
+        .map(|file| file.name.clone())
+        .collect()
+}
+
+/// Drag a tab's title to `to`, optionally pressing Escape before releasing, and
+/// leave the pointer there for `release_at` (which may differ from `to`).
+fn drag_tab(
+    app: &mut LumenApp,
+    ctx: &egui::Context,
+    from: &str,
+    to: egui::Pos2,
+    escape: bool,
+    release_at: egui::Pos2,
+) {
+    let (_, output) = frame(app, ctx, 900.0, vec![]);
+    let start = label_rect(&output, from).center();
+    frame(app, ctx, 900.0, vec![pointer(start), press(start, true)]);
+    frame(
+        app,
+        ctx,
+        900.0,
+        vec![pointer(start + egui::vec2(24.0, 0.0))],
+    );
+    frame(app, ctx, 900.0, vec![pointer(to)]);
+    frame(app, ctx, 900.0, vec![pointer(to)]);
+    if escape {
+        frame(
+            app,
+            ctx,
+            900.0,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+    }
+    frame(
+        app,
+        ctx,
+        900.0,
+        vec![pointer(release_at), press(release_at, false)],
+    );
+    frame(app, ctx, 900.0, vec![]);
+}
+
+fn settled(count: usize) -> (LumenApp, egui::Context, egui::FullOutput) {
+    let (mut app, ctx) = fixture(count);
+    let mut output = frame(&mut app, &ctx, 900.0, vec![]).1;
+    for _ in 0..3 {
+        output = frame(&mut app, &ctx, 900.0, vec![]).1;
+    }
+    (app, ctx, output)
+}
+
+#[test]
+fn dragging_a_tab_past_its_neighbours_reorders_without_touching_content() {
+    let (mut app, ctx, output) = settled(3);
+    app.editor.files[0].dirty = true;
+    let target = label_rect(&output, "file_2.rs").center() + egui::vec2(60.0, 0.0);
+    let active = app.editor.active_id();
+    drag_tab(&mut app, &ctx, "file_0.rs", target, false, target);
+    assert_eq!(order(&app), ["file_1.rs", "file_2.rs", "file_0.rs"]);
+    assert_eq!(
+        app.editor.active_id(),
+        active,
+        "dragging does not change the active tab"
+    );
+    let moved = app
+        .editor
+        .files
+        .iter()
+        .find(|f| f.name == "file_0.rs")
+        .unwrap();
+    assert!(moved.dirty);
+    assert_eq!(moved.text, "untouched");
+}
+
+#[test]
+fn dragging_left_moves_a_later_tab_to_the_front() {
+    let (mut app, ctx, output) = settled(3);
+    let target = label_rect(&output, "file_0.rs").center() - egui::vec2(40.0, 0.0);
+    drag_tab(&mut app, &ctx, "file_2.rs", target, false, target);
+    assert_eq!(order(&app), ["file_2.rs", "file_0.rs", "file_1.rs"]);
+}
+
+#[test]
+fn releasing_over_the_tabs_own_slot_changes_nothing() {
+    let (mut app, ctx, output) = settled(3);
+    let own = label_rect(&output, "file_1.rs").center() + egui::vec2(30.0, 0.0);
+    drag_tab(&mut app, &ctx, "file_1.rs", own, false, own);
+    assert_eq!(order(&app), ["file_0.rs", "file_1.rs", "file_2.rs"]);
+}
+
+#[test]
+fn escape_while_dragging_cancels_the_move() {
+    let (mut app, ctx, output) = settled(3);
+    let target = label_rect(&output, "file_2.rs").center() + egui::vec2(60.0, 0.0);
+    drag_tab(&mut app, &ctx, "file_0.rs", target, true, target);
+    assert_eq!(order(&app), ["file_0.rs", "file_1.rs", "file_2.rs"]);
+    // The cancel does not leak into the next drag.
+    drag_tab(&mut app, &ctx, "file_0.rs", target, false, target);
+    assert_eq!(order(&app), ["file_1.rs", "file_2.rs", "file_0.rs"]);
+}
+
+#[test]
+fn dropping_well_outside_the_strip_abandons_the_move() {
+    let (mut app, ctx, output) = settled(3);
+    let target = label_rect(&output, "file_2.rs").center() + egui::vec2(60.0, 0.0);
+    let far_below = egui::pos2(target.x, 400.0);
+    drag_tab(&mut app, &ctx, "file_0.rs", target, false, far_below);
+    assert_eq!(order(&app), ["file_0.rs", "file_1.rs", "file_2.rs"]);
+}
+
+#[test]
+fn a_plain_click_still_selects_and_never_reorders() {
+    let (mut app, ctx, output) = settled(3);
+    let title = label_rect(&output, "file_0.rs").center();
+    frame(
+        &mut app,
+        &ctx,
+        900.0,
+        vec![pointer(title), press(title, true)],
+    );
+    frame(&mut app, &ctx, 900.0, vec![press(title, false)]);
+    frame(&mut app, &ctx, 900.0, vec![]);
+    assert_eq!(order(&app), ["file_0.rs", "file_1.rs", "file_2.rs"]);
+    assert_eq!(app.editor.active_index(), Some(0));
+}
+
+#[test]
+fn the_tab_menu_offers_move_left_and_right_with_end_states() {
+    let (mut app, ctx, output) = settled(3);
+    let first = label_rect(&output, "file_0.rs").center();
+    for pressed in [true, false] {
+        frame(
+            &mut app,
+            &ctx,
+            900.0,
+            vec![
+                pointer(first),
+                egui::Event::PointerButton {
+                    pos: first,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
+    let (_, menu) = frame(&mut app, &ctx, 900.0, vec![]);
+    label_rect(&menu, "Move Left");
+    let right = label_rect(&menu, "Move Right");
+    click(&mut app, &ctx, 900.0, right.center());
+    assert_eq!(order(&app), ["file_1.rs", "file_0.rs", "file_2.rs"]);
 }

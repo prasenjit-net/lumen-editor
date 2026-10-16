@@ -514,14 +514,14 @@ impl LumenApp {
         context: Vec<(String, Value)>,
         ctx: &egui::Context,
     ) {
-        let active = self.editor.active_file;
+        let active = self.editor.active_index();
         for index in 0..self.editor.files.len() {
             if self.editor.files[index].dirty && self.editor.files[index].path.is_some() {
-                self.editor.active_file = Some(index);
+                self.editor.set_active_index(Some(index));
                 self.save_active();
             }
         }
-        self.editor.active_file = active;
+        self.editor.set_active_index(active);
         let still_dirty: Vec<String> = self
             .editor
             .files
@@ -986,7 +986,7 @@ impl LumenApp {
             .iter()
             .position(|file| file.path.as_deref() == Some(path.as_path()));
         match existing {
-            Some(index) => self.editor.active_file = Some(index),
+            Some(index) => self.editor.set_active_index(Some(index)),
             None => self.open_file(path),
         }
         if let (Some(document), Some(line)) = (self.editor.active(), location.line) {
@@ -1847,7 +1847,7 @@ mod tests {
             .editor
             .files
             .push(dirty_document("a.rs", Some(path.clone()), "edited"));
-        h.app.editor.active_file = Some(0);
+        h.app.editor.set_active_index(Some(0));
         h.say(AgentKind::Claude, "go");
         h.app
             .execute(Command::ResolveUnsavedFiles(UnsavedChoice::SaveAll), &h.ctx);
@@ -1864,7 +1864,7 @@ mod tests {
             .editor
             .files
             .push(dirty_document("b.rs", Some(path.clone()), "mine"));
-        h.app.editor.active_file = Some(0);
+        h.app.editor.set_active_index(Some(0));
         h.say(AgentKind::Claude, "go");
         h.app
             .execute(Command::ResolveUnsavedFiles(UnsavedChoice::SaveAll), &h.ctx);
@@ -2057,7 +2057,7 @@ mod tests {
             path.clone(),
             "fn a() {}\nfn b() {}\n".into(),
         ));
-        h.app.editor.active_file = Some(0);
+        h.app.editor.set_active_index(Some(0));
         h.app.editor.files[0].enable_shared_editing();
         h.app.editor.files[0]
             .editing

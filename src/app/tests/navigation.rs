@@ -107,3 +107,119 @@ fn recent_files_survive_restart_and_missing_targets_are_pruned() {
     after_missing.initialize_recent_files(Some(settings));
     assert!(after_missing.view.navigation.recent.is_empty());
 }
+
+/// An app whose in-memory file system already contains the named folders, rooted in
+/// a real temporary directory so every path is absolute on every platform (the
+/// history loader ignores relative entries). Returns the app, the folder paths in
+/// the order given, and the settings path used for persistence.
+fn app_with_folders(names: &[&str]) -> (crate::app::LumenApp, Vec<PathBuf>, PathBuf) {
+    let temp = tempfile::tempdir().unwrap().keep();
+    let settings = temp.join(".lumen/settings.toml");
+    let (mut app, storage) = test_app(TestDialogs::default());
+    let folders: Vec<PathBuf> = names.iter().map(|name| temp.join(name)).collect();
+    for folder in &folders {
+        storage.0.borrow_mut().directories.insert(folder.clone());
+    }
+    app.initialize_recent_files(Some(settings.clone()));
+    (app, folders, settings)
+}
+
+#[test]
+fn opened_folders_are_remembered_newest_first_without_duplicates_and_survive_restart() {
+    let (mut app, f, settings) = app_with_folders(&["a", "b", "c"]);
+    for index in [0, 1, 0, 2] {
+        app.open_folder_path(f[index].clone());
+    }
+    let expected = vec![f[2].clone(), f[0].clone(), f[1].clone()];
+    assert_eq!(app.view.navigation.recent_folders, expected);
+
+    let (mut reopened, _) = test_app(TestDialogs::default());
+    reopened.initialize_recent_files(Some(settings));
+    assert_eq!(reopened.view.navigation.recent_folders, expected);
+    assert!(
+        reopened.editor.workspace.is_none(),
+        "history never auto-opens"
+    );
+}
+
+#[test]
+fn the_folder_history_is_capped() {
+    let names: Vec<String> = (0..20).map(|n| format!("f{n}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let (mut app, f, _) = app_with_folders(&refs);
+    for folder in &f {
+        app.open_folder_path(folder.clone());
+    }
+    assert_eq!(app.view.navigation.recent_folders.len(), 15);
+    assert_eq!(app.view.navigation.recent_folders[0], f[19]);
+    assert_eq!(app.view.navigation.recent_folders[14], f[5]);
+}
+
+#[test]
+fn a_missing_folder_reports_prunes_and_changes_nothing_else() {
+    let (mut app, f, settings) = app_with_folders(&["here"]);
+    let here = f[0].clone();
+    let gone = here.with_file_name("gone");
+    app.open_folder_path(here.clone());
+    app.editor.new_file();
+    app.view.expanded_dirs.insert(here.join("sub"));
+    app.view.navigation.recent_folders.push(gone.clone());
+    app.open_folder_path(gone);
+    assert!(app.view.status.starts_with("Folder not found"));
+    assert_eq!(app.editor.workspace, Some(here.clone()));
+    assert_eq!(app.editor.files.len(), 1);
+    assert!(app.view.expanded_dirs.contains(&here.join("sub")));
+    assert_eq!(app.view.navigation.recent_folders, vec![here.clone()]);
+    let (mut reopened, _) = test_app(TestDialogs::default());
+    reopened.initialize_recent_files(Some(settings));
+    assert_eq!(
+        reopened.view.navigation.recent_folders,
+        vec![here],
+        "the pruned entry stays gone after a restart"
+    );
+}
+
+#[test]
+fn clearing_history_forgets_files_and_folders_on_disk_too() {
+    let (mut app, f, settings) = app_with_folders(&["a"]);
+    app.open_folder_path(f[0].clone());
+    app.remember_recent_file(&f[0].join("x.rs"));
+    app.clear_recent_history();
+    assert!(app.view.navigation.recent.is_empty());
+    assert!(app.view.navigation.recent_folders.is_empty());
+    let (mut reopened, _) = test_app(TestDialogs::default());
+    reopened.initialize_recent_files(Some(settings));
+    assert!(reopened.view.navigation.recent.is_empty());
+    assert!(reopened.view.navigation.recent_folders.is_empty());
+}
+
+#[test]
+fn reopen_last_folder_is_opt_in_and_skips_missing_or_already_open_workspaces() {
+    let (mut app, f, _) = app_with_folders(&["last"]);
+    let last = f[0].clone();
+    app.open_folder_path(last.clone());
+    app.close_folder();
+    assert!(app.editor.workspace.is_none());
+    // Off by default.
+    app.reopen_last_folder_if_enabled();
+    assert!(app.editor.workspace.is_none());
+    app.view.settings.user.persisted.insert(
+        "workbench.reopen_last_folder".into(),
+        lumen_settings_core::Value::Bool(true),
+    );
+    app.reopen_last_folder_if_enabled();
+    assert_eq!(app.editor.workspace, Some(last.clone()));
+    // An already-open workspace is never replaced.
+    app.view
+        .navigation
+        .remember_folder(&last.with_file_name("other"));
+    app.reopen_last_folder_if_enabled();
+    assert_eq!(app.editor.workspace, Some(last.clone()));
+    // A vanished folder is reported, pruned, and opens nothing.
+    app.close_folder();
+    app.view.navigation.recent_folders = vec![last.with_file_name("vanished")];
+    app.reopen_last_folder_if_enabled();
+    assert!(app.editor.workspace.is_none());
+    assert!(app.view.status.starts_with("Folder not found"));
+    assert!(app.view.navigation.recent_folders.is_empty());
+}

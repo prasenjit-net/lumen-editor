@@ -30,25 +30,49 @@ impl LumenApp {
 
     pub(crate) fn choose_folder(&mut self) {
         if let Some(folder) = self.dialogs.open_folder() {
-            super::source_control::close_diff_preview(&mut self.editor, &mut self.view);
-            self.cancel_file_index();
-            self.view.navigation.indexed_root = None;
-            self.cancel_workspace_search();
-            self.view.workspace_search.results = None;
-            self.view.workspace_search.completed_request = None;
-            self.editor.workspace = Some(folder.clone());
-            // A comparison belongs to the repository it was opened from.
-            self.source_control_job = None;
-            self.view.source_control = Default::default();
-            self.view.expanded_dirs.clear();
-            self.view.expanded_dirs.insert(folder.clone());
-            self.view.explorer_selection = Some(ExplorerSelection::Directory(folder.clone()));
-            self.view.explorer_edit = None;
-            self.view.delete_prompt = None;
-            self.view.activity = Activity::Explorer;
-            self.view.sidebar_visible = true;
-            self.view.status = format!("Opened folder {}", display_name(&folder));
+            self.open_folder_path(folder);
         }
+    }
+
+    /// Open `folder` as the workspace. Shared by the native dialog, the welcome
+    /// list, the recent-folder picker and menus. A folder that is gone (or is a
+    /// file) is reported and dropped from the history; nothing else changes.
+    pub(crate) fn open_folder_path(&mut self, folder: PathBuf) {
+        if !self.file_system.is_directory(&folder) {
+            self.view.navigation.forget_folder(&folder);
+            self.save_recent_files();
+            self.view.status = format!("Folder not found: {}", folder.display());
+            return;
+        }
+        super::source_control::close_diff_preview(&mut self.editor, &mut self.view);
+        self.cancel_file_index();
+        self.view.navigation.indexed_root = None;
+        self.cancel_workspace_search();
+        self.view.workspace_search.results = None;
+        self.view.workspace_search.completed_request = None;
+        self.editor.workspace = Some(folder.clone());
+        // A comparison belongs to the repository it was opened from.
+        self.source_control_job = None;
+        self.view.source_control = Default::default();
+        self.view.expanded_dirs.clear();
+        self.view.expanded_dirs.insert(folder.clone());
+        self.view.explorer_selection = Some(ExplorerSelection::Directory(folder.clone()));
+        self.view.explorer_edit = None;
+        self.view.delete_prompt = None;
+        self.view.activity = Activity::Explorer;
+        self.view.sidebar_visible = true;
+        self.view.status = format!("Opened folder {}", display_name(&folder));
+        self.view.navigation.remember_folder(&folder);
+        self.save_recent_files();
+    }
+
+    /// Forget every recently opened file and folder, in memory and on disk.
+    pub(crate) fn clear_recent_history(&mut self) {
+        self.view.navigation.recent.clear();
+        self.view.navigation.recent_folders.clear();
+        self.view.navigation.matched_query = None;
+        self.save_recent_files();
+        self.view.status = "Cleared recently opened files and folders".into();
     }
 
     pub(crate) fn close_folder(&mut self) {
@@ -95,7 +119,7 @@ impl LumenApp {
             .iter()
             .position(|file| file.path.as_deref() == Some(path.as_path()))
         {
-            self.editor.active_file = Some(index);
+            self.editor.set_active_index(Some(index));
             self.remember_recent_file(&path);
             return;
         }
@@ -104,7 +128,8 @@ impl LumenApp {
                 self.editor
                     .files
                     .push(Document::from_path(path.clone(), text));
-                self.editor.active_file = Some(self.editor.files.len() - 1);
+                self.editor
+                    .set_active_index(Some(self.editor.files.len() - 1));
                 self.remember_recent_file(&path);
                 self.view.status = "File opened".into();
             }
@@ -315,7 +340,7 @@ impl LumenApp {
     }
 
     pub(crate) fn save_active(&mut self) {
-        let Some(index) = self.editor.active_file else {
+        let Some(index) = self.editor.active_index() else {
             return;
         };
         if let Some(path) = self.editor.files[index].path.clone() {
@@ -326,7 +351,7 @@ impl LumenApp {
     }
 
     pub(crate) fn save_as_active(&mut self) {
-        let Some(index) = self.editor.active_file else {
+        let Some(index) = self.editor.active_index() else {
             return;
         };
         if let Some(path) = self.dialogs.save_as(&self.editor.files[index].name) {
@@ -334,11 +359,11 @@ impl LumenApp {
         }
     }
 
-    pub(crate) fn request_close(&mut self, index: usize) {
-        Command::RequestClose(index).apply_local(&mut self.editor, &mut self.view);
+    pub(crate) fn request_close(&mut self, id: crate::model::DocumentId) {
+        Command::RequestClose(id).apply_local(&mut self.editor, &mut self.view);
     }
 
-    pub(crate) fn close_file(&mut self, index: usize) {
-        Command::CloseFile(index).apply_local(&mut self.editor, &mut self.view);
+    pub(crate) fn close_file(&mut self, id: crate::model::DocumentId) {
+        Command::CloseFile(id).apply_local(&mut self.editor, &mut self.view);
     }
 }

@@ -124,7 +124,7 @@ mod tests {
             root.join("src/ui/a.rs"),
             "fn a() {}\n".into(),
         ));
-        app.editor.active_file = Some(0);
+        app.editor.set_active_index(Some(0));
         let ctx = egui::Context::default();
         crate::ui::theme::configure_ui(&ctx);
         Fixture { app, ctx, root }
@@ -263,7 +263,7 @@ mod tests {
         for _ in 0..3 {
             output = frame(&mut app, &ctx, 900.0, vec![]);
         }
-        assert!(text_rect(&output, "Recent").is_some());
+        assert!(text_rect(&output, "Recent files").is_some());
         let recent = output
             .shapes
             .iter()
@@ -304,5 +304,77 @@ mod tests {
             "New File opened one untitled buffer"
         );
         assert!(app.editor.files[0].path.is_none());
+    }
+
+    fn click_at(app: &mut LumenApp, ctx: &egui::Context, target: egui::Pos2) {
+        for pressed in [true, false] {
+            frame(
+                app,
+                ctx,
+                900.0,
+                vec![
+                    egui::Event::PointerMoved(target),
+                    egui::Event::PointerButton {
+                        pos: target,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+    }
+
+    fn welcome(app: &mut LumenApp, ctx: &egui::Context) -> egui::FullOutput {
+        let mut output = frame(app, ctx, 900.0, vec![]);
+        for _ in 0..3 {
+            output = frame(app, ctx, 900.0, vec![]);
+        }
+        output
+    }
+
+    fn entry(output: &egui::FullOutput, prefix: &str) -> egui::Rect {
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text.starts_with(prefix) => {
+                    Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no entry starting with {prefix:?}"))
+    }
+
+    #[test]
+    fn welcome_lists_recent_folders_and_opening_one_makes_it_the_workspace() {
+        let root =
+            std::env::temp_dir().join(format!("lumen-welcome-folder-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut app = LumenApp::default();
+        app.view.navigation.recent_folders = vec![root.clone()];
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let output = welcome(&mut app, &ctx);
+        assert!(text_rect(&output, "Recent folders").is_some());
+        let name = root.file_name().unwrap().to_string_lossy().into_owned();
+        click_at(&mut app, &ctx, entry(&output, &name).center());
+        assert_eq!(app.editor.workspace.as_deref(), Some(root.as_path()));
+        assert_eq!(app.view.navigation.recent_folders, vec![root.clone()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_missing_recent_folder_is_pruned_without_touching_the_workspace() {
+        let missing = std::env::temp_dir().join("lumen-no-such-folder/gone");
+        let mut app = LumenApp::default();
+        app.view.navigation.recent_folders = vec![missing];
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let output = welcome(&mut app, &ctx);
+        click_at(&mut app, &ctx, entry(&output, "gone").center());
+        assert!(app.editor.workspace.is_none());
+        assert!(app.view.navigation.recent_folders.is_empty());
+        assert!(app.view.status.starts_with("Folder not found"));
     }
 }

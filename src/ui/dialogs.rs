@@ -196,15 +196,18 @@ impl Workbench<'_> {
 
     pub(crate) fn unsaved_changes_dialog(&mut self, ctx: &egui::Context) {
         let colors = crate::ui::theme::palette(&ctx.style().visuals);
-        let Some(index) = self.view.pending_close else {
+        let Some(id) = self.view.pending_close else {
             return;
         };
-        let name = self
+        let Some(name) = self
             .editor
-            .files
-            .get(index)
-            .map(|file| file.name.clone())
-            .unwrap_or_default();
+            .index_of(id)
+            .map(|index| self.editor.files[index].name.clone())
+        else {
+            // The document went away while the prompt was open.
+            self.view.pending_close = None;
+            return;
+        };
         egui::Window::new("Unsaved changes")
             .collapsible(false)
             .resizable(false)
@@ -222,10 +225,10 @@ impl Workbench<'_> {
                     let cancel = ui.button("Cancel");
                     keep_focus(ui.ctx(), &[&save, &discard, &cancel], &save);
                     if save.clicked() {
-                        self.command(Command::SaveAndClose(index));
+                        self.command(Command::SaveAndClose(id));
                     } else if discard.clicked() {
                         self.view.pending_close = None;
-                        self.command(Command::CloseFile(index));
+                        self.command(Command::CloseFile(id));
                     } else if cancel.clicked() || escape_pressed(ui.ctx()) {
                         self.view.pending_close = None;
                         self.view.focus_editor = true;
@@ -296,7 +299,7 @@ mod tests {
         app.editor.new_file();
         app.editor.files[0].text = "unsaved".into();
         app.editor.files[0].dirty = true;
-        app.view.pending_close = Some(0);
+        app.view.pending_close = Some(app.editor.files[0].id);
         let ctx = egui::Context::default();
         crate::ui::theme::configure_ui(&ctx);
         for _ in 0..3 {

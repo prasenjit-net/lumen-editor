@@ -136,7 +136,7 @@ impl LumenApp {
                 self.execute(action, ctx);
             }
             if let Some(menu) = &self.native_menu {
-                let open = self.editor.active_file.is_some();
+                let open = self.editor.active_index().is_some();
                 let text_input =
                     ctx.wants_keyboard_input() || (open && !self.view.explorer_focused);
                 let explorer = self.view.explorer_focused
@@ -208,12 +208,84 @@ impl LumenApp {
                 }
             }
         }
+        self.handle_tab_shortcuts(ctx, terminal_focused);
         if !terminal_focused {
             self.route_platform_paste(ctx);
             self.start_clipboard_read(ctx);
             self.poll_clipboard(ctx);
         }
         super::editor_action::finish_paste_validation(&mut self.view, self.editor.active(), ctx);
+    }
+
+    /// Next/previous tab and Reopen Closed Tab. Previous is checked first because
+    /// a Ctrl+Tab shortcut would otherwise also match when Shift is held.
+    fn handle_tab_shortcuts(&mut self, ctx: &egui::Context, terminal_focused: bool) {
+        if terminal_focused
+            || self.view.command_palette
+            || self.view.navigation.mode.is_some()
+            || self.view.pending_close.is_some()
+            || self.view.pending_quit
+        {
+            return;
+        }
+        let shortcut = egui::KeyboardShortcut::new;
+        let ctrl = egui::Modifiers::CTRL;
+        let mut command = None;
+        // The split shortcuts only exist while split editing is switched on, so
+        // they never swallow a key press for nothing.
+        let split = self.split_enabled();
+        // Moving a tab uses the primary modifier with Shift+Alt; it is checked first
+        // because Cmd+Alt+Arrow (macOS next/previous tab) would also match it.
+        let moving = egui::Modifiers::COMMAND | egui::Modifiers::ALT | egui::Modifiers::SHIFT;
+        ctx.input_mut(|input| {
+            command = if input.consume_shortcut(&shortcut(moving, egui::Key::ArrowLeft)) {
+                Some(Command::MoveActiveTabLeft)
+            } else if input.consume_shortcut(&shortcut(moving, egui::Key::ArrowRight)) {
+                Some(Command::MoveActiveTabRight)
+            } else if input
+                .consume_shortcut(&shortcut(ctrl | egui::Modifiers::SHIFT, egui::Key::Tab))
+            {
+                Some(Command::PreviousTab)
+            } else if input.consume_shortcut(&shortcut(ctrl, egui::Key::Tab)) {
+                Some(Command::NextTab)
+            } else if input.consume_shortcut(&shortcut(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::T,
+            )) {
+                Some(Command::ReopenClosedTab)
+            } else if cfg!(target_os = "macos")
+                && input.consume_shortcut(&shortcut(
+                    egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+                    egui::Key::ArrowRight,
+                ))
+            {
+                Some(Command::NextTab)
+            } else if cfg!(target_os = "macos")
+                && input.consume_shortcut(&shortcut(
+                    egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+                    egui::Key::ArrowLeft,
+                ))
+            {
+                Some(Command::PreviousTab)
+            } else if split
+                && input.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::Backslash))
+            {
+                Some(Command::SplitEditor)
+            } else if split
+                && input.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::Num1))
+            {
+                Some(Command::FocusGroup(0))
+            } else if split
+                && input.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::Num2))
+            {
+                Some(Command::FocusGroup(1))
+            } else {
+                None
+            };
+        });
+        if let Some(command) = command {
+            self.execute(command, ctx);
+        }
     }
 }
 
@@ -248,5 +320,108 @@ mod tests {
             |ctx| app.handle_events(ctx),
         );
         assert!(!app.view.terminal.open);
+    }
+
+    fn press(app: &mut LumenApp, key: egui::Key, modifiers: egui::Modifiers) {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(
+            egui::RawInput {
+                modifiers,
+                events: vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                }],
+                ..Default::default()
+            },
+            |ctx| app.handle_events(ctx),
+        );
+    }
+
+    fn three_tabs() -> LumenApp {
+        let mut app = LumenApp::default();
+        for _ in 0..3 {
+            app.editor.new_file();
+        }
+        app.editor.set_active_index(Some(0));
+        app
+    }
+
+    #[test]
+    fn control_tab_cycles_forward_and_with_shift_backward() {
+        let mut app = three_tabs();
+        let ctrl = egui::Modifiers::CTRL;
+        press(&mut app, egui::Key::Tab, ctrl);
+        assert_eq!(app.editor.active_index(), Some(1));
+        press(&mut app, egui::Key::Tab, ctrl | egui::Modifiers::SHIFT);
+        assert_eq!(
+            app.editor.active_index(),
+            Some(0),
+            "Shift reverses, it is not Next"
+        );
+        press(&mut app, egui::Key::Tab, ctrl | egui::Modifiers::SHIFT);
+        assert_eq!(app.editor.active_index(), Some(2), "wraps backwards");
+    }
+
+    #[test]
+    fn tab_shortcuts_are_ignored_while_a_dialog_palette_or_terminal_has_the_keyboard() {
+        let ctrl = egui::Modifiers::CTRL;
+        let mut app = three_tabs();
+        app.view.command_palette = true;
+        press(&mut app, egui::Key::Tab, ctrl);
+        assert_eq!(app.editor.active_index(), Some(0));
+        app.view.command_palette = false;
+        app.view.pending_close = Some(app.editor.files[0].id);
+        press(&mut app, egui::Key::Tab, ctrl);
+        assert_eq!(app.editor.active_index(), Some(0));
+        app.view.pending_close = None;
+        app.view.pending_quit = true;
+        press(&mut app, egui::Key::Tab, ctrl);
+        assert_eq!(app.editor.active_index(), Some(0));
+    }
+
+    #[test]
+    fn command_shift_t_reopens_the_last_closed_tab() {
+        let mut app = LumenApp::default();
+        let root = std::env::temp_dir().join(format!("lumen-reopen-key-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("a.txt");
+        std::fs::write(&file, "hello").unwrap();
+        app.open_file(file.clone());
+        let id = app.editor.active_id().unwrap();
+        app.request_close(id);
+        assert!(app.editor.files.is_empty());
+        press(
+            &mut app,
+            egui::Key::T,
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        );
+        assert_eq!(
+            app.editor.active().unwrap().path.as_deref(),
+            Some(file.as_path())
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn moving_a_tab_by_keyboard_does_not_also_switch_tabs() {
+        let mut app = three_tabs();
+        let ids: Vec<_> = app.editor.files.iter().map(|f| f.id).collect();
+        app.editor.set_active_index(Some(1));
+        let moving = egui::Modifiers::COMMAND | egui::Modifiers::ALT | egui::Modifiers::SHIFT;
+        press(&mut app, egui::Key::ArrowLeft, moving);
+        let order: Vec<_> = app.editor.files.iter().map(|f| f.id).collect();
+        assert_eq!(order, [ids[1], ids[0], ids[2]]);
+        assert_eq!(
+            app.editor.active_id(),
+            Some(ids[1]),
+            "same document stays active"
+        );
+        press(&mut app, egui::Key::ArrowRight, moving);
+        let order: Vec<_> = app.editor.files.iter().map(|f| f.id).collect();
+        assert_eq!(order, ids);
+        assert_eq!(app.editor.active_id(), Some(ids[1]));
     }
 }

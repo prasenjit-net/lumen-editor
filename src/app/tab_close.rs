@@ -7,6 +7,9 @@ use crate::model::DocumentId;
 pub(crate) enum TabCloseScope {
     Others(DocumentId),
     ToTheRight(DocumentId),
+    ToTheLeft(DocumentId),
+    /// Every tab without unsaved changes; never prompts.
+    Saved,
     All,
 }
 
@@ -25,21 +28,27 @@ impl BulkClose {
     }
 }
 
+/// Tabs shown in the focused group's strip: the document backing an open diff is hidden.
+pub(crate) fn visible_documents(
+    editor: &crate::model::EditorState,
+    view: &super::view_state::ViewState,
+) -> Vec<DocumentId> {
+    let hidden = view
+        .source_control
+        .diff
+        .as_ref()
+        .and_then(|diff| diff.diff_only_document);
+    // Tab commands act on the focused editor group's strip.
+    editor
+        .documents_in(editor.focused_group())
+        .into_iter()
+        .filter(|id| Some(*id) != hidden)
+        .collect()
+}
+
 impl LumenApp {
-    /// Tabs shown in the strip: the document backing an open diff is hidden.
-    fn visible_documents(&self) -> Vec<DocumentId> {
-        let hidden = self
-            .view
-            .source_control
-            .diff
-            .as_ref()
-            .and_then(|diff| diff.diff_only_document);
-        self.editor
-            .files
-            .iter()
-            .map(|file| file.id)
-            .filter(|id| Some(*id) != hidden)
-            .collect()
+    pub(crate) fn visible_documents(&self) -> Vec<DocumentId> {
+        visible_documents(&self.editor, &self.view)
     }
 
     pub(crate) fn begin_bulk_close(&mut self, scope: TabCloseScope) {
@@ -51,8 +60,21 @@ impl LumenApp {
                 Some(position) => visible[position + 1..].to_vec(),
                 None => Vec::new(),
             },
+            TabCloseScope::ToTheLeft(from) => match visible.iter().position(|id| *id == from) {
+                Some(position) => visible[..position].to_vec(),
+                None => Vec::new(),
+            },
+            TabCloseScope::Saved => visible
+                .into_iter()
+                .filter(|id| {
+                    self.editor
+                        .index_of(*id)
+                        .is_some_and(|index| !self.editor.files[index].dirty)
+                })
+                .collect(),
         };
         if targets.is_empty() {
+            self.view.status = "No tabs to close".into();
             return;
         }
         // Close everything that is clean first, so the prompts for unsaved
@@ -79,29 +101,22 @@ impl LumenApp {
             return;
         }
         if let Some(awaited) = self.view.bulk_close.awaiting.take()
-            && self.editor.files.iter().any(|file| file.id == awaited)
+            && self.editor.index_of(awaited).is_some()
         {
             self.view.bulk_close.clear();
             return;
         }
-        let active = self.editor.active().map(|file| file.id);
         while !self.view.bulk_close.queue.is_empty() {
             let id = self.view.bulk_close.queue.remove(0);
-            let Some(index) = self.editor.files.iter().position(|file| file.id == id) else {
+            let Some(index) = self.editor.index_of(id) else {
                 continue;
             };
             if self.editor.files[index].dirty {
                 self.view.bulk_close.awaiting = Some(id);
-                self.view.pending_close = Some(index);
+                self.view.pending_close = Some(id);
                 return;
             }
-            self.command_local(Command::CloseFile(index));
-            // Closing another tab must not change which tab is active.
-            if let Some(active) = active
-                && let Some(position) = self.editor.files.iter().position(|file| file.id == active)
-            {
-                self.editor.active_file = Some(position);
-            }
+            self.command_local(Command::CloseFile(id));
         }
         self.view.status = "Closed tabs".into();
     }
@@ -131,19 +146,19 @@ mod tests {
     #[test]
     fn close_others_keeps_the_chosen_tab_active_and_closes_clean_tabs() {
         let (mut app, ids) = app_with_tabs(4);
-        app.editor.active_file = Some(3);
+        app.editor.set_active_index(Some(3));
         app.begin_bulk_close(TabCloseScope::Others(ids[1]));
         assert_eq!(open_ids(&app), [ids[1]]);
         assert_eq!(app.view.pending_close, None);
         // Closing around the active tab never changes which tab is active.
         let (mut app, ids) = app_with_tabs(4);
-        app.editor.active_file = Some(3);
+        app.editor.set_active_index(Some(3));
         app.begin_bulk_close(TabCloseScope::ToTheRight(ids[0]));
         assert_eq!(open_ids(&app), [ids[0]]);
         let (mut app, ids) = app_with_tabs(4);
-        app.editor.active_file = Some(3);
+        app.editor.set_active_index(Some(3));
         app.begin_bulk_close(TabCloseScope::Others(ids[3]));
-        assert_eq!(app.editor.active_file, Some(0));
+        assert_eq!(app.editor.active_index(), Some(0));
         assert_eq!(open_ids(&app), [ids[3]]);
     }
 
@@ -155,7 +170,7 @@ mod tests {
         app.begin_bulk_close(TabCloseScope::All);
         // Every clean tab closed; the dirty one now awaits the user.
         assert_eq!(open_ids(&app), [ids[1]]);
-        assert_eq!(app.view.pending_close, Some(0));
+        assert_eq!(app.view.pending_close, Some(app.editor.files[0].id));
         // Cancel clears the prompt but leaves the document open.
         app.view.pending_close = None;
         app.advance_bulk_close();
@@ -195,5 +210,35 @@ mod tests {
         });
         app.begin_bulk_close(TabCloseScope::All);
         assert!(open_ids(&app).contains(&ids[2]));
+    }
+
+    #[test]
+    fn close_to_the_left_closes_only_tabs_before_the_chosen_one() {
+        let (mut app, ids) = app_with_tabs(4);
+        app.begin_bulk_close(TabCloseScope::ToTheLeft(ids[2]));
+        assert_eq!(open_ids(&app), [ids[2], ids[3]]);
+        app.begin_bulk_close(TabCloseScope::ToTheLeft(ids[2]));
+        assert_eq!(open_ids(&app), [ids[2], ids[3]]);
+        assert_eq!(
+            app.view.status, "No tabs to close",
+            "nothing is to the left"
+        );
+    }
+
+    #[test]
+    fn close_saved_never_prompts_and_keeps_every_unsaved_tab() {
+        let (mut app, ids) = app_with_tabs(4);
+        app.editor.files[1].dirty = true;
+        app.editor.files[1].text = "keep me".into();
+        app.begin_bulk_close(TabCloseScope::Saved);
+        assert_eq!(open_ids(&app), [ids[1]]);
+        assert_eq!(
+            app.view.pending_close, None,
+            "saved tabs close without a prompt"
+        );
+        assert_eq!(app.editor.files[0].text, "keep me");
+        assert!(app.editor.files[0].dirty);
+        app.begin_bulk_close(TabCloseScope::Saved);
+        assert_eq!(app.view.status, "No tabs to close");
     }
 }

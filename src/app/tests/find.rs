@@ -63,7 +63,7 @@ fn replace_all_is_one_undoable_edit_and_does_not_touch_other_documents() {
         &ctx,
         vec![egui::Event::Text("other buffer".into())],
     );
-    app.editor.active_file = Some(0);
+    app.editor.set_active_index(Some(0));
     app.view.focus_editor = true;
     editor_frame(&mut app, &ctx, vec![]);
     app.execute(Command::Replace, &ctx);
@@ -92,7 +92,7 @@ fn replace_all_is_one_undoable_edit_and_does_not_touch_other_documents() {
     editor_frame(&mut app, &ctx, vec![]);
     assert_eq!(app.editor.files[0].text, "éé éé éé\r\n");
     assert!(app.editor.files[0].dirty);
-    app.editor.active_file = Some(1);
+    app.editor.set_active_index(Some(1));
     editor_frame(&mut app, &ctx, vec![]);
     assert_eq!(app.editor.files[1].text, "other buffer");
     assert!(!app.view.find.contains_key(&app.editor.files[1].id));
@@ -122,7 +122,7 @@ fn stale_or_blocked_replacement_is_cancelled_without_mutation() {
         .get_mut(&id)
         .unwrap()
         .queue_replace(&app.editor.files[0], true);
-    app.view.pending_close = Some(0);
+    app.view.pending_close = Some(app.editor.files[0].id);
     editor_frame(&mut app, &ctx, vec![]);
     assert_eq!(app.editor.files[0].text, "keep!");
     app.view.pending_close = None;
@@ -161,11 +161,11 @@ fn find_state_is_per_document_and_replace_button_changes_only_current_match() {
     editor_frame(&mut app, &ctx, vec![]);
     let second = app.editor.active().unwrap().id;
     app.view.find.get_mut(&second).unwrap().query = "other".into();
-    app.editor.active_file = Some(0);
+    app.editor.set_active_index(Some(0));
     editor_frame(&mut app, &ctx, vec![]);
     assert_eq!(app.view.find[&id].query, "cat");
     assert_eq!(app.view.find[&second].query, "other");
-    app.close_file(1);
+    app.close_file(app.editor.files[1].id);
     assert!(!app.view.find.contains_key(&second));
 }
 

@@ -1,6 +1,14 @@
 //! Compact, single-row editor tabs with clipped overflow and fixed toolbar actions.
 use super::{Workbench, widgets};
-use crate::{app::command::Command, icon, model::DocumentId};
+use crate::{
+    app::{
+        command::Command,
+        tab_commands::TabMove,
+        view_state::{TabDrag, TabStripGeometry},
+    },
+    icon,
+    model::DocumentId,
+};
 use eframe::egui::{self, CornerRadius, Frame, Margin, RichText, ScrollArea, Stroke};
 use std::path::Path;
 
@@ -87,18 +95,27 @@ impl TabSizing {
 impl Workbench<'_> {
     pub(crate) fn editor_tabs(&mut self, ui: &mut egui::Ui) -> egui::Rect {
         let colors = crate::ui::theme::palette(ui.visuals());
+        // Only the first editor group hosts the Settings and Diff tabs.
+        let hide_virtual = self.view.hide_virtual_tabs;
+        let diff_tab = !hide_virtual && self.view.source_control.diff.is_some();
+        let settings_open = !hide_virtual && self.view.settings.open;
+        let settings_tab = !hide_virtual && self.view.settings.tab_open;
         let hidden_document = self
             .view
             .source_control
             .diff
             .as_ref()
             .and_then(|diff| diff.diff_only_document);
+        // Each editor group's strip lists only its own documents.
+        let group_documents = self.editor.documents_in(self.editor.focused_group());
         let visible_files: Vec<_> = self
             .editor
             .files
             .iter()
             .enumerate()
-            .filter(|(_, file)| Some(file.id) != hidden_document)
+            .filter(|(_, file)| {
+                Some(file.id) != hidden_document && group_documents.contains(&file.id)
+            })
             .map(|(index, _)| index)
             .collect();
         let titles: Vec<_> = visible_files
@@ -113,20 +130,22 @@ impl Workbench<'_> {
                     if file.disk_changed { " !" } else { "" }
                 )
             })
-            .chain(self.view.source_control.diff.as_ref().map(|diff| {
-                let name = diff
-                    .path
-                    .file_name()
-                    .unwrap_or(diff.path.as_os_str())
-                    .to_string_lossy();
-                format!("{} {} (Diff)", icon::GIT_BRANCH, name)
-            }))
             .chain(
                 self.view
-                    .settings
-                    .tab_open
-                    .then(|| format!("{} Settings", icon::GEAR)),
+                    .source_control
+                    .diff
+                    .as_ref()
+                    .filter(|_| !hide_virtual)
+                    .map(|diff| {
+                        let name = diff
+                            .path
+                            .file_name()
+                            .unwrap_or(diff.path.as_os_str())
+                            .to_string_lossy();
+                        format!("{} {} (Diff)", icon::GIT_BRANCH, name)
+                    }),
             )
+            .chain(settings_tab.then(|| format!("{} Settings", icon::GEAR)))
             .collect();
         let font = egui::TextStyle::Button.resolve(ui.style());
         let natural: Vec<_> = titles
@@ -142,25 +161,24 @@ impl Workbench<'_> {
                 .clamp(MIN_WIDTH, MAX_WIDTH)
             })
             .collect();
-        let diff_active = self
-            .view
-            .source_control
-            .diff
-            .as_ref()
-            .is_some_and(|diff| diff.active);
-        let active_index = if self.view.settings.open {
-            self.view.settings.tab_open.then_some(
-                visible_files.len() + usize::from(self.view.source_control.diff.is_some()),
-            )
+        let diff_active = diff_tab
+            && self
+                .view
+                .source_control
+                .diff
+                .as_ref()
+                .is_some_and(|diff| diff.active);
+        let active_index = if settings_open {
+            settings_tab.then_some(visible_files.len() + usize::from(diff_tab))
         } else if diff_active {
             Some(visible_files.len())
         } else {
             self.editor
-                .active_file
+                .active_index()
                 .and_then(|index| visible_files.iter().position(|visible| *visible == index))
         };
         let sizing = TabSizing::new(ui.available_width(), &natural, active_index);
-        let active = if self.view.settings.open {
+        let active = if settings_open {
             Some(TabTarget::Settings)
         } else if diff_active {
             Some(TabTarget::Diff)
@@ -177,12 +195,23 @@ impl Workbench<'_> {
             widths: sizing.widths.clone(),
         };
         let reveal = previous.as_ref() != Some(&signature)
-            || (self.view.settings.open && self.view.settings.focus_search);
+            || (settings_open && self.view.settings.focus_search);
         ui.ctx()
             .data_mut(|data| data.insert_temp(reveal_id, signature));
+        let split_enabled = self.view.settings.boolean("workbench.split_editor");
+        let groups = self.editor.group_count();
+        let saved = visible_files
+            .iter()
+            .filter(|index| !self.editor.files[**index].dirty)
+            .count();
         let mut select = None;
         let mut close = None;
         let mut menu_command: Option<Command> = None;
+        // A completed tab drag: the document and its new position among the tabs.
+        let mut tab_drop: Option<(usize, usize)> = None;
+        let mut strip_geometry: Option<TabStripGeometry> = None;
+        let mut drag_state: Option<TabDrag> = None;
+        let mut outside_drop: Option<(DocumentId, egui::Pos2)> = None;
         let mut open_settings = false;
         let mut close_settings = false;
         let mut open_diff = false;
@@ -202,6 +231,8 @@ impl Workbench<'_> {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = GAP;
+                                let mut tab_rects: Vec<egui::Rect> = Vec::new();
+                                let mut dragged_tab: Option<(usize, bool)> = None;
                                 for (tab_index, &file_index) in visible_files.iter().enumerate() {
                                     let file = &self.editor.files[file_index];
                                     let selected = active == Some(TabTarget::Document(file.id));
@@ -221,11 +252,13 @@ impl Workbench<'_> {
                                         tab_menu(
                                             ui,
                                             TabMenuTarget {
-                                                index: file_index,
                                                 id: file.id,
                                                 path: file.path.as_deref(),
                                                 position: tab_index,
                                                 count: visible_files.len(),
+                                                saved,
+                                                split_enabled,
+                                                groups,
                                             },
                                             self.editor.workspace.is_some(),
                                             &mut menu_command,
@@ -235,13 +268,68 @@ impl Workbench<'_> {
                                         select = Some(file_index);
                                     }
                                     if response.close {
-                                        close = Some(file_index);
+                                        close = Some(file.id);
                                     }
                                     if selected && reveal {
                                         ui.scroll_to_rect(response.rect, None);
                                     }
+                                    tab_rects.push(response.rect);
+                                    if response.title.drag_started() {
+                                        set_drag_cancelled(ui.ctx(), false);
+                                    }
+                                    if response.title.dragged() {
+                                        dragged_tab = Some((tab_index, false));
+                                    } else if response.title.drag_stopped() {
+                                        dragged_tab = Some((tab_index, true));
+                                    }
                                 }
-                                if let Some(diff) = &self.view.source_control.diff {
+                                if !tab_rects.is_empty() {
+                                    let band = egui::Rect::from_x_y_ranges(
+                                        ui.clip_rect().x_range(),
+                                        tab_rects
+                                            .iter()
+                                            .map(|rect| rect.top())
+                                            .fold(f32::INFINITY, f32::min)
+                                            ..=tab_rects
+                                                .iter()
+                                                .map(|rect| rect.bottom())
+                                                .fold(f32::NEG_INFINITY, f32::max),
+                                    );
+                                    strip_geometry = Some(TabStripGeometry {
+                                        group: self.editor.focused_group(),
+                                        band,
+                                        tabs: visible_files
+                                            .iter()
+                                            .map(|index| self.editor.files[*index].id)
+                                            .zip(tab_rects.iter().copied())
+                                            .collect(),
+                                    });
+                                }
+                                if let Some((from, released)) = dragged_tab {
+                                    let id = visible_files[from];
+                                    let id = self.editor.files[id].id;
+                                    if !released {
+                                        drag_state = Some(TabDrag {
+                                            source_group: self.editor.focused_group(),
+                                        });
+                                    }
+                                    match drive_tab_drag(ui, &tab_rects, from, released) {
+                                        DragOutcome::Move(position) => {
+                                            tab_drop = Some((visible_files[from], position));
+                                        }
+                                        DragOutcome::Outside(pointer) => {
+                                            outside_drop = Some((id, pointer));
+                                        }
+                                        DragOutcome::Holding | DragOutcome::Nothing => {}
+                                    }
+                                }
+                                if let Some(diff) = self
+                                    .view
+                                    .source_control
+                                    .diff
+                                    .as_ref()
+                                    .filter(|_| !hide_virtual)
+                                {
                                     let index = visible_files.len();
                                     let selected = active == Some(TabTarget::Diff);
                                     let dirty = diff.document.is_some_and(|document| {
@@ -265,9 +353,8 @@ impl Workbench<'_> {
                                         ui.scroll_to_rect(response.rect, None);
                                     }
                                 }
-                                if self.view.settings.tab_open {
-                                    let index = visible_files.len()
-                                        + usize::from(self.view.source_control.diff.is_some());
+                                if settings_tab {
+                                    let index = visible_files.len() + usize::from(diff_tab);
                                     let selected = active == Some(TabTarget::Settings);
                                     let response = tab(
                                         ui,
@@ -316,7 +403,12 @@ impl Workbench<'_> {
                                 ui.close();
                             }
                         }
-                        if let Some(diff) = &self.view.source_control.diff
+                        if let Some(diff) = self
+                            .view
+                            .source_control
+                            .diff
+                            .as_ref()
+                            .filter(|_| !hide_virtual)
                             && ui
                                 .selectable_label(
                                     active == Some(TabTarget::Diff),
@@ -327,10 +419,7 @@ impl Workbench<'_> {
                             open_diff = true;
                             ui.close();
                         }
-                        if self.view.settings.tab_open
-                            && ui
-                                .selectable_label(self.view.settings.open, "Settings")
-                                .clicked()
+                        if settings_tab && ui.selectable_label(settings_open, "Settings").clicked()
                         {
                             open_settings = true;
                             ui.close();
@@ -360,14 +449,32 @@ impl Workbench<'_> {
             if let Some(diff) = &mut self.view.source_control.diff {
                 diff.active = false;
             }
-            self.editor.active_file = Some(index);
+            self.editor.set_active_index(Some(index));
             self.view.focus_editor = true;
         }
-        if let Some(index) = close {
-            self.command(Command::RequestClose(index));
+        if let Some(id) = close {
+            self.command(Command::RequestClose(id));
         }
         if let Some(command) = menu_command {
             self.command(command);
+        }
+        if let Some(geometry) = strip_geometry {
+            self.view
+                .tab_strips
+                .retain(|strip| strip.group != geometry.group);
+            self.view.tab_strips.push(geometry);
+        }
+        if drag_state.is_some() {
+            self.view.tab_drag = drag_state;
+        }
+        // A release away from this strip may be a drop onto another group, which
+        // is only known once every group has drawn.
+        if outside_drop.is_some() && self.editor.group_count() > 1 {
+            self.view.tab_drop_request = outside_drop;
+        }
+        if let Some((file_index, position)) = tab_drop {
+            let id = self.editor.files[file_index].id;
+            self.command(Command::MoveTab(id, TabMove::To(position)));
         }
         if close_diff {
             crate::app::source_control::close_diff_preview(self.editor, self.view);
@@ -376,9 +483,10 @@ impl Workbench<'_> {
             if let Some(diff) = &mut self.view.source_control.diff {
                 diff.active = true;
                 self.view.focus_editor = diff.document.is_some();
-                self.editor.active_file = diff
-                    .document
-                    .and_then(|id| self.editor.files.iter().position(|file| file.id == id));
+                self.editor.set_active_index(
+                    diff.document
+                        .and_then(|id| self.editor.files.iter().position(|file| file.id == id)),
+                );
             }
         }
         if close_settings {
@@ -391,13 +499,115 @@ impl Workbench<'_> {
     }
 }
 
+/// Escape cannot abort an egui drag, so the cancel is remembered and honoured
+/// when the button is released.
+fn set_drag_cancelled(ctx: &egui::Context, cancelled: bool) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("tab_drag_cancelled"), cancelled));
+}
+
+fn is_drag_cancelled(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<bool>(egui::Id::new("tab_drag_cancelled")))
+        .unwrap_or(false)
+}
+
+/// Show the insertion marker and scroll the strip while a tab is held, and on
+/// release return the position to move it to. `None` while still dragging, for
+/// a drop outside the strip, after Escape, or when the tab would not move.
+/// What a drag amounted to this frame.
+enum DragOutcome {
+    /// Still held; nothing to do yet.
+    Holding,
+    /// Released over its own strip: move to this position among the tabs.
+    Move(usize),
+    /// Released away from its own strip, at this pointer position.
+    Outside(egui::Pos2),
+    /// Cancelled, or dropped where it already was.
+    Nothing,
+}
+
+fn drive_tab_drag(
+    ui: &mut egui::Ui,
+    rects: &[egui::Rect],
+    from: usize,
+    released: bool,
+) -> DragOutcome {
+    use super::tab_drag::{edge_scroll_speed, insertion_gap, marker_x, resulting_position};
+    let colors = crate::ui::theme::palette(ui.visuals());
+    if !released {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+    // egui itself ends a drag on Escape and reports it as a stop, so an Escape in
+    // the same frame as the "release" is a cancel, not a drop. Consuming it also
+    // keeps it from closing Find in the editor below.
+    if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        set_drag_cancelled(ui.ctx(), true);
+    }
+    let Some(pointer) = ui.ctx().pointer_latest_pos() else {
+        return DragOutcome::Nothing;
+    };
+    // The strip is as tall as its tabs and as wide as the visible viewport; the
+    // clip rectangle alone spans the whole window height.
+    let tabs_top = rects
+        .iter()
+        .map(|rect| rect.top())
+        .fold(f32::INFINITY, f32::min);
+    let tabs_bottom = rects
+        .iter()
+        .map(|rect| rect.bottom())
+        .fold(f32::NEG_INFINITY, f32::max);
+    let viewport = egui::Rect::from_x_y_ranges(ui.clip_rect().x_range(), tabs_top..=tabs_bottom);
+    let cancelled = is_drag_cancelled(ui.ctx());
+    let inside = viewport.expand2(egui::vec2(0.0, 24.0)).contains(pointer);
+    if released {
+        set_drag_cancelled(ui.ctx(), false);
+        if cancelled {
+            return DragOutcome::Nothing;
+        }
+        // Away from the strip: possibly onto another group, else abandoned.
+        if !inside {
+            return DragOutcome::Outside(pointer);
+        }
+    }
+    let centres: Vec<f32> = rects.iter().map(|rect| rect.center().x).collect();
+    let gap = insertion_gap(&centres, pointer.x);
+    if released {
+        let position = resulting_position(from, gap);
+        return if position != from {
+            DragOutcome::Move(position)
+        } else {
+            DragOutcome::Nothing
+        };
+    }
+    if !cancelled
+        && inside
+        && let Some(x) = marker_x(rects, gap)
+    {
+        ui.painter().vline(
+            x,
+            viewport.y_range(),
+            egui::Stroke::new(2.0_f32, colors.accent),
+        );
+    }
+    if !cancelled {
+        let speed = edge_scroll_speed(pointer.x, viewport.left(), viewport.right(), 28.0, 480.0);
+        if speed != 0.0 && inside {
+            ui.scroll_with_delta(egui::vec2(speed * ui.input(|input| input.stable_dt), 0.0));
+            ui.ctx().request_repaint();
+        }
+    }
+    DragOutcome::Holding
+}
+
 struct TabMenuTarget<'a> {
-    index: usize,
     id: DocumentId,
     path: Option<&'a Path>,
     /// Position among the visible tabs, and how many there are.
     position: usize,
     count: usize,
+    /// Tabs without unsaved changes.
+    saved: usize,
+    split_enabled: bool,
+    groups: usize,
 }
 
 /// Context menu for a document tab. It only records the chosen command; the
@@ -421,13 +631,20 @@ fn tab_menu(
             ui.close();
         }
     };
-    item(ui, "Close", true, "", Command::RequestClose(target.index));
+    item(ui, "Close", true, "", Command::RequestClose(target.id));
     item(
         ui,
         "Close Others",
         target.count > 1,
         "There are no other tabs",
         Command::CloseTabs(TabCloseScope::Others(target.id)),
+    );
+    item(
+        ui,
+        "Close to the Left",
+        target.position > 0,
+        "There are no tabs to the left",
+        Command::CloseTabs(TabCloseScope::ToTheLeft(target.id)),
     );
     item(
         ui,
@@ -438,11 +655,46 @@ fn tab_menu(
     );
     item(
         ui,
+        "Close Saved",
+        target.saved > 0,
+        "Every open tab has unsaved changes",
+        Command::CloseTabs(TabCloseScope::Saved),
+    );
+    item(
+        ui,
         "Close All",
         true,
         "",
         Command::CloseTabs(TabCloseScope::All),
     );
+    ui.separator();
+    item(
+        ui,
+        "Move Left",
+        target.position > 0,
+        "This is already the first tab",
+        Command::MoveTab(target.id, TabMove::Left),
+    );
+    item(
+        ui,
+        "Move Right",
+        target.position + 1 < target.count,
+        "This is already the last tab",
+        Command::MoveTab(target.id, TabMove::Right),
+    );
+    if target.split_enabled {
+        item(
+            ui,
+            if target.groups > 1 {
+                "Move to Other Group"
+            } else {
+                "Split Right"
+            },
+            target.groups > 1 || target.count > 1,
+            "Open another tab before splitting the editor",
+            Command::MoveTabToGroup(target.id),
+        );
+    }
     ui.separator();
     let unsaved = "This file has not been saved yet";
     let path = target.path.map(Path::to_path_buf).unwrap_or_default();
@@ -523,7 +775,8 @@ fn tab(
                             colors.muted
                         }))
                         .frame(false)
-                        .truncate(),
+                        .truncate()
+                        .sense(egui::Sense::click_and_drag()),
                     )
                     .on_hover_text(tooltip);
                 select = response.clicked();

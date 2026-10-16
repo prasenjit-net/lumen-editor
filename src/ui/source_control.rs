@@ -792,10 +792,7 @@ mod tests {
         for width in [180.0, 300.0, 600.0] {
             let ctx = egui::Context::default();
             theme::configure_ui(&ctx);
-            let mut editor = EditorState {
-                workspace: Some(PathBuf::from("/workspace")),
-                ..Default::default()
-            };
+            let mut editor = EditorState::with_workspace(PathBuf::from("/workspace"));
             let mut view = ViewState::default();
             view.source_control.snapshot = Some(GitSnapshot {
                 root: PathBuf::from("/workspace"),
@@ -1130,7 +1127,7 @@ mod tests {
         document.enable_shared_editing();
         let id = document.id;
         diff.editor.files.push(document);
-        diff.editor.active_file = Some(0);
+        diff.editor.set_active_index(Some(0));
         let state = diff.view.source_control.diff.as_mut().unwrap();
         state.side = DiffSide::Working;
         state.document = Some(id);

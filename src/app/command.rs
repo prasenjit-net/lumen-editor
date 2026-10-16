@@ -1,8 +1,9 @@
 use super::agent::AgentKind;
 use super::editor_action::EditorAction;
-use super::view_state::{Activity, ExplorerEdit, ViewState};
+use super::tab_commands::TabMove;
+use super::view_state::{Activity, ClosedTab, ExplorerEdit, MAX_CLOSED_TABS, ViewState};
 use super::workspace_search::ReplaceScope;
-use crate::model::{DocumentId, EditorState};
+use crate::model::{Document, DocumentId, EditorState};
 use crate::services::source_control::DiffSide;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -141,12 +142,39 @@ pub(crate) enum Command {
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     SelectAll,
     OpenPath(PathBuf),
+    /// Open a previously used workspace folder.
+    OpenRecentFolder(PathBuf),
+    ShowRecentFolders,
+    ClearRecentHistory,
     /// Show a workspace file or folder in the Explorer sidebar.
     RevealInExplorer(PathBuf),
-    RequestClose(usize),
+    RequestClose(DocumentId),
     CloseTabs(crate::app::tab_close::TabCloseScope),
-    CloseFile(usize),
-    SaveAndClose(usize),
+    /// Tab commands relative to the active tab, for the palette and shortcuts.
+    CloseOtherTabs,
+    CloseTabsToLeft,
+    CloseTabsToRight,
+    CloseSavedTabs,
+    CloseAllTabs,
+    NextTab,
+    PreviousTab,
+    ReopenClosedTab,
+    /// Reorder a document tab, by stable ID.
+    MoveTab(DocumentId, TabMove),
+    MoveActiveTabLeft,
+    MoveActiveTabRight,
+    /// Open the second editor group with the active tab, or move it across.
+    SplitEditor,
+    /// Send a tab to the other editor group (opening it if needed).
+    MoveTabToGroup(DocumentId),
+    /// Drop a tab into `group` at `position` among that group's tabs.
+    MoveTabToGroupAt(DocumentId, usize, usize),
+    FocusNextGroup,
+    /// Switch the two editor groups between side by side and stacked.
+    ToggleSplitOrientation,
+    FocusGroup(usize),
+    CloseFile(DocumentId),
+    SaveAndClose(DocumentId),
     SaveAllAndQuit,
     DiscardAndQuit,
 }
@@ -203,26 +231,44 @@ impl Command {
                     view.status = "New untitled file".into();
                 }
             }
-            Self::RequestClose(index) => {
-                if editor.files.get(index).is_some_and(|file| file.dirty) {
-                    view.pending_close = Some(index);
+            Self::RequestClose(id) => {
+                if editor
+                    .index_of(id)
+                    .is_some_and(|index| editor.files[index].dirty)
+                {
+                    view.pending_close = Some(id);
                 } else {
-                    Self::CloseFile(index).apply_local(editor, view);
+                    Self::CloseFile(id).apply_local(editor, view);
                 }
             }
-            Self::CloseFile(index) => {
-                if index < editor.files.len() {
+            Self::CloseFile(id) => {
+                if editor.index_of(id).is_some() {
                     if view
                         .source_control
                         .diff
                         .as_ref()
                         .and_then(|diff| diff.document)
-                        == Some(editor.files[index].id)
+                        == Some(id)
                     {
                         view.source_control.diff = None;
                     }
-                    view.find.remove(&editor.files[index].id);
-                    editor.close_file(index);
+                    view.find.remove(&id);
+                    // A document closed with all its content on disk can come
+                    // back with Reopen Closed Tab; unsaved or untitled ones cannot.
+                    if let Some(index) = editor.index_of(id)
+                        && let document = &editor.files[index]
+                        && !document.dirty
+                        && let Some(path) = document.path.clone()
+                    {
+                        view.closed_tabs.retain(|closed| closed.path != path);
+                        view.closed_tabs.push(ClosedTab {
+                            path,
+                            caret: caret_byte(document),
+                        });
+                        let excess = view.closed_tabs.len().saturating_sub(MAX_CLOSED_TABS);
+                        view.closed_tabs.drain(..excess);
+                    }
+                    editor.close_document(id);
                     view.status = "Closed file".into();
                 }
             }
@@ -242,6 +288,10 @@ impl Command {
             Self::OpenFile => Some("open"),
             Self::OpenFolder => Some("folder"),
             Self::CloseFolder => Some("close_folder"),
+            Self::ShowRecentFolders => Some("recent_folders"),
+            Self::NextTab => Some("next_tab"),
+            Self::PreviousTab => Some("previous_tab"),
+            Self::ReopenClosedTab => Some("reopen_tab"),
             Self::Save => Some("save"),
             Self::SaveAs => Some("save_as"),
             Self::CloseEditor => Some("close"),
@@ -274,6 +324,10 @@ impl Command {
             "open" => Self::OpenFile,
             "folder" => Self::OpenFolder,
             "close_folder" => Self::CloseFolder,
+            "recent_folders" => Self::ShowRecentFolders,
+            "next_tab" => Self::NextTab,
+            "previous_tab" => Self::PreviousTab,
+            "reopen_tab" => Self::ReopenClosedTab,
             "save" => Self::Save,
             "save_as" => Self::SaveAs,
             "close" => Self::CloseEditor,
@@ -295,4 +349,15 @@ impl Command {
             _ => return None,
         })
     }
+}
+
+/// Primary caret of the document, or the start when it has no live editor state.
+fn caret_byte(document: &Document) -> usize {
+    #[cfg(feature = "shared-editor")]
+    if let Some(buffer) = document.editing.as_ref() {
+        let selections = buffer.selections();
+        return selections.selections()[selections.primary_index()].head;
+    }
+    let _ = document;
+    0
 }

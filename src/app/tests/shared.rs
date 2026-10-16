@@ -24,7 +24,7 @@ fn buffer(app: &LumenApp) -> &EditorBuffer {
     app.editor.active().unwrap().editing.as_ref().unwrap()
 }
 fn select(app: &mut LumenApp, selections: Vec<Selection>, primary: usize) {
-    let index = app.editor.active_file.unwrap();
+    let index = app.editor.active_index().unwrap();
     app.editor.files[index]
         .editing
         .as_mut()
@@ -89,9 +89,9 @@ fn save_as_cancellation_and_failed_close_save_preserve_core_history() {
     assert_eq!(buffer(&app).selections(), &original_selection);
     assert!(buffer(&app).is_dirty());
     storage.0.borrow_mut().fail_writes = true;
-    app.request_close(0);
-    assert_eq!(app.view.pending_close, Some(0));
-    app.execute(Command::SaveAndClose(0), &ctx);
+    app.request_close(app.editor.files[0].id);
+    assert_eq!(app.view.pending_close, Some(app.editor.files[0].id));
+    app.execute(Command::SaveAndClose(app.editor.files[0].id), &ctx);
     assert_eq!(app.editor.active().unwrap().id, id);
     assert!(buffer(&app).is_dirty());
     assert_eq!(buffer(&app).text(), "xoriginal");
@@ -324,7 +324,7 @@ fn tabs_have_independent_shared_history_and_stable_document_identity() {
     edit_command(&mut app, &ctx, EditorAction::Undo);
     editor_frame(&mut app, &ctx, vec![]);
     assert_eq!(buffer(&app).text(), "");
-    app.close_file(1);
+    app.close_file(app.editor.files[1].id);
     app.view.focus_editor = true;
     editor_frame(&mut app, &ctx, vec![]);
     assert_eq!(app.editor.active().unwrap().id, first);
@@ -367,7 +367,7 @@ fn shaped_tabs_restore_two_axis_scroll_selection_and_focus() {
     let selection = buffer(&app).selections().clone();
     app.new_file();
     editor_frame(&mut app, &ctx, vec![]);
-    app.close_file(1);
+    app.close_file(app.editor.files[1].id);
     app.view.focus_editor = true;
     editor_frame(&mut app, &ctx, vec![]);
     assert_eq!(app.editor.active().unwrap().id, first);

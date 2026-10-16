@@ -53,6 +53,7 @@ impl NativeMenu {
             &item(Command::NewUntitled, "New Text File", Code::KeyN, false),
             &item(Command::OpenFile, "Open File…", Code::KeyO, false),
             &item(Command::OpenFolder, "Open Folder…", Code::KeyO, true),
+            &plain_item(Command::ShowRecentFolders, "Open Recent Folder…"),
             &close_folder,
             &PredefinedMenuItem::separator(),
             &save,
@@ -120,6 +121,12 @@ impl NativeMenu {
                 Code::KeyF,
                 true,
             ),
+            &PredefinedMenuItem::separator(),
+            // Their shortcuts (Ctrl+Tab, Ctrl+Shift+Tab, Cmd+Shift+T) are handled
+            // in the event loop, so the items carry no accelerator of their own.
+            &plain_item(Command::NextTab, "Next Tab"),
+            &plain_item(Command::PreviousTab, "Previous Tab"),
+            &plain_item(Command::ReopenClosedTab, "Reopen Closed Tab"),
         ])?;
         // Keep the terminal discoverable from the native menu on macOS and
         // Windows as well as from the status bar, mirroring VS Code's panel

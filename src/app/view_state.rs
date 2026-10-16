@@ -54,6 +54,7 @@ pub(crate) struct DeletePrompt {
 pub(crate) enum NavigationMode {
     QuickOpen,
     GoToLine,
+    RecentFolders,
 }
 
 #[derive(Default)]
@@ -70,6 +71,8 @@ pub(crate) struct NavigationView {
     pub(crate) limited: bool,
     pub(crate) errors: usize,
     pub(crate) recent: Vec<PathBuf>,
+    /// Recently opened workspace folders, most recent first.
+    pub(crate) recent_folders: Vec<PathBuf>,
     pub(crate) recent_warning: Option<String>,
     pub(crate) error: Option<String>,
 }
@@ -269,6 +272,29 @@ impl ExplorerEdit {
     }
 }
 
+/// Geometry of one group's tab strip in the current frame.
+#[derive(Clone, Debug)]
+pub(crate) struct TabStripGeometry {
+    pub(crate) group: usize,
+    /// Visible strip: as wide as its viewport and as tall as its tabs.
+    pub(crate) band: eframe::egui::Rect,
+    pub(crate) tabs: Vec<(crate::model::DocumentId, eframe::egui::Rect)>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TabDrag {
+    pub(crate) source_group: usize,
+}
+
+/// A document closed without losing content: enough to open it again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ClosedTab {
+    pub(crate) path: PathBuf,
+    pub(crate) caret: usize,
+}
+
+pub(crate) const MAX_CLOSED_TABS: usize = 20;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum Activity {
     #[default]
@@ -297,6 +323,22 @@ pub(crate) struct ViewState {
     pub(crate) shared_editor: bool,
     #[cfg(feature = "shared-editor")]
     pub(crate) shared_surface: Option<lumen_editor_surface::EditorSurface>,
+    /// Live editor surface of each editor group while the editor is split; the
+    /// focused group's lives in `shared_surface` between frames.
+    #[cfg(feature = "shared-editor")]
+    pub(crate) group_surfaces: Vec<Option<lumen_editor_surface::EditorSurface>>,
+    /// Set while a non-first editor group draws, so it shows no Settings/Diff tab.
+    pub(crate) hide_virtual_tabs: bool,
+    /// Where each editor group's tabs were drawn this frame, for drops between groups.
+    pub(crate) tab_strips: Vec<TabStripGeometry>,
+    /// The tab being dragged this frame, if any.
+    pub(crate) tab_drag: Option<TabDrag>,
+    /// A drag released away from its own strip: resolved once every group has drawn.
+    pub(crate) tab_drop_request: Option<(crate::model::DocumentId, eframe::egui::Pos2)>,
+    /// Stack the two editor groups top to bottom instead of side by side.
+    pub(crate) split_vertical: bool,
+    /// Share of the editor area given to the first group when split (0..1).
+    pub(crate) split_ratio: f32,
     #[cfg(feature = "shared-editor")]
     pub(crate) shared_output: Option<lumen_editor_surface::SurfaceOutput>,
     #[cfg(feature = "shared-editor")]
@@ -362,8 +404,12 @@ pub(crate) struct ViewState {
     pub(crate) status: String,
     pub(crate) safety_notices: Vec<String>,
     pub(crate) safety_details_open: bool,
-    pub(crate) pending_close: Option<usize>,
+    /// Document waiting on the unsaved-changes prompt. A stable ID, so reordering
+    /// or closing other tabs cannot retarget the prompt.
+    pub(crate) pending_close: Option<crate::model::DocumentId>,
     pub(crate) bulk_close: crate::app::tab_close::BulkClose,
+    /// Recently closed saved documents, newest last, for Reopen Closed Tab.
+    pub(crate) closed_tabs: Vec<ClosedTab>,
     pub(crate) window_title: String,
     pub(crate) pending_quit: bool,
     pub(crate) save_conflict: Option<SaveConflict>,
@@ -393,6 +439,14 @@ impl Default for ViewState {
             shared_editor: true,
             #[cfg(feature = "shared-editor")]
             shared_surface: None,
+            #[cfg(feature = "shared-editor")]
+            group_surfaces: Vec::new(),
+            hide_virtual_tabs: false,
+            tab_strips: Vec::new(),
+            tab_drag: None,
+            tab_drop_request: None,
+            split_vertical: false,
+            split_ratio: 0.5,
             #[cfg(feature = "shared-editor")]
             shared_output: None,
             #[cfg(feature = "shared-editor")]
@@ -445,6 +499,7 @@ impl Default for ViewState {
             safety_details_open: false,
             pending_close: None,
             bulk_close: Default::default(),
+            closed_tabs: Vec::new(),
             window_title: String::new(),
             pending_quit: false,
             save_conflict: None,

@@ -23,6 +23,7 @@ impl Workbench<'_> {
         egui::Window::new(match mode {
             NavigationMode::QuickOpen => "Go to File",
             NavigationMode::GoToLine => "Go to Line/Column",
+            NavigationMode::RecentFolders => "Open Recent Folder",
         })
             .open(&mut open)
             .collapsible(false)
@@ -45,11 +46,16 @@ impl Workbench<'_> {
                     return;
                 }
                 let mut selection_moved = false;
-                if mode == NavigationMode::QuickOpen {
+                let folders = matching_folders(&nav.recent_folders, &nav.query);
+                if mode != NavigationMode::GoToLine {
+                    let count = match mode {
+                        NavigationMode::RecentFolders => folders.len(),
+                        _ => nav.matches.len(),
+                    };
                     if ui.input_mut(|input| {
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
                     }) {
-                        nav.selected = (nav.selected + 1).min(nav.matches.len().saturating_sub(1));
+                        nav.selected = (nav.selected + 1).min(count.saturating_sub(1));
                         selection_moved = true;
                     }
                     if ui.input_mut(|input| {
@@ -66,6 +72,7 @@ impl Workbench<'_> {
                         .hint_text(match mode {
                             NavigationMode::QuickOpen => "Search files by name or path",
                             NavigationMode::GoToLine => "Line[:Column]",
+                            NavigationMode::RecentFolders => "Filter recent folders",
                         })
                         .desired_width(f32::INFINITY),
                 );
@@ -80,6 +87,9 @@ impl Workbench<'_> {
                 match mode {
                     NavigationMode::QuickOpen => {
                         action = show_quick_results(ui, nav, root, enter, selection_moved);
+                    }
+                    NavigationMode::RecentFolders => {
+                        action = show_folder_results(ui, nav, &folders, enter, selection_moved);
                     }
                     NavigationMode::GoToLine => {
                         ui.label(
@@ -176,6 +186,74 @@ fn show_quick_results(
         });
     if nav.matches.is_empty() && !nav.running {
         ui.label(RichText::new("No matching files").color(colors.muted));
+    }
+    action
+}
+
+/// Recent folders matching every word of `query` (case-insensitive), in
+/// most-recent-first order.
+fn matching_folders(folders: &[std::path::PathBuf], query: &str) -> Vec<std::path::PathBuf> {
+    let query = query.to_lowercase();
+    folders
+        .iter()
+        .filter(|folder| {
+            let text = folder.to_string_lossy().to_lowercase();
+            query.split_whitespace().all(|word| text.contains(word))
+        })
+        .cloned()
+        .collect()
+}
+
+fn show_folder_results(
+    ui: &mut egui::Ui,
+    nav: &mut NavigationView,
+    folders: &[std::path::PathBuf],
+    enter: bool,
+    selection_moved: bool,
+) -> Option<Command> {
+    let colors = crate::ui::theme::palette(ui.visuals());
+    nav.selected = nav.selected.min(folders.len().saturating_sub(1));
+    let mut action = folders
+        .get(nav.selected)
+        .cloned()
+        .filter(|_| enter)
+        .map(Command::OpenRecentFolder);
+    ui.add_space(4.0);
+    if let Some(warning) = &nav.recent_warning {
+        ui.label(RichText::new(warning).size(11.0).color(colors.muted));
+    }
+    egui::ScrollArea::vertical()
+        .max_height(330.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for (index, folder) in folders.iter().enumerate() {
+                let name = folder
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| folder.display().to_string());
+                let parent = folder
+                    .parent()
+                    .map(|parent| parent.display().to_string())
+                    .unwrap_or_default();
+                let label = format!("{}  {}    {}", icon::FOLDER, name, parent);
+                let row = quick_result_row(ui, label, index == nav.selected);
+                if index == nav.selected && selection_moved {
+                    row.scroll_to_me(Some(egui::Align::Center));
+                }
+                if row.on_hover_text(folder.display().to_string()).clicked() {
+                    action = Some(Command::OpenRecentFolder(folder.clone()));
+                }
+            }
+        });
+    if folders.is_empty() {
+        ui.label(
+            RichText::new(if nav.recent_folders.is_empty() {
+                "No recently opened folders"
+            } else {
+                "No matching folders"
+            })
+            .color(colors.muted),
+        );
     }
     action
 }
@@ -324,5 +402,88 @@ mod tests {
         assert!(app.view.focus_editor);
         assert_eq!(app.editor.files.len(), 1);
         assert!(!app.editor.files[0].dirty);
+    }
+
+    fn folder_app(names: &[&std::path::Path]) -> (LumenApp, egui::Context) {
+        let mut app = LumenApp::default();
+        app.view.navigation.recent_folders = names.iter().map(|p| p.to_path_buf()).collect();
+        app.open_recent_folder_picker();
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        for _ in 0..3 {
+            frame(&mut app, &ctx, 700.0, vec![]);
+        }
+        (app, ctx)
+    }
+
+    #[test]
+    fn recent_folder_filter_matches_every_word_case_insensitively() {
+        let folders: Vec<std::path::PathBuf> = ["/work/Alpha", "/work/beta", "/home/alpha-two"]
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        assert_eq!(matching_folders(&folders, "").len(), 3);
+        assert_eq!(matching_folders(&folders, "ALPHA").len(), 2);
+        assert_eq!(
+            matching_folders(&folders, "work alpha"),
+            [folders[0].clone()]
+        );
+        assert!(matching_folders(&folders, "zzz").is_empty());
+    }
+
+    #[test]
+    fn recent_folder_picker_arrows_select_and_enter_opens_the_chosen_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let (first, second) = (temp.path().join("first"), temp.path().join("second"));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let (mut app, ctx) = folder_app(&[&first, &second]);
+        assert_eq!(
+            app.view.navigation.mode,
+            Some(NavigationMode::RecentFolders)
+        );
+        frame(&mut app, &ctx, 700.0, vec![key(egui::Key::ArrowDown)]);
+        assert_eq!(app.view.navigation.selected, 1);
+        frame(&mut app, &ctx, 700.0, vec![key(egui::Key::Enter)]);
+        assert_eq!(app.editor.workspace.as_deref(), Some(second.as_path()));
+        assert_eq!(
+            app.view.navigation.mode, None,
+            "picker closes after choosing"
+        );
+    }
+
+    #[test]
+    fn recent_folder_picker_escape_closes_without_changing_anything_and_empty_says_so() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mut app, ctx) = folder_app(&[temp.path()]);
+        frame(&mut app, &ctx, 700.0, vec![key(egui::Key::Escape)]);
+        assert_eq!(app.view.navigation.mode, None);
+        assert!(app.editor.workspace.is_none());
+
+        let (mut empty, ctx) = folder_app(&[]);
+        let output = frame(&mut empty, &ctx, 700.0, vec![]);
+        assert!(text_position(&output.shapes, "No recently opened folders").is_some());
+    }
+
+    #[test]
+    fn the_command_palette_offers_the_picker_and_only_enables_clear_when_there_is_history() {
+        let mut app = LumenApp::default();
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        let mut reason = None;
+        app.render_component(&ctx, |workbench| {
+            reason = workbench.palette_disabled_reason(&Command::ClearRecentHistory);
+        });
+        assert_eq!(reason, Some("There is no history to clear"));
+        app.view.navigation.recent_folders = vec!["/x".into()];
+        app.render_component(&ctx, |workbench| {
+            reason = workbench.palette_disabled_reason(&Command::ClearRecentHistory);
+        });
+        assert_eq!(reason, None);
+        app.execute(Command::ShowRecentFolders, &ctx);
+        assert_eq!(
+            app.view.navigation.mode,
+            Some(NavigationMode::RecentFolders)
+        );
     }
 }
