@@ -1,4 +1,6 @@
 //! Read-only Git adapter. All paths passed to Git are argv values, never shell text.
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::{
     collections::BTreeSet,
     fs,
@@ -6,6 +8,9 @@ use std::{
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
 };
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const MAX_DIFF_BYTES: u64 = 256 * 1024;
 const MAX_UNTRACKED_BYTES: u64 = 128 * 1024;
@@ -550,11 +555,18 @@ fn untracked_preview(root: &Path, path: &Path, relative: &Path) -> Result<String
 fn git_command(root: &Path) -> Command {
     let mut command = Command::new("git");
     command
+        .stdin(Stdio::null())
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
         .args(["-c", "core.fsmonitor=false", "-C"])
         .arg(root);
+    // A GUI process has no console of its own on Windows. Without this flag,
+    // each background Git invocation can briefly create a visible console
+    // window. Keep all Git transport centralized here so refresh, diff, index
+    // mutations, commits, and remote operations share the same behavior.
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
     command
 }
 
