@@ -53,6 +53,7 @@ impl TerminalSession {
             .map_err(|error| format!("Could not create terminal: {error}"))?;
         let mut command = CommandBuilder::new(default_shell());
         command.cwd(root);
+        configure_environment(&mut command);
         let child = pair
             .slave
             .spawn_command(command)
@@ -112,6 +113,16 @@ impl Drop for TerminalSession {
     }
 }
 
+/// The emulator understands 256-colour and truecolor sequences, so say so.
+/// Without `TERM` (typical when the app is launched from the Dock, Start menu
+/// or a file manager) or with `TERM=dumb`, shells and tools disable colour
+/// entirely. Override rather than inherit: the program on the other end of this
+/// PTY is Lumen's emulator, whatever terminal started Lumen.
+fn configure_environment(command: &mut CommandBuilder) {
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+}
+
 fn default_shell() -> std::ffi::OsString {
     #[cfg(windows)]
     {
@@ -159,6 +170,50 @@ mod tests {
             thread::sleep(std::time::Duration::from_millis(10));
         }
         panic!("terminal output was not received: {output:?}");
+    }
+
+    /// Reproduces the "no colour" report: the shell must see a colour-capable
+    /// `TERM`, and its escape sequences must reach the emulator as coloured cells.
+    #[cfg(not(windows))]
+    #[test]
+    fn shell_sees_a_colour_terminal_and_colours_reach_the_emulator() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut session = TerminalSession::start(directory.path(), 10, 60).unwrap();
+        session
+            .write(
+                b"printf '%s|%s\\n' \"$TERM\" \"$COLORTERM\"; printf '\\033[31mRED\\033[0m\\n'\r",
+            )
+            .unwrap();
+        let mut emulator = lumen_terminal_core::Terminal::new(10, 60);
+        let mut seen = String::new();
+        for _ in 0..200 {
+            for chunk in session.drain_output() {
+                emulator.feed(&chunk);
+            }
+            let screen = emulator.screen();
+            seen = (0..screen.rows)
+                .map(|row| screen.line(row))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if seen.contains("RED") && seen.contains("xterm-256color|truecolor") {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            seen.contains("xterm-256color|truecolor"),
+            "environment: {seen}"
+        );
+        let screen = emulator.screen();
+        let red_row = (0..screen.rows)
+            .find(|row| screen.line(*row).trim() == "RED")
+            .expect("the colour sequence output reached the screen");
+        let cell = screen.cell(red_row, 0).expect("first cell");
+        assert_ne!(
+            cell.foreground,
+            lumen_terminal_core::TerminalColor::Named(256),
+            "red text kept the default foreground"
+        );
     }
 
     #[test]

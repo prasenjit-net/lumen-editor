@@ -40,29 +40,22 @@ impl Workbench<'_> {
                         }
                         // Bottom-aligned group: Terminal, Output, Settings.
                         ui.add_space((ui.available_height() - 50.0 * 3.0).max(0.0));
-                        let has_workspace = self.editor.workspace.is_some();
-                        for (glyph, selected, enabled, tooltip, command) in [
+                        for (glyph, selected, tooltip, command) in [
                             (
                                 icon::TERMINAL,
                                 self.view.terminal.open,
-                                has_workspace,
-                                "Terminal (Ctrl+`)",
+                                "Terminal (Ctrl+`); opens in your home folder when no folder is open",
                                 Command::ToggleTerminal,
                             ),
                             (
                                 icon::OUTPUT,
                                 self.view.output.open,
-                                true,
                                 "Output",
                                 Command::ToggleOutput,
                             ),
                         ] {
-                            let response = ui
-                                .add_enabled_ui(enabled, |ui| {
-                                    widgets::icon_button(ui, glyph, selected)
-                                })
-                                .inner
-                                .on_hover_text(tooltip);
+                            let response =
+                                widgets::icon_button(ui, glyph, selected).on_hover_text(tooltip);
                             if selected {
                                 ui.painter().vline(
                                     response.rect.left(),
@@ -250,7 +243,7 @@ mod tests {
     }
 
     #[test]
-    fn output_button_toggles_the_panel_and_terminal_needs_a_folder() {
+    fn output_button_toggles_the_panel() {
         let mut app = LumenApp::default();
         let ctx = egui::Context::default();
         crate::ui::theme::configure_ui(&ctx);
@@ -264,9 +257,25 @@ mod tests {
         );
         click(&mut app, &ctx, 900.0, icon::OUTPUT);
         assert!(!app.view.output.open);
+    }
 
-        // No folder open: the terminal button is disabled and does nothing.
+    #[test]
+    fn terminal_button_works_without_a_folder_and_starts_in_the_home_directory() {
+        let mut app = LumenApp::default();
+        assert!(app.editor.workspace.is_none());
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
         click(&mut app, &ctx, 900.0, icon::TERMINAL);
-        assert!(!app.view.terminal.open);
+        assert!(app.view.terminal.open, "terminal opens with no folder");
+        assert!(
+            app.view.status.contains(
+                &crate::services::terminal::default_working_directory()
+                    .display()
+                    .to_string()
+            ) || app.view.terminal.error.is_some(),
+            "started in the user directory: {}",
+            app.view.status
+        );
+        app.close_terminal();
     }
 }

@@ -27,6 +27,7 @@ impl Workbench<'_> {
         let cursor_style = self.view.settings.choice("terminal.cursor_style");
         let color_scheme = self.view.settings.choice("terminal.color_scheme");
         let cursor_blink = self.view.settings.boolean("terminal.cursor_blink");
+        let auto_scroll = self.view.settings.boolean("terminal.auto_scroll");
         let panel_divider = self.view.settings.boolean("terminal.panel_divider");
         let canvas_focused =
             ctx.memory(|memory| memory.has_focus(egui::Id::new("terminal_canvas")));
@@ -106,19 +107,32 @@ impl Workbench<'_> {
                             .show(ui, |ui| {
                                 ScrollArea::vertical()
                                     .id_salt("terminal_output")
-                                    .stick_to_bottom(self.view.terminal.scroll_to_bottom)
+                                    // Stay pinned to the live prompt until the user
+                                    // scrolls back, instead of only on the frame
+                                    // that new output arrived.
+                                    .stick_to_bottom(
+                                        auto_scroll || self.view.terminal.scroll_to_bottom,
+                                    )
                                     .max_height(ui.available_height())
                                     .show(ui, |ui| {
+                                        // Rows touch: N rows of `line_height` must
+                                        // exactly fill the N rows the PTY was sized
+                                        // for, or the prompt scrolls out of view.
+                                        ui.spacing_mut().item_spacing.y = 0.0;
                                         if let Some(screen) = screen {
                                             for row in 0..screen.rows {
                                                 if let Some(cells) = screen.row(row) {
-                                                    ui.label(terminal_line(
-                                                        cells,
-                                                        &font,
-                                                        &cursor_style,
-                                                        cursor_visible,
-                                                        &color_scheme,
-                                                    ));
+                                                    ui.add(
+                                                        egui::Label::new(terminal_line(
+                                                            cells,
+                                                            &font,
+                                                            line_height,
+                                                            &cursor_style,
+                                                            cursor_visible,
+                                                            &color_scheme,
+                                                        ))
+                                                        .wrap_mode(egui::TextWrapMode::Extend),
+                                                    );
                                                 }
                                             }
                                         } else {
@@ -154,6 +168,7 @@ impl Workbench<'_> {
 fn terminal_line(
     cells: &[lumen_terminal_core::Cell],
     font: &FontId,
+    line_height: f32,
     cursor_style: &str,
     cursor_visible: bool,
     color_scheme: &str,
@@ -169,6 +184,7 @@ fn terminal_line(
             0.0,
             TextFormat {
                 font_id: font.clone(),
+                line_height: Some(line_height),
                 color: if block_cursor { background } else { foreground },
                 background: if block_cursor { foreground } else { background },
                 underline: if cursor && cursor_style == "underline" {
@@ -355,6 +371,197 @@ mod tests {
         assert_eq!(
             terminal_input_bytes(egui::Event::Text("echo ok".into())),
             Some(b"echo ok".to_vec())
+        );
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use crate::app::LumenApp;
+
+    const SCREEN_HEIGHT: f32 = 600.0;
+
+    fn frame(app: &mut LumenApp, ctx: &egui::Context) -> egui::FullOutput {
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, SCREEN_HEIGHT),
+                )),
+                ..Default::default()
+            },
+            |ctx| app.render_component(ctx, |workbench| workbench.terminal_panel(ctx)),
+        );
+        // The real app applies the measured size to the PTY/emulator after drawing.
+        app.resize_terminal(app.view.terminal.rows, app.view.terminal.columns);
+        output
+    }
+
+    /// (top, bottom, text) of every terminal row drawn.
+    fn rows(output: &egui::FullOutput, marker: &str) -> Vec<(f32, f32, String)> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text.contains(marker) => Some((
+                    text.pos.y,
+                    text.pos.y + text.galley.size().y,
+                    text.galley.job.text.trim().to_owned(),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn app_with_screen(initial_rows: usize, text: &str) -> (LumenApp, egui::Context) {
+        let mut app = LumenApp::default();
+        app.view.terminal.open = true;
+        let mut emulator = lumen_terminal_core::Terminal::new(initial_rows, 100);
+        emulator.feed(text.as_bytes());
+        app.view.terminal.emulator = Some(emulator);
+        app.view.terminal.applied_rows = initial_rows as u16;
+        app.view.terminal.applied_columns = 100;
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        (app, ctx)
+    }
+
+    #[test]
+    fn rows_are_exactly_line_height_apart_and_fit_the_measured_panel() {
+        let (mut app, ctx) = app_with_screen(24, "alpha\r\nbeta\r\ngamma\r\n$ ");
+        for _ in 0..3 {
+            frame(&mut app, &ctx);
+        }
+        let output = frame(&mut app, &ctx);
+        let line_height = app.view.settings.number("terminal.line_height", None);
+        let drawn = rows(&output, "");
+        let terminal_rows: Vec<_> = drawn
+            .iter()
+            .filter(|(_, _, text)| !text.is_empty() || true)
+            .collect();
+        // Pitch between consecutive terminal rows equals the configured height.
+        let pitches: Vec<f32> = terminal_rows
+            .windows(2)
+            .map(|pair| pair[1].0 - pair[0].0)
+            .filter(|pitch| *pitch > 0.0 && *pitch < line_height * 1.5)
+            .collect();
+        assert!(!pitches.is_empty());
+        assert!(
+            pitches
+                .iter()
+                .all(|pitch| (pitch - line_height).abs() < 0.01),
+            "row pitch {pitches:?} vs {line_height}"
+        );
+        // Nothing is drawn below the window, and the live prompt is on screen.
+        assert!(
+            terminal_rows
+                .iter()
+                .all(|(_, bottom, _)| *bottom <= SCREEN_HEIGHT + 0.5)
+        );
+        let prompt = rows(&output, "$ ");
+        assert!(!prompt.is_empty(), "prompt row is visible");
+    }
+
+    #[test]
+    fn shrinking_a_tall_initial_terminal_keeps_the_prompt_visible_and_pinned() {
+        // The shell starts with 24 rows, but the panel only fits about eleven.
+        let lines: String = (1..=30).map(|n| format!("out{n}\r\n")).collect();
+        let (mut app, ctx) = app_with_screen(24, &format!("{lines}$ "));
+        for _ in 0..6 {
+            frame(&mut app, &ctx);
+        }
+        let output = frame(&mut app, &ctx);
+        assert!(
+            app.view.terminal.rows < 24,
+            "rows follow the panel: {}",
+            app.view.terminal.rows
+        );
+        let prompt = rows(&output, "$ ");
+        assert_eq!(prompt.len(), 1);
+        let line_height = app.view.settings.number("terminal.line_height", None);
+        // Pinned to the bottom edge of the panel, not scrolled out above it.
+        assert!(
+            SCREEN_HEIGHT - prompt[0].1 < line_height * 2.0 + 10.0,
+            "prompt bottom {} too far above {SCREEN_HEIGHT}",
+            prompt[0].1
+        );
+        assert!(
+            prompt[0].0 > SCREEN_HEIGHT - 220.0,
+            "prompt is inside the panel"
+        );
+    }
+
+    #[test]
+    fn a_short_session_shows_its_first_prompt_at_the_top_of_the_canvas() {
+        let (mut app, ctx) = app_with_screen(24, "$ ");
+        for _ in 0..4 {
+            frame(&mut app, &ctx);
+        }
+        let output = frame(&mut app, &ctx);
+        let prompt = rows(&output, "$ ");
+        assert_eq!(prompt.len(), 1, "the initial prompt is not hidden");
+        assert!(
+            prompt[0].0 > SCREEN_HEIGHT - 220.0 + 30.0,
+            "below the header"
+        );
+        assert!(prompt[0].1 < SCREEN_HEIGHT, "inside the panel");
+    }
+
+    #[test]
+    fn dragging_from_a_panel_tab_over_the_terminal_selects_nothing() {
+        let (mut app, ctx) = app_with_screen(11, "one\r\ntwo\r\n$ ");
+        for _ in 0..3 {
+            frame(&mut app, &ctx);
+        }
+        let output = frame(&mut app, &ctx);
+        let tab = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == "OUTPUT" => {
+                    Some(egui::Rect::from_min_size(text.pos, text.galley.size()).center())
+                }
+                _ => None,
+            })
+            .expect("output tab is drawn");
+        let inside_terminal = egui::pos2(tab.x + 40.0, tab.y + 60.0);
+        let run = |app: &mut LumenApp, ctx: &egui::Context, events: Vec<egui::Event>| {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, SCREEN_HEIGHT),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| app.render_component(ctx, |workbench| workbench.terminal_panel(ctx)),
+            );
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(tab), button(tab, true)],
+        );
+        run(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(inside_terminal)],
+        );
+        run(&mut app, &ctx, vec![button(inside_terminal, false)]);
+        run(&mut app, &ctx, vec![]);
+        assert!(
+            !ctx.plugin::<egui::text_selection::LabelSelectionState>()
+                .lock()
+                .has_selection(),
+            "tab clicks must not start a text selection"
         );
     }
 }

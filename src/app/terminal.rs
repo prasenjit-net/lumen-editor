@@ -92,8 +92,11 @@ impl LumenApp {
             .workspace
             .clone()
             .unwrap_or_else(default_working_directory);
-        let rows = self.view.terminal.rows.max(DEFAULT_ROWS);
-        let columns = self.view.terminal.columns.max(DEFAULT_COLUMNS);
+        // Start at the size the panel last measured so the shell's first prompt
+        // is drawn for the visible rows; fall back to defaults before any layout.
+        let measured = |value: u16, default: u16| if value == 0 { default } else { value };
+        let rows = measured(self.view.terminal.rows, DEFAULT_ROWS);
+        let columns = measured(self.view.terminal.columns, DEFAULT_COLUMNS);
         match TerminalSession::start(&root, rows, columns) {
             Ok(session) => {
                 self.terminal_session = Some(session);

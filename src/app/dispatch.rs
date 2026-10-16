@@ -50,7 +50,10 @@ impl LumenApp {
             Command::CancelWorkspaceSearch => self.cancel_workspace_search(),
             Command::ClearWorkspaceSearch => self.clear_workspace_search(),
             Command::RefreshSourceControl => self.refresh_source_control(ctx),
-            Command::ToggleTerminal => self.toggle_terminal(ctx),
+            Command::ToggleTerminal => {
+                super::output::clear_text_selection(ctx);
+                self.toggle_terminal(ctx);
+            }
             Command::ToggleProblems => {
                 self.view.problems.open = !self.view.problems.open;
                 if self.view.problems.open {
@@ -58,9 +61,16 @@ impl LumenApp {
                     self.view.output.open = false;
                 }
             }
-            Command::ToggleOutput => self.toggle_output(),
-            Command::ShowOutput => self.show_output(),
+            Command::ToggleOutput => {
+                super::output::clear_text_selection(ctx);
+                self.toggle_output();
+            }
+            Command::ShowOutput => {
+                super::output::clear_text_selection(ctx);
+                self.show_output();
+            }
             Command::ShowTerminal => {
+                super::output::clear_text_selection(ctx);
                 if !self.view.terminal.open {
                     self.toggle_terminal(ctx);
                 }
