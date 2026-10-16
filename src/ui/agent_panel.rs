@@ -8,7 +8,8 @@ use super::{
 };
 use crate::{
     app::{
-        agent::{AgentKind, AgentSessionView, ConnectionState, display_folder},
+        agent::{AgentKind, AgentSessionView, ConnectionState, UnsavedChoice, display_folder},
+        agent_changes::{ChangeAction, RowState, TurnChanges},
         agent_permission::{PendingPermission, display_path},
         command::Command,
     },
@@ -57,7 +58,8 @@ impl Workbench<'_> {
                 let mut commands = Vec::new();
                 status_strip(ui, session, folder.as_deref(), &mut commands);
                 let running = session.running;
-                let sendable = !session.draft.trim().is_empty() && !running;
+                let sendable =
+                    !session.draft.trim().is_empty() && !running && session.held_prompt.is_none();
                 TopBottomPanel::bottom("agent_composer")
                     .frame(
                         Frame::default()
@@ -67,6 +69,8 @@ impl Workbench<'_> {
                     .show_separator_line(false)
                     .show_inside(ui, |ui| {
                         let session = self.view.agents.session_mut(active);
+                        unsaved_card(ui, session, &mut commands);
+                        changes_card(ui, session, root.as_deref(), &mut commands);
                         permission_cards(ui, session, root.as_deref(), &mut commands);
                         composer(ui, session, running, sendable, &mut commands);
                     });
@@ -196,6 +200,249 @@ fn status_strip(
             );
         });
     ui.separator();
+}
+
+/// Asked when the message is held back because editor tabs have unsaved text.
+fn unsaved_card(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Vec<Command>) {
+    let Some(held) = &session.held_prompt else {
+        return;
+    };
+    Frame::default()
+        .fill(theme::BG)
+        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(204, 167, 0)))
+        .corner_radius(3)
+        .inner_margin(Margin::symmetric(8, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let names = held.files.join(", ");
+            ui.label(
+                RichText::new(format!(
+                    "⚠ {} unsaved file(s): {names}. The agent reads files from disk and will not see these edits.",
+                    held.files.len()
+                ))
+                .size(11.0)
+                .color(theme::TEXT),
+            );
+            ui.horizontal_wrapped(|ui| {
+                let mut choice = |ui: &mut egui::Ui, label: &str, hint: &str, choice| {
+                    if ui.button(label).on_hover_text(hint).clicked() {
+                        commands.push(Command::ResolveUnsavedFiles(choice));
+                    }
+                };
+                choice(ui, "Save all & send", "Save the open files, then send", UnsavedChoice::SaveAll);
+                if held.can_attach {
+                    choice(ui, "Attach & send", "Send the unsaved text to the agent as context", UnsavedChoice::Attach);
+                }
+                choice(ui, "Send anyway", "The agent will only see what is on disk", UnsavedChoice::SendAnyway);
+                choice(ui, "Cancel", "Put the message back in the box", UnsavedChoice::Cancel);
+            });
+        });
+    ui.add_space(6.0);
+}
+
+/// "Changed by the agent": a summary row that expands into per-file diffs with
+/// Open / Revert, plus Revert all and Keep (dismiss).
+fn changes_card(
+    ui: &mut egui::Ui,
+    session: &AgentSessionView,
+    root: Option<&std::path::Path>,
+    commands: &mut Vec<Command>,
+) {
+    let kind = session.kind;
+    if session.preparing || session.finishing {
+        ui.label(
+            RichText::new(if session.preparing {
+                "Preparing change tracking…"
+            } else {
+                "Comparing files…"
+            })
+            .size(10.5)
+            .color(theme::MUTED),
+        );
+    }
+    let Some(changes) = &session.changes else {
+        return;
+    };
+    let (mut added, mut removed) = (0, 0);
+    for row in &changes.rows {
+        let diff = line_diff::diff(
+            row.change.before.as_deref().unwrap_or(""),
+            row.change.after.as_deref().unwrap_or(""),
+            0,
+        );
+        added += diff.added;
+        removed += diff.removed;
+    }
+    let pending = changes
+        .rows
+        .iter()
+        .filter(|row| row.state == RowState::Pending)
+        .count();
+    Frame::default()
+        .fill(theme::BG)
+        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+        .corner_radius(3)
+        .inner_margin(Margin::symmetric(8, 5))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                let arrow = if changes.open {
+                    icon::CARET_DOWN
+                } else {
+                    icon::CARET_RIGHT
+                };
+                if ui
+                    .add(
+                        egui::Label::new(
+                            RichText::new(format!(
+                                "{arrow} Changed by the agent: {} file(s)  +{added} −{removed}",
+                                changes.rows.len()
+                            ))
+                            .size(11.5)
+                            .color(theme::TEXT),
+                        )
+                        .selectable(false)
+                        .sense(egui::Sense::click()),
+                    )
+                    .on_hover_text("Show or hide the changed files")
+                    .clicked()
+                {
+                    commands.push(Command::AgentChanges(kind, ChangeAction::ToggleOpen));
+                }
+                if pending > 0
+                    && ui
+                        .small_button("Revert all")
+                        .on_hover_text("Restore every text file to how it was before this turn")
+                        .clicked()
+                {
+                    commands.push(Command::AgentChanges(kind, ChangeAction::RevertAll));
+                }
+                if ui
+                    .small_button("Keep")
+                    .on_hover_text("Accept the changes and hide this")
+                    .clicked()
+                {
+                    commands.push(Command::AgentChanges(kind, ChangeAction::Dismiss));
+                }
+            });
+            if changes.truncated {
+                ui.label(
+                    RichText::new("⚠ This folder is large; some changes may not be listed.")
+                        .size(10.5)
+                        .color(Color32::from_rgb(204, 167, 0)),
+                );
+            }
+            if changes.open {
+                change_rows(ui, kind, changes, root, commands);
+            }
+        });
+    ui.add_space(6.0);
+}
+
+fn change_rows(
+    ui: &mut egui::Ui,
+    kind: AgentKind,
+    changes: &TurnChanges,
+    root: Option<&std::path::Path>,
+    commands: &mut Vec<Command>,
+) {
+    use crate::services::workspace_snapshot::ChangeKind;
+    ScrollArea::vertical()
+        .id_salt(("agent_changes", kind))
+        .max_height(220.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for (index, row) in changes.rows.iter().take(200).enumerate() {
+                ui.push_id(index, |ui| {
+                    let (mark, color) = match row.change.kind {
+                        ChangeKind::Added => ("A", theme::DIFF_ADDED_TEXT),
+                        ChangeKind::Modified => ("M", Color32::from_rgb(204, 167, 0)),
+                        ChangeKind::Deleted => ("D", theme::DIFF_REMOVED_TEXT),
+                    };
+                    let path = row.change.path.display().to_string();
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(mark).monospace().size(11.0).color(color));
+                        let label = display_path(&path, root);
+                        if ui
+                            .add(
+                                egui::Label::new(
+                                    RichText::new(label).size(11.0).color(theme::TEXT),
+                                )
+                                .selectable(false)
+                                .sense(egui::Sense::click()),
+                            )
+                            .on_hover_text("Show the diff")
+                            .clicked()
+                        {
+                            commands.push(Command::AgentChanges(
+                                kind,
+                                ChangeAction::ToggleFile(row.change.path.clone()),
+                            ));
+                        }
+                        match &row.state {
+                            RowState::Pending => {
+                                if row.change.kind != ChangeKind::Deleted
+                                    && ui.small_button("Open").clicked()
+                                {
+                                    commands.push(Command::AgentChanges(
+                                        kind,
+                                        ChangeAction::OpenFile(row.change.path.clone()),
+                                    ));
+                                }
+                                if ui
+                                    .add_enabled(
+                                        !row.change.opaque,
+                                        egui::Button::new("Revert").small(),
+                                    )
+                                    .on_disabled_hover_text(
+                                        "Binary or large files cannot be reverted here",
+                                    )
+                                    .clicked()
+                                {
+                                    commands.push(Command::AgentChanges(
+                                        kind,
+                                        ChangeAction::Revert(row.change.path.clone()),
+                                    ));
+                                }
+                            }
+                            RowState::Reverted => {
+                                ui.label(RichText::new("reverted").size(10.5).color(theme::MUTED));
+                            }
+                            RowState::Failed(reason) => {
+                                ui.label(
+                                    RichText::new(format!("not reverted: {reason}"))
+                                        .size(10.5)
+                                        .color(theme::DIFF_REMOVED_TEXT),
+                                );
+                            }
+                        }
+                    });
+                    if row.expanded {
+                        if row.change.opaque {
+                            ui.label(
+                                RichText::new("Binary or large file")
+                                    .size(10.5)
+                                    .color(theme::MUTED),
+                            );
+                        } else {
+                            diff_view(
+                                ui,
+                                row.change.before.as_deref(),
+                                row.change.after.as_deref().unwrap_or(""),
+                                &path,
+                            );
+                        }
+                    }
+                });
+            }
+            if changes.rows.len() > 200 {
+                ui.label(
+                    RichText::new(format!("… and {} more files", changes.rows.len() - 200))
+                        .size(10.5)
+                        .color(theme::MUTED),
+                );
+            }
+        });
 }
 
 /// The oldest unanswered request, with the rest counted. Keyboard: Tab / Enter
@@ -764,7 +1011,7 @@ fn job(inlines: &[Inline], size: f32, color: Color32) -> LayoutJob {
 mod tests {
     use super::*;
     use crate::{
-        app::{LumenApp, agent::AgentKind},
+        app::{LumenApp, agent::AgentKind, agent_changes::RowState},
         services::agent_process::fake::FakeAgentLauncher,
     };
     use lumen_agent_protocol::{
@@ -1181,6 +1428,153 @@ mod tests {
         assert!(
             shown.contains("Run tests") && shown.contains("$ cargo test"),
             "{shown}"
+        );
+    }
+
+    use crate::app::agent_changes::{ChangeRow, TurnChanges};
+    use crate::services::workspace_snapshot::{ChangeKind, FileChange};
+
+    fn change(
+        path: &str,
+        kind: ChangeKind,
+        before: Option<&str>,
+        after: Option<&str>,
+    ) -> ChangeRow {
+        ChangeRow {
+            change: FileChange {
+                path: path.into(),
+                kind,
+                before: before.map(Arc::from),
+                after: after.map(Arc::from),
+                opaque: false,
+            },
+            state: RowState::Pending,
+            expanded: false,
+        }
+    }
+
+    impl Panel {
+        fn with_changes(&mut self) {
+            self.app.editor.workspace = Some("/w".into());
+            self.app.view.agents.session_mut(AgentKind::Claude).changes = Some(TurnChanges {
+                root: "/w".into(),
+                rows: vec![
+                    change(
+                        "/w/src/a.rs",
+                        ChangeKind::Modified,
+                        Some("old\n"),
+                        Some("new\nmore\n"),
+                    ),
+                    change("/w/b.txt", ChangeKind::Added, None, Some("hello\n")),
+                ],
+                truncated: false,
+                open: false,
+            });
+        }
+    }
+
+    #[test]
+    fn the_change_card_summarises_expands_and_offers_revert_and_keep() {
+        let mut panel = Panel::new();
+        panel.with_changes();
+        let shown = panel.texts();
+        assert!(shown.contains("Changed by the agent: 2 file(s)"), "{shown}");
+        assert!(
+            shown.contains("+3 −1"),
+            "added/removed totals across files: {shown}"
+        );
+        assert!(shown.contains("Revert all") && shown.contains("Keep"));
+        assert!(!shown.contains("src/a.rs"), "collapsed until opened");
+
+        panel.click_text("Changed by the agent");
+        let shown = panel.texts();
+        assert!(shown.contains("src/a.rs") && shown.contains("b.txt"));
+        assert!(shown.contains("Open") && shown.contains("Revert"));
+
+        panel.click_text("src/a.rs");
+        let shown = panel.texts();
+        assert!(
+            shown.contains("- old") && shown.contains("+ new"),
+            "inline diff: {shown}"
+        );
+    }
+
+    #[test]
+    fn keep_hides_the_card_and_reverted_rows_say_so() {
+        let mut panel = Panel::new();
+        panel.with_changes();
+        if let Some(changes) = &mut panel.app.view.agents.session_mut(AgentKind::Claude).changes {
+            changes.open = true;
+            changes.rows[0].state = RowState::Reverted;
+            changes.rows[1].state = RowState::Failed("it changed again".into());
+        }
+        let shown = panel.texts();
+        assert!(shown.contains("reverted") && shown.contains("not reverted: it changed again"));
+        panel.click_text("Keep");
+        assert!(
+            panel
+                .app
+                .view
+                .agents
+                .session(AgentKind::Claude)
+                .changes
+                .is_none()
+        );
+        assert!(!panel.texts().contains("Changed by the agent"));
+    }
+
+    #[test]
+    fn tracking_progress_is_visible_while_a_snapshot_runs() {
+        let mut panel = Panel::new();
+        panel
+            .app
+            .view
+            .agents
+            .session_mut(AgentKind::Claude)
+            .preparing = true;
+        assert!(panel.texts().contains("Preparing change tracking…"));
+        let session = panel.app.view.agents.session_mut(AgentKind::Claude);
+        session.preparing = false;
+        session.finishing = true;
+        assert!(panel.texts().contains("Comparing files…"));
+    }
+
+    #[test]
+    fn the_unsaved_files_card_offers_the_four_choices_and_cancel_returns_the_text() {
+        let mut panel = Panel::new();
+        let mut document = crate::model::Document::from_path("/w/a.rs".into(), "x".into());
+        document.dirty = true;
+        panel.app.editor.files.push(document);
+        panel.app.view.agents.session_mut(AgentKind::Claude).draft = "explain".into();
+        panel
+            .app
+            .execute(crate::app::command::Command::SendAgentPrompt, &panel.ctx);
+        let shown = panel.texts();
+        for expected in [
+            "1 unsaved file(s): a.rs",
+            "will not see these edits",
+            "Save all & send",
+            "Attach & send",
+            "Send anyway",
+            "Cancel",
+        ] {
+            assert!(shown.contains(expected), "missing {expected:?} in {shown}");
+        }
+        assert!(panel.fake.launched.lock().unwrap().is_empty());
+        panel.click_text("Cancel");
+        let session = panel.app.view.agents.session(AgentKind::Claude);
+        assert!(session.held_prompt.is_none());
+        assert_eq!(session.draft, "explain");
+        assert!(!panel.texts().contains("Attach & send"));
+
+        panel
+            .app
+            .execute(crate::app::command::Command::SendAgentPrompt, &panel.ctx);
+        panel.click_text("Send anyway");
+        assert_eq!(
+            panel.fake.launched.lock().unwrap().len(),
+            1,
+            "the agent starts after the choice"
         );
     }
 }

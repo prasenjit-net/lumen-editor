@@ -38,6 +38,9 @@ pub(crate) enum Command {
         Option<String>,
     ),
     AllowAgentNpx,
+    ResolveUnsavedFiles(super::agent::UnsavedChoice),
+    /// Review, revert or dismiss what the agent changed.
+    AgentChanges(AgentKind, super::agent_changes::ChangeAction),
     ShowOutput,
     ShowTerminal,
     CloseOutput,

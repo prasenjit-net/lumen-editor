@@ -14,6 +14,7 @@ pub(crate) mod settings;
 pub(crate) mod source_control;
 pub(crate) mod terminal;
 pub(crate) mod workspace_search;
+pub(crate) mod workspace_snapshot;
 pub(crate) use clipboard::{ClipboardRead, ClipboardRequestId, ClipboardService, NativeClipboard};
 pub(crate) use dialogs::{FileDialogs, NativeDialogs};
 pub(crate) use filesystem::{FileSystem, LocalFileSystem};

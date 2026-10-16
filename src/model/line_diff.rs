@@ -21,18 +21,22 @@ pub(crate) struct LineDiff {
 /// Largest `old_middle * new_middle` the LCS table may reach (about 16 MiB).
 const MAX_TABLE: usize = 4_000_000;
 
+/// Lines of `text`; a final newline ends the last line instead of starting a blank one.
+fn lines_of(text: &str) -> Vec<&str> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let mut lines: Vec<&str> = text.split('\n').collect();
+    if text.ends_with('\n') {
+        lines.pop();
+    }
+    lines
+}
+
 pub(crate) fn diff(old: &str, new: &str, context: usize) -> LineDiff {
     // An empty text has no lines (a new or fully deleted file), not one blank line.
-    let old_lines: Vec<&str> = if old.is_empty() {
-        Vec::new()
-    } else {
-        old.split('\n').collect()
-    };
-    let new_lines: Vec<&str> = if new.is_empty() {
-        Vec::new()
-    } else {
-        new.split('\n').collect()
-    };
+    let old_lines = lines_of(old);
+    let new_lines = lines_of(new);
     let prefix = old_lines
         .iter()
         .zip(&new_lines)
@@ -215,6 +219,16 @@ mod tests {
     fn insertions_and_deletions_in_the_middle_align_on_the_longest_common_subsequence() {
         let result = diff("a\nb\nc\nd", "a\nc\nX\nd", 5);
         assert_eq!(kinds(&result), " a|-b| c|+X| d");
+    }
+
+    #[test]
+    fn a_trailing_newline_is_not_an_extra_blank_line() {
+        let result = diff("old\n", "new\nmore\n", 3);
+        assert_eq!((result.added, result.removed), (2, 1));
+        assert_eq!(kinds(&result), "-old|+new|+more");
+        assert_eq!(diff("hello\n", "", 3).removed, 1);
+        // A real blank line is still a line.
+        assert_eq!(diff("a\n\n", "a\n", 3).removed, 1);
     }
 
     #[test]

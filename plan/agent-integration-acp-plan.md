@@ -434,23 +434,39 @@ each real adapter.
 
 Exit met: chat works end to end with Claude Code and Codex, read-only.
 
-### Phase 3 - permissions and edit review *(revised)*
+### Phase 3 - permissions and edit review *(revised)* - done 2026-10-16
 
-- [ ] Permission card (queue, keyboard, cancel semantics, per-session
-  `allow_always` memory); Claude diff shown from the permission request.
-- [ ] Dirty-buffer guard: refuse (reject_once + message) when the target is an open
-  buffer with unsaved edits; reload clean open buffers after agent writes.
-- [ ] Pre-turn snapshot and **"Files changed by the agent"** review (diff against
-  snapshot, Open diff, Revert file) - the primary mechanism for Codex.
-- [ ] Unsaved-buffer handling: warning plus *Save all and send* / *Attach as
-  context*.
-- [ ] Tool-call rows with diff preview and "Open diff" using the existing diff
-  viewer.
-- [ ] (Low priority) `fs/read_text_file` / `fs/write_text_file` handlers with scope,
-  size and conflict rules, for future adapters.
+- [x] Permission cards: oldest request shown with the rest counted, tool kind,
+  locations, command, and a unified diff (Claude sends it before the write); options
+  are the agent's own; Esc declines; cancelling a turn answers every open request as
+  `cancelled`; a crash drops them; an attention badge on the activity button.
+  Standing approvals ("allow always") are the adapter's to remember - Lumen keeps no
+  copy, and never offers them for paths outside the open folder.
+- [x] Dirty-buffer guard: a write to a file that is an open buffer with unsaved edits
+  is declined automatically with an explanation. Optional `agent.allow_read_in_workspace`
+  auto-allows plain reads inside the folder.
+- [x] Pre-turn snapshot and **"Changed by the agent"** review: incremental, bounded
+  scans of the folder (`services/workspace_snapshot.rs`, honors .gitignore, skips
+  `.git`, racy-mtime safe) before and after each turn; review card with per-file
+  diff, Open, Revert and Revert all, Keep. Reverts are guarded (file must still be
+  exactly what the agent left; unsaved tabs block; added files go to the Trash;
+  deleted files are recreated only if absent). Open clean tabs follow the disk.
+  Setting `agent.track_changes`.
+- [x] Unsaved-buffer handling (`agent.unsaved_files`: ask / save / attach / ignore):
+  the message is held with a card offering *Save all & send*, *Attach & send*
+  (resource blocks, size-capped, only when the agent takes embedded context),
+  *Send anyway* or *Cancel*.
+- [x] Tool-call rows show the same inline diff.
+- [x] Live (ignored) full loop with both real agents: they ask permission, the test
+  approves, the review lists the new file, and revert trashes it.
+- [ ] Still open: `fs/read_text_file` / `fs/write_text_file` handlers (no adapter calls
+  them), "Open diff" in Lumen's side-by-side git diff viewer (inline diffs only),
+  Codex `workspace-write` mode handling, the preview posture (Codex still starts in
+  `read-only`; relaxing it needs a mode selector - Phase 4), visual inspection of
+  all cards, Windows verification.
 
-Exit: Claude edits are reviewed before they happen and Codex edits after; no
-unsaved buffer is ever overwritten; the edit-safety tests pass.
+Exit met for the revised design: Claude edits are reviewed before they happen and
+Codex edits after; no unsaved buffer is overwritten; guarded reverts.
 
 ### Phase 4 - editor integration
 

@@ -80,7 +80,7 @@ impl AgentKind {
         }
     }
 
-    fn index(self) -> usize {
+    pub(super) fn index(self) -> usize {
         match self {
             Self::Claude => 0,
             Self::Codex => 1,
@@ -126,6 +126,14 @@ pub(crate) enum ConnectionState {
 /// Everything the panel shows for one agent.
 pub(crate) struct AgentSessionView {
     pub(crate) kind: AgentKind,
+    /// A message waiting for the user's choice about unsaved files.
+    pub(crate) held_prompt: Option<HeldPrompt>,
+    /// Files the last turn changed, awaiting review.
+    pub(crate) changes: Option<super::agent_changes::TurnChanges>,
+    /// Taking the folder snapshot before sending the prompt.
+    pub(crate) preparing: bool,
+    /// Comparing the folder with the snapshot after the turn.
+    pub(crate) finishing: bool,
     /// Requests the agent is blocked on, oldest first.
     pub(crate) pending_permissions: Vec<super::agent_permission::PendingPermission>,
     pub(crate) state: ConnectionState,
@@ -146,6 +154,10 @@ impl AgentSessionView {
     fn new(kind: AgentKind) -> Self {
         Self {
             kind,
+            held_prompt: None,
+            changes: None,
+            preparing: false,
+            finishing: false,
             pending_permissions: Vec::new(),
             state: ConnectionState::Idle,
             conversation: Conversation::default(),
@@ -194,6 +206,30 @@ impl AgentsView {
     }
 }
 
+/// One user message: the text plus context blocks (unsaved buffers).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Prompt {
+    pub(crate) text: String,
+    pub(crate) attachments: Vec<Value>,
+}
+
+/// A message held back until the user decides what to do about unsaved files.
+#[derive(Clone, Debug)]
+pub(crate) struct HeldPrompt {
+    pub(crate) text: String,
+    pub(crate) files: Vec<String>,
+    /// Attaching is offered only when the agent accepts embedded context.
+    pub(crate) can_attach: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UnsavedChoice {
+    SaveAll,
+    Attach,
+    SendAnyway,
+    Cancel,
+}
+
 #[derive(Default)]
 struct Slot {
     connection: Option<Box<dyn AgentConnection>>,
@@ -201,13 +237,14 @@ struct Slot {
     session_id: Option<String>,
     init: Option<InitializeResult>,
     /// Sent as soon as the session is ready (typed while still connecting).
-    queued_prompt: Option<String>,
-    last_prompt: Option<String>,
+    queued_prompt: Option<Prompt>,
+    last_prompt: Option<Prompt>,
     handshake_timeout: Option<Duration>,
 }
 
 pub(crate) struct AgentRuntime {
     pub(crate) launcher: Arc<dyn AgentLauncher>,
+    pub(super) tracking: [super::agent_changes::Tracking; 2],
     slots: [Slot; 2],
     /// Session-level permission to download the adapter with npx.
     npx_consent: [bool; 2],
@@ -217,6 +254,7 @@ impl Default for AgentRuntime {
     fn default() -> Self {
         Self {
             launcher: Arc::new(LocalAgentLauncher),
+            tracking: Default::default(),
             slots: Default::default(),
             npx_consent: [false; 2],
         }
@@ -330,22 +368,177 @@ impl LumenApp {
 
     // ------------------------------------------------------------ commands
 
-    /// Send the composer text. Starts the agent first if needed.
+    /// Send the composer text. Unsaved buffers are handled first (agents read the
+    /// disk); then the agent is started if needed.
     pub(crate) fn send_agent_prompt(&mut self, ctx: &egui::Context) {
         let kind = self.view.agents.active;
-        let current_cwd = self.session_cwd();
         let session = self.view.agents.session_mut(kind);
         let text = session.draft.trim().to_owned();
-        if text.is_empty() || session.running {
+        if text.is_empty() || session.running || session.held_prompt.is_some() {
             return;
         }
-        session.draft.clear();
-        session.conversation.push_user_message(&text);
+        let unsaved = self.unsaved_files();
+        let policy = self.view.settings.choice("agent.unsaved_files");
+        if unsaved.is_empty() || policy == "ignore" {
+            self.view.agents.session_mut(kind).draft.clear();
+            return self.submit_prompt(
+                kind,
+                Prompt {
+                    text,
+                    attachments: Vec::new(),
+                },
+                ctx,
+            );
+        }
+        let can_attach = self
+            .runtime_slot(kind)
+            .init
+            .as_ref()
+            .is_none_or(|init| init.capabilities.prompt.embedded_context);
+        match policy.as_str() {
+            "save" => {
+                self.view.agents.session_mut(kind).draft.clear();
+                self.save_for_agent(kind, text, ctx);
+            }
+            "attach" if can_attach => {
+                self.view.agents.session_mut(kind).draft.clear();
+                let attachments = self.unsaved_attachments(kind);
+                self.submit_prompt(kind, Prompt { text, attachments }, ctx);
+            }
+            _ => {
+                let session = self.view.agents.session_mut(kind);
+                session.draft.clear();
+                session.held_prompt = Some(HeldPrompt {
+                    text,
+                    files: unsaved,
+                    can_attach,
+                });
+            }
+        }
+    }
+
+    /// Names of open buffers with unsaved edits.
+    fn unsaved_files(&self) -> Vec<String> {
+        self.editor
+            .files
+            .iter()
+            .filter(|document| document.dirty)
+            .map(|document| document.name.clone())
+            .collect()
+    }
+
+    /// Unsaved buffers as `resource` context blocks, within size limits.
+    fn unsaved_attachments(&mut self, kind: AgentKind) -> Vec<Value> {
+        const PER_FILE: usize = 200 * 1024;
+        const TOTAL: usize = 1024 * 1024;
+        let (mut blocks, mut total, mut skipped) = (Vec::new(), 0, 0);
+        for document in self.editor.files.iter().filter(|document| document.dirty) {
+            if document.text.len() > PER_FILE || total + document.text.len() > TOTAL {
+                skipped += 1;
+                continue;
+            }
+            total += document.text.len();
+            let uri = match &document.path {
+                Some(path) => super::language_services::file_uri(path),
+                None => format!("untitled:{}", document.name),
+            };
+            blocks.push(requests::resource_block(&uri, &document.text, None));
+        }
+        if skipped > 0 {
+            self.view
+                .agents
+                .session_mut(kind)
+                .conversation
+                .push_notice(&format!(
+                    "{skipped} unsaved file(s) were too large to attach and were left out."
+                ));
+        }
+        blocks
+    }
+
+    /// Save every unsaved file that has a path, then send. Untitled buffers have
+    /// nowhere to be saved silently, so they are attached instead.
+    fn save_for_agent(&mut self, kind: AgentKind, text: String, ctx: &egui::Context) {
+        let active = self.editor.active_file;
+        for index in 0..self.editor.files.len() {
+            if self.editor.files[index].dirty && self.editor.files[index].path.is_some() {
+                self.editor.active_file = Some(index);
+                self.save_active();
+            }
+        }
+        self.editor.active_file = active;
+        let still_dirty: Vec<String> = self
+            .editor
+            .files
+            .iter()
+            .filter(|document| document.dirty && document.path.is_some())
+            .map(|document| document.name.clone())
+            .collect();
+        if !still_dirty.is_empty() {
+            let session = self.view.agents.session_mut(kind);
+            session.draft = text;
+            session.conversation.push_notice(&format!(
+                "Not sent: could not save {}. Resolve it in the editor, then send again.",
+                still_dirty.join(", ")
+            ));
+            return;
+        }
+        let attachments = if self.editor.files.iter().any(|document| document.dirty) {
+            self.unsaved_attachments(kind)
+        } else {
+            Vec::new()
+        };
+        self.submit_prompt(kind, Prompt { text, attachments }, ctx);
+    }
+
+    pub(crate) fn resolve_unsaved_choice(&mut self, choice: UnsavedChoice, ctx: &egui::Context) {
+        let kind = self.view.agents.active;
+        let Some(held) = self.view.agents.session_mut(kind).held_prompt.take() else {
+            return;
+        };
+        match choice {
+            UnsavedChoice::Cancel => self.view.agents.session_mut(kind).draft = held.text,
+            UnsavedChoice::SendAnyway => {
+                self.submit_prompt(
+                    kind,
+                    Prompt {
+                        text: held.text,
+                        attachments: Vec::new(),
+                    },
+                    ctx,
+                );
+            }
+            UnsavedChoice::Attach => {
+                let attachments = self.unsaved_attachments(kind);
+                self.submit_prompt(
+                    kind,
+                    Prompt {
+                        text: held.text,
+                        attachments,
+                    },
+                    ctx,
+                );
+            }
+            UnsavedChoice::SaveAll => self.save_for_agent(kind, held.text, ctx),
+        }
+    }
+
+    /// Record the message in the transcript and route it by connection state.
+    fn submit_prompt(&mut self, kind: AgentKind, prompt: Prompt, ctx: &egui::Context) {
+        let current_cwd = self.session_cwd();
+        let session = self.view.agents.session_mut(kind);
+        session.conversation.push_user_message(&prompt.text);
+        if !prompt.attachments.is_empty() {
+            session.conversation.push_notice(&format!(
+                "Attached {} unsaved file(s) as context.",
+                prompt.attachments.len()
+            ));
+        }
         session.follow_output = true;
         let cwd_changed = session.state == ConnectionState::Ready
             && session.cwd.as_deref() != Some(current_cwd.as_str());
         match self.view.agents.session(kind).state.clone() {
-            ConnectionState::Ready if !cwd_changed => self.dispatch_prompt(kind, text),
+            ConnectionState::Ready if !cwd_changed => self.dispatch_prompt(kind, prompt),
             ConnectionState::Ready => {
                 Self::agent_log(
                     kind,
@@ -353,14 +546,14 @@ impl LumenApp {
                     "Folder changed; starting a new session",
                 );
                 self.stop_agent(kind);
-                self.runtime_slot(kind).queued_prompt = Some(text);
+                self.runtime_slot(kind).queued_prompt = Some(prompt);
                 self.start_agent(kind, ctx);
             }
             ConnectionState::Starting | ConnectionState::NeedsAuth => {
-                self.runtime_slot(kind).queued_prompt = Some(text);
+                self.runtime_slot(kind).queued_prompt = Some(prompt);
             }
             ConnectionState::Idle | ConnectionState::Failed(_) | ConnectionState::NotFound(_) => {
-                self.runtime_slot(kind).queued_prompt = Some(text);
+                self.runtime_slot(kind).queued_prompt = Some(prompt);
                 self.start_agent(kind, ctx);
             }
         }
@@ -369,6 +562,16 @@ impl LumenApp {
     pub(crate) fn cancel_agent_turn(&mut self) {
         let kind = self.view.agents.active;
         if !self.view.agents.session(kind).running {
+            return;
+        }
+        if self.view.agents.session(kind).preparing {
+            // Nothing was sent yet: just drop the message.
+            self.cancel_snapshot(kind);
+            let session = self.view.agents.session_mut(kind);
+            session.running = false;
+            session
+                .conversation
+                .push_notice("Cancelled before sending.");
             return;
         }
         if let Some(session_id) = self.runtime_slot(kind).session_id.clone() {
@@ -383,6 +586,7 @@ impl LumenApp {
     pub(crate) fn new_agent_session(&mut self) {
         let kind = self.view.agents.active;
         self.stop_agent(kind);
+        self.reset_tracking(kind);
         let session = self.view.agents.session_mut(kind);
         let draft = std::mem::take(&mut session.draft);
         *session = AgentSessionView::new(kind);
@@ -527,6 +731,7 @@ impl LumenApp {
         slot.tracker.clear();
         slot.session_id = None;
         slot.init = None;
+        self.cancel_snapshot(kind);
         let session = self.view.agents.session_mut(kind);
         session.running = false;
         session.pending_permissions.clear();
@@ -546,25 +751,35 @@ impl LumenApp {
         session.conversation.finish_turn(true);
     }
 
-    fn dispatch_prompt(&mut self, kind: AgentKind, text: String) {
+    fn dispatch_prompt(&mut self, kind: AgentKind, prompt: Prompt) {
+        if self.runtime_slot(kind).session_id.is_none() {
+            self.runtime_slot(kind).queued_prompt = Some(prompt);
+            return;
+        }
+        // Busy from now on, including while the folder snapshot is taken.
+        self.view.agents.session_mut(kind).running = true;
+        self.runtime_slot(kind).last_prompt = Some(prompt.clone());
+        if !self.begin_tracked_turn(kind, &prompt) {
+            self.send_prompt_now(kind, prompt);
+        }
+    }
+
+    pub(super) fn send_prompt_now(&mut self, kind: AgentKind, prompt: Prompt) {
         let Some(session_id) = self.runtime_slot(kind).session_id.clone() else {
-            self.runtime_slot(kind).queued_prompt = Some(text);
             return;
         };
         let id = self.register(kind, "session/prompt", None);
-        let slot = self.runtime_slot(kind);
-        slot.last_prompt = Some(text.clone());
-        self.view.agents.session_mut(kind).running = true;
-        self.agent_send(
-            kind,
-            &requests::session_prompt(id, &session_id, vec![requests::text_block(&text)]),
-        );
+        // Context first, then what the user typed.
+        let mut blocks = prompt.attachments;
+        blocks.push(requests::text_block(&prompt.text));
+        self.agent_send(kind, &requests::session_prompt(id, &session_id, blocks));
     }
 
     // ------------------------------------------------------------- polling
 
     pub(crate) fn poll_agents(&mut self, ctx: &egui::Context) {
         for kind in AgentKind::ALL {
+            self.poll_snapshots(kind, ctx);
             let events = match self.runtime_slot(kind).connection.as_ref() {
                 Some(connection) => connection.drain_events(),
                 None => continue,
@@ -817,6 +1032,7 @@ impl LumenApp {
         }
         session.follow_output = true;
         self.runtime_slot(kind).last_prompt = None;
+        self.begin_after_snapshot(kind);
     }
 }
 
@@ -1264,6 +1480,10 @@ mod tests {
         let first = tempfile::tempdir().unwrap();
         let second = tempfile::tempdir().unwrap();
         h.app.editor.workspace = Some(first.path().to_path_buf());
+        h.app.view.settings.user.persisted.insert(
+            "agent.track_changes".into(),
+            lumen_settings_core::Value::Bool(false),
+        );
         h.say(AgentKind::Claude, "a");
         h.connect(AgentKind::Claude);
         let prompt = h.last_request("session/prompt");
@@ -1336,6 +1556,254 @@ mod tests {
         );
     }
 
+    fn dirty_document(
+        name: &str,
+        path: Option<std::path::PathBuf>,
+        text: &str,
+    ) -> crate::model::Document {
+        let mut document = match path {
+            Some(path) => crate::model::Document::from_path(path, "orig".into()),
+            None => crate::model::Document::untitled(0),
+        };
+        document.name = name.to_owned();
+        document.text = text.to_owned();
+        document.dirty = true;
+        document
+    }
+
+    fn prompt_blocks(h: &Harness) -> Vec<Value> {
+        h.last_request("session/prompt")["params"]["prompt"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn unsaved_buffers_hold_the_message_until_the_user_chooses() {
+        let mut h = Harness::new();
+        h.app.editor.files.push(dirty_document(
+            "a.rs",
+            Some("/w/a.rs".into()),
+            "fn changed() {}",
+        ));
+        h.say(AgentKind::Claude, "explain");
+        let session = h.app.view.agents.session(AgentKind::Claude);
+        let held = session.held_prompt.as_ref().expect("held");
+        assert_eq!(
+            (held.text.as_str(), held.files.clone()),
+            ("explain", vec!["a.rs".to_owned()])
+        );
+        assert!(held.can_attach);
+        assert!(session.draft.is_empty() && session.conversation.entries.is_empty());
+        assert!(
+            h.fake.launched.lock().unwrap().is_empty(),
+            "nothing starts until the choice"
+        );
+        // A second Enter while held does nothing.
+        h.app.view.agents.session_mut(AgentKind::Claude).draft = "again".into();
+        h.app.execute(Command::SendAgentPrompt, &h.ctx);
+        assert!(h.fake.launched.lock().unwrap().is_empty());
+
+        h.app
+            .execute(Command::ResolveUnsavedFiles(UnsavedChoice::Cancel), &h.ctx);
+        let session = h.app.view.agents.session(AgentKind::Claude);
+        assert!(session.held_prompt.is_none());
+        assert_eq!(session.draft, "explain", "the message goes back to the box");
+    }
+
+    #[test]
+    fn attach_sends_unsaved_text_as_context_blocks_before_the_message() {
+        let mut h = Harness::new();
+        h.app.editor.files.push(dirty_document(
+            "a.rs",
+            Some("/w/a.rs".into()),
+            "fn changed() {}",
+        ));
+        h.app
+            .editor
+            .files
+            .push(dirty_document("Untitled-1", None, "scratch"));
+        h.say(AgentKind::Claude, "review");
+        h.app
+            .execute(Command::ResolveUnsavedFiles(UnsavedChoice::Attach), &h.ctx);
+        h.connect(AgentKind::Claude);
+        let blocks = prompt_blocks(&h);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0]["type"], "resource");
+        assert_eq!(blocks[0]["resource"]["uri"], "file:///w/a.rs");
+        assert_eq!(blocks[0]["resource"]["text"], "fn changed() {}");
+        assert_eq!(blocks[1]["resource"]["uri"], "untitled:Untitled-1");
+        assert_eq!(blocks[2], json!({"type":"text","text":"review"}));
+        let notices = format!(
+            "{:?}",
+            h.app
+                .view
+                .agents
+                .session(AgentKind::Claude)
+                .conversation
+                .entries
+        );
+        assert!(notices.contains("Attached 2 unsaved file(s)"), "{notices}");
+    }
+
+    #[test]
+    fn send_anyway_sends_only_the_text() {
+        let mut h = Harness::new();
+        h.app
+            .editor
+            .files
+            .push(dirty_document("a.rs", Some("/w/a.rs".into()), "x"));
+        h.say(AgentKind::Claude, "hi");
+        h.app.execute(
+            Command::ResolveUnsavedFiles(UnsavedChoice::SendAnyway),
+            &h.ctx,
+        );
+        h.connect(AgentKind::Claude);
+        assert_eq!(prompt_blocks(&h), vec![json!({"type":"text","text":"hi"})]);
+    }
+
+    #[test]
+    fn save_all_writes_the_files_then_sends_and_a_failed_save_keeps_the_message() {
+        let mut h = Harness::new();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.rs");
+        std::fs::write(&path, "orig").unwrap();
+        h.app
+            .editor
+            .files
+            .push(dirty_document("a.rs", Some(path.clone()), "edited"));
+        h.app.editor.active_file = Some(0);
+        h.say(AgentKind::Claude, "go");
+        h.app
+            .execute(Command::ResolveUnsavedFiles(UnsavedChoice::SaveAll), &h.ctx);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "edited");
+        assert!(!h.app.editor.files[0].dirty);
+        h.connect(AgentKind::Claude);
+        assert_eq!(prompt_blocks(&h).len(), 1, "saved, so nothing to attach");
+
+        // The disk copy changed behind Lumen's back: the save is refused, nothing is sent.
+        let mut h = Harness::new();
+        let path = dir.path().join("b.rs");
+        std::fs::write(&path, "someone else wrote this").unwrap();
+        h.app
+            .editor
+            .files
+            .push(dirty_document("b.rs", Some(path.clone()), "mine"));
+        h.app.editor.active_file = Some(0);
+        h.say(AgentKind::Claude, "go");
+        h.app
+            .execute(Command::ResolveUnsavedFiles(UnsavedChoice::SaveAll), &h.ctx);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "someone else wrote this"
+        );
+        assert!(h.fake.launched.lock().unwrap().is_empty());
+        let session = h.app.view.agents.session(AgentKind::Claude);
+        assert_eq!(session.draft, "go");
+        assert!(format!("{:?}", session.conversation.entries).contains("could not save b.rs"));
+    }
+
+    #[test]
+    fn the_unsaved_files_setting_can_skip_the_question() {
+        for (policy, expect_blocks) in [("attach", 2), ("ignore", 1)] {
+            let mut h = Harness::new();
+            h.app.view.settings.user.persisted.insert(
+                "agent.unsaved_files".into(),
+                lumen_settings_core::Value::Choice(policy.into()),
+            );
+            h.app
+                .editor
+                .files
+                .push(dirty_document("a.rs", Some("/w/a.rs".into()), "x"));
+            h.say(AgentKind::Claude, "hi");
+            assert!(
+                h.app
+                    .view
+                    .agents
+                    .session(AgentKind::Claude)
+                    .held_prompt
+                    .is_none(),
+                "{policy}"
+            );
+            h.connect(AgentKind::Claude);
+            assert_eq!(prompt_blocks(&h).len(), expect_blocks, "{policy}");
+        }
+        // Clean buffers never ask.
+        let mut h = Harness::new();
+        h.app.editor.files.push(crate::model::Document::from_path(
+            "/w/clean.rs".into(),
+            "x".into(),
+        ));
+        h.say(AgentKind::Claude, "hi");
+        assert!(
+            h.app
+                .view
+                .agents
+                .session(AgentKind::Claude)
+                .held_prompt
+                .is_none()
+        );
+        assert_eq!(h.fake.launched.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn attaching_is_not_offered_when_the_agent_cannot_take_embedded_context() {
+        let mut h = Harness::new();
+        h.say(AgentKind::Claude, "first");
+        h.connect(AgentKind::Claude); // this agent advertised no embeddedContext
+        let prompt = h.last_request("session/prompt");
+        h.reply(&prompt, json!({"stopReason":"end_turn"}));
+        h.app
+            .editor
+            .files
+            .push(dirty_document("a.rs", Some("/w/a.rs".into()), "x"));
+        h.say(AgentKind::Claude, "second");
+        assert!(
+            !h.app
+                .view
+                .agents
+                .session(AgentKind::Claude)
+                .held_prompt
+                .as_ref()
+                .unwrap()
+                .can_attach
+        );
+    }
+
+    #[test]
+    fn oversized_buffers_are_left_out_of_attachments_with_a_note() {
+        let mut h = Harness::new();
+        h.app.view.settings.user.persisted.insert(
+            "agent.unsaved_files".into(),
+            lumen_settings_core::Value::Choice("attach".into()),
+        );
+        h.app
+            .editor
+            .files
+            .push(dirty_document("big.txt", None, &"x".repeat(300 * 1024)));
+        h.app
+            .editor
+            .files
+            .push(dirty_document("small.txt", None, "ok"));
+        h.say(AgentKind::Claude, "hi");
+        h.connect(AgentKind::Claude);
+        let blocks = prompt_blocks(&h);
+        assert_eq!(blocks.len(), 2, "one attachment plus the text");
+        let notices = format!(
+            "{:?}",
+            h.app
+                .view
+                .agents
+                .session(AgentKind::Claude)
+                .conversation
+                .entries
+        );
+        assert!(
+            notices.contains("1 unsaved file(s) were too large"),
+            "{notices}"
+        );
+    }
+
     /// End-to-end through the controller with a real adapter. Set
     /// `LUMEN_ACP_CLAUDE` / `LUMEN_ACP_CODEX` to the adapter command line
     /// (`node /path/to/dist/index.js`) and run
@@ -1403,5 +1871,103 @@ mod tests {
     #[ignore = "needs a logged-in Codex adapter; see live_controller_turn"]
     fn live_codex_controller_turn() {
         live_controller_turn(AgentKind::Codex, "LUMEN_ACP_CODEX");
+    }
+
+    /// Full Phase 3 loop with a real agent: it asks permission to create a file, the
+    /// test approves, and the change review lists the new file and can revert it.
+    /// Needs `LUMEN_ACP_CLAUDE` / `LUMEN_ACP_CODEX` like the other live tests.
+    #[cfg(unix)]
+    fn live_edit_review(kind: AgentKind, variable: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let line = std::env::var(variable).unwrap_or_else(|_| panic!("set {variable}"));
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let wrapper = root
+            .join("..")
+            .join(format!("lumen-live-{}.sh", std::process::id()));
+        std::fs::write(&wrapper, format!("#!/bin/sh\nexec {line} \"$@\"\n")).unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut app = LumenApp::default();
+        app.editor.workspace = Some(root.clone());
+        app.view.settings.user.persisted.insert(
+            format!("agent.{}.command", kind.id()),
+            lumen_settings_core::Value::Text(wrapper.canonicalize().unwrap().display().to_string()),
+        );
+        let ctx = egui::Context::default();
+        app.view.agents.active = kind;
+        app.view.agents.session_mut(kind).draft =
+            "Create a file named notes.txt in the current folder containing exactly: hi from agent. Use no other files.".into();
+        app.execute(Command::SendAgentPrompt, &ctx);
+        let deadline = Instant::now() + Duration::from_secs(180);
+        let mut approved = 0;
+        loop {
+            app.poll_agents(&ctx);
+            // Approve what the agent asks, like a user clicking the first option.
+            let pending = app
+                .view
+                .agents
+                .session(kind)
+                .pending_permissions
+                .first()
+                .cloned();
+            if let Some(pending) = pending {
+                let option = pending.request.options[0].id.clone();
+                app.execute(
+                    Command::AnswerAgentPermission(kind, pending.id, Some(option)),
+                    &ctx,
+                );
+                approved += 1;
+            }
+            let session = app.view.agents.session(kind);
+            if let ConnectionState::Failed(error) | ConnectionState::NotFound(error) =
+                &session.state
+            {
+                panic!("agent failed: {error}");
+            }
+            if !session.running
+                && !session.finishing
+                && !session.preparing
+                && session.changes.is_some()
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out; state {:?}, approved {approved}",
+                session.state
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let notes = root.join("notes.txt");
+        assert_eq!(
+            std::fs::read_to_string(&notes).unwrap().trim(),
+            "hi from agent"
+        );
+        let rows = &app.view.agents.session(kind).changes.as_ref().unwrap().rows;
+        assert!(rows.iter().any(|row| row.change.path == notes), "{rows:?}");
+        app.execute(
+            Command::AgentChanges(
+                kind,
+                crate::app::agent_changes::ChangeAction::Revert(notes.clone()),
+            ),
+            &ctx,
+        );
+        let _ = std::fs::remove_file(&wrapper);
+        // Reverting an added file moves it to the Trash.
+        assert!(!notes.exists(), "the added file was reverted");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "needs a logged-in Claude adapter; moves one temp file to the Trash"]
+    fn live_claude_edit_review() {
+        live_edit_review(AgentKind::Claude, "LUMEN_ACP_CLAUDE");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "needs a logged-in Codex adapter; moves one temp file to the Trash"]
+    fn live_codex_edit_review() {
+        live_edit_review(AgentKind::Codex, "LUMEN_ACP_CODEX");
     }
 }

@@ -71,6 +71,8 @@ impl LumenApp {
             Command::AnswerAgentPermission(kind, id, option) => {
                 self.answer_agent_permission(kind, &id, option.as_deref());
             }
+            Command::AgentChanges(kind, action) => self.apply_change_action(kind, action),
+            Command::ResolveUnsavedFiles(choice) => self.resolve_unsaved_choice(choice, ctx),
             Command::AllowAgentNpx => self.allow_agent_npx(ctx),
             Command::ToggleOutput => {
                 super::output::clear_text_selection(ctx);
