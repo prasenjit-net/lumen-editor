@@ -78,7 +78,8 @@ impl LumenApp {
                             self.editor.next_untitled.max(number.saturating_add(1));
                     }
                     self.editor.files.push(document);
-                    self.editor.active_file = Some(self.editor.files.len() - 1);
+                    self.editor
+                        .set_active_index(Some(self.editor.files.len() - 1));
                     restored += 1;
                 }
                 if restored > 0 {

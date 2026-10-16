@@ -124,7 +124,7 @@ mod tests {
             root.join("src/ui/a.rs"),
             "fn a() {}\n".into(),
         ));
-        app.editor.active_file = Some(0);
+        app.editor.set_active_index(Some(0));
         let ctx = egui::Context::default();
         crate::ui::theme::configure_ui(&ctx);
         Fixture { app, ctx, root }

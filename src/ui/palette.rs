@@ -52,7 +52,7 @@ impl Workbench<'_> {
             ui.separator();
             if ui
                 .add_enabled(
-                    self.editor.active_file.is_some(),
+                    self.editor.active_index().is_some(),
                     egui::Button::new(format!(
                         "{}  Save   {}",
                         icon::FLOPPY_DISK,
@@ -66,7 +66,7 @@ impl Workbench<'_> {
             }
             if ui
                 .add_enabled(
-                    self.editor.active_file.is_some(),
+                    self.editor.active_index().is_some(),
                     egui::Button::new(format!(
                         "{}  Save As…   {}",
                         icon::FLOPPY_DISK,
@@ -81,7 +81,7 @@ impl Workbench<'_> {
             ui.separator();
             if ui
                 .add_enabled(
-                    self.editor.active_file.is_some() || self.view.settings.open,
+                    self.editor.active_index().is_some() || self.view.settings.open,
                     egui::Button::new(format!(
                         "{}  Close Document   {}",
                         icon::X,

@@ -136,7 +136,7 @@ impl LumenApp {
                 self.execute(action, ctx);
             }
             if let Some(menu) = &self.native_menu {
-                let open = self.editor.active_file.is_some();
+                let open = self.editor.active_index().is_some();
                 let text_input =
                     ctx.wants_keyboard_input() || (open && !self.view.explorer_focused);
                 let explorer = self.view.explorer_focused

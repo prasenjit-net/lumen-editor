@@ -30,8 +30,8 @@ pub(crate) fn close_diff_preview(editor: &mut EditorState, view: &mut ViewState)
         view.find.remove(&id);
         editor.close_file(index);
     }
-    if editor.active_file.is_none() && !editor.files.is_empty() {
-        editor.active_file = Some(editor.files.len() - 1);
+    if editor.active_index().is_none() && !editor.files.is_empty() {
+        editor.set_active_index(Some(editor.files.len() - 1));
     }
 }
 
@@ -550,7 +550,7 @@ impl LumenApp {
             active: true,
         });
         if side == DiffSide::Staged {
-            self.editor.active_file = None;
+            self.editor.set_active_index(None);
         }
         self.view.source_control.loading = false;
     }

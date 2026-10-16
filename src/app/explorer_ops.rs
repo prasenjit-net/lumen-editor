@@ -159,7 +159,7 @@ impl LumenApp {
                             .push(Document::from_path(target.clone(), String::new()));
                         self.editor.files.len() - 1
                     });
-                self.editor.active_file = Some(index);
+                self.editor.set_active_index(Some(index));
                 self.view.focus_editor = true;
                 self.view.explorer_focused = false;
             }

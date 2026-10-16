@@ -55,7 +55,7 @@ impl LumenApp {
     }
 
     pub(super) fn apply_formatting_response(&mut self, message: &serde_json::Value) {
-        let Some(index) = self.editor.active_file else {
+        let Some(index) = self.editor.active_index() else {
             return;
         };
         let document = &mut self.editor.files[index];

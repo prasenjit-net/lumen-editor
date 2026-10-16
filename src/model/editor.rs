@@ -1,8 +1,11 @@
-use super::Document;
+use super::{Document, DocumentId};
 use std::path::PathBuf;
 pub(crate) struct EditorState {
     pub(crate) files: Vec<Document>,
-    pub(crate) active_file: Option<usize>,
+    /// Index into `files`. Private on purpose: callers ask for the active
+    /// document through the accessors below, so what "active" means can change
+    /// (for example with several editor groups) without touching every caller.
+    active_file: Option<usize>,
     pub(crate) workspace: Option<PathBuf>,
     pub(crate) next_untitled: usize,
 }
@@ -17,23 +20,66 @@ impl Default for EditorState {
     }
 }
 impl EditorState {
+    #[cfg(test)]
+    pub(crate) fn with_workspace(workspace: PathBuf) -> Self {
+        Self {
+            workspace: Some(workspace),
+            ..Self::default()
+        }
+    }
     pub(crate) fn active(&self) -> Option<&Document> {
         self.active_file.and_then(|index| self.files.get(index))
+    }
+    pub(crate) fn active_index(&self) -> Option<usize> {
+        self.active_file.filter(|index| *index < self.files.len())
+    }
+    pub(crate) fn active_id(&self) -> Option<DocumentId> {
+        self.active().map(|document| document.id)
+    }
+    pub(crate) fn index_of(&self, id: DocumentId) -> Option<usize> {
+        self.files.iter().position(|document| document.id == id)
+    }
+    /// Make `id` the active document; false (and no change) if it is not open.
+    pub(crate) fn activate(&mut self, id: DocumentId) -> bool {
+        match self.index_of(id) {
+            Some(index) => {
+                self.active_file = Some(index);
+                true
+            }
+            None => false,
+        }
+    }
+    /// Set the active tab by position. An index past the end clears the active
+    /// document instead of pointing at nothing.
+    pub(crate) fn set_active_index(&mut self, index: Option<usize>) {
+        self.active_file = index.filter(|index| *index < self.files.len());
     }
     pub(crate) fn new_file(&mut self) {
         self.files.push(Document::untitled(self.next_untitled));
         self.next_untitled += 1;
         self.active_file = Some(self.files.len() - 1);
     }
+    /// Close the document at `index`. Closing the active one activates its
+    /// neighbour; closing any other tab keeps the *same document* active.
     pub(crate) fn close_file(&mut self, index: usize) {
         if index >= self.files.len() {
             return;
         }
+        let keep_active = self
+            .active_file
+            .filter(|active| *active != index)
+            .and_then(|_| self.active_id());
         self.files.remove(index);
-        self.active_file = match self.files.len() {
-            0 => None,
-            count => Some(index.min(count - 1)),
+        self.active_file = match (keep_active, self.files.len()) {
+            (_, 0) => None,
+            (Some(id), _) => self.index_of(id),
+            (None, count) => Some(index.min(count - 1)),
         };
+    }
+    pub(crate) fn close_document(&mut self, id: DocumentId) {
+        if let Some(index) = self.index_of(id) {
+            self.close_file(index);
+        }
     }
     pub(crate) fn has_unsaved_changes(&self) -> bool {
         self.files.iter().any(|file| file.dirty)
@@ -63,5 +109,84 @@ impl EditorState {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn editor(count: usize) -> EditorState {
+        let mut editor = EditorState::default();
+        for _ in 0..count {
+            editor.new_file();
+        }
+        editor
+    }
+
+    fn ids(editor: &EditorState) -> Vec<DocumentId> {
+        editor.files.iter().map(|file| file.id).collect()
+    }
+
+    #[test]
+    fn closing_another_tab_keeps_the_same_document_active() {
+        for closed in [0, 1, 3] {
+            let mut editor = editor(4);
+            editor.set_active_index(Some(2));
+            let active = editor.active_id();
+            let victim = editor.files[closed].id;
+            editor.close_document(victim);
+            assert_eq!(editor.active_id(), active, "closing tab {closed}");
+            assert_eq!(editor.files.len(), 3);
+        }
+    }
+
+    #[test]
+    fn closing_the_active_tab_activates_its_neighbour() {
+        let mut editor = editor(3);
+        let ids = ids(&editor);
+        editor.activate(ids[1]);
+        editor.close_document(ids[1]);
+        assert_eq!(editor.active_id(), Some(ids[2]));
+        editor.close_document(ids[2]);
+        assert_eq!(
+            editor.active_id(),
+            Some(ids[0]),
+            "falls back to the last tab"
+        );
+        editor.close_document(ids[0]);
+        assert_eq!(editor.active_id(), None);
+        assert_eq!(editor.active_index(), None);
+    }
+
+    #[test]
+    fn activation_and_lookup_use_identity_not_position() {
+        let mut editor = editor(3);
+        let ids = ids(&editor);
+        assert!(editor.activate(ids[0]));
+        // Shuffling tabs (as reordering will) leaves identity intact.
+        editor.files.swap(0, 2);
+        assert_eq!(editor.index_of(ids[0]), Some(2));
+        editor.set_active_index(editor.index_of(ids[0]));
+        assert_eq!(editor.active_id(), Some(ids[0]));
+        let mut other = EditorState::default();
+        other.new_file();
+        let stranger = other.files[0].id;
+        assert!(!editor.activate(stranger));
+        assert_eq!(
+            editor.active_id(),
+            Some(ids[0]),
+            "unknown id changes nothing"
+        );
+        editor.close_document(stranger);
+        assert_eq!(editor.files.len(), 3, "closing an unknown id is a no-op");
+    }
+
+    #[test]
+    fn an_out_of_range_active_index_clears_instead_of_dangling() {
+        let mut editor = editor(2);
+        editor.set_active_index(Some(5));
+        assert_eq!(editor.active_index(), None);
+        assert!(editor.active().is_none());
     }
 }

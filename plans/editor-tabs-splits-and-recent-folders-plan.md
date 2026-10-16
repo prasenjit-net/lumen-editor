@@ -63,6 +63,22 @@ Reordering and splitting both break any code that treats a tab index as identity
 **Acceptance:** all existing tests pass unchanged in behavior; new tests prove closing a
 non-active tab keeps the active tab, and a pending close survives a reorder.
 
+**Status: done (branch `f-tab-identity`).**
+- `pending_close` is an `Option<DocumentId>`; `RequestClose`, `CloseFile` and `SaveAndClose`
+  carry a `DocumentId`; the unsaved-changes dialog looks the document up by ID and drops the
+  prompt if it disappeared. `tab_close.rs` and the tab menu use IDs too.
+- `EditorState` gained `active_index()`, `active_id()`, `index_of()`, `activate()`,
+  `set_active_index()` and `close_document()`; `active_file` is now private and every caller
+  (about 80 sites, including tests) goes through the accessors, so Phase 3 can redefine
+  "active" in one place. `close_file` keeps the same *document* active when another tab
+  closes, so the workaround in `tab_close.rs` was removed.
+- **Behavior fix found on the way:** "Save" in the unsaved-changes prompt used to save the
+  *active* buffer even when the prompt was about a different tab (closing a non-active dirty
+  tab with its X). It now activates the prompted document and saves that one; if the save is
+  cancelled or fails the document stays open and active. Regression tests cover it.
+- Not changed: tab selection and strip drawing still work with visible-file indexes inside a
+  single frame (they are recomputed every frame, so they cannot go stale across frames).
+
 ## Phase 1 - Complete the tab commands (S-M)
 
 Missing from today's menu and keyboard story:

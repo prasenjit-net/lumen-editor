@@ -156,7 +156,7 @@ impl Workbench<'_> {
             Some(visible_files.len())
         } else {
             self.editor
-                .active_file
+                .active_index()
                 .and_then(|index| visible_files.iter().position(|visible| *visible == index))
         };
         let sizing = TabSizing::new(ui.available_width(), &natural, active_index);
@@ -221,7 +221,6 @@ impl Workbench<'_> {
                                         tab_menu(
                                             ui,
                                             TabMenuTarget {
-                                                index: file_index,
                                                 id: file.id,
                                                 path: file.path.as_deref(),
                                                 position: tab_index,
@@ -235,7 +234,7 @@ impl Workbench<'_> {
                                         select = Some(file_index);
                                     }
                                     if response.close {
-                                        close = Some(file_index);
+                                        close = Some(file.id);
                                     }
                                     if selected && reveal {
                                         ui.scroll_to_rect(response.rect, None);
@@ -360,11 +359,11 @@ impl Workbench<'_> {
             if let Some(diff) = &mut self.view.source_control.diff {
                 diff.active = false;
             }
-            self.editor.active_file = Some(index);
+            self.editor.set_active_index(Some(index));
             self.view.focus_editor = true;
         }
-        if let Some(index) = close {
-            self.command(Command::RequestClose(index));
+        if let Some(id) = close {
+            self.command(Command::RequestClose(id));
         }
         if let Some(command) = menu_command {
             self.command(command);
@@ -376,9 +375,10 @@ impl Workbench<'_> {
             if let Some(diff) = &mut self.view.source_control.diff {
                 diff.active = true;
                 self.view.focus_editor = diff.document.is_some();
-                self.editor.active_file = diff
-                    .document
-                    .and_then(|id| self.editor.files.iter().position(|file| file.id == id));
+                self.editor.set_active_index(
+                    diff.document
+                        .and_then(|id| self.editor.files.iter().position(|file| file.id == id)),
+                );
             }
         }
         if close_settings {
@@ -392,7 +392,6 @@ impl Workbench<'_> {
 }
 
 struct TabMenuTarget<'a> {
-    index: usize,
     id: DocumentId,
     path: Option<&'a Path>,
     /// Position among the visible tabs, and how many there are.
@@ -421,7 +420,7 @@ fn tab_menu(
             ui.close();
         }
     };
-    item(ui, "Close", true, "", Command::RequestClose(target.index));
+    item(ui, "Close", true, "", Command::RequestClose(target.id));
     item(
         ui,
         "Close Others",

@@ -143,10 +143,10 @@ pub(crate) enum Command {
     OpenPath(PathBuf),
     /// Show a workspace file or folder in the Explorer sidebar.
     RevealInExplorer(PathBuf),
-    RequestClose(usize),
+    RequestClose(DocumentId),
     CloseTabs(crate::app::tab_close::TabCloseScope),
-    CloseFile(usize),
-    SaveAndClose(usize),
+    CloseFile(DocumentId),
+    SaveAndClose(DocumentId),
     SaveAllAndQuit,
     DiscardAndQuit,
 }
@@ -203,26 +203,29 @@ impl Command {
                     view.status = "New untitled file".into();
                 }
             }
-            Self::RequestClose(index) => {
-                if editor.files.get(index).is_some_and(|file| file.dirty) {
-                    view.pending_close = Some(index);
+            Self::RequestClose(id) => {
+                if editor
+                    .index_of(id)
+                    .is_some_and(|index| editor.files[index].dirty)
+                {
+                    view.pending_close = Some(id);
                 } else {
-                    Self::CloseFile(index).apply_local(editor, view);
+                    Self::CloseFile(id).apply_local(editor, view);
                 }
             }
-            Self::CloseFile(index) => {
-                if index < editor.files.len() {
+            Self::CloseFile(id) => {
+                if editor.index_of(id).is_some() {
                     if view
                         .source_control
                         .diff
                         .as_ref()
                         .and_then(|diff| diff.document)
-                        == Some(editor.files[index].id)
+                        == Some(id)
                     {
                         view.source_control.diff = None;
                     }
-                    view.find.remove(&editor.files[index].id);
-                    editor.close_file(index);
+                    view.find.remove(&id);
+                    editor.close_document(id);
                     view.status = "Closed file".into();
                 }
             }

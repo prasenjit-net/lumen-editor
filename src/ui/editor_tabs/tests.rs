@@ -12,7 +12,7 @@ fn fixture(count: usize) -> (LumenApp, egui::Context) {
             "untouched".into(),
         ));
     }
-    app.editor.active_file = count.checked_sub(1);
+    app.editor.set_active_index(count.checked_sub(1));
     let ctx = egui::Context::default();
     crate::ui::theme::configure_ui(&ctx);
     (app, ctx)
@@ -146,7 +146,7 @@ fn dropdown_opens_hidden_editor_and_new_file_button_keeps_its_behavior() {
         })
         .expect("hidden editor is available in dropdown");
     click(&mut app, &ctx, 300.0, position);
-    assert_eq!(app.editor.active_file, Some(0));
+    assert_eq!(app.editor.active_index(), Some(0));
     for _ in 0..3 {
         frame(&mut app, &ctx, 300.0, vec![]);
     }
@@ -176,7 +176,7 @@ fn settings_is_revealed_in_overflow_and_dirty_markers_keep_close_confirmation() 
     app.execute(Command::CloseEditor, &ctx);
     app.editor.files[0].name = "a_very_long_filename_that_must_not_expand_the_editor_tab.rs".into();
     app.editor.files[0].dirty = true;
-    app.editor.active_file = Some(0);
+    app.editor.set_active_index(Some(0));
     for _ in 0..3 {
         frame(&mut app, &ctx, 300.0, vec![]);
     }
@@ -184,7 +184,7 @@ fn settings_is_revealed_in_overflow_and_dirty_markers_keep_close_confirmation() 
     let dirty = label_rect(&output, "●");
     assert!(dirty.left() >= 0.0 && dirty.right() <= 248.0);
     click(&mut app, &ctx, 300.0, dirty.center());
-    assert_eq!(app.view.pending_close, Some(0));
+    assert_eq!(app.view.pending_close, Some(app.editor.files[0].id));
     assert_eq!(app.editor.files.len(), 30);
     assert!(app.editor.files[0].dirty);
     assert_eq!(app.editor.files[0].text, "untouched");
@@ -293,7 +293,11 @@ fn right_click_opens_a_tab_menu_without_activating_the_tab_or_changing_content()
     ] {
         label_rect(&output, entry);
     }
-    assert_eq!(app.editor.active_file, Some(2), "menu must not switch tabs");
+    assert_eq!(
+        app.editor.active_index(),
+        Some(2),
+        "menu must not switch tabs"
+    );
     assert_eq!(app.editor.files[0].text, "untouched");
     assert_eq!(app.editor.files.len(), 3);
 }
@@ -319,7 +323,11 @@ fn close_others_from_the_menu_prompts_for_a_dirty_tab_and_keeps_its_text() {
     let others = label_rect(&output, "Close Others");
     click(&mut app, &ctx, 900.0, others.center());
     app.advance_bulk_close();
-    assert_eq!(app.view.pending_close, Some(0), "dirty tab is not dropped");
+    assert_eq!(
+        app.view.pending_close,
+        Some(app.editor.files[0].id),
+        "dirty tab is not dropped"
+    );
     assert_eq!(app.editor.files[0].text, "precious");
     assert_eq!(app.editor.files.len(), 2, "the clean other tab closed");
 }
@@ -340,7 +348,7 @@ fn middle_click_closes_a_clean_tab_and_prompts_for_a_dirty_one() {
         dirty.center(),
         egui::PointerButton::Middle,
     );
-    assert_eq!(app.view.pending_close, Some(1));
+    assert_eq!(app.view.pending_close, Some(app.editor.files[1].id));
     app.view.pending_close = None;
     let clean = label_rect(&output, "file_0.rs");
     button(

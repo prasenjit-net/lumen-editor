@@ -208,8 +208,8 @@ impl LumenApp {
             Command::SaveConflictAs(document) => self.save_conflict_as(document),
             Command::ReviewDiskChange(document) => self.review_disk_change(document),
             Command::DismissConflict => self.view.save_conflict = None,
-            Command::RequestClose(index) => self.request_close(index),
-            Command::CloseFile(index) => self.close_file(index),
+            Command::RequestClose(id) => self.request_close(id),
+            Command::CloseFile(id) => self.close_file(id),
             Command::CloseTabs(scope) => self.begin_bulk_close(scope),
             Command::CloseEditor => {
                 if self.view.settings.open {
@@ -227,8 +227,8 @@ impl LumenApp {
                     super::source_control::close_diff_preview(&mut self.editor, &mut self.view);
                     return;
                 }
-                if let Some(index) = self.editor.active_file {
-                    self.request_close(index);
+                if let Some(id) = self.editor.active_id() {
+                    self.request_close(id);
                 }
             }
             Command::Quit => self.request_quit(ctx),
@@ -273,26 +273,34 @@ impl LumenApp {
             Command::Undo => super::editor_action::EditorAction::Undo.send(ctx),
             Command::Redo => super::editor_action::EditorAction::Redo.send(ctx),
             Command::SelectAll => super::editor_action::EditorAction::SelectAll.send(ctx),
-            Command::SaveAndClose(index) => {
-                // Preserve the current dialog's active-buffer save semantics.
-                self.save_active();
+            Command::SaveAndClose(id) => {
                 self.view.pending_close = None;
-                if self.editor.files.get(index).is_some_and(|file| !file.dirty) {
-                    self.close_file(index);
+                // Save the document the prompt is about, not whichever tab
+                // happens to be active. It stays active if the save is cancelled
+                // or fails, so the user lands on the file that is still unsaved.
+                if self.editor.activate(id) {
+                    self.save_active();
+                    if self
+                        .editor
+                        .index_of(id)
+                        .is_some_and(|index| !self.editor.files[index].dirty)
+                    {
+                        self.close_file(id);
+                    }
                 }
             }
             Command::SaveAllAndQuit => {
-                let active = self.editor.active_file;
+                let active = self.editor.active_index();
                 for index in 0..self.editor.files.len() {
                     if self.editor.files[index].dirty {
-                        self.editor.active_file = Some(index);
+                        self.editor.set_active_index(Some(index));
                         self.save_active();
                         if self.editor.files[index].dirty {
                             break;
                         }
                     }
                 }
-                self.editor.active_file = active;
+                self.editor.set_active_index(active);
                 if !self.editor.has_unsaved_changes() {
                     self.finish_quit(ctx);
                 }

@@ -32,7 +32,7 @@ impl Workbench<'_> {
                         self.source_diff_editor(ui);
                         return;
                     }
-                    let Some(index) = self.editor.active_file else {
+                    let Some(index) = self.editor.active_index() else {
                         ui.vertical_centered(|ui| {
                             ui.add_space(130.0);
                             ui.label(

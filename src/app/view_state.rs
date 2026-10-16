@@ -362,7 +362,9 @@ pub(crate) struct ViewState {
     pub(crate) status: String,
     pub(crate) safety_notices: Vec<String>,
     pub(crate) safety_details_open: bool,
-    pub(crate) pending_close: Option<usize>,
+    /// Document waiting on the unsaved-changes prompt. A stable ID, so reordering
+    /// or closing other tabs cannot retarget the prompt.
+    pub(crate) pending_close: Option<crate::model::DocumentId>,
     pub(crate) bulk_close: crate::app::tab_close::BulkClose,
     pub(crate) window_title: String,
     pub(crate) pending_quit: bool,

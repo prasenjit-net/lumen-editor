@@ -103,7 +103,7 @@ fn tabs_keep_independent_text_cursor_and_undo_state() {
     assert_eq!(app.editor.files[0].text, "alpha");
     assert_eq!(app.editor.files[1].text, "");
 
-    app.editor.active_file = Some(0);
+    app.editor.set_active_index(Some(0));
     app.view.focus_editor = true;
     editor_frame(&mut app, &ctx, vec![]);
     let state = egui::text_edit::TextEditState::load(&ctx, text_id(first)).unwrap();
@@ -147,7 +147,7 @@ fn document_identity_survives_rename_and_tab_index_changes() {
     let second = app.editor.files[1].id;
     app.editor.files[1].relocate("renamed.rs".into());
     assert_eq!(app.editor.files[1].id, second);
-    app.close_file(0);
+    app.close_file(app.editor.files[0].id);
     assert_eq!(app.editor.files[0].id, second);
     app.new_file();
     assert_ne!(app.editor.files[1].id, second);
@@ -189,7 +189,7 @@ fn clicking_a_tab_transfers_keyboard_input_to_its_document() {
             ],
         );
     }
-    assert_eq!(app.editor.active_file, Some(0));
+    assert_eq!(app.editor.active_index(), Some(0));
     editor_frame(&mut app, &ctx, vec![egui::Event::Text("first".into())]);
     assert_eq!(app.editor.files[0].text, "first");
     assert_eq!(app.editor.files[1].text, "");
@@ -249,9 +249,9 @@ fn queued_editor_action_cannot_edit_a_different_tab_or_modal() {
     assert_eq!(app.editor.files[0].text, "keep");
     assert_eq!(app.editor.files[1].text, "");
     assert!(app.view.pending_editor_action.is_none());
-    app.editor.active_file = Some(0);
+    app.editor.set_active_index(Some(0));
     app.execute(Command::EditorAction(document, EditorAction::Cut), &ctx);
-    app.view.pending_close = Some(0);
+    app.view.pending_close = Some(app.editor.files[0].id);
     editor_frame(&mut app, &ctx, vec![]);
     assert_eq!(app.editor.files[0].text, "keep");
 }

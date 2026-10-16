@@ -60,8 +60,8 @@ pub(crate) fn run() -> eframe::Result<()> {
                 #[cfg(target_os = "windows")]
                 menu.attach(cc)?;
                 menu.set_context(
-                    app.editor.active_file.is_some(),
-                    app.editor.active_file.is_some(),
+                    app.editor.active_index().is_some(),
+                    app.editor.active_index().is_some(),
                     false,
                     false,
                     false,

@@ -95,7 +95,7 @@ impl LumenApp {
             .iter()
             .position(|file| file.path.as_deref() == Some(path.as_path()))
         {
-            self.editor.active_file = Some(index);
+            self.editor.set_active_index(Some(index));
             self.remember_recent_file(&path);
             return;
         }
@@ -104,7 +104,8 @@ impl LumenApp {
                 self.editor
                     .files
                     .push(Document::from_path(path.clone(), text));
-                self.editor.active_file = Some(self.editor.files.len() - 1);
+                self.editor
+                    .set_active_index(Some(self.editor.files.len() - 1));
                 self.remember_recent_file(&path);
                 self.view.status = "File opened".into();
             }
@@ -315,7 +316,7 @@ impl LumenApp {
     }
 
     pub(crate) fn save_active(&mut self) {
-        let Some(index) = self.editor.active_file else {
+        let Some(index) = self.editor.active_index() else {
             return;
         };
         if let Some(path) = self.editor.files[index].path.clone() {
@@ -326,7 +327,7 @@ impl LumenApp {
     }
 
     pub(crate) fn save_as_active(&mut self) {
-        let Some(index) = self.editor.active_file else {
+        let Some(index) = self.editor.active_index() else {
             return;
         };
         if let Some(path) = self.dialogs.save_as(&self.editor.files[index].name) {
@@ -334,11 +335,11 @@ impl LumenApp {
         }
     }
 
-    pub(crate) fn request_close(&mut self, index: usize) {
-        Command::RequestClose(index).apply_local(&mut self.editor, &mut self.view);
+    pub(crate) fn request_close(&mut self, id: crate::model::DocumentId) {
+        Command::RequestClose(id).apply_local(&mut self.editor, &mut self.view);
     }
 
-    pub(crate) fn close_file(&mut self, index: usize) {
-        Command::CloseFile(index).apply_local(&mut self.editor, &mut self.view);
+    pub(crate) fn close_file(&mut self, id: crate::model::DocumentId) {
+        Command::CloseFile(id).apply_local(&mut self.editor, &mut self.view);
     }
 }
