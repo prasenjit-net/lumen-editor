@@ -100,8 +100,11 @@ impl Workbench<'_> {
                         });
                     }
                     self.editor_find_bar(ui, document_id);
+                    #[cfg(not(feature = "shared-editor"))]
                     let hover_position = ui.cursor().min + egui::vec2(56.0, 22.0);
                     self.editor_viewport(ui, index);
+                    // The shared editor anchors hover to the caret in its own popups.
+                    #[cfg(not(feature = "shared-editor"))]
                     if let Some(hover) = self.view.language_hover.clone() {
                         egui::Area::new(egui::Id::new("language_server_hover"))
                             .order(egui::Order::Foreground)

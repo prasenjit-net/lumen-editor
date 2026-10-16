@@ -350,6 +350,9 @@ pub(crate) struct ViewState {
     pub(crate) language_server_summary: Option<LanguageServerSummary>,
     pub(crate) language_server_details_open: bool,
     pub(crate) language_hover: Option<String>,
+    /// Document and caret byte the hover was requested at; it follows that spot
+    /// and disappears when the caret moves away.
+    pub(crate) language_hover_anchor: Option<(crate::model::DocumentId, usize)>,
     pub(crate) language_navigation: LanguageNavigationView,
     pub(crate) language_server_diagnostics: std::collections::HashMap<
         crate::model::DocumentId,
@@ -433,6 +436,7 @@ impl Default for ViewState {
             language_server_summary: None,
             language_server_details_open: false,
             language_hover: None,
+            language_hover_anchor: None,
             language_navigation: Default::default(),
             language_server_diagnostics: std::collections::HashMap::new(),
             sidebar_visible: true,

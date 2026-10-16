@@ -1270,6 +1270,18 @@ impl LumenApp {
             LanguageRequestKind::Hover => {
                 match lumen_language_services::incoming::parse_hover_response(message) {
                     Ok(Some(hover)) => {
+                        // Only show it if the caret is still where it was asked.
+                        #[cfg(feature = "shared-editor")]
+                        {
+                            let anchor = self
+                                .caret_is_still_at(request.caret)
+                                .zip(self.editor.active().map(|document| document.id));
+                            let Some((byte, document)) = anchor else {
+                                self.view.status = "Hover discarded: the caret moved".into();
+                                return true;
+                            };
+                            self.view.language_hover_anchor = Some((document, byte));
+                        }
                         self.view.language_hover = Some(hover.text);
                         self.view.status = "Hover ready".into();
                     }
@@ -2127,6 +2139,7 @@ mod tests {
         ServerEvent::Message(serde_json::json!({
             "jsonrpc":"2.0", "id":0, "result":{"capabilities":{
                 "textDocumentSync":{"openClose":true,"change":1,"save":{"includeText":true}},
+                "hoverProvider":true,
                 "completionProvider":{"triggerCharacters":["."]},
                 "signatureHelpProvider":{"triggerCharacters":["("]}
             }}
@@ -2211,6 +2224,45 @@ mod tests {
         app.request_language_signature_help();
         assert!(request_ids(&messages, "textDocument/completion").is_empty());
         assert!(request_ids(&messages, "textDocument/signatureHelp").is_empty());
+    }
+
+    #[cfg(feature = "shared-editor")]
+    #[test]
+    fn hover_reply_is_anchored_to_the_requested_caret_and_dropped_if_it_moved() {
+        let (mut app, messages, events) = completion_app("let value = 1;", 5);
+        let ctx = eframe::egui::Context::default();
+        let reply = |id: u64| {
+            ServerEvent::Message(serde_json::json!({
+                "jsonrpc":"2.0","id":id,"result":{"contents":"let value: i32"}
+            }))
+        };
+        app.request_language_hover();
+        let id = request_ids(&messages, "textDocument/hover")[0];
+        events.lock().unwrap().push(reply(id));
+        app.poll_language_server(&ctx);
+        assert_eq!(app.view.language_hover.as_deref(), Some("let value: i32"));
+        assert_eq!(
+            app.view.language_hover_anchor,
+            Some((app.editor.files[0].id, 5))
+        );
+
+        app.view.language_hover = None;
+        app.view.language_hover_anchor = None;
+        app.request_language_hover();
+        let id = request_ids(&messages, "textDocument/hover")[1];
+        app.editor.files[0]
+            .editing
+            .as_mut()
+            .unwrap()
+            .set_selections(vec![lumen_editor_core::Selection::caret(9)], 0)
+            .unwrap();
+        events.lock().unwrap().push(reply(id));
+        app.poll_language_server(&ctx);
+        assert!(app.view.language_hover.is_none(), "stale hover is dropped");
+        assert!(app.view.language_hover_anchor.is_none());
+        // The caret was only read, never moved, by the hover machinery.
+        let selections = app.editor.files[0].editing.as_ref().unwrap().selections();
+        assert_eq!(selections.selections()[selections.primary_index()].head, 9);
     }
 
     #[cfg(feature = "shared-editor")]

@@ -21,6 +21,8 @@ mod language_navigation;
 mod navigation;
 mod output;
 mod palette;
+#[cfg(feature = "shared-editor")]
+mod popup_place;
 mod problems;
 mod settings;
 pub(crate) mod shortcut;
