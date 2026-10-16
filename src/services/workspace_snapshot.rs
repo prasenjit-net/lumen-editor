@@ -241,7 +241,12 @@ mod tests {
                 format!(
                     "{:?} {}",
                     change.kind,
-                    change.path.strip_prefix(root).unwrap().display()
+                    change
+                        .path
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/")
                 )
             })
             .collect()
@@ -330,7 +335,12 @@ mod tests {
         let names: Vec<_> = snapshot
             .entries
             .keys()
-            .map(|path| path.strip_prefix(root).unwrap().display().to_string())
+            .map(|path| {
+                path.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
             .collect();
         assert_eq!(names, [".env", ".gitignore", "src/main.rs"]);
     }
