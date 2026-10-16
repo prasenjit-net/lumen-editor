@@ -22,6 +22,9 @@ use std::{
 
 const MAX_LSP_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SERVER_STDERR_BYTES: usize = 8 * 1024;
+/// Reserved positive i32 ID, compatible with servers that use `lsp_server::RequestId`.
+pub(crate) const SHUTDOWN_REQUEST_ID: u64 = i32::MAX as u64;
+pub(crate) type ServerWake = Arc<dyn Fn() + Send + Sync>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ServerAvailability {
@@ -32,6 +35,22 @@ pub(crate) enum ServerAvailability {
 
 pub(crate) trait LanguageServerService: Send + Sync {
     fn availability(&self, language: &LanguageDescriptor) -> ServerAvailability;
+
+    fn start(
+        &self,
+        executable: &Path,
+        workspace: &Path,
+        wake: ServerWake,
+    ) -> Result<Box<dyn LanguageServerConnection>, String>;
+}
+
+pub(crate) trait LanguageServerConnection: Send {
+    fn send(&mut self, message: &Value) -> Result<(), String>;
+    fn drain_events(&self) -> Vec<ServerEvent>;
+    fn exit_reason(&mut self) -> Result<Option<String>, String>;
+    fn output_closed_reason(&mut self) -> String;
+    fn begin_shutdown(&mut self) -> Result<(), String>;
+    fn finish_shutdown(&mut self);
 }
 
 /// Events leave the service on a channel so an LSP reader never blocks an
@@ -55,7 +74,11 @@ pub(crate) struct ServerProcess {
 }
 
 impl ServerProcess {
-    pub(crate) fn start(executable: &Path, workspace: &Path) -> Result<Self, String> {
+    pub(crate) fn start(
+        executable: &Path,
+        workspace: &Path,
+        wake: ServerWake,
+    ) -> Result<Self, String> {
         let mut child = Command::new(executable)
             .current_dir(workspace)
             .stdin(Stdio::piped())
@@ -79,7 +102,7 @@ impl ServerProcess {
         let stderr_reader = Arc::clone(&stderr);
         thread::spawn(move || read_server_stderr(error_output, stderr_reader));
         let (sender, events) = mpsc::channel();
-        thread::spawn(move || read_server_output(output, sender));
+        thread::spawn(move || read_server_output(output, sender, wake));
         Ok(Self {
             child,
             input,
@@ -136,6 +159,16 @@ impl ServerProcess {
         }
     }
 
+    pub(crate) fn begin_shutdown(&mut self) -> Result<(), String> {
+        self.send(&lumen_language_services::lsp::shutdown_request(
+            SHUTDOWN_REQUEST_ID,
+        ))
+    }
+
+    pub(crate) fn finish_shutdown(&mut self) {
+        let _ = self.send(&lumen_language_services::lsp::exit_notification());
+    }
+
     fn stderr_text(&self) -> String {
         self.stderr
             .lock()
@@ -150,7 +183,33 @@ impl Drop for ServerProcess {
     }
 }
 
-fn read_server_output(mut output: impl Read, sender: Sender<ServerEvent>) {
+impl LanguageServerConnection for ServerProcess {
+    fn send(&mut self, message: &Value) -> Result<(), String> {
+        Self::send(self, message)
+    }
+
+    fn drain_events(&self) -> Vec<ServerEvent> {
+        Self::drain_events(self)
+    }
+
+    fn exit_reason(&mut self) -> Result<Option<String>, String> {
+        Self::exit_reason(self)
+    }
+
+    fn output_closed_reason(&mut self) -> String {
+        Self::output_closed_reason(self)
+    }
+
+    fn begin_shutdown(&mut self) -> Result<(), String> {
+        Self::begin_shutdown(self)
+    }
+
+    fn finish_shutdown(&mut self) {
+        Self::finish_shutdown(self);
+    }
+}
+
+fn read_server_output(mut output: impl Read, sender: Sender<ServerEvent>, wake: ServerWake) {
     let mut decoder = ContentLengthDecoder::new(MAX_LSP_MESSAGE_BYTES);
     let mut buffer = [0; 4096];
     loop {
@@ -161,6 +220,7 @@ fn read_server_output(mut output: impl Read, sender: Sender<ServerEvent>) {
                 let _ = sender.send(ServerEvent::ProtocolError(format!(
                     "Could not read language-server output: {error}"
                 )));
+                wake();
                 return;
             }
             Ok(count) => count,
@@ -169,6 +229,7 @@ fn read_server_output(mut output: impl Read, sender: Sender<ServerEvent>) {
             Ok(payloads) => payloads,
             Err(error) => {
                 let _ = sender.send(ServerEvent::ProtocolError(error.to_string()));
+                wake();
                 return;
             }
         };
@@ -178,17 +239,20 @@ fn read_server_output(mut output: impl Read, sender: Sender<ServerEvent>) {
                     if sender.send(ServerEvent::Message(message)).is_err() {
                         return;
                     }
+                    wake();
                 }
                 Err(error) => {
                     let _ = sender.send(ServerEvent::ProtocolError(format!(
                         "Invalid language-server JSON: {error}"
                     )));
+                    wake();
                     return;
                 }
             }
         }
     }
     let _ = sender.send(ServerEvent::Exited);
+    wake();
 }
 
 fn read_server_stderr(mut output: impl Read, retained: Arc<Mutex<Vec<u8>>>) {
@@ -220,6 +284,16 @@ impl LanguageServerService for LocalLanguageServer {
             return ServerAvailability::NotSupported;
         };
         discover(server, env::var_os("PATH").as_deref())
+    }
+
+    fn start(
+        &self,
+        executable: &Path,
+        workspace: &Path,
+        wake: ServerWake,
+    ) -> Result<Box<dyn LanguageServerConnection>, String> {
+        ServerProcess::start(executable, workspace, wake)
+            .map(|process| Box::new(process) as Box<dyn LanguageServerConnection>)
     }
 }
 
@@ -253,6 +327,7 @@ mod tests {
     use super::*;
     use lumen_language_services::LanguageRegistry;
     use std::io;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct InterruptedOnce {
         interrupted: bool,
@@ -305,14 +380,18 @@ mod tests {
         let message = serde_json::json!({"jsonrpc": "2.0", "method": "ready"});
         let framed = encode_message(&message).unwrap();
         let (sender, receiver) = mpsc::channel();
-        read_server_output(std::io::Cursor::new(framed), sender);
+        read_server_output(std::io::Cursor::new(framed), sender, Arc::new(|| {}));
         assert_eq!(
             receiver.try_iter().collect::<Vec<_>>(),
             vec![ServerEvent::Message(message), ServerEvent::Exited]
         );
 
         let (sender, receiver) = mpsc::channel();
-        read_server_output(std::io::Cursor::new(b"Content-Length: 1\r\n\r\nx"), sender);
+        read_server_output(
+            std::io::Cursor::new(b"Content-Length: 1\r\n\r\nx"),
+            sender,
+            Arc::new(|| {}),
+        );
         assert!(matches!(
             receiver.try_iter().next(),
             Some(ServerEvent::ProtocolError(_))
@@ -329,11 +408,28 @@ mod tests {
         };
         let (sender, receiver) = mpsc::channel();
 
-        read_server_output(input, sender);
+        read_server_output(input, sender, Arc::new(|| {}));
 
         assert_eq!(
             receiver.try_iter().collect::<Vec<_>>(),
             vec![ServerEvent::Message(message), ServerEvent::Exited]
         );
+    }
+
+    #[test]
+    fn stdio_reader_wakes_the_ui_for_messages_and_exit() {
+        let message = serde_json::json!({"jsonrpc": "2.0", "method": "ready"});
+        let framed = encode_message(&message).unwrap();
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let wake_count = Arc::clone(&wakes);
+        let (sender, _receiver) = mpsc::channel();
+        read_server_output(
+            std::io::Cursor::new(framed),
+            sender,
+            Arc::new(move || {
+                wake_count.fetch_add(1, Ordering::Relaxed);
+            }),
+        );
+        assert_eq!(wakes.load(Ordering::Relaxed), 2);
     }
 }

@@ -143,6 +143,21 @@ impl Workbench<'_> {
                         {
                             self.command(Command::ToggleTerminal);
                         }
+                        let errors = self.view.language_server_diagnostics.values().flatten()
+                            .filter(|diagnostic| diagnostic.severity == lumen_language_services::diagnostics::DiagnosticSeverity::Error)
+                            .count();
+                        let warnings = self.view.language_server_diagnostics.values().flatten()
+                            .filter(|diagnostic| diagnostic.severity == lumen_language_services::diagnostics::DiagnosticSeverity::Warning)
+                            .count();
+                        if ui.add(
+                            egui::Button::new(
+                                RichText::new(format!("{} {errors}  {} {warnings}", icon::ERROR, icon::WARNING))
+                                    .size(11.0)
+                                    .color(Color32::WHITE),
+                            ).frame(false),
+                        ).on_hover_text("Show Problems").clicked() {
+                            self.command(Command::ToggleProblems);
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             #[cfg(feature = "shared-editor")]
                             let cursors = self

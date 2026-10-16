@@ -162,6 +162,10 @@ impl Workbench<'_> {
                         format!("{}  Terminal: Toggle Terminal", icon::TERMINAL),
                         Command::ToggleTerminal,
                     ),
+                    (
+                        format!("{}  View: Problems", icon::WARNING),
+                        Command::ToggleProblems,
+                    ),
                 ] {
                     if ui.selectable_label(false, label).clicked() {
                         self.command(action);

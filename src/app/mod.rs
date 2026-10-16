@@ -45,7 +45,9 @@ pub(crate) struct LumenApp {
         std::sync::Arc<dyn crate::services::source_control::SourceControlService>,
     pub(crate) language_server_service:
         std::sync::Arc<dyn crate::services::language_server::LanguageServerService>,
-    pub(crate) language_server_process: Option<crate::services::language_server::ServerProcess>,
+    pub(crate) language_server_process:
+        Option<Box<dyn crate::services::language_server::LanguageServerConnection>>,
+    pub(crate) retiring_language_servers: Vec<language_services::RetiringLanguageServer>,
     pub(crate) language_server_workspace: Option<std::path::PathBuf>,
     pub(crate) language_server_language: Option<lumen_language_services::LanguageId>,
     pub(crate) language_server_generation: lumen_language_services::SessionGeneration,
@@ -54,12 +56,14 @@ pub(crate) struct LumenApp {
         Option<lumen_language_services::capabilities::ServerCapabilities>,
     pub(crate) language_server_requests: lumen_language_services::requests::RequestTracker,
     pub(crate) language_server_request_kinds:
-        std::collections::HashMap<u64, language_services::LanguageRequestKind>,
-    pub(crate) language_server_document: Option<(
+        std::collections::HashMap<u64, language_services::PendingLanguageRequest>,
+    pub(crate) language_server_documents: std::collections::HashMap<
         crate::model::DocumentId,
-        u64,
-        lumen_language_services::DocumentUri,
-    )>,
+        language_services::SyncedLanguageDocument,
+    >,
+    pub(crate) language_server_restart: language_services::LanguageServerRestart,
+    pub(crate) language_server_started_at: Option<std::time::Instant>,
+    pub(crate) language_server_ready_at: Option<std::time::Instant>,
     pub(crate) terminal_session: Option<crate::services::terminal::TerminalSession>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
@@ -84,6 +88,7 @@ impl Default for LumenApp {
                 crate::services::language_server::LocalLanguageServer,
             ),
             language_server_process: None,
+            retiring_language_servers: Vec::new(),
             language_server_workspace: None,
             language_server_language: None,
             language_server_generation: Default::default(),
@@ -91,7 +96,10 @@ impl Default for LumenApp {
             language_server_capabilities: None,
             language_server_requests: Default::default(),
             language_server_request_kinds: Default::default(),
-            language_server_document: None,
+            language_server_documents: Default::default(),
+            language_server_restart: Default::default(),
+            language_server_started_at: None,
+            language_server_ready_at: None,
             terminal_session: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
@@ -102,8 +110,8 @@ impl eframe::App for LumenApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.sync_project_settings();
         self.apply_workbench_settings(ctx);
-        self.refresh_language_server_status();
-        self.poll_language_server();
+        self.refresh_language_server_status(ctx);
+        self.poll_language_server(ctx);
         self.handle_events(ctx);
         // Apply actions after each component, retaining the original frame order:
         // an explorer click can still open a file in the editor this same frame.
@@ -112,6 +120,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.activity_bar(ctx));
         self.ensure_source_control(ctx);
         self.render_component(ctx, |workbench| workbench.sidebar(ctx));
+        self.render_component(ctx, |workbench| workbench.problems_panel(ctx));
         self.render_component(ctx, |workbench| workbench.terminal_panel(ctx));
         self.resize_terminal(self.view.terminal.rows, self.view.terminal.columns);
         self.render_component(ctx, |workbench| workbench.editor(ctx));

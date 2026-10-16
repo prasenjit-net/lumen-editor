@@ -16,6 +16,7 @@ mod explorer_edit;
 mod language_navigation;
 mod navigation;
 mod palette;
+mod problems;
 mod settings;
 mod source_control;
 mod terminal;

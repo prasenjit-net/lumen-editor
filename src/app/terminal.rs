@@ -12,6 +12,7 @@ impl LumenApp {
             return;
         }
         self.view.terminal.open = true;
+        self.view.problems.open = false;
         ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("terminal_canvas")));
         if self.terminal_session.is_none() {
             self.start_terminal(ctx);

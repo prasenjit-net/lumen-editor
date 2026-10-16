@@ -3,11 +3,51 @@
 //! Process discovery stays in `services`; this controller caches a small view
 //! model for the active file so UI rendering never queries PATH or starts tools.
 use super::{LumenApp, view_state::LanguageServerStatus};
-use crate::services::language_server::{ServerAvailability, ServerEvent, ServerProcess};
+use crate::services::language_server::{LanguageServerConnection, ServerAvailability, ServerEvent};
 use lumen_language_services::{
     DocumentKey, DocumentUri, DocumentVersion, LanguageId, LanguageRegistry, RequestStamp,
     ServerDocumentVersion, capabilities::ServerCapabilities, lsp,
 };
+use std::time::{Duration, Instant};
+
+const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(12);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const STABLE_SERVER_PERIOD: Duration = Duration::from_secs(30);
+const MAX_RESTART_ATTEMPTS: u32 = 5;
+
+#[derive(Clone, Debug)]
+pub(crate) struct SyncedLanguageDocument {
+    uri: DocumentUri,
+    revision: u64,
+    server_version: ServerDocumentVersion,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LanguageServerTarget {
+    executable: std::path::PathBuf,
+    workspace: std::path::PathBuf,
+    language: LanguageId,
+    name: String,
+}
+
+#[derive(Default)]
+pub(crate) struct LanguageServerRestart {
+    target: Option<LanguageServerTarget>,
+    attempts: u32,
+    retry_at: Option<Instant>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PendingLanguageRequest {
+    kind: LanguageRequestKind,
+    deadline: Instant,
+}
+
+pub(crate) struct RetiringLanguageServer {
+    process: Box<dyn LanguageServerConnection>,
+    deadline: Instant,
+    exit_sent: bool,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LanguageRequestKind {
@@ -18,15 +58,16 @@ pub(crate) enum LanguageRequestKind {
 
 impl LumenApp {
     pub(crate) fn close_workspace_language_server(&mut self) {
-        self.language_server_process = None;
+        self.clear_language_requests();
+        self.retire_language_server();
         self.language_server_workspace = None;
         self.language_server_language = None;
         self.language_server_generation = self.language_server_generation.next();
         self.language_server_initialized = false;
+        self.language_server_ready_at = None;
         self.language_server_capabilities = None;
-        self.language_server_requests.clear();
-        self.language_server_request_kinds.clear();
-        self.language_server_document = None;
+        self.language_server_documents.clear();
+        self.language_server_restart = Default::default();
         self.view.language_server_document = None;
         self.view.language_server_status = None;
         self.view.language_server_details_open = false;
@@ -52,11 +93,12 @@ impl LumenApp {
                 "The active language server does not provide document symbols.".into();
             return;
         }
-        let Some((document_id, revision, uri)) = self.language_server_document.clone() else {
+        let Some((document_id, revision, uri, server_version)) = self.active_synced_document()
+        else {
             self.view.status = "Language server is not ready for this document.".into();
             return;
         };
-        let stamp = self.request_stamp(document_id, revision, uri.clone());
+        let stamp = self.request_stamp(document_id, revision, server_version, uri.clone());
         let request_id = self.language_server_requests.register(stamp);
         let message = lsp::document_symbols_request(request_id, &uri);
         self.send_language_request(request_id, LanguageRequestKind::Symbols, &message);
@@ -85,7 +127,32 @@ impl LumenApp {
         }
     }
 
-    pub(crate) fn refresh_language_server_status(&mut self) {
+    pub(crate) fn open_problem(
+        &mut self,
+        document: crate::model::DocumentId,
+        range: std::ops::Range<usize>,
+    ) {
+        let Some(index) = self
+            .editor
+            .files
+            .iter()
+            .position(|file| file.id == document)
+        else {
+            self.view.status = "The problem's document is no longer open.".into();
+            return;
+        };
+        self.editor.active_file = Some(index);
+        self.view.settings.open = false;
+        if let Some(diff) = &mut self.view.source_control.diff {
+            diff.active = false;
+        }
+        self.view.pending_goto = Some((document, range.start));
+        self.view.pending_problem_selection = Some((document, range));
+        self.view.focus_editor = true;
+        self.view.status = "Opened problem location".into();
+    }
+
+    pub(crate) fn refresh_language_server_status(&mut self, ctx: &eframe::egui::Context) {
         let active = self.editor.active().and_then(|document| {
             document
                 .path
@@ -97,15 +164,12 @@ impl LumenApp {
             self.view.language_server_status = None;
             return;
         };
-        if self.view.language_server_document == Some(document) {
-            return;
-        }
         self.view.language_server_document = Some(document);
         self.view.language_server_status = LanguageRegistry::detect(&path).and_then(|language| {
             match self.language_server_service.availability(language) {
                 ServerAvailability::Available { executable } => {
                     let name = executable.file_name()?.to_str()?.to_owned();
-                    self.start_language_server(executable, language.id, name.clone());
+                    self.start_language_server(executable, language.id, name.clone(), ctx);
                     Some(
                         self.view
                             .language_server_status
@@ -126,9 +190,16 @@ impl LumenApp {
         executable: std::path::PathBuf,
         language: LanguageId,
         name: String,
+        ctx: &eframe::egui::Context,
     ) {
         let Some(workspace) = self.editor.workspace.clone() else {
             return;
+        };
+        let target = LanguageServerTarget {
+            executable: executable.clone(),
+            workspace: workspace.clone(),
+            language,
+            name: name.clone(),
         };
         if self.language_server_workspace.as_ref() == Some(&workspace)
             && self.language_server_process.is_some()
@@ -136,17 +207,39 @@ impl LumenApp {
         {
             return;
         }
-        self.language_server_process = None;
+        if self.language_server_restart.target.as_ref() == Some(&target)
+            && let Some(retry_at) = self.language_server_restart.retry_at
+        {
+            if retry_at > Instant::now() {
+                ctx.request_repaint_after(retry_at.saturating_duration_since(Instant::now()));
+                return;
+            }
+        } else if self.language_server_restart.target.as_ref() == Some(&target)
+            && self.language_server_restart.attempts > MAX_RESTART_ATTEMPTS
+        {
+            return;
+        } else {
+            self.language_server_restart = LanguageServerRestart {
+                target: Some(target.clone()),
+                ..Default::default()
+            };
+        }
+        self.clear_language_requests();
+        self.retire_language_server();
         self.language_server_workspace = None;
         self.language_server_language = None;
         self.language_server_generation = self.language_server_generation.next();
         self.language_server_initialized = false;
+        self.language_server_ready_at = None;
         self.language_server_capabilities = None;
-        self.language_server_requests.clear();
-        self.language_server_request_kinds.clear();
         self.view.language_hover = None;
-        self.language_server_document = None;
-        match ServerProcess::start(&executable, &workspace) {
+        self.language_server_documents.clear();
+        let repaint = ctx.clone();
+        match self.language_server_service.start(
+            &executable,
+            &workspace,
+            std::sync::Arc::new(move || repaint.request_repaint()),
+        ) {
             Ok(mut process) => {
                 let workspace_uri = file_uri(&workspace);
                 match process.send(&lsp::initialize_request(0, &workspace_uri)) {
@@ -154,25 +247,58 @@ impl LumenApp {
                         self.language_server_workspace = Some(workspace);
                         self.language_server_language = Some(language);
                         self.language_server_process = Some(process);
+                        self.language_server_started_at = Some(Instant::now());
+                        self.language_server_restart.retry_at = None;
                         self.view.language_server_status =
                             Some(LanguageServerStatus::Starting(name));
                     }
-                    Err(error) => {
-                        self.view.language_server_status = Some(LanguageServerStatus::Error(error))
-                    }
+                    Err(error) => self.schedule_language_server_restart(error, ctx),
                 }
             }
-            Err(error) => {
-                self.view.language_server_status = Some(LanguageServerStatus::Error(error))
-            }
+            Err(error) => self.schedule_language_server_restart(error, ctx),
         }
     }
 
-    pub(crate) fn poll_language_server(&mut self) {
+    pub(crate) fn poll_language_server(&mut self, ctx: &eframe::egui::Context) {
+        self.poll_retiring_language_servers();
+        if self.language_server_initialized
+            && self
+                .language_server_ready_at
+                .is_some_and(|ready| ready.elapsed() >= STABLE_SERVER_PERIOD)
+        {
+            self.language_server_restart.attempts = 0;
+            self.language_server_ready_at = None;
+        }
+        if !self.language_server_initialized
+            && self.language_server_process.is_some()
+            && self
+                .language_server_started_at
+                .is_some_and(|started| started.elapsed() >= INITIALIZE_TIMEOUT)
+        {
+            self.stop_language_server("Language server initialization timed out");
+            if let Some(retry_at) = self.language_server_restart.retry_at {
+                ctx.request_repaint_after(retry_at.saturating_duration_since(Instant::now()));
+            }
+            return;
+        }
+        self.expire_language_requests();
+        if let Some(deadline) = self
+            .language_server_request_kinds
+            .values()
+            .map(|request| request.deadline)
+            .min()
+        {
+            ctx.request_repaint_after(deadline.saturating_duration_since(Instant::now()));
+        }
+        if let Some(started) = self.language_server_started_at {
+            ctx.request_repaint_after(
+                (started + INITIALIZE_TIMEOUT).saturating_duration_since(Instant::now()),
+            );
+        }
         let mut events = self
             .language_server_process
             .as_ref()
-            .map(ServerProcess::drain_events)
+            .map(|process| process.drain_events())
             .unwrap_or_default();
         let process_exited = self
             .language_server_process
@@ -192,19 +318,27 @@ impl LumenApp {
                     if message["id"] == 0 && !self.language_server_initialized =>
                 {
                     match ServerCapabilities::from_initialize_response(&message) {
-                        Ok(capabilities) if capabilities.text_document_sync.is_some() => {
+                        Ok(capabilities)
+                            if capabilities.text_document_sync.is_some()
+                                && capabilities.open_close =>
+                        {
                             self.language_server_capabilities = Some(capabilities);
-                            if let Some(process) = &mut self.language_server_process
-                                && let Err(error) = process.send(&lsp::initialized_notification())
-                            {
-                                self.view.language_server_status =
-                                    Some(LanguageServerStatus::Error(error));
-                                self.language_server_process = None;
+                            let initialized = self
+                                .language_server_process
+                                .as_mut()
+                                .ok_or_else(|| "Language server stopped".to_owned())
+                                .and_then(|process| process.send(&lsp::initialized_notification()));
+                            if let Err(error) = initialized {
+                                self.stop_language_server(&error);
+                                ctx.request_repaint();
                                 return;
                             }
                             // LSP forbids document notifications until the
                             // initialized notification has been delivered.
                             self.language_server_initialized = true;
+                            self.language_server_started_at = None;
+                            self.language_server_restart.retry_at = None;
+                            self.language_server_ready_at = Some(Instant::now());
                             if let Some(LanguageServerStatus::Starting(name)) =
                                 self.view.language_server_status.take()
                             {
@@ -212,22 +346,32 @@ impl LumenApp {
                                     Some(LanguageServerStatus::Ready(name));
                             }
                         }
-                        Ok(_) => self.stop_language_server(
-                            "Language server does not support text synchronization",
-                        ),
-                        Err(error) => self.stop_language_server(&format!(
-                            "Invalid language-server initialization: {error:?}"
-                        )),
+                        Ok(_) => {
+                            self.stop_language_server(
+                                "Language server does not support open-document text synchronization",
+                            );
+                            break;
+                        }
+                        Err(error) => {
+                            self.stop_language_server(&format!(
+                                "Invalid language-server initialization: {error:?}"
+                            ));
+                            break;
+                        }
                     }
                 }
-                ServerEvent::ProtocolError(error) => self.stop_language_server(&error),
+                ServerEvent::ProtocolError(error) => {
+                    self.stop_language_server(&error);
+                    break;
+                }
                 ServerEvent::Exited => {
                     let reason = self
                         .language_server_process
                         .as_mut()
-                        .map(ServerProcess::output_closed_reason)
+                        .map(|process| process.output_closed_reason())
                         .unwrap_or_else(|| "Language server exited".into());
                     self.stop_language_server(&reason);
+                    break;
                 }
                 ServerEvent::Message(message) => {
                     if !self.accept_language_response(&message) {
@@ -236,92 +380,272 @@ impl LumenApp {
                 }
             }
         }
-        self.sync_active_language_document();
+        self.sync_language_documents();
+        if let Some(retry_at) = self.language_server_restart.retry_at {
+            ctx.request_repaint_after(retry_at.saturating_duration_since(Instant::now()));
+        }
     }
 
     fn stop_language_server(&mut self, error: &str) {
+        self.clear_language_requests();
         self.language_server_process = None;
         self.language_server_workspace = None;
         self.language_server_language = None;
         self.language_server_initialized = false;
         self.language_server_capabilities = None;
-        self.language_server_requests.clear();
-        self.language_server_request_kinds.clear();
         self.view.language_hover = None;
-        self.language_server_document = None;
+        self.language_server_documents.clear();
+        self.language_server_started_at = None;
+        self.language_server_ready_at = None;
         self.view.language_server_diagnostics.clear();
         self.view.language_server_status = Some(LanguageServerStatus::Error(error.to_owned()));
+        self.schedule_language_server_restart_without_context(error);
     }
 
-    fn sync_active_language_document(&mut self) {
+    fn sync_language_documents(&mut self) {
         if !self.language_server_initialized {
             return;
         }
         let Some(language) = self.language_server_language else {
             return;
         };
-        let Some(document) = self.editor.active() else {
-            return;
-        };
-        let Some(path) = document.path.as_ref() else {
-            return;
-        };
-        if LanguageRegistry::detect(path).map(|descriptor| descriptor.id) != Some(language) {
-            return;
-        }
-        let version = ServerDocumentVersion(document.revision.saturating_add(1));
-        let Ok(uri) = DocumentUri::new(file_uri(path)) else {
-            return;
-        };
-        let message = match &self.language_server_document {
-            None => lsp::did_open(&uri, language, version, &document.text),
-            Some((id, revision, _)) if *id == document.id && *revision != document.revision => {
-                lsp::did_change(&uri, version, &document.text)
+        let desired = self
+            .editor
+            .files
+            .iter()
+            .filter_map(|document| {
+                let path = document.path.as_ref()?;
+                (LanguageRegistry::detect(path).map(|descriptor| descriptor.id) == Some(language))
+                    .then(|| {
+                    DocumentUri::new(file_uri(path))
+                        .ok()
+                        .map(|uri| (document.id, document.revision, uri, document.text.clone()))
+                })?
+            })
+            .collect::<Vec<_>>();
+        let desired_ids = desired
+            .iter()
+            .map(|item| item.0)
+            .collect::<std::collections::HashSet<_>>();
+        let stale = self
+            .language_server_documents
+            .iter()
+            .filter(|(id, synced)| {
+                !desired_ids.contains(id)
+                    || desired
+                        .iter()
+                        .any(|(desired_id, _, uri, _)| desired_id == *id && uri != &synced.uri)
+            })
+            .map(|(id, synced)| (*id, synced.uri.clone()))
+            .collect::<Vec<_>>();
+        for (id, uri) in stale {
+            if let Err(error) = self.send_language_notification(&lsp::did_close(&uri)) {
+                self.stop_language_server(&error);
+                return;
             }
-            Some((id, _, _)) if *id == document.id => return,
-            Some((_, _, previous_uri)) => {
-                if let Some(process) = &mut self.language_server_process
-                    && process.send(&lsp::did_close(previous_uri)).is_err()
-                {
-                    self.stop_language_server("Could not close language-server document");
+            self.language_server_documents.remove(&id);
+            self.view.language_server_diagnostics.remove(&id);
+        }
+        for (id, revision, uri, text) in desired {
+            let (message, version) = match self.language_server_documents.get(&id) {
+                None => {
+                    let version = ServerDocumentVersion(1);
+                    (Some(lsp::did_open(&uri, language, version, &text)), version)
+                }
+                Some(synced) if synced.revision != revision => {
+                    let version = ServerDocumentVersion(synced.server_version.0.saturating_add(1));
+                    (Some(lsp::did_change(&uri, version, &text)), version)
+                }
+                Some(_) => continue,
+            };
+            if let Some(message) = message {
+                if let Err(error) = self.send_language_notification(&message) {
+                    self.stop_language_server(&error);
                     return;
                 }
-                lsp::did_open(&uri, language, version, &document.text)
+                self.view.language_hover = None;
+                self.view.language_server_diagnostics.remove(&id);
+                self.language_server_documents.insert(
+                    id,
+                    SyncedLanguageDocument {
+                        uri,
+                        revision,
+                        server_version: version,
+                    },
+                );
             }
-        };
-        if let Some(process) = &mut self.language_server_process
-            && process.send(&message).is_ok()
-        {
-            self.view.language_hover = None;
-            self.view.language_server_diagnostics.remove(&document.id);
-            self.language_server_document = Some((document.id, document.revision, uri));
         }
     }
 
     fn accept_diagnostics(&mut self, message: serde_json::Value) {
-        let Some(document) = self.editor.active() else {
+        let Some((document, synced)) = self.editor.files.iter().find_map(|document| {
+            let synced = self.language_server_documents.get(&document.id)?;
+            (message
+                .pointer("/params/uri")
+                .and_then(serde_json::Value::as_str)
+                == Some(synced.uri.as_str()))
+            .then_some((document, synced))
+        }) else {
             return;
         };
-        let Some(path) = document.path.as_ref() else {
-            return;
-        };
-        let uri = file_uri(path);
         let Ok(published) =
             lumen_language_services::incoming::parse_publish_diagnostics(&message, &document.text)
         else {
             return;
         };
-        if published.uri != uri {
+        if let Some(version) = published.version
+            && version != synced.server_version.0
+        {
             return;
         }
-        if let Some(version) = published.version
-            && version != document.revision.saturating_add(1)
-        {
+        if document.revision != synced.revision {
             return;
         }
         self.view
             .language_server_diagnostics
             .insert(document.id, published.diagnostics);
+    }
+
+    pub(crate) fn notify_language_document_saved(&mut self, document_id: crate::model::DocumentId) {
+        self.sync_language_documents();
+        let Some(include_text) = self
+            .language_server_capabilities
+            .as_ref()
+            .and_then(|capabilities| capabilities.save)
+        else {
+            return;
+        };
+        let Some(synced) = self.language_server_documents.get(&document_id).cloned() else {
+            return;
+        };
+        let text = include_text
+            .then(|| {
+                self.editor
+                    .files
+                    .iter()
+                    .find(|document| document.id == document_id)
+            })
+            .flatten()
+            .map(|document| document.text.clone());
+        if let Err(error) =
+            self.send_language_notification(&lsp::did_save(&synced.uri, text.as_deref()))
+        {
+            self.stop_language_server(&error);
+        }
+    }
+
+    fn active_synced_document(
+        &self,
+    ) -> Option<(
+        crate::model::DocumentId,
+        u64,
+        DocumentUri,
+        ServerDocumentVersion,
+    )> {
+        let document = self.editor.active()?;
+        let synced = self.language_server_documents.get(&document.id)?;
+        (document.revision == synced.revision).then(|| {
+            (
+                document.id,
+                document.revision,
+                synced.uri.clone(),
+                synced.server_version,
+            )
+        })
+    }
+
+    fn send_language_notification(&mut self, message: &serde_json::Value) -> Result<(), String> {
+        self.language_server_process
+            .as_mut()
+            .ok_or_else(|| "Language server stopped".to_owned())?
+            .send(message)
+    }
+
+    fn retire_language_server(&mut self) {
+        let Some(mut process) = self.language_server_process.take() else {
+            return;
+        };
+        if process.begin_shutdown().is_ok() {
+            self.retiring_language_servers.push(RetiringLanguageServer {
+                process,
+                deadline: Instant::now() + Duration::from_secs(2),
+                exit_sent: false,
+            });
+        }
+    }
+
+    fn poll_retiring_language_servers(&mut self) {
+        let now = Instant::now();
+        self.retiring_language_servers.retain_mut(|server| {
+            let acknowledged = server.process.drain_events().iter().any(|event| {
+                matches!(event, ServerEvent::Message(message)
+                    if message.get("id").and_then(serde_json::Value::as_u64)
+                        == Some(crate::services::language_server::SHUTDOWN_REQUEST_ID))
+            });
+            if acknowledged && !server.exit_sent {
+                server.process.finish_shutdown();
+                server.exit_sent = true;
+                server.deadline = now + Duration::from_millis(250);
+            }
+            let exited = server.process.exit_reason().ok().flatten().is_some();
+            !exited && now < server.deadline
+        });
+    }
+
+    fn clear_language_requests(&mut self) {
+        if let Some(process) = &mut self.language_server_process {
+            for request_id in self.language_server_request_kinds.keys().copied() {
+                let _ = process.send(&lsp::cancel_request(request_id));
+            }
+        }
+        self.language_server_requests.clear();
+        self.language_server_request_kinds.clear();
+    }
+
+    fn expire_language_requests(&mut self) {
+        let now = Instant::now();
+        let expired = self
+            .language_server_request_kinds
+            .iter()
+            .filter_map(|(id, request)| (request.deadline <= now).then_some(*id))
+            .collect::<Vec<_>>();
+        let timed_out = !expired.is_empty();
+        for request_id in expired {
+            self.language_server_request_kinds.remove(&request_id);
+            self.language_server_requests.discard(request_id);
+            if let Some(process) = &mut self.language_server_process {
+                let _ = process.send(&lsp::cancel_request(request_id));
+            }
+        }
+        if timed_out {
+            self.view.status = "Language server request timed out".into();
+        }
+    }
+
+    fn schedule_language_server_restart(&mut self, error: String, ctx: &eframe::egui::Context) {
+        self.schedule_language_server_restart_without_context(&error);
+        if let Some(retry_at) = self.language_server_restart.retry_at {
+            ctx.request_repaint_after(retry_at.saturating_duration_since(Instant::now()));
+        }
+    }
+
+    fn schedule_language_server_restart_without_context(&mut self, error: &str) {
+        self.language_server_restart.attempts =
+            self.language_server_restart.attempts.saturating_add(1);
+        if self.language_server_restart.attempts > MAX_RESTART_ATTEMPTS {
+            self.language_server_restart.retry_at = None;
+            self.view.language_server_status = Some(LanguageServerStatus::Error(format!(
+                "{error} (automatic restart limit reached)"
+            )));
+            return;
+        }
+        let delay =
+            Duration::from_secs(1_u64 << (self.language_server_restart.attempts - 1).min(4));
+        self.language_server_restart.retry_at = Some(Instant::now() + delay);
+        self.view.language_server_status = Some(LanguageServerStatus::Error(format!(
+            "{error} (retrying in {}s)",
+            delay.as_secs()
+        )));
     }
 
     fn request_at_caret(&mut self, kind: LanguageRequestKind) {
@@ -337,7 +661,8 @@ impl LumenApp {
             self.view.status = "The active language server does not provide this feature.".into();
             return;
         }
-        let Some((document_id, revision, uri)) = self.language_server_document.clone() else {
+        let Some((document_id, revision, uri, server_version)) = self.active_synced_document()
+        else {
             self.view.status = "Language server is not ready for this document.".into();
             return;
         };
@@ -362,7 +687,7 @@ impl LumenApp {
             self.view.status = "Could not map the caret for the language server.".into();
             return;
         };
-        let stamp = self.request_stamp(document_id, revision, uri.clone());
+        let stamp = self.request_stamp(document_id, revision, server_version, uri.clone());
         let request_id = self.language_server_requests.register(stamp);
         let message = match kind {
             LanguageRequestKind::Hover => lsp::hover_request(request_id, &uri, position),
@@ -376,6 +701,7 @@ impl LumenApp {
         &self,
         document_id: crate::model::DocumentId,
         revision: u64,
+        server_version: ServerDocumentVersion,
         uri: DocumentUri,
     ) -> RequestStamp {
         RequestStamp {
@@ -384,7 +710,7 @@ impl LumenApp {
                 uri,
             },
             document_version: DocumentVersion(revision),
-            server_version: ServerDocumentVersion(revision.saturating_add(1)),
+            server_version,
             session: self.language_server_generation,
         }
     }
@@ -395,6 +721,18 @@ impl LumenApp {
         kind: LanguageRequestKind,
         message: &serde_json::Value,
     ) {
+        let superseded = self
+            .language_server_request_kinds
+            .iter()
+            .filter_map(|(id, pending)| (pending.kind == kind).then_some(*id))
+            .collect::<Vec<_>>();
+        for old_id in superseded {
+            if let Some(process) = &mut self.language_server_process {
+                let _ = process.send(&lsp::cancel_request(old_id));
+            }
+            self.language_server_request_kinds.remove(&old_id);
+            self.language_server_requests.discard(old_id);
+        }
         let result = self
             .language_server_process
             .as_mut()
@@ -402,7 +740,13 @@ impl LumenApp {
             .and_then(|process| process.send(message));
         match result {
             Ok(()) => {
-                self.language_server_request_kinds.insert(request_id, kind);
+                self.language_server_request_kinds.insert(
+                    request_id,
+                    PendingLanguageRequest {
+                        kind,
+                        deadline: Instant::now() + REQUEST_TIMEOUT,
+                    },
+                );
                 self.view.status = match kind {
                     LanguageRequestKind::Hover => "Loading hover…",
                     LanguageRequestKind::Definition => "Finding definition…",
@@ -418,9 +762,10 @@ impl LumenApp {
         let Some(request_id) = message.get("id").and_then(serde_json::Value::as_u64) else {
             return false;
         };
-        let Some(kind) = self.language_server_request_kinds.remove(&request_id) else {
+        let Some(request) = self.language_server_request_kinds.remove(&request_id) else {
             return false;
         };
+        let kind = request.kind;
         let Some(current) = self.current_request_stamp() else {
             return true;
         };
@@ -455,16 +800,8 @@ impl LumenApp {
     }
 
     fn current_request_stamp(&self) -> Option<RequestStamp> {
-        let (id, revision, uri) = self.language_server_document.as_ref()?;
-        Some(RequestStamp {
-            document: DocumentKey {
-                id: id.language_service_id(),
-                uri: uri.clone(),
-            },
-            document_version: DocumentVersion(*revision),
-            server_version: ServerDocumentVersion(revision.saturating_add(1)),
-            session: self.language_server_generation,
-        })
+        let (id, revision, uri, server_version) = self.active_synced_document()?;
+        Some(self.request_stamp(id, revision, server_version, uri))
     }
 
     fn apply_definition_response(&mut self, message: &serde_json::Value) {
@@ -612,6 +949,96 @@ fn hex(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::language_server::{
+        LanguageServerConnection, LanguageServerService, ServerWake,
+    };
+    use std::sync::{Arc, Mutex};
+
+    type RecordedMessages = Arc<Mutex<Vec<serde_json::Value>>>;
+    type QueuedEvents = Arc<Mutex<Vec<ServerEvent>>>;
+
+    #[derive(Default)]
+    struct FakeLanguageServer {
+        messages: Arc<Mutex<Vec<serde_json::Value>>>,
+        events: Arc<Mutex<Vec<ServerEvent>>>,
+    }
+
+    struct FakeConnection {
+        messages: Arc<Mutex<Vec<serde_json::Value>>>,
+        events: Arc<Mutex<Vec<ServerEvent>>>,
+    }
+
+    impl LanguageServerConnection for FakeConnection {
+        fn send(&mut self, message: &serde_json::Value) -> Result<(), String> {
+            self.messages.lock().unwrap().push(message.clone());
+            Ok(())
+        }
+
+        fn drain_events(&self) -> Vec<ServerEvent> {
+            self.events.lock().unwrap().drain(..).collect()
+        }
+
+        fn exit_reason(&mut self) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+        fn output_closed_reason(&mut self) -> String {
+            "fake server exited".into()
+        }
+        fn begin_shutdown(&mut self) -> Result<(), String> {
+            self.send(&lsp::shutdown_request(
+                crate::services::language_server::SHUTDOWN_REQUEST_ID,
+            ))
+        }
+        fn finish_shutdown(&mut self) {
+            let _ = self.send(&lsp::exit_notification());
+        }
+    }
+
+    impl LanguageServerService for FakeLanguageServer {
+        fn availability(
+            &self,
+            _language: &lumen_language_services::LanguageDescriptor,
+        ) -> ServerAvailability {
+            ServerAvailability::Available {
+                executable: "fake-lsp".into(),
+            }
+        }
+
+        fn start(
+            &self,
+            _executable: &std::path::Path,
+            _workspace: &std::path::Path,
+            _wake: ServerWake,
+        ) -> Result<Box<dyn LanguageServerConnection>, String> {
+            Ok(Box::new(FakeConnection {
+                messages: Arc::clone(&self.messages),
+                events: Arc::clone(&self.events),
+            }))
+        }
+    }
+
+    fn initialized() -> ServerEvent {
+        ServerEvent::Message(serde_json::json!({
+            "jsonrpc":"2.0", "id":0, "result":{"capabilities":{
+                "textDocumentSync":{"openClose":true,"change":1,"save":{"includeText":true}},
+                "hoverProvider":true,
+                "definitionProvider":true,
+                "documentSymbolProvider":true
+            }}
+        }))
+    }
+
+    fn fake_app() -> (LumenApp, RecordedMessages, QueuedEvents) {
+        let service = FakeLanguageServer::default();
+        let messages = Arc::clone(&service.messages);
+        let events = Arc::clone(&service.events);
+        let mut app = LumenApp {
+            language_server_service: Arc::new(service),
+            ..Default::default()
+        };
+        app.editor.workspace = Some("/workspace".into());
+        (app, messages, events)
+    }
 
     #[test]
     fn active_server_language_gets_a_cached_snapshot_and_parser_only_language_does_not() {
@@ -622,7 +1049,7 @@ mod tests {
         ));
         app.editor.active_file = Some(0);
         let rust_id = app.editor.files[0].id;
-        app.refresh_language_server_status();
+        app.refresh_language_server_status(&eframe::egui::Context::default());
         assert_eq!(app.view.language_server_document, Some(rust_id));
         assert!(app.view.language_server_status.is_some());
 
@@ -631,7 +1058,7 @@ mod tests {
             String::new(),
         ));
         app.editor.active_file = Some(1);
-        app.refresh_language_server_status();
+        app.refresh_language_server_status(&eframe::egui::Context::default());
         assert!(app.view.language_server_status.is_none());
     }
 
@@ -667,10 +1094,168 @@ mod tests {
         app.editor.active_file = Some(0);
         app.language_server_language = Some(LanguageId::RUST);
 
-        app.sync_active_language_document();
+        app.sync_language_documents();
 
-        assert!(app.language_server_document.is_none());
+        assert!(app.language_server_documents.is_empty());
         assert!(!app.language_server_initialized);
+    }
+
+    #[test]
+    fn fake_server_syncs_save_rename_and_close_for_all_open_documents() {
+        let (mut app, messages, events) = fake_app();
+        app.editor.files.push(crate::model::Document::from_path(
+            "/workspace/a.rs".into(),
+            "fn a() {}".into(),
+        ));
+        app.editor.files.push(crate::model::Document::from_path(
+            "/workspace/b.rs".into(),
+            "fn b() {}".into(),
+        ));
+        app.editor.active_file = Some(0);
+        let first = app.editor.files[0].id;
+        let second = app.editor.files[1].id;
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        events.lock().unwrap().push(initialized());
+        app.poll_language_server(&ctx);
+
+        let methods = || {
+            messages
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|message| {
+                    message
+                        .get("method")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            methods()
+                .iter()
+                .filter(|method| method.as_str() == "textDocument/didOpen")
+                .count(),
+            2
+        );
+
+        app.editor.files[0].text.push_str("\n// changed");
+        app.editor.files[0].record_text_change();
+        app.notify_language_document_saved(first);
+        assert!(methods().contains(&"textDocument/didChange".to_owned()));
+        assert!(methods().contains(&"textDocument/didSave".to_owned()));
+
+        app.editor.files[0].relocate("/workspace/renamed.rs".into());
+        app.poll_language_server(&ctx);
+        assert_eq!(
+            methods()
+                .iter()
+                .filter(|method| method.as_str() == "textDocument/didClose")
+                .count(),
+            1
+        );
+        assert_eq!(
+            methods()
+                .iter()
+                .filter(|method| method.as_str() == "textDocument/didOpen")
+                .count(),
+            3
+        );
+
+        app.editor.files.retain(|document| document.id != second);
+        app.poll_language_server(&ctx);
+        assert_eq!(
+            methods()
+                .iter()
+                .filter(|method| method.as_str() == "textDocument/didClose")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn fake_server_rejects_stale_diagnostics_and_schedules_bounded_restart() {
+        let (mut app, _messages, events) = fake_app();
+        app.editor.files.push(crate::model::Document::from_path(
+            "/workspace/a.rs".into(),
+            "fn a() {}".into(),
+        ));
+        app.editor.active_file = Some(0);
+        let document = app.editor.files[0].id;
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        events.lock().unwrap().push(initialized());
+        app.poll_language_server(&ctx);
+        app.editor.files[0].text.push('x');
+        app.editor.files[0].record_text_change();
+        app.poll_language_server(&ctx);
+        events.lock().unwrap().push(ServerEvent::Message(serde_json::json!({
+            "jsonrpc":"2.0", "method":"textDocument/publishDiagnostics", "params":{
+                "uri":"file:///workspace/a.rs", "version":1,
+                "diagnostics":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"message":"stale"}]
+            }
+        })));
+        app.poll_language_server(&ctx);
+        assert!(!app.view.language_server_diagnostics.contains_key(&document));
+
+        events.lock().unwrap().push(ServerEvent::Exited);
+        app.poll_language_server(&ctx);
+        assert_eq!(app.language_server_restart.attempts, 1);
+        assert!(app.language_server_restart.retry_at.is_some());
+        assert!(matches!(
+            app.view.language_server_status,
+            Some(LanguageServerStatus::Error(_))
+        ));
+    }
+
+    #[test]
+    fn workspace_close_uses_shutdown_then_exit_and_restart_is_bounded() {
+        let (mut app, messages, events) = fake_app();
+        app.editor.files.push(crate::model::Document::from_path(
+            "/workspace/a.rs".into(),
+            "fn a() {}".into(),
+        ));
+        app.editor.active_file = Some(0);
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        events.lock().unwrap().push(initialized());
+        app.poll_language_server(&ctx);
+
+        app.close_workspace_language_server();
+        assert!(messages.lock().unwrap().iter().any(|message| {
+            message.get("method").and_then(serde_json::Value::as_str) == Some("shutdown")
+        }));
+        events.lock().unwrap().push(ServerEvent::Message(
+            serde_json::json!({"jsonrpc":"2.0", "id":crate::services::language_server::SHUTDOWN_REQUEST_ID, "result":null}),
+        ));
+        app.poll_language_server(&ctx);
+        assert!(messages.lock().unwrap().iter().any(|message| {
+            message.get("method").and_then(serde_json::Value::as_str) == Some("exit")
+        }));
+
+        for _ in 0..=MAX_RESTART_ATTEMPTS {
+            app.schedule_language_server_restart_without_context("crashed");
+        }
+        assert!(app.language_server_restart.retry_at.is_none());
+        assert!(matches!(
+            app.view.language_server_status,
+            Some(LanguageServerStatus::Error(ref message)) if message.contains("limit reached")
+        ));
+    }
+
+    #[test]
+    fn opening_a_problem_targets_the_exact_diagnostic_range() {
+        let mut app = LumenApp::default();
+        app.editor.files.push(crate::model::Document::from_path(
+            "/workspace/a.rs".into(),
+            "abcdef".into(),
+        ));
+        let document = app.editor.files[0].id;
+        app.open_problem(document, 1..4);
+        assert_eq!(app.editor.active_file, Some(0));
+        assert_eq!(app.view.pending_goto, Some((document, 1)));
+        assert_eq!(app.view.pending_problem_selection, Some((document, 1..4)));
     }
 
     #[test]

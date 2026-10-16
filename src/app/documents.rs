@@ -126,11 +126,13 @@ impl LumenApp {
         match result {
             Ok(()) => {
                 file.mark_saved(path.clone());
+                let saved_document = file.id;
                 self.remember_recent_file(&path);
                 self.view.navigation.add_workspace_path(&path);
                 self.view.save_conflict = None;
                 self.view.status = "Saved".into();
                 self.settings_file_saved(&path);
+                self.notify_language_document_saved(saved_document);
             }
             Err(error)
                 if same_path
@@ -214,9 +216,11 @@ impl LumenApp {
         match result {
             Ok(()) => {
                 file.mark_saved(conflict.path.clone());
+                let saved_document = file.id;
                 self.remember_recent_file(&conflict.path);
                 self.view.status = "External version overwritten by explicit request".into();
                 self.settings_file_saved(&conflict.path);
+                self.notify_language_document_saved(saved_document);
             }
             Err(error) => {
                 self.view.save_conflict = Some(conflict);

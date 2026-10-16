@@ -1,9 +1,9 @@
 # Language services and syntax-highlighting design
 
-Status: Phase 2 in progress — transport, initialization, active-document full
-sync, and typed diagnostic intake are implemented; diagnostics painting,
-restart policy, complete document lifecycle, and navigation remain. Updated:
-2026-10-15.
+Status: Phase 2 implementation complete; native Rust/Go live validation remains.
+Transport, all-open-document synchronization, save/rename/close lifecycle,
+bounded restart policy, diagnostics painting and the Problems panel are implemented.
+Updated: 2026-10-15.
 
 ## What this adds, and why syntax and LSP must remain separate
 
@@ -290,7 +290,7 @@ specified by a project unless the user’s server-command policy permits it.
   single viewport/layout authority. Compare old/new screenshots before expanding
   parser coverage to further languages.
 
-### Phase 2 — generic LSP transport and diagnostics — In progress
+### Phase 2 — generic LSP transport and diagnostics — Implementation complete; live validation pending
 
 - [x] Add bounded, fragmented JSON-RPC `Content-Length` framing in the language
   crate. It owns no process or JSON serialization and is ready for a service adapter.
@@ -311,18 +311,21 @@ specified by a project unless the user’s server-command policy permits it.
 - [x] Implement bounded stdio JSON-RPC in `services/`; it accepts only a
   registry-discovered executable path and reports parsed messages/errors through
   non-blocking events.
-- [x] Implement initial app lifecycle: lazy per-language/workspace process
-  startup, initialize/initialized negotiation, active-document full sync, and
-  starting/ready/error status. Complete open/close/rename/session generation
-  handling remains outstanding.
+- [x] Implement app lifecycle: lazy per-language/workspace process startup,
+  initialize/initialized negotiation, all-open-document full sync, stable
+  per-session versions, Save As/rename URI transitions, guarded `didSave`,
+  `didClose`, graceful shutdown handshake and starting/ready/error status.
 - [x] Decode `publishDiagnostics` through UTF-16/UTF-8-safe typed contracts.
-- [ ] Render validated diagnostics in the shared editor viewport and Problems UI;
-  retain parser highlighting and editor geometry when no server is available.
+- [x] Render validated diagnostics in the shared editor viewport and a compact,
+  searchable/filterable Problems panel with severity counts and exact-range
+  navigation; retain parser highlighting when no server is available.
 - [ ] Apply and live-validate Rust diagnostics with `rust-analyzer`, then Go
   diagnostics with `gopls`.
-- [ ] Add restart backoff plus fake-server coverage for initialization failure,
-  crash/restart, malformed messages, workspace switch, stale diagnostics, dirty
-  buffers, Save As, rename and close.
+- [x] Add bounded exponential restart backoff, initialization/request deadlines,
+  request cancellation, UI wakeups and injectable fake-server coverage for
+  initialization, crash/restart, stale diagnostics, dirty buffers, save, rename
+  and close. Framing tests cover malformed/fragmented messages; workspace/session
+  stamps cover stale results after switches.
 
 ### Phase 3 — semantic tokens and navigation — In progress
 

@@ -30,3 +30,5 @@ pub const PLAY: &str = "\u{eb2c}";
 pub const PLUS: &str = "\u{ea60}";
 pub const PUZZLE_PIECE: &str = "\u{eae6}";
 pub const X: &str = "\u{ea76}";
+pub const ERROR: &str = "\u{ea87}";
+pub const WARNING: &str = "\u{ea6c}";

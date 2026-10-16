@@ -51,8 +51,16 @@ impl LumenApp {
             Command::ClearWorkspaceSearch => self.clear_workspace_search(),
             Command::RefreshSourceControl => self.refresh_source_control(ctx),
             Command::ToggleTerminal => self.toggle_terminal(ctx),
+            Command::ToggleProblems => {
+                self.view.problems.open = !self.view.problems.open;
+                if self.view.problems.open {
+                    self.view.terminal.open = false;
+                }
+            }
             Command::SendTerminalInput(bytes) => self.send_terminal_input(&bytes, ctx),
             Command::CloseTerminal => self.close_terminal(),
+            Command::CloseProblems => self.view.problems.open = false,
+            Command::OpenProblem(document, range) => self.open_problem(document, range),
             Command::ClearTerminal => self.clear_terminal(),
             Command::PullSourceControl => self.pull_source_control(ctx),
             Command::PushSourceControl => self.push_source_control(ctx),

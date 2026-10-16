@@ -126,6 +126,23 @@ impl Workbench<'_> {
                 self.view.status = "Could not move to that text position".into();
             }
         }
+        if let Some((target, range)) = self.view.pending_problem_selection.take()
+            && target == document
+        {
+            let selection = lumen_editor_core::Selection {
+                anchor: range.start,
+                head: range.end,
+            };
+            if self.editor.files[index]
+                .editing
+                .as_mut()
+                .unwrap()
+                .set_selections(vec![selection], 0)
+                .is_ok()
+            {
+                surface.reveal(range.start);
+            }
+        }
         let output = Frame::new()
             .fill(BG)
             .corner_radius(4)

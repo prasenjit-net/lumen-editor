@@ -163,6 +163,24 @@ pub(crate) struct TerminalView {
     pub(crate) applied_columns: u16,
 }
 
+pub(crate) struct ProblemsView {
+    pub(crate) open: bool,
+    pub(crate) filter: String,
+    pub(crate) show_errors: bool,
+    pub(crate) show_warnings: bool,
+}
+
+impl Default for ProblemsView {
+    fn default() -> Self {
+        Self {
+            open: false,
+            filter: String::new(),
+            show_errors: true,
+            show_warnings: true,
+        }
+    }
+}
+
 /// Confirmation state stays in the app layer; the UI only presents it and
 /// emits typed commands, while the Git service performs the operation.
 pub(crate) struct SourceRevertPrompt {
@@ -245,12 +263,15 @@ pub(crate) struct ViewState {
     pub(crate) command_palette_focus: bool,
     pub(crate) navigation: NavigationView,
     pub(crate) pending_goto: Option<(crate::model::DocumentId, usize)>,
+    pub(crate) pending_problem_selection:
+        Option<(crate::model::DocumentId, std::ops::Range<usize>)>,
     pub(crate) fold_tabs:
         std::collections::HashMap<crate::model::DocumentId, super::folding::FoldTabState>,
     pub(crate) search: String,
     pub(crate) workspace_search: WorkspaceSearchView,
     pub(crate) source_control: SourceControlView,
     pub(crate) terminal: TerminalView,
+    pub(crate) problems: ProblemsView,
     pub(crate) language_server_document: Option<crate::model::DocumentId>,
     pub(crate) language_server_status: Option<LanguageServerStatus>,
     pub(crate) language_server_details_open: bool,
@@ -316,11 +337,13 @@ impl Default for ViewState {
             command_palette_focus: false,
             navigation: NavigationView::default(),
             pending_goto: None,
+            pending_problem_selection: None,
             fold_tabs: Default::default(),
             search: String::new(),
             workspace_search: WorkspaceSearchView::default(),
             source_control: SourceControlView::default(),
             terminal: TerminalView::default(),
+            problems: ProblemsView::default(),
             language_server_document: None,
             language_server_status: None,
             language_server_details_open: false,

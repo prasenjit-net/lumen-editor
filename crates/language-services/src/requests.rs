@@ -23,6 +23,10 @@ impl RequestTracker {
     pub fn clear(&mut self) {
         self.pending.clear();
     }
+
+    pub fn discard(&mut self, id: u64) -> bool {
+        self.pending.remove(&id).is_some()
+    }
 }
 
 #[cfg(test)]

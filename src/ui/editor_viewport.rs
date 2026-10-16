@@ -143,6 +143,26 @@ impl Workbench<'_> {
                                         );
                                         output.response.request_focus();
                                     }
+                                    if let Some((target, range)) =
+                                        self.view.pending_problem_selection.take()
+                                        && target == document
+                                    {
+                                        let start = self.editor.files[index].text[..range.start]
+                                            .chars()
+                                            .count();
+                                        let end = self.editor.files[index].text[..range.end]
+                                            .chars()
+                                            .count();
+                                        let mut widget = output.state.clone();
+                                        widget.cursor.set_char_range(Some(
+                                            egui::text::CCursorRange::two(
+                                                egui::text::CCursor::new(start),
+                                                egui::text::CCursor::new(end),
+                                            ),
+                                        ));
+                                        widget.store(&ctx, text_widget_id(document));
+                                        output.response.request_focus();
+                                    }
                                     if replacing {
                                         finish_replace(&output, &self.editor.files[index], &ctx);
                                     }

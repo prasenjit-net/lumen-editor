@@ -80,6 +80,38 @@ pub fn did_close(uri: &DocumentUri) -> Value {
 }
 
 #[must_use]
+pub fn did_save(uri: &DocumentUri, text: Option<&str>) -> Value {
+    let mut params = json!({ "textDocument": { "uri": uri.as_str() } });
+    if let Some(text) = text {
+        params["text"] = Value::String(text.to_owned());
+    }
+    json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didSave",
+        "params": params
+    })
+}
+
+#[must_use]
+pub fn cancel_request(request_id: u64) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "$/cancelRequest",
+        "params": { "id": request_id }
+    })
+}
+
+#[must_use]
+pub fn shutdown_request(request_id: u64) -> Value {
+    json!({ "jsonrpc": "2.0", "id": request_id, "method": "shutdown", "params": null })
+}
+
+#[must_use]
+pub fn exit_notification() -> Value {
+    json!({ "jsonrpc": "2.0", "method": "exit", "params": null })
+}
+
+#[must_use]
 pub fn hover_request(request_id: u64, uri: &DocumentUri, position: Position) -> Value {
     text_position_request(request_id, "textDocument/hover", uri, position)
 }
@@ -146,6 +178,8 @@ mod tests {
         assert_eq!(change["params"]["textDocument"]["version"], 2);
         assert!(change["params"]["contentChanges"][0]["range"].is_null());
         assert_eq!(did_close(&uri)["method"], "textDocument/didClose");
+        assert_eq!(did_save(&uri, None)["method"], "textDocument/didSave");
+        assert!(did_save(&uri, Some("saved"))["params"]["text"] == "saved");
     }
 
     #[test]
