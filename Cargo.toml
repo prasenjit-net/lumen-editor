@@ -49,6 +49,7 @@ lumen-editor-core = { path = "crates/editor-core" }
 lumen-editor-surface = { path = "crates/editor-surface", optional = true }
 lumen-language-services = { path = "crates/language-services" }
 lumen-terminal-core = { path = "crates/terminal-core" }
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

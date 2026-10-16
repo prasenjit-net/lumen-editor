@@ -168,6 +168,10 @@ impl Workbench<'_> {
                         Command::ToggleTerminal,
                     ),
                     (
+                        format!("{}  View: Output", icon::OUTPUT),
+                        Command::ToggleOutput,
+                    ),
+                    (
                         format!("{}  View: Problems", icon::WARNING),
                         Command::ToggleProblems,
                     ),

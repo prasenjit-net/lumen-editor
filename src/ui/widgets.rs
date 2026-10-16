@@ -16,6 +16,68 @@ pub(crate) fn panel_header(
     title: &str,
     actions: &[HeaderAction],
 ) -> Option<Command> {
+    header_row(ui, actions, |ui| {
+        ui.add(
+            egui::Label::new(RichText::new(title).size(11.0).color(TEXT))
+                .halign(egui::Align::LEFT)
+                .truncate(),
+        );
+        None
+    })
+}
+
+/// A selectable tab in a bottom-panel header (Terminal / Output).
+pub(crate) struct PanelTab<'a> {
+    pub(crate) label: &'a str,
+    pub(crate) active: bool,
+    pub(crate) command: Command,
+}
+
+/// Same geometry as `panel_header`, with tabs where the title would be. The
+/// active tab is underlined in the accent color; actions stay at the right.
+pub(crate) fn tabbed_panel_header(
+    ui: &mut egui::Ui,
+    tabs: &[PanelTab],
+    actions: &[HeaderAction],
+) -> Option<Command> {
+    header_row(ui, actions, |ui| {
+        ui.spacing_mut().item_spacing.x = 14.0;
+        let mut clicked = None;
+        for tab in tabs {
+            let response = ui.add(
+                egui::Label::new(RichText::new(tab.label).size(11.0).color(if tab.active {
+                    TEXT
+                } else {
+                    MUTED
+                }))
+                .sense(egui::Sense::click())
+                .truncate(),
+            );
+            if tab.active {
+                let rect = response.rect;
+                ui.painter().hline(
+                    rect.x_range(),
+                    rect.bottom() + 3.0,
+                    Stroke::new(1.0_f32, ACCENT),
+                );
+            }
+            if response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+                && !tab.active
+            {
+                clicked = Some(tab.command.clone());
+            }
+        }
+        clicked
+    })
+}
+
+fn header_row(
+    ui: &mut egui::Ui,
+    actions: &[HeaderAction],
+    draw_title: impl FnOnce(&mut egui::Ui) -> Option<Command>,
+) -> Option<Command> {
     const HEIGHT: f32 = 35.0;
     const LEFT_INSET: f32 = 20.0;
     const RIGHT_INSET: f32 = 6.0;
@@ -46,21 +108,16 @@ pub(crate) fn panel_header(
             .id_salt("panel_header")
             .max_rect(rect),
     );
-    header_ui.scope_builder(
+    let title_command = header_ui.scope_builder(
         egui::UiBuilder::new()
             .max_rect(title_rect)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
         |ui| {
             ui.set_clip_rect(title_rect.intersect(ui.clip_rect()));
-            ui.add(
-                egui::Label::new(RichText::new(title).size(11.0).color(TEXT))
-                    .halign(egui::Align::LEFT)
-                    .truncate(),
-            );
+            draw_title(ui)
         },
     );
-
-    let mut clicked = None;
+    let mut clicked = title_command.inner;
     for (index, action) in actions.iter().enumerate() {
         let button_rect = egui::Rect::from_min_size(
             egui::pos2(

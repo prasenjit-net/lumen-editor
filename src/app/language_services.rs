@@ -459,6 +459,10 @@ impl LumenApp {
                         .and_then(|server| server.initialization_options),
                 )) {
                     Ok(()) => {
+                        crate::services::logger::info(
+                            "language-server",
+                            &format!("Starting {name} in {}", workspace.display()),
+                        );
                         self.language_server_workspace = Some(workspace);
                         self.language_server_language = Some(language);
                         self.language_server_process = Some(process);
@@ -555,6 +559,7 @@ impl LumenApp {
                             self.language_server_started_at = None;
                             self.language_server_restart.retry_at = None;
                             self.language_server_ready_at = Some(Instant::now());
+                            crate::services::logger::info("language-server", "Initialized; ready");
                             if let Some(LanguageServerStatus::Starting(name)) =
                                 self.view.language_server_status.take()
                             {
@@ -598,6 +603,7 @@ impl LumenApp {
                         let _ = process.send(&reply);
                     }
                 }
+                ServerEvent::Message(message) if log_server_message(&message) => {}
                 ServerEvent::Message(message) => {
                     if !self.accept_language_response(&message) {
                         self.accept_diagnostics(message);
@@ -613,6 +619,7 @@ impl LumenApp {
     }
 
     fn stop_language_server(&mut self, error: &str) {
+        crate::services::logger::error("language-server", error);
         self.clear_language_requests();
         self.language_server_process = None;
         self.language_server_workspace = None;
@@ -867,6 +874,10 @@ impl LumenApp {
         self.language_server_restart.attempts =
             self.language_server_restart.attempts.saturating_add(1);
         if self.language_server_restart.attempts > MAX_RESTART_ATTEMPTS {
+            crate::services::logger::error(
+                "language-server",
+                "Automatic restart limit reached; the server stays stopped until the workspace or file changes",
+            );
             self.language_server_restart.retry_at = None;
             self.view.language_server_status = Some(LanguageServerStatus::Error(format!(
                 "{error} (automatic restart limit reached)"
@@ -876,6 +887,14 @@ impl LumenApp {
         let delay =
             Duration::from_secs(1_u64 << (self.language_server_restart.attempts - 1).min(4));
         self.language_server_restart.retry_at = Some(Instant::now() + delay);
+        crate::services::logger::warn(
+            "language-server",
+            &format!(
+                "Restarting in {}s (attempt {})",
+                delay.as_secs(),
+                self.language_server_restart.attempts
+            ),
+        );
         self.view.language_server_status = Some(LanguageServerStatus::Error(format!(
             "{error} (retrying in {}s)",
             delay.as_secs()
@@ -1388,6 +1407,28 @@ fn flatten_symbols(
         });
         flatten_symbols(&symbol.children, path, depth + 1, output);
     }
+}
+
+/// Server `window/logMessage` and `window/showMessage` notifications go to the
+/// Output log. Returns true when the message was one of those and is handled.
+fn log_server_message(message: &serde_json::Value) -> bool {
+    use crate::model::output_log::LogLevel;
+    let method = message.get("method").and_then(serde_json::Value::as_str);
+    if !matches!(method, Some("window/logMessage" | "window/showMessage"))
+        || message.get("id").is_some()
+    {
+        return false;
+    }
+    let params = &message["params"];
+    let level = match params["type"].as_u64() {
+        Some(1) => LogLevel::Error,
+        Some(2) => LogLevel::Warn,
+        _ => LogLevel::Info,
+    };
+    if let Some(text) = params["message"].as_str() {
+        crate::services::logger::log(level, "language-server", text);
+    }
+    true
 }
 
 pub(super) fn file_uri(path: &std::path::Path) -> String {

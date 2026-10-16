@@ -18,6 +18,7 @@ mod explorer_edit;
 mod language_edit;
 mod language_navigation;
 mod navigation;
+mod output;
 mod palette;
 mod problems;
 mod settings;

@@ -5,6 +5,7 @@ pub(crate) mod file_index;
 mod file_operations;
 mod filesystem;
 pub(crate) mod language_server;
+pub(crate) mod logger;
 pub(crate) mod recent_files;
 pub(crate) mod recovery;
 mod reveal;

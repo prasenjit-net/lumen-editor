@@ -204,6 +204,16 @@ pub(crate) struct TerminalView {
     pub(crate) applied_columns: u16,
 }
 
+/// Read-only log panel sharing the terminal's slot in the bottom panel.
+#[derive(Default)]
+pub(crate) struct OutputView {
+    pub(crate) open: bool,
+    pub(crate) entries: Vec<crate::model::output_log::LogEntry>,
+    /// Newest log sequence copied into `entries`.
+    pub(crate) seen: u64,
+    pub(crate) scroll_to_bottom: bool,
+}
+
 pub(crate) struct ProblemsView {
     pub(crate) open: bool,
     pub(crate) filter: String,
@@ -313,6 +323,7 @@ pub(crate) struct ViewState {
     pub(crate) source_control: SourceControlView,
     pub(crate) terminal: TerminalView,
     pub(crate) problems: ProblemsView,
+    pub(crate) output: OutputView,
     pub(crate) language_server_document: Option<crate::model::DocumentId>,
     pub(crate) language_server_status: Option<LanguageServerStatus>,
     /// Latest semantic tokens per document; valid only for the stored revision.
@@ -399,6 +410,7 @@ impl Default for ViewState {
             source_control: SourceControlView::default(),
             terminal: TerminalView::default(),
             problems: ProblemsView::default(),
+            output: OutputView::default(),
             language_server_document: None,
             language_server_status: None,
             language_semantic_tokens: std::collections::HashMap::new(),

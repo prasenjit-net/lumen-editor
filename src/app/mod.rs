@@ -14,6 +14,7 @@ mod folding;
 mod language_edits;
 mod language_services;
 mod navigation;
+pub(crate) mod output;
 mod safety;
 pub(crate) mod settings;
 pub(crate) mod source_control;
@@ -68,6 +69,9 @@ pub(crate) struct LumenApp {
     pub(crate) semantic_token_request: Option<language_services::SemanticTokenAttempt>,
     pub(crate) language_server_started_at: Option<std::time::Instant>,
     pub(crate) language_server_ready_at: Option<std::time::Instant>,
+    /// Last status/terminal text mirrored into the log, to log changes once.
+    pub(crate) logged_status: String,
+    pub(crate) logged_terminal_error: Option<String>,
     pub(crate) terminal_session: Option<crate::services::terminal::TerminalSession>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
@@ -105,6 +109,8 @@ impl Default for LumenApp {
             semantic_token_request: None,
             language_server_started_at: None,
             language_server_ready_at: None,
+            logged_status: String::new(),
+            logged_terminal_error: None,
             terminal_session: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
@@ -126,6 +132,7 @@ impl eframe::App for LumenApp {
         self.ensure_source_control(ctx);
         self.render_component(ctx, |workbench| workbench.sidebar(ctx));
         self.render_component(ctx, |workbench| workbench.problems_panel(ctx));
+        self.render_component(ctx, |workbench| workbench.output_panel(ctx));
         self.render_component(ctx, |workbench| workbench.terminal_panel(ctx));
         self.resize_terminal(self.view.terminal.rows, self.view.terminal.columns);
         self.render_component(ctx, |workbench| workbench.editor(ctx));
@@ -150,6 +157,8 @@ impl eframe::App for LumenApp {
         self.poll_file_index(ctx);
         self.poll_source_control(ctx);
         self.poll_terminal(ctx);
+        self.log_status_changes();
+        self.sync_output();
     }
 }
 

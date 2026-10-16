@@ -38,7 +38,42 @@ impl Workbench<'_> {
                                 self.command(Command::ActivateActivity(activity));
                             }
                         }
-                        ui.add_space((ui.available_height() - 50.0).max(0.0));
+                        // Bottom-aligned group: Terminal, Output, Settings.
+                        ui.add_space((ui.available_height() - 50.0 * 3.0).max(0.0));
+                        let has_workspace = self.editor.workspace.is_some();
+                        for (glyph, selected, enabled, tooltip, command) in [
+                            (
+                                icon::TERMINAL,
+                                self.view.terminal.open,
+                                has_workspace,
+                                "Terminal (Ctrl+`)",
+                                Command::ToggleTerminal,
+                            ),
+                            (
+                                icon::OUTPUT,
+                                self.view.output.open,
+                                true,
+                                "Output",
+                                Command::ToggleOutput,
+                            ),
+                        ] {
+                            let response = ui
+                                .add_enabled_ui(enabled, |ui| {
+                                    widgets::icon_button(ui, glyph, selected)
+                                })
+                                .inner
+                                .on_hover_text(tooltip);
+                            if selected {
+                                ui.painter().vline(
+                                    response.rect.left(),
+                                    response.rect.y_range(),
+                                    Stroke::new(2.0_f32, ACCENT),
+                                );
+                            }
+                            if response.clicked() {
+                                self.command(command);
+                            }
+                        }
                         if widgets::icon_button(ui, icon::GEAR, self.view.settings.open)
                             .on_hover_text("Settings (Cmd/Ctrl+,)")
                             .clicked()
@@ -164,5 +199,74 @@ mod tests {
                     .contains(std::path::Path::new("/workspace"))
             );
         }
+    }
+
+    fn glyph_y(output: &egui::FullOutput, glyph: &str) -> f32 {
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == glyph => Some(text.pos.y),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{glyph:?} is visible"))
+    }
+
+    #[test]
+    fn terminal_and_output_buttons_sit_above_settings_at_the_bottom() {
+        for height in [420.0_f32, 600.0, 900.0] {
+            let mut app = LumenApp::default();
+            app.editor.workspace = Some("/workspace".into());
+            let ctx = egui::Context::default();
+            crate::ui::theme::configure_ui(&ctx);
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, height),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| app.render_component(ctx, |workbench| workbench.activity_bar(ctx)),
+            );
+            let (terminal, log, gear) = (
+                glyph_y(&output, icon::TERMINAL),
+                glyph_y(&output, icon::OUTPUT),
+                glyph_y(&output, icon::GEAR),
+            );
+            assert!(
+                terminal < log && log < gear,
+                "{height}: {terminal} {log} {gear}"
+            );
+            assert!(
+                gear > height - 70.0,
+                "settings stays bottom-aligned at {height}"
+            );
+            assert!(
+                terminal > glyph_y(&output, icon::PUZZLE_PIECE),
+                "below the activities"
+            );
+        }
+    }
+
+    #[test]
+    fn output_button_toggles_the_panel_and_terminal_needs_a_folder() {
+        let mut app = LumenApp::default();
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let baseline = active_stripes(&frame(&mut app, &ctx, 900.0, vec![]));
+        click(&mut app, &ctx, 900.0, icon::OUTPUT);
+        assert!(app.view.output.open);
+        assert_eq!(
+            active_stripes(&frame(&mut app, &ctx, 900.0, vec![])),
+            baseline + 1,
+            "the open Output button is marked like an active activity"
+        );
+        click(&mut app, &ctx, 900.0, icon::OUTPUT);
+        assert!(!app.view.output.open);
+
+        // No folder open: the terminal button is disabled and does nothing.
+        click(&mut app, &ctx, 900.0, icon::TERMINAL);
+        assert!(!app.view.terminal.open);
     }
 }
