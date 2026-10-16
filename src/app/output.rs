@@ -7,6 +7,13 @@ use crate::{
 };
 use eframe::egui;
 
+/// Drop any text selection made in the previous bottom-panel view.
+pub(crate) fn clear_text_selection(ctx: &egui::Context) {
+    ctx.plugin::<egui::text_selection::LabelSelectionState>()
+        .lock()
+        .clear_selection();
+}
+
 impl LumenApp {
     /// Open the Output tab in the bottom panel (the terminal session keeps running).
     pub(crate) fn show_output(&mut self) {
@@ -67,6 +74,9 @@ mod tests {
     use super::*;
     use crate::app::command::Command;
 
+    /// The log is process-wide; tests that read it back or clear it take turns.
+    static LOG_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn bottom_panel_slot_holds_one_view_at_a_time() {
         let mut app = LumenApp::default();
@@ -88,6 +98,9 @@ mod tests {
 
     #[test]
     fn status_and_terminal_changes_are_logged_once_with_a_level() {
+        let _turn = LOG_TESTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut app = LumenApp::default();
         app.view.status = "Save failed: output-test-unique-1".into();
         app.log_status_changes();
@@ -118,6 +131,9 @@ mod tests {
 
     #[test]
     fn clearing_empties_the_panel_and_records_that_it_happened() {
+        let _turn = LOG_TESTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut app = LumenApp::default();
         logger::info("test", "output-test-before-clear");
         app.sync_output();

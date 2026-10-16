@@ -50,6 +50,9 @@ pub(crate) fn tabbed_panel_header(
                 } else {
                     MUTED
                 }))
+                // A selectable label would start a text selection on click, and
+                // that selection would then sweep over whatever panel replaces it.
+                .selectable(false)
                 .sense(egui::Sense::click())
                 .truncate(),
             );
