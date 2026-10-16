@@ -115,6 +115,12 @@ impl SettingsState {
             _ => unreachable!(),
         }
     }
+    pub(crate) fn text(&self, id: &str) -> String {
+        match self.effective(setting(id), None).0 {
+            Value::Text(value) => value,
+            _ => unreachable!(),
+        }
+    }
     pub(crate) fn search_exclude(&self) -> String {
         match self.effective(setting("search.exclude"), None).0 {
             Value::Text(value) => value,

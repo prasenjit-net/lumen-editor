@@ -319,6 +319,10 @@ specified by a project unless the user’s server-command policy permits it.
 - [x] Render validated diagnostics in the shared editor viewport and a compact,
   searchable/filterable Problems panel with severity counts and exact-range
   navigation; retain parser highlighting when no server is available.
+- [x] Add `language.rust|go.enabled`, `language.*.server_path` and
+  `language.server.startup_timeout_seconds` settings. Disabling a language stops its
+  session; a configured path must be an absolute existing file. Server args, trace
+  and project-command trust policy remain open.
 - [ ] Apply and live-validate Rust diagnostics with `rust-analyzer`, then Go
   diagnostics with `gopls`.
 - [x] Add bounded exponential restart backoff, initialization/request deadlines,

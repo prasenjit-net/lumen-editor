@@ -10,7 +10,6 @@ use lumen_language_services::{
 };
 use std::time::{Duration, Instant};
 
-const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(12);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const STABLE_SERVER_PERIOD: Duration = Duration::from_secs(30);
 const MAX_RESTART_ATTEMPTS: u32 = 5;
@@ -165,24 +164,103 @@ impl LumenApp {
             return;
         };
         self.view.language_server_document = Some(document);
-        self.view.language_server_status = LanguageRegistry::detect(&path).and_then(|language| {
-            match self.language_server_service.availability(language) {
-                ServerAvailability::Available { executable } => {
-                    let name = executable.file_name()?.to_str()?.to_owned();
-                    self.start_language_server(executable, language.id, name.clone(), ctx);
-                    Some(
-                        self.view
-                            .language_server_status
-                            .clone()
-                            .unwrap_or(LanguageServerStatus::Available(name)),
-                    )
+        let language = LanguageRegistry::detect(&path);
+        if let Some(language) = language
+            && !self.language_server_enabled(language.id)
+        {
+            self.disable_language_server(language.id);
+            self.view.language_server_status = None;
+            return;
+        }
+        self.view.language_server_status =
+            language.and_then(
+                |language| match self.language_server_availability(language) {
+                    ServerAvailability::Available { executable } => {
+                        let name = executable.file_name()?.to_str()?.to_owned();
+                        self.start_language_server(executable, language.id, name.clone(), ctx);
+                        Some(
+                            self.view
+                                .language_server_status
+                                .clone()
+                                .unwrap_or(LanguageServerStatus::Available(name)),
+                        )
+                    }
+                    ServerAvailability::Missing { candidates } => candidates
+                        .first()
+                        .map(|candidate| LanguageServerStatus::Missing(candidate.clone())),
+                    ServerAvailability::NotSupported => None,
+                },
+            );
+    }
+
+    fn language_setting_prefix(language: LanguageId) -> Option<&'static str> {
+        match language {
+            LanguageId::RUST => Some("language.rust"),
+            LanguageId::GO => Some("language.go"),
+            _ => None,
+        }
+    }
+
+    /// Languages without a settings namespace (such as JSON) have no server to gate.
+    fn language_server_enabled(&self, language: LanguageId) -> bool {
+        Self::language_setting_prefix(language)
+            .is_none_or(|prefix| self.view.settings.boolean(&format!("{prefix}.enabled")))
+    }
+
+    /// An explicit user/project server path replaces PATH discovery. It must name
+    /// an existing file; a bad path is reported as missing rather than falling
+    /// back to a different executable than the user asked for.
+    fn language_server_availability(
+        &self,
+        language: &lumen_language_services::LanguageDescriptor,
+    ) -> ServerAvailability {
+        let configured = Self::language_setting_prefix(language.id)
+            .map(|prefix| self.view.settings.text(&format!("{prefix}.server_path")))
+            .map(|path| path.trim().to_owned())
+            .filter(|path| !path.is_empty());
+        match configured {
+            Some(path) => {
+                let executable = std::path::PathBuf::from(&path);
+                if executable.is_absolute() && executable.is_file() {
+                    ServerAvailability::Available { executable }
+                } else {
+                    ServerAvailability::Missing {
+                        candidates: vec![path],
+                    }
                 }
-                ServerAvailability::Missing { candidates } => candidates
-                    .first()
-                    .map(|candidate| LanguageServerStatus::Missing(candidate.clone())),
-                ServerAvailability::NotSupported => None,
             }
-        });
+            None => self.language_server_service.availability(language),
+        }
+    }
+
+    fn initialize_timeout(&self) -> Duration {
+        Duration::from_secs_f64(
+            f64::from(
+                self.view
+                    .settings
+                    .number("language.server.startup_timeout_seconds", None),
+            )
+            .max(1.0),
+        )
+    }
+
+    /// Stops the running session when its language is switched off in settings.
+    fn disable_language_server(&mut self, language: LanguageId) {
+        if self.language_server_language != Some(language) {
+            return;
+        }
+        self.clear_language_requests();
+        self.retire_language_server();
+        self.language_server_workspace = None;
+        self.language_server_language = None;
+        self.language_server_initialized = false;
+        self.language_server_capabilities = None;
+        self.language_server_documents.clear();
+        self.language_server_started_at = None;
+        self.language_server_ready_at = None;
+        self.language_server_restart = Default::default();
+        self.view.language_hover = None;
+        self.view.language_server_diagnostics.clear();
     }
 
     fn start_language_server(
@@ -269,11 +347,12 @@ impl LumenApp {
             self.language_server_restart.attempts = 0;
             self.language_server_ready_at = None;
         }
+        let initialize_timeout = self.initialize_timeout();
         if !self.language_server_initialized
             && self.language_server_process.is_some()
             && self
                 .language_server_started_at
-                .is_some_and(|started| started.elapsed() >= INITIALIZE_TIMEOUT)
+                .is_some_and(|started| started.elapsed() >= initialize_timeout)
         {
             self.stop_language_server("Language server initialization timed out");
             if let Some(retry_at) = self.language_server_restart.retry_at {
@@ -292,7 +371,7 @@ impl LumenApp {
         }
         if let Some(started) = self.language_server_started_at {
             ctx.request_repaint_after(
-                (started + INITIALIZE_TIMEOUT).saturating_duration_since(Instant::now()),
+                (started + initialize_timeout).saturating_duration_since(Instant::now()),
             );
         }
         let mut events = self
@@ -1297,5 +1376,67 @@ mod tests {
             app.view.language_navigation.locations[0].position.character,
             7
         );
+    }
+
+    fn rust_app() -> (LumenApp, RecordedMessages, QueuedEvents) {
+        let (mut app, messages, events) = fake_app();
+        app.editor.files.push(crate::model::Document::from_path(
+            "/workspace/a.rs".into(),
+            "fn a() {}".into(),
+        ));
+        app.editor.active_file = Some(0);
+        (app, messages, events)
+    }
+
+    #[test]
+    fn disabled_language_never_starts_and_stops_a_running_session() {
+        let (mut app, messages, _events) = rust_app();
+        app.view.settings.user.persisted.insert(
+            "language.rust.enabled".into(),
+            lumen_settings_core::Value::Bool(false),
+        );
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        assert!(app.language_server_process.is_none());
+        assert!(app.view.language_server_status.is_none());
+        assert!(messages.lock().unwrap().is_empty());
+
+        app.view.settings.user.persisted.clear();
+        app.refresh_language_server_status(&ctx);
+        assert!(app.language_server_process.is_some());
+        app.view.settings.user.persisted.insert(
+            "language.rust.enabled".into(),
+            lumen_settings_core::Value::Bool(false),
+        );
+        app.refresh_language_server_status(&ctx);
+        assert!(app.language_server_process.is_none());
+        assert!(app.language_server_language.is_none());
+    }
+
+    #[test]
+    fn configured_server_path_must_be_an_existing_absolute_file() {
+        let (mut app, _messages, _events) = rust_app();
+        app.view.settings.user.persisted.insert(
+            "language.rust.server_path".into(),
+            lumen_settings_core::Value::Text("relative/rust-analyzer".into()),
+        );
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        assert!(app.language_server_process.is_none());
+        assert!(matches!(
+            app.view.language_server_status,
+            Some(LanguageServerStatus::Missing(ref path)) if path == "relative/rust-analyzer"
+        ));
+    }
+
+    #[test]
+    fn startup_timeout_setting_controls_initialize_deadline() {
+        let mut app = LumenApp::default();
+        assert_eq!(app.initialize_timeout(), Duration::from_secs(12));
+        app.view.settings.user.persisted.insert(
+            "language.server.startup_timeout_seconds".into(),
+            lumen_settings_core::Value::Number(30.0),
+        );
+        assert_eq!(app.initialize_timeout(), Duration::from_secs(30));
     }
 }
