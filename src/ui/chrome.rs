@@ -128,21 +128,6 @@ impl Workbench<'_> {
                                 .size(11.0)
                                 .color(Color32::WHITE),
                         );
-                        if ui
-                            .add_enabled(
-                                self.editor.workspace.is_some(),
-                                egui::Button::new(
-                                    RichText::new(icon::TERMINAL)
-                                        .size(13.0)
-                                        .color(Color32::WHITE),
-                                )
-                                .frame(false),
-                            )
-                            .on_hover_text("Toggle Terminal")
-                            .clicked()
-                        {
-                            self.command(Command::ToggleTerminal);
-                        }
                         let errors = self.view.language_server_diagnostics.values().flatten()
                             .filter(|diagnostic| diagnostic.severity == lumen_language_services::diagnostics::DiagnosticSeverity::Error)
                             .count();

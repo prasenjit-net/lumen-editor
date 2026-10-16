@@ -2,6 +2,11 @@ use crate::{app::LumenApp, platform, ui::theme::configure_ui};
 use eframe::egui;
 use std::path::PathBuf;
 pub(crate) fn run() -> eframe::Result<()> {
+    install_panic_log();
+    crate::services::logger::info(
+        "editor",
+        &format!("Lumen {} started", env!("CARGO_PKG_VERSION")),
+    );
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size([1280.0, 760.0])
         .with_min_inner_size([900.0, 560.0])
@@ -25,6 +30,10 @@ pub(crate) fn run() -> eframe::Result<()> {
         Box::new(|cc| {
             let _fonts = platform::fonts::configure(&cc.egui_ctx);
             configure_ui(&cc.egui_ctx);
+            let repaint = cc.egui_ctx.clone();
+            crate::services::logger::set_waker(std::sync::Arc::new(move || {
+                repaint.request_repaint()
+            }));
             let mut app = LumenApp::default();
             #[cfg(feature = "shared-editor")]
             {
@@ -63,4 +72,13 @@ pub(crate) fn run() -> eframe::Result<()> {
             Ok(Box::new(app))
         }),
     )
+}
+
+/// Record panics in the Output log before the default handler reports them.
+fn install_panic_log() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        crate::services::logger::error("panic", &info.to_string());
+        previous(info);
+    }));
 }

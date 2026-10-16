@@ -1,6 +1,6 @@
 use super::{
     Workbench, theme,
-    widgets::{HeaderAction, panel_header},
+    widgets::{HeaderAction, PanelTab, tabbed_panel_header},
 };
 use crate::{app::command::Command, icon};
 use eframe::egui::{
@@ -57,7 +57,19 @@ impl Workbench<'_> {
                         enabled: true,
                     },
                 ];
-                if let Some(command) = panel_header(ui, "TERMINAL", &actions) {
+                let tabs = [
+                    PanelTab {
+                        label: "TERMINAL",
+                        active: true,
+                        command: Command::ShowTerminal,
+                    },
+                    PanelTab {
+                        label: "OUTPUT",
+                        active: false,
+                        command: Command::ShowOutput,
+                    },
+                ];
+                if let Some(command) = tabbed_panel_header(ui, &tabs, &actions) {
                     self.command(command);
                 }
                 if let Some(error) = &self.view.terminal.error {

@@ -131,6 +131,19 @@ impl NativeMenu {
             true,
             Some(Accelerator::new(Modifiers::CONTROL, Code::Backquote)),
         ))?;
+        terminal.append(&MenuItem::with_id(
+            Command::ToggleOutput.menu_id().expect("native command"),
+            "Toggle Output",
+            true,
+            Some(Accelerator::new(
+                if cfg!(target_os = "macos") {
+                    Modifiers::META | Modifiers::SHIFT
+                } else {
+                    Modifiers::CONTROL | Modifiers::SHIFT
+                },
+                Code::KeyU,
+            )),
+        ))?;
         let window = Submenu::new("Window", true);
         #[cfg(target_os = "macos")]
         window.append_items(&[

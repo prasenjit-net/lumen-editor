@@ -55,8 +55,19 @@ impl LumenApp {
                 self.view.problems.open = !self.view.problems.open;
                 if self.view.problems.open {
                     self.view.terminal.open = false;
+                    self.view.output.open = false;
                 }
             }
+            Command::ToggleOutput => self.toggle_output(),
+            Command::ShowOutput => self.show_output(),
+            Command::ShowTerminal => {
+                if !self.view.terminal.open {
+                    self.toggle_terminal(ctx);
+                }
+            }
+            Command::CloseOutput => self.view.output.open = false,
+            Command::ClearOutput => self.clear_output(),
+            Command::CopyOutput => self.copy_output(ctx),
             Command::SendTerminalInput(bytes) => self.send_terminal_input(&bytes, ctx),
             Command::CloseTerminal => self.close_terminal(),
             Command::CloseProblems => self.view.problems.open = false,
