@@ -45,7 +45,11 @@ pub fn initialize_request_with_options(
             "rootUri": workspace_uri,
             "workspaceFolders": [{ "uri": workspace_uri, "name": "Lumen Workspace" }],
             "capabilities": {
-                "workspace": { "workspaceFolders": true },
+                "workspace": {
+                    "workspaceFolders": true,
+                    // Text edits only: no file create/rename/delete from servers.
+                    "workspaceEdit": { "documentChanges": true, "resourceOperations": [] }
+                },
                 "textDocument": {
                     "publishDiagnostics": { "relatedInformation": true },
                     "completion": {
@@ -55,6 +59,9 @@ pub fn initialize_request_with_options(
                             "insertReplaceSupport": false
                         }
                     },
+                    "references": {},
+                    "formatting": {},
+                    "rename": { "prepareSupport": false },
                     "signatureHelp": {
                         "signatureInformation": {
                             "documentationFormat": ["plaintext"],
@@ -240,6 +247,57 @@ pub fn signature_help_request(request_id: u64, uri: &DocumentUri, position: Posi
 }
 
 #[must_use]
+pub fn references_request(request_id: u64, uri: &DocumentUri, position: Position) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": uri.as_str() },
+            "position": { "line": position.line, "character": position.character },
+            "context": { "includeDeclaration": true }
+        }
+    })
+}
+
+#[must_use]
+pub fn rename_request(
+    request_id: u64,
+    uri: &DocumentUri,
+    position: Position,
+    new_name: &str,
+) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/rename",
+        "params": {
+            "textDocument": { "uri": uri.as_str() },
+            "position": { "line": position.line, "character": position.character },
+            "newName": new_name
+        }
+    })
+}
+
+#[must_use]
+pub fn formatting_request(
+    request_id: u64,
+    uri: &DocumentUri,
+    tab_size: u32,
+    insert_spaces: bool,
+) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/formatting",
+        "params": {
+            "textDocument": { "uri": uri.as_str() },
+            "options": { "tabSize": tab_size, "insertSpaces": insert_spaces }
+        }
+    })
+}
+
+#[must_use]
 pub fn hover_request(request_id: u64, uri: &DocumentUri, position: Position) -> Value {
     text_position_request(request_id, "textDocument/hover", uri, position)
 }
@@ -294,7 +352,7 @@ mod tests {
             text_document["completion"]["completionItem"]["snippetSupport"],
             false
         );
-        assert!(text_document["rename"].is_null());
+        assert_eq!(text_document["rename"]["prepareSupport"], false);
         assert!(text_document["codeAction"].is_null());
         assert_eq!(initialized_notification()["method"], "initialized");
     }

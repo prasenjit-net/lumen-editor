@@ -126,7 +126,7 @@ pub(crate) fn accept(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lumen_language_services::incoming::CompletionEdit;
+    use lumen_language_services::incoming::TextEdit;
 
     fn item(label: &str) -> CompletionItem {
         CompletionItem {
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn import_edits_before_the_word_apply_and_later_ones_are_skipped() {
         let mut with_import = item("HashMap");
-        with_import.additional_edits = vec![CompletionEdit {
+        with_import.additional_edits = vec![TextEdit {
             range: 0..0,
             new_text: "use std::collections::HashMap;\n".into(),
         }];

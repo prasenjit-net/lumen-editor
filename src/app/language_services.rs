@@ -21,6 +21,16 @@ pub(crate) struct SyncedLanguageDocument {
     server_version: ServerDocumentVersion,
 }
 
+impl SyncedLanguageDocument {
+    pub(super) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub(super) fn server_version(&self) -> ServerDocumentVersion {
+        self.server_version
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LanguageServerTarget {
     executable: std::path::PathBuf,
@@ -58,6 +68,9 @@ pub(crate) enum LanguageRequestKind {
     SemanticTokens,
     Completion,
     SignatureHelp,
+    References,
+    Formatting,
+    Rename,
 }
 
 /// The last semantic-token request, so a failed or empty reply is not retried
@@ -67,6 +80,16 @@ pub(crate) struct SemanticTokenAttempt {
     document: crate::model::DocumentId,
     revision: u64,
     at: Instant,
+}
+
+/// A validated caret-relative request target.
+pub(super) struct CaretContext {
+    pub(super) document_id: crate::model::DocumentId,
+    pub(super) revision: u64,
+    pub(super) uri: DocumentUri,
+    pub(super) server_version: ServerDocumentVersion,
+    pub(super) byte: usize,
+    pub(super) position: lumen_language_services::Position,
 }
 
 const SEMANTIC_TOKEN_DEBOUNCE: Duration = Duration::from_millis(250);
@@ -745,7 +768,7 @@ impl LumenApp {
         }
     }
 
-    fn active_synced_document(
+    pub(super) fn active_synced_document(
         &self,
     ) -> Option<(
         crate::model::DocumentId,
@@ -859,33 +882,28 @@ impl LumenApp {
         )));
     }
 
-    fn request_at_caret(&mut self, kind: LanguageRequestKind) {
-        let capability = self
+    /// Validate capability, sync state and caret for a caret-relative request.
+    pub(super) fn caret_context(
+        &mut self,
+        supported: impl Fn(&ServerCapabilities) -> bool,
+    ) -> Option<CaretContext> {
+        if !self
             .language_server_capabilities
             .as_ref()
-            .is_some_and(|capabilities| match kind {
-                LanguageRequestKind::Hover => capabilities.hover,
-                LanguageRequestKind::Definition => capabilities.definition,
-                LanguageRequestKind::Completion => capabilities.completion,
-                LanguageRequestKind::SignatureHelp => capabilities.signature_help,
-                LanguageRequestKind::Symbols | LanguageRequestKind::SemanticTokens => false,
-            });
-        if !capability {
+            .is_some_and(supported)
+        {
             self.view.status = "The active language server does not provide this feature.".into();
-            return;
+            return None;
         }
         let Some((document_id, revision, uri, server_version)) = self.active_synced_document()
         else {
             self.view.status = "Language server is not ready for this document.".into();
-            return;
+            return None;
         };
-        let Some(document) = self
+        let document = self
             .editor
             .active()
-            .filter(|document| document.id == document_id)
-        else {
-            return;
-        };
+            .filter(|document| document.id == document_id)?;
         #[cfg(feature = "shared-editor")]
         let byte = document
             .editing
@@ -898,8 +916,37 @@ impl LumenApp {
         let byte = 0;
         let Ok(position) = lumen_language_services::byte_to_position(&document.text, byte) else {
             self.view.status = "Could not map the caret for the language server.".into();
+            return None;
+        };
+        Some(CaretContext {
+            document_id,
+            revision,
+            uri,
+            server_version,
+            byte,
+            position,
+        })
+    }
+
+    fn request_at_caret(&mut self, kind: LanguageRequestKind) {
+        let Some(context) = self.caret_context(|capabilities| match kind {
+            LanguageRequestKind::Hover => capabilities.hover,
+            LanguageRequestKind::Definition => capabilities.definition,
+            LanguageRequestKind::Completion => capabilities.completion,
+            LanguageRequestKind::SignatureHelp => capabilities.signature_help,
+            LanguageRequestKind::References => capabilities.references,
+            _ => false,
+        }) else {
             return;
         };
+        let CaretContext {
+            document_id,
+            revision,
+            uri,
+            server_version,
+            byte,
+            position,
+        } = context;
         let stamp = self.request_stamp(document_id, revision, server_version, uri.clone());
         let request_id = self.language_server_requests.register(stamp);
         let message = match kind {
@@ -909,11 +956,14 @@ impl LumenApp {
             LanguageRequestKind::SignatureHelp => {
                 lsp::signature_help_request(request_id, &uri, position)
             }
-            LanguageRequestKind::Symbols | LanguageRequestKind::SemanticTokens => {
-                unreachable!("this request does not use a caret position")
-            }
+            LanguageRequestKind::References => lsp::references_request(request_id, &uri, position),
+            _ => unreachable!("this request does not use a plain caret position"),
         };
         self.send_language_request_at(request_id, kind, Some(byte), &message);
+    }
+
+    pub(crate) fn request_language_references(&mut self) {
+        self.request_at_caret(LanguageRequestKind::References);
     }
 
     pub(crate) fn request_language_completion(&mut self) {
@@ -988,7 +1038,7 @@ impl LumenApp {
 
     /// Caret byte of the active document's primary selection, only when it is a
     /// plain caret equal to `expected`; replies for a moved caret are dropped.
-    fn caret_is_still_at(&self, expected: Option<usize>) -> Option<usize> {
+    pub(super) fn caret_is_still_at(&self, expected: Option<usize>) -> Option<usize> {
         #[cfg(feature = "shared-editor")]
         {
             let buffer = self.editor.active()?.editing.as_ref()?;
@@ -1094,7 +1144,7 @@ impl LumenApp {
         }
     }
 
-    fn request_stamp(
+    pub(super) fn request_stamp(
         &self,
         document_id: crate::model::DocumentId,
         revision: u64,
@@ -1121,7 +1171,7 @@ impl LumenApp {
         self.send_language_request_at(request_id, kind, None, message);
     }
 
-    fn send_language_request_at(
+    pub(super) fn send_language_request_at(
         &mut self,
         request_id: u64,
         kind: LanguageRequestKind,
@@ -1162,6 +1212,9 @@ impl LumenApp {
                     LanguageRequestKind::Symbols => Some("Loading document symbols…"),
                     LanguageRequestKind::Completion => Some("Loading completions…"),
                     LanguageRequestKind::SignatureHelp => Some("Loading signature help…"),
+                    LanguageRequestKind::References => Some("Finding references…"),
+                    LanguageRequestKind::Formatting => Some("Formatting…"),
+                    LanguageRequestKind::Rename => Some("Computing rename…"),
                     LanguageRequestKind::SemanticTokens => None,
                 } {
                     self.view.status = status.into();
@@ -1206,7 +1259,9 @@ impl LumenApp {
                     }
                 }
             }
-            LanguageRequestKind::Definition => self.apply_definition_response(message),
+            LanguageRequestKind::Definition => {
+                self.apply_location_response(message, "Go to Definition", true)
+            }
             LanguageRequestKind::Symbols => self.apply_document_symbols_response(message),
             LanguageRequestKind::SemanticTokens => self.apply_semantic_tokens_response(message),
             LanguageRequestKind::Completion => {
@@ -1215,21 +1270,32 @@ impl LumenApp {
             LanguageRequestKind::SignatureHelp => {
                 self.apply_signature_help_response(message, request.caret)
             }
+            LanguageRequestKind::References => {
+                self.apply_location_response(message, "Find References", false)
+            }
+            LanguageRequestKind::Formatting => self.apply_formatting_response(message),
+            LanguageRequestKind::Rename => self.apply_rename_response(message, request.caret),
         }
         true
     }
 
-    fn current_request_stamp(&self) -> Option<RequestStamp> {
+    pub(super) fn current_request_stamp(&self) -> Option<RequestStamp> {
         let (id, revision, uri, server_version) = self.active_synced_document()?;
         Some(self.request_stamp(id, revision, server_version, uri))
     }
 
-    fn apply_definition_response(&mut self, message: &serde_json::Value) {
+    fn apply_location_response(
+        &mut self,
+        message: &serde_json::Value,
+        title: &'static str,
+        open_single: bool,
+    ) {
         let locations =
             match lumen_language_services::incoming::parse_definition_locations_response(message) {
                 Ok(locations) => locations,
                 Err(_) => {
-                    self.view.status = "Language server returned an invalid definition".into();
+                    self.view.status =
+                        format!("Language server returned invalid locations for {title}");
                     return;
                 }
             };
@@ -1250,13 +1316,13 @@ impl LumenApp {
             })
             .collect::<Vec<_>>();
         if targets.is_empty() {
-            self.view.status = "No definition found".into();
+            self.view.status = format!("{title}: nothing found");
             return;
         }
-        if targets.len() == 1 {
+        if open_single && targets.len() == 1 {
             self.view.language_navigation.locations = targets;
             self.open_language_location(0);
-            self.view.status = "Opened definition".into();
+            self.view.status = format!("{title}: opened");
             return;
         }
         targets.sort_by(|left, right| {
@@ -1264,7 +1330,7 @@ impl LumenApp {
                 .cmp(&right.path)
                 .then(left.label.cmp(&right.label))
         });
-        self.show_language_locations("Go to Definition", targets);
+        self.show_language_locations(title, targets);
     }
 
     fn apply_document_symbols_response(&mut self, message: &serde_json::Value) {
@@ -1292,7 +1358,7 @@ impl LumenApp {
         self.show_language_locations("Go to Symbol in Editor", locations);
     }
 
-    fn show_language_locations(
+    pub(super) fn show_language_locations(
         &mut self,
         title: &str,
         locations: Vec<super::view_state::LanguageLocation>,
@@ -1324,7 +1390,7 @@ fn flatten_symbols(
     }
 }
 
-fn file_uri(path: &std::path::Path) -> String {
+pub(super) fn file_uri(path: &std::path::Path) -> String {
     let text = path.to_string_lossy().replace('\\', "/");
     let escaped = text.bytes().fold(String::new(), |mut uri, byte| {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~') {
@@ -1338,7 +1404,7 @@ fn file_uri(path: &std::path::Path) -> String {
     format!("file://{escaped}")
 }
 
-fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
+pub(super) fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
     let encoded = uri.strip_prefix("file://")?;
     let mut bytes = Vec::with_capacity(encoded.len());
     let mut input = encoded.as_bytes().iter().copied();
@@ -1685,7 +1751,7 @@ mod tests {
             {"uri":"file:///workspace/b.rs","range":{"start":{"line":3,"character":2},"end":{"line":3,"character":4}}},
             {"uri":"file:///workspace/a.rs","range":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}}}
         ]});
-        app.apply_definition_response(&message);
+        app.apply_location_response(&message, "Go to Definition", true);
         assert!(app.view.language_navigation.open);
         assert_eq!(app.view.language_navigation.title, "Go to Definition");
         assert_eq!(app.view.language_navigation.locations.len(), 2);
@@ -2094,5 +2160,239 @@ mod tests {
         assert_eq!(document, app.editor.files[0].id);
         assert_eq!(revision, app.editor.files[0].revision);
         assert_eq!(&help.label[help.active_parameter.unwrap()], "a: u8");
+    }
+
+    fn editing_initialized() -> ServerEvent {
+        ServerEvent::Message(serde_json::json!({
+            "jsonrpc":"2.0", "id":0, "result":{"capabilities":{
+                "textDocumentSync":{"openClose":true,"change":1,"save":{"includeText":true}},
+                "referencesProvider":true,
+                "renameProvider":true,
+                "documentFormattingProvider":true
+            }}
+        }))
+    }
+
+    /// Workspace with an open `a.rs` and a closed `b.rs`, both using `foo`.
+    fn rename_app() -> (LumenApp, RecordedMessages, QueuedEvents, std::path::PathBuf) {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let base = std::env::temp_dir().join(format!(
+            "lumen-rename-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("Cargo.toml"), "[package]").unwrap();
+        std::fs::write(base.join("b.rs"), "fn b() { foo(); }\n").unwrap();
+        let (mut app, messages, events) = fake_app();
+        app.editor.workspace = Some(base.clone());
+        app.editor.files.push(crate::model::Document::from_path(
+            base.join("a.rs"),
+            "fn foo() {}\nfn a() { foo(); }\n".into(),
+        ));
+        app.editor.active_file = Some(0);
+        app.editor.files[0].enable_shared_editing();
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        events.lock().unwrap().push(editing_initialized());
+        app.poll_language_server(&ctx);
+        (app, messages, events, base)
+    }
+
+    fn set_caret(app: &mut LumenApp, byte: usize) {
+        app.editor.files[0]
+            .editing
+            .as_mut()
+            .unwrap()
+            .set_selections(vec![lumen_editor_core::Selection::caret(byte)], 0)
+            .unwrap();
+    }
+
+    fn rename_edit(base: &std::path::Path) -> serde_json::Value {
+        let range = |l: u32, s: u32, e: u32| serde_json::json!({"start":{"line":l,"character":s},"end":{"line":l,"character":e}});
+        serde_json::json!({"changes":{
+            file_uri(&base.join("a.rs")): [
+                {"range":range(0,3,6),"newText":"bar"},
+                {"range":range(1,9,12),"newText":"bar"}],
+            file_uri(&base.join("b.rs")): [{"range":range(0,9,12),"newText":"bar"}]
+        }})
+    }
+
+    fn reply(events: &QueuedEvents, id: u64, result: serde_json::Value) {
+        events.lock().unwrap().push(ServerEvent::Message(
+            serde_json::json!({"jsonrpc":"2.0","id":id,"result":result}),
+        ));
+    }
+
+    #[test]
+    fn references_always_open_the_picker_even_for_one_location() {
+        let (mut app, messages, events, base) = rename_app();
+        set_caret(&mut app, 4);
+        let ctx = eframe::egui::Context::default();
+        app.request_language_references();
+        let id = request_ids(&messages, "textDocument/references")[0];
+        reply(
+            &events,
+            id,
+            serde_json::json!([{"uri": file_uri(&base.join("b.rs")),
+                "range":{"start":{"line":0,"character":9},"end":{"line":0,"character":12}}}]),
+        );
+        app.poll_language_server(&ctx);
+        assert!(app.view.language_navigation.open);
+        assert_eq!(app.view.language_navigation.locations.len(), 1);
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn formatting_applies_as_one_undo_step_and_ignores_stale_replies() {
+        let (mut app, messages, events, base) = rename_app();
+        set_caret(&mut app, 0);
+        let ctx = eframe::egui::Context::default();
+        app.request_language_formatting();
+        let id = request_ids(&messages, "textDocument/formatting")[0];
+        reply(
+            &events,
+            id,
+            serde_json::json!([{"range":{"start":{"line":0,"character":2},"end":{"line":0,"character":3}},"newText":"  "}]),
+        );
+        app.poll_language_server(&ctx);
+        assert_eq!(
+            app.editor.files[0].text,
+            "fn  foo() {}\nfn a() { foo(); }\n"
+        );
+        assert!(app.editor.files[0].dirty);
+        assert!(app.editor.files[0].editing.as_mut().unwrap().undo());
+
+        // A reply for a superseded revision changes nothing.
+        app.editor.files[0].sync_shared_editing();
+        app.poll_language_server(&ctx);
+        app.request_language_formatting();
+        let id = request_ids(&messages, "textDocument/formatting")[1];
+        app.editor.files[0].revision += 1;
+        reply(
+            &events,
+            id,
+            serde_json::json!([{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":2}},"newText":"XX"}]),
+        );
+        app.poll_language_server(&ctx);
+        assert!(!app.editor.files[0].text.starts_with("XX"));
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn rename_is_previewed_validated_and_applied_across_open_and_closed_files() {
+        let (mut app, messages, events, base) = rename_app();
+        set_caret(&mut app, 4);
+        let ctx = eframe::egui::Context::default();
+        app.begin_language_rename();
+        assert_eq!(app.view.rename_prompt.as_ref().unwrap().original, "foo");
+        app.view.rename_prompt.as_mut().unwrap().name = "bar".into();
+        app.submit_language_rename();
+        let rename = messages
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|message| message["method"] == "textDocument/rename")
+            .cloned()
+            .expect("rename request");
+        assert_eq!(rename["params"]["newName"], "bar");
+        reply(&events, rename["id"].as_u64().unwrap(), rename_edit(&base));
+        app.poll_language_server(&ctx);
+        let plan = app
+            .view
+            .language_edit_plan
+            .clone()
+            .expect("plan awaits review");
+        assert_eq!((plan.files.len(), plan.edit_count()), (2, 3));
+        // Nothing is touched before the user applies.
+        assert_eq!(app.editor.files[0].text, "fn foo() {}\nfn a() { foo(); }\n");
+        assert_eq!(
+            std::fs::read_to_string(base.join("b.rs")).unwrap(),
+            "fn b() { foo(); }\n"
+        );
+
+        app.apply_language_edit();
+        assert_eq!(app.editor.files[0].text, "fn bar() {}\nfn a() { bar(); }\n");
+        assert!(app.editor.files[0].dirty, "open buffers stay unsaved");
+        assert_eq!(
+            std::fs::read_to_string(base.join("b.rs")).unwrap(),
+            "fn b() { bar(); }\n"
+        );
+        assert!(app.view.language_edit_plan.is_none());
+        assert!(app.editor.files[0].editing.as_mut().unwrap().undo());
+        assert_eq!(
+            app.editor.files[0].editing.as_ref().unwrap().text(),
+            "fn foo() {}\nfn a() { foo(); }\n"
+        );
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn rename_apply_refuses_when_files_changed_after_the_preview() {
+        let (mut app, messages, events, base) = rename_app();
+        set_caret(&mut app, 4);
+        let ctx = eframe::egui::Context::default();
+        app.begin_language_rename();
+        app.view.rename_prompt.as_mut().unwrap().name = "bar".into();
+        app.submit_language_rename();
+        let id = request_ids(&messages, "textDocument/rename")[0];
+        reply(&events, id, rename_edit(&base));
+        app.poll_language_server(&ctx);
+        std::fs::write(base.join("b.rs"), "fn b() { foo(); } // edited\n").unwrap();
+        app.apply_language_edit();
+        assert!(app.view.status.contains("changed since the preview"));
+        assert_eq!(app.editor.files[0].text, "fn foo() {}\nfn a() { foo(); }\n");
+        assert!(
+            std::fs::read_to_string(base.join("b.rs"))
+                .unwrap()
+                .contains("foo")
+        );
+
+        // An open file edited after the preview blocks the whole rename too.
+        app.view.language_edit_plan = None;
+        std::fs::write(base.join("b.rs"), "fn b() { foo(); }\n").unwrap();
+        set_caret(&mut app, 4);
+        app.begin_language_rename();
+        app.view.rename_prompt.as_mut().unwrap().name = "bar".into();
+        app.submit_language_rename();
+        let id = request_ids(&messages, "textDocument/rename")[1];
+        reply(&events, id, rename_edit(&base));
+        app.poll_language_server(&ctx);
+        assert!(app.view.language_edit_plan.is_some());
+        app.editor.files[0].revision += 1;
+        app.apply_language_edit();
+        assert!(
+            std::fs::read_to_string(base.join("b.rs"))
+                .unwrap()
+                .contains("foo")
+        );
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn rename_rejects_outside_workspace_and_file_operations() {
+        let (mut app, _messages, _events, base) = rename_app();
+        let outside = serde_json::json!({"changes":{"file:///etc/hosts":[
+            {"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"newText":"x"}]}});
+        assert!(app.plan_workspace_edit("Rename", &outside).is_err());
+        let moves =
+            serde_json::json!({"documentChanges":[{"kind":"rename","oldUri":"a","newUri":"b"}]});
+        let error = app.plan_workspace_edit("Rename", &moves).unwrap_err();
+        assert!(error.contains("create, move or delete"));
+        // A stale server version is refused.
+        let versioned = serde_json::json!({"documentChanges":[{
+            "textDocument":{"uri": file_uri(&base.join("a.rs")), "version": 99},
+            "edits":[{"range":{"start":{"line":0,"character":3},"end":{"line":0,"character":6}},"newText":"bar"}]}]});
+        assert!(
+            app.plan_workspace_edit("Rename", &versioned)
+                .unwrap_err()
+                .contains("newer")
+        );
+        // Prompt validation: unchanged or blank names never reach the server.
+        set_caret(&mut app, 4);
+        app.begin_language_rename();
+        app.submit_language_rename();
+        assert!(app.view.rename_prompt.is_some());
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

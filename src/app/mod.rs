@@ -11,6 +11,7 @@ mod events;
 mod explorer_ops;
 pub(crate) mod find;
 mod folding;
+mod language_edits;
 mod language_services;
 mod navigation;
 mod safety;
@@ -20,6 +21,7 @@ pub(crate) mod terminal;
 #[cfg(test)]
 mod tests;
 pub(crate) mod view_state;
+pub(crate) mod workspace_edit;
 pub(crate) mod workspace_search;
 use crate::{
     model::EditorState,
@@ -130,6 +132,8 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.palette(ctx));
         self.render_component(ctx, |workbench| workbench.navigation_palette(ctx));
         self.render_component(ctx, |workbench| workbench.language_navigation(ctx));
+        self.render_component(ctx, |workbench| workbench.rename_prompt(ctx));
+        self.render_component(ctx, |workbench| workbench.language_edit_preview(ctx));
         self.render_component(ctx, |workbench| workbench.unsaved_changes_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.quit_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.settings_quit_dialog(ctx));

@@ -133,6 +133,9 @@ impl Workbench<'_> {
                     ("Go to Definition".into(), Command::GoToDefinition),
                     ("Show Hover".into(), Command::ShowHover),
                     ("Trigger Suggest".into(), Command::TriggerCompletion),
+                    ("Find All References".into(), Command::FindReferences),
+                    ("Rename Symbol".into(), Command::RenameSymbol),
+                    ("Format Document".into(), Command::FormatDocument),
                     ("Show Signature Help".into(), Command::ShowSignatureHelp),
                     (
                         "Go to Symbol in Editor".into(),

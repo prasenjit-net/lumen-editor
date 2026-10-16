@@ -368,7 +368,17 @@ specified by a project unless the user’s server-command policy permits it.
   advertised). Signature help highlights the active parameter and clears on edit.
   Live-validated with rust-analyzer and gopls. No automatic trigger-character popups
   or `completionItem/resolve` yet; a reply is discarded if the caret moves first.
-- [ ] Then references, rename preview, code-action and
+- [x] References (Shift+F12, location picker), Format Document (Shift+Alt+F; applied
+  directly to the active buffer as one undoable step after revision validation) and
+  Rename Symbol (F2). Rename and any multi-file edit go through a reviewed plan
+  (`app/workspace_edit.rs`): edits are decoded against the text the server saw, shown
+  as before/after lines, re-validated at apply time (open tabs by revision, closed
+  files by exact disk content and the guarded workspace writer), and open files change
+  only in their buffers (unsaved, one undo step). File create/rename/delete,
+  out-of-workspace paths, overlapping edits and stale document versions reject the
+  whole edit. Live-validated with rust-analyzer and gopls. Not built: prepareRename,
+  rename of files/modules, code actions, range formatting.
+- [ ] Then (remaining) rename preview, code-action and
   formatting transactions. Each mutating edit goes through the app’s existing
   save/conflict/document identity protections.
 - [ ] Add native acceptance on macOS and Windows, representative large workspaces,

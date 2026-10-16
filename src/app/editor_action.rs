@@ -93,6 +93,8 @@ pub(crate) fn blocked(view: &ViewState) -> bool {
         || view.pending_quit
         || view.delete_prompt.is_some()
         || view.explorer_edit.is_some()
+        || view.rename_prompt.is_some()
+        || view.language_edit_plan.is_some()
 }
 
 /// Reject delayed popup paste before any other input widget can consume it.

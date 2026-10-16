@@ -91,6 +91,15 @@ pub(crate) enum LanguageServerStatus {
     Error(String),
 }
 
+/// Inline rename prompt for the identifier under the caret.
+#[derive(Clone, Debug)]
+pub(crate) struct RenamePrompt {
+    pub(crate) document: crate::model::DocumentId,
+    pub(crate) name: String,
+    pub(crate) original: String,
+    pub(crate) focus: bool,
+}
+
 /// An open completion popup. Typing narrows `items` through
 /// `completion::visible`; `selected` indexes that filtered list.
 #[derive(Clone, Debug)]
@@ -310,6 +319,9 @@ pub(crate) struct ViewState {
     pub(crate) language_semantic_tokens:
         std::collections::HashMap<crate::model::DocumentId, SemanticSnapshot>,
     pub(crate) language_completion: Option<CompletionSession>,
+    pub(crate) rename_prompt: Option<RenamePrompt>,
+    /// A language-server edit awaiting the user's review.
+    pub(crate) language_edit_plan: Option<super::workspace_edit::EditPlan>,
     /// Signature help is shown for the revision it was requested at.
     pub(crate) language_signature: Option<(
         crate::model::DocumentId,
@@ -391,6 +403,8 @@ impl Default for ViewState {
             language_server_status: None,
             language_semantic_tokens: std::collections::HashMap::new(),
             language_completion: None,
+            rename_prompt: None,
+            language_edit_plan: None,
             language_signature: None,
             language_server_summary: None,
             language_server_details_open: false,

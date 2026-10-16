@@ -176,7 +176,7 @@ fn parse_definition_location(value: &Value) -> Result<DefinitionLocation, Incomi
 
 /// One byte-range edit against the text the request was made for.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CompletionEdit {
+pub struct TextEdit {
     pub range: std::ops::Range<usize>,
     pub new_text: String,
 }
@@ -191,7 +191,146 @@ pub struct CompletionItem {
     pub insert_text: String,
     /// Server-chosen replacement range, when the item carried a `textEdit`.
     pub edit_range: Option<std::ops::Range<usize>>,
-    pub additional_edits: Vec<CompletionEdit>,
+    pub additional_edits: Vec<TextEdit>,
+}
+
+/// Edits for one file from a `WorkspaceEdit`, in document order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileTextEdits {
+    pub uri: String,
+    /// Document version the server says the edits apply to, if it said.
+    pub version: Option<u64>,
+    pub edits: Vec<TextEdit>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorkspaceEditError {
+    Invalid,
+    /// Create/rename/delete file operations are not supported by Lumen.
+    ResourceOperation,
+    /// Text for a file named by the edit was unavailable.
+    UnknownFile(String),
+    Overlap(String),
+}
+
+/// Decode a `WorkspaceEdit` (`changes` or `documentChanges`) into per-file byte
+/// edits. `text_of` supplies each file's text as the server saw it. Overlapping
+/// edits and resource operations reject the whole edit: a partial rename is worse
+/// than none.
+pub fn parse_workspace_edit(
+    edit: &Value,
+    mut text_of: impl FnMut(&str) -> Option<String>,
+) -> Result<Vec<FileTextEdits>, WorkspaceEditError> {
+    let mut files: Vec<FileTextEdits> = Vec::new();
+    let mut add = |uri: &str,
+                   version: Option<u64>,
+                   raw: &[Value],
+                   text_of: &mut dyn FnMut(&str) -> Option<String>|
+     -> Result<(), WorkspaceEditError> {
+        let text = text_of(uri).ok_or_else(|| WorkspaceEditError::UnknownFile(uri.to_owned()))?;
+        let mut edits = Vec::with_capacity(raw.len());
+        for entry in raw {
+            let range = entry.get("range").ok_or(WorkspaceEditError::Invalid)?;
+            edits.push(TextEdit {
+                range: parse_byte_range(range, &text).map_err(|_| WorkspaceEditError::Invalid)?,
+                new_text: entry
+                    .get("newText")
+                    .and_then(Value::as_str)
+                    .ok_or(WorkspaceEditError::Invalid)?
+                    .to_owned(),
+            });
+        }
+        match files.iter_mut().find(|file| file.uri == uri) {
+            Some(file) => file.edits.extend(edits),
+            None => files.push(FileTextEdits {
+                uri: uri.to_owned(),
+                version,
+                edits,
+            }),
+        }
+        Ok(())
+    };
+    if let Some(changes) = edit.get("documentChanges").and_then(Value::as_array) {
+        for change in changes {
+            if change.get("kind").is_some() {
+                return Err(WorkspaceEditError::ResourceOperation);
+            }
+            let document = change
+                .get("textDocument")
+                .ok_or(WorkspaceEditError::Invalid)?;
+            let uri = document
+                .get("uri")
+                .and_then(Value::as_str)
+                .ok_or(WorkspaceEditError::Invalid)?;
+            let edits = change
+                .get("edits")
+                .and_then(Value::as_array)
+                .ok_or(WorkspaceEditError::Invalid)?;
+            add(
+                uri,
+                document.get("version").and_then(Value::as_u64),
+                edits,
+                &mut text_of,
+            )?;
+        }
+    } else if let Some(changes) = edit.get("changes").and_then(Value::as_object) {
+        for (uri, edits) in changes {
+            let edits = edits.as_array().ok_or(WorkspaceEditError::Invalid)?;
+            add(uri, None, edits, &mut text_of)?;
+        }
+    } else {
+        return Err(WorkspaceEditError::Invalid);
+    }
+    for file in &mut files {
+        file.edits
+            .sort_by_key(|edit| (edit.range.start, edit.range.end));
+        if file
+            .edits
+            .windows(2)
+            .any(|pair| pair[0].range.end > pair[1].range.start)
+        {
+            return Err(WorkspaceEditError::Overlap(file.uri.clone()));
+        }
+    }
+    files.retain(|file| !file.edits.is_empty());
+    Ok(files)
+}
+
+/// Decode a formatting reply (`TextEdit[]` or null) against the requested text.
+pub fn parse_text_edits_response(
+    message: &Value,
+    text: &str,
+) -> Result<Vec<TextEdit>, IncomingError> {
+    let result = message.get("result").ok_or(IncomingError::InvalidPayload)?;
+    if result.is_null() {
+        return Ok(Vec::new());
+    }
+    let mut edits = result
+        .as_array()
+        .ok_or(IncomingError::InvalidPayload)?
+        .iter()
+        .map(|entry| {
+            Ok(TextEdit {
+                range: parse_byte_range(
+                    entry.get("range").ok_or(IncomingError::InvalidPayload)?,
+                    text,
+                )?,
+                new_text: entry
+                    .get("newText")
+                    .and_then(Value::as_str)
+                    .ok_or(IncomingError::InvalidPayload)?
+                    .to_owned(),
+            })
+        })
+        .collect::<Result<Vec<_>, IncomingError>>()?;
+    edits.sort_by_key(|edit| (edit.range.start, edit.range.end));
+    if edits
+        .windows(2)
+        .any(|pair| pair[0].range.end > pair[1].range.start)
+    {
+        return Err(IncomingError::InvalidRange);
+    }
+    Ok(edits)
 }
 
 const MAX_COMPLETION_ITEMS: usize = 500;
@@ -252,7 +391,7 @@ fn parse_completion_item(entry: &Value, text: &str) -> Option<(String, Completio
             edits
                 .iter()
                 .map(|edit| {
-                    Some(CompletionEdit {
+                    Some(TextEdit {
                         range: parse_byte_range(edit.get("range")?, text).ok()?,
                         new_text: edit.get("newText")?.as_str()?.to_owned(),
                     })
@@ -645,5 +784,81 @@ mod tests {
         );
         let none = json!({"id":1,"result":{"signatures":[]}});
         assert_eq!(parse_signature_help_response(&none), Ok(None));
+    }
+
+    fn workspace_edit_texts(uri: &str) -> Option<String> {
+        match uri {
+            "file:///a.rs" => Some("let 🌍 = foo;\nfoo();".into()),
+            "file:///b.rs" => Some("foo".into()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn workspace_edits_decode_both_forms_and_sort_per_file() {
+        let range =
+            |l, s, e| json!({"start":{"line":l,"character":s},"end":{"line":l,"character":e}});
+        let changes = json!({"changes":{
+            "file:///a.rs":[
+                {"range":range(1,0,3),"newText":"bar"},
+                {"range":range(0,9,12),"newText":"bar"}
+            ],
+            "file:///b.rs":[{"range":range(0,0,3),"newText":"bar"}]
+        }});
+        let files = parse_workspace_edit(&changes, workspace_edit_texts).unwrap();
+        let a = files
+            .iter()
+            .find(|file| file.uri == "file:///a.rs")
+            .unwrap();
+        assert_eq!(a.edits[0].range, 11..14);
+        assert_eq!(a.edits[1].range, 16..19);
+        let versioned = json!({"documentChanges":[{
+            "textDocument":{"uri":"file:///b.rs","version":4},
+            "edits":[{"range":range(0,0,3),"newText":"baz"}]
+        }]});
+        let files = parse_workspace_edit(&versioned, workspace_edit_texts).unwrap();
+        assert_eq!(
+            (files[0].version, files[0].edits[0].new_text.as_str()),
+            (Some(4), "baz")
+        );
+    }
+
+    #[test]
+    fn workspace_edits_reject_resource_ops_overlaps_and_unknown_files() {
+        let range = |s, e| json!({"start":{"line":0,"character":s},"end":{"line":0,"character":e}});
+        let rename = json!({"documentChanges":[{"kind":"rename","oldUri":"a","newUri":"b"}]});
+        assert_eq!(
+            parse_workspace_edit(&rename, workspace_edit_texts),
+            Err(WorkspaceEditError::ResourceOperation)
+        );
+        let overlap = json!({"changes":{"file:///b.rs":[
+            {"range":range(0,2),"newText":"x"},{"range":range(1,3),"newText":"y"}]}});
+        assert_eq!(
+            parse_workspace_edit(&overlap, workspace_edit_texts),
+            Err(WorkspaceEditError::Overlap("file:///b.rs".into()))
+        );
+        let unknown = json!({"changes":{"file:///zzz.rs":[{"range":range(0,1),"newText":"x"}]}});
+        assert!(matches!(
+            parse_workspace_edit(&unknown, workspace_edit_texts),
+            Err(WorkspaceEditError::UnknownFile(_))
+        ));
+        assert_eq!(
+            parse_workspace_edit(&json!({}), workspace_edit_texts),
+            Err(WorkspaceEditError::Invalid)
+        );
+    }
+
+    #[test]
+    fn formatting_replies_decode_null_edits_and_reject_overlap() {
+        let text = "a  b\n";
+        let edit = |s, e, t: &str| json!({"range":{"start":{"line":0,"character":s},"end":{"line":0,"character":e}},"newText":t});
+        assert_eq!(
+            parse_text_edits_response(&json!({"result":null}), text),
+            Ok(vec![])
+        );
+        let edits = parse_text_edits_response(&json!({"result":[edit(1,3," ")]}), text).unwrap();
+        assert_eq!(edits[0].range, 1..3);
+        let overlap = json!({"result":[edit(0,3,"x"), edit(2,4,"y")]});
+        assert!(parse_text_edits_response(&overlap, text).is_err());
     }
 }

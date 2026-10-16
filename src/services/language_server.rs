@@ -722,4 +722,169 @@ mod tests {
         let help = signed.expect("no signature help");
         assert!(help.active_parameter.is_some() || help.label.contains(signature.1));
     }
+
+    #[test]
+    #[ignore = "requires rust-analyzer, rustfmt and a Rust toolchain on PATH"]
+    fn live_rust_analyzer_renames_and_formats() {
+        live_edits(
+            lumen_language_services::LanguageId::RUST,
+            &[(
+                "Cargo.toml",
+                "[package]\nname = \"live\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )],
+            "src/main.rs",
+            "fn helper() {}\nfn main(){ helper(); helper();let x=1;let _=x; }\n",
+            "helper",
+        );
+    }
+
+    #[test]
+    #[ignore = "requires gopls and a Go toolchain on PATH"]
+    fn live_gopls_renames_and_formats() {
+        live_edits(
+            lumen_language_services::LanguageId::GO,
+            &[("go.mod", "module live\n\ngo 1.21\n")],
+            "main.go",
+            "package main\n\nfunc helper() {}\nfunc main(){ helper(); helper();x:=1;_=x }\n",
+            "helper",
+        );
+    }
+
+    /// Rename the first `symbol` to `renamed` and format the document, decoding the
+    /// replies exactly as the app does.
+    fn live_edits(
+        language_id: lumen_language_services::LanguageId,
+        project_files: &[(&str, &str)],
+        source_name: &str,
+        text: &str,
+        symbol: &str,
+    ) {
+        use lumen_language_services::{
+            DocumentUri, ServerDocumentVersion, byte_to_position, incoming, lsp,
+        };
+        use std::time::{Duration, Instant};
+
+        let language = LanguageRegistry::by_id(language_id).unwrap();
+        let ServerAvailability::Available { executable } =
+            LocalLanguageServer.availability(language)
+        else {
+            panic!("{} not on PATH", language.label);
+        };
+        let root = env::temp_dir().join(format!(
+            "lumen-live-edit-{}-{}",
+            language_id.as_str(),
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        for (name, contents) in project_files {
+            std::fs::write(root.join(name), contents).unwrap();
+        }
+        let file = root.join(source_name);
+        std::fs::write(&file, text).unwrap();
+        let root_uri = format!("file://{}", root.display());
+        let uri = DocumentUri::new(format!("file://{}", file.display())).unwrap();
+        let symbol_start = text.find(symbol).unwrap() + 1;
+        let position = byte_to_position(text, symbol_start).unwrap();
+
+        let mut server = ServerProcess::start(&executable, &root, Arc::new(|| {})).unwrap();
+        server
+            .send(&lsp::initialize_request_with_options(
+                0,
+                &root_uri,
+                language
+                    .server
+                    .and_then(|server| server.initialization_options),
+            ))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let (mut initialized, mut rename_plan, mut format_edits) = (false, None, None);
+        let mut pending: Option<(u64, &str)> = None;
+        let mut next_id = 10_u64;
+        loop {
+            assert!(
+                Instant::now() < deadline,
+                "timed out; stderr: {}",
+                server.stderr_text()
+            );
+            let mut found = None;
+            for event in server.drain_events() {
+                let ServerEvent::Message(message) = event else {
+                    continue;
+                };
+                if message.get("id") == Some(&serde_json::json!(0)) && !initialized {
+                    initialized = true;
+                    found = Some(
+                        lumen_language_services::capabilities::ServerCapabilities::from_initialize_response(&message)
+                            .unwrap(),
+                    );
+                    server.send(&lsp::initialized_notification()).unwrap();
+                    server
+                        .send(&lsp::did_open(
+                            &uri,
+                            language_id,
+                            ServerDocumentVersion(1),
+                            text,
+                        ))
+                        .unwrap();
+                } else if let Some((id, kind)) = pending
+                    && message.get("id") == Some(&serde_json::json!(id))
+                {
+                    pending = None;
+                    if kind == "rename" {
+                        if let Some(result) =
+                            message.get("result").filter(|result| !result.is_null())
+                        {
+                            let files =
+                                incoming::parse_workspace_edit(result, |_| Some(text.to_owned()))
+                                    .expect("rename edit decodes");
+                            println!("rename: {files:?}");
+                            rename_plan = Some(files);
+                        }
+                    } else {
+                        let edits = incoming::parse_text_edits_response(&message, text).unwrap();
+                        println!("format: {} edits", edits.len());
+                        if !edits.is_empty() {
+                            format_edits = Some(edits);
+                        }
+                    }
+                } else if let Some(reply) = lsp::server_request_response(&message) {
+                    server.send(&reply).unwrap();
+                }
+            }
+            if let Some(found) = found {
+                assert!(
+                    found.rename && found.formatting && found.references,
+                    "{found:?}"
+                );
+            }
+            if rename_plan.is_some() && format_edits.is_some() {
+                break;
+            }
+            if initialized && pending.is_none() {
+                next_id += 1;
+                let (kind, request) = if rename_plan.is_none() {
+                    (
+                        "rename",
+                        lsp::rename_request(next_id, &uri, position, "renamed"),
+                    )
+                } else {
+                    ("format", lsp::formatting_request(next_id, &uri, 4, true))
+                };
+                server.send(&request).unwrap();
+                pending = Some((next_id, kind));
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        let _ = server.begin_shutdown();
+        let _ = std::fs::remove_dir_all(&root);
+        let renamed = rename_plan.unwrap();
+        let edits = &renamed[0].edits;
+        assert!(edits.len() >= 3, "definition and both calls: {edits:?}");
+        let applied = crate::app::workspace_edit::apply_to_text(text, edits).unwrap();
+        assert_eq!(applied.matches("renamed").count(), 3);
+        assert!(!applied.contains("helper"));
+        let formatted =
+            crate::app::workspace_edit::apply_to_text(text, &format_edits.unwrap()).unwrap();
+        assert_ne!(formatted, text);
+    }
 }
