@@ -143,7 +143,10 @@ mod tests {
     /// Two files per group, each with distinctive text.
     fn split_app() -> (LumenApp, egui::Context) {
         let mut app = LumenApp::default();
-        app.view.shared_editor = true;
+        #[cfg(feature = "shared-editor")]
+        {
+            app.view.shared_editor = true;
+        }
         for (name, text) in [
             ("aaa.rs", "LEFTONE"),
             ("bbb.rs", "LEFTTWO"),
