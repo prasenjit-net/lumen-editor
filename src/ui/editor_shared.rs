@@ -153,6 +153,20 @@ impl Workbench<'_> {
             }
         }
         self.completion_before_input(&ctx, index);
+        // Inside a diff, follow the other pane's scrolling and report our own.
+        let diff_hook = self.view.source_control.diff_scroll_hook;
+        let diff_line_height = self
+            .view
+            .settings
+            .number(
+                "editor.line_height",
+                self.editor.files[index].path.clone().as_deref(),
+            )
+            .max(1.0);
+        if diff_hook {
+            let target = self.view.source_control.diff_scroll.take_pending(1);
+            surface.set_scroll_y(target.map(|line| line * diff_line_height));
+        }
         let output = Frame::new()
             .fill(BG)
             .corner_radius(4)
@@ -168,6 +182,12 @@ impl Workbench<'_> {
                 .inner
             })
             .inner;
+        if diff_hook {
+            self.view
+                .source_control
+                .diff_scroll
+                .observe(1, output.scroll_y / diff_line_height);
+        }
         self.editor.files[index].sync_shared_editing();
         if let Some(headers) = &output.folded_headers {
             self.view

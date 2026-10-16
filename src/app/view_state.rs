@@ -183,6 +183,11 @@ pub(crate) struct SourceControlView {
     pub(crate) loading: bool,
     pub(crate) error: Option<String>,
     pub(crate) diff: Option<SourceDiffView>,
+    /// Keeps the two diff panes on the same line; reset when the diff changes.
+    pub(crate) diff_scroll: super::scroll_sync::ScrollSync,
+    pub(crate) diff_scroll_key: Option<(PathBuf, crate::services::source_control::DiffSide)>,
+    /// True only while the diff's editable pane is being drawn.
+    pub(crate) diff_scroll_hook: bool,
     pub(crate) commit_message: String,
     pub(crate) amend_commit: bool,
     pub(crate) commit_error: Option<String>,
