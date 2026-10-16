@@ -31,6 +31,12 @@ pub(crate) enum Command {
     NewAgentSession,
     RetryAgent,
     AuthenticateAgent(String),
+    /// Answer a queued permission request; `None` declines it.
+    AnswerAgentPermission(
+        AgentKind,
+        lumen_agent_protocol::rpc::RequestId,
+        Option<String>,
+    ),
     AllowAgentNpx,
     ShowOutput,
     ShowTerminal,

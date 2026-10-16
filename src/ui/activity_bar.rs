@@ -27,6 +27,14 @@ impl Workbench<'_> {
                                 self.view.sidebar_visible && self.view.activity == activity;
                             let response = widgets::icon_button(ui, glyph, selected)
                                 .on_hover_text(activity.title());
+                            if glyph == icon::AGENT && self.view.agents.needs_attention() {
+                                // An agent is blocked on a permission request.
+                                ui.painter().circle_filled(
+                                    response.rect.right_top() + egui::vec2(-12.0, 12.0),
+                                    4.5,
+                                    egui::Color32::from_rgb(204, 167, 0),
+                                );
+                            }
                             if selected {
                                 ui.painter().vline(
                                     response.rect.left(),

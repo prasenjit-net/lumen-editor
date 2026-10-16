@@ -68,6 +68,9 @@ impl LumenApp {
             Command::NewAgentSession => self.new_agent_session(),
             Command::RetryAgent => self.retry_agent(ctx),
             Command::AuthenticateAgent(method) => self.authenticate_agent(&method),
+            Command::AnswerAgentPermission(kind, id, option) => {
+                self.answer_agent_permission(kind, &id, option.as_deref());
+            }
             Command::AllowAgentNpx => self.allow_agent_npx(ctx),
             Command::ToggleOutput => {
                 super::output::clear_text_selection(ctx);

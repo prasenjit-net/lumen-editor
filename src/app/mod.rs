@@ -1,5 +1,6 @@
 //! Application orchestration: shared commands, workflows and frame ordering.
 pub(crate) mod agent;
+pub(crate) mod agent_permission;
 mod clipboard;
 pub(crate) mod command;
 pub(crate) mod completion;

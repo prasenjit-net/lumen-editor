@@ -9,10 +9,14 @@ use super::{
 use crate::{
     app::{
         agent::{AgentKind, AgentSessionView, ConnectionState, display_folder},
+        agent_permission::{PendingPermission, display_path},
         command::Command,
     },
     icon,
-    model::markdown_lite::{self, Block, Inline},
+    model::{
+        line_diff::{self, DiffLine},
+        markdown_lite::{self, Block, Inline},
+    },
 };
 use eframe::egui::{
     self, Align, Color32, FontId, Frame, Layout, Margin, RichText, ScrollArea, SidePanel,
@@ -20,7 +24,7 @@ use eframe::egui::{
 };
 use lumen_agent_protocol::{
     reducer::{Entry, Role},
-    types::{PlanStatus, ToolCall, ToolContent, ToolKind, ToolStatus},
+    types::{PermissionKind, PlanStatus, ToolCall, ToolContent, ToolKind, ToolStatus},
 };
 
 const DEFAULT_WIDTH: f32 = 380.0;
@@ -41,6 +45,7 @@ impl Workbench<'_> {
             .frame(Frame::default().fill(theme::PANEL))
             .show(ctx, |ui| {
                 self.agent_header(ui, active);
+                let root = self.editor.workspace.clone();
                 let folder = self
                     .view
                     .agents
@@ -62,6 +67,7 @@ impl Workbench<'_> {
                     .show_separator_line(false)
                     .show_inside(ui, |ui| {
                         let session = self.view.agents.session_mut(active);
+                        permission_cards(ui, session, root.as_deref(), &mut commands);
                         composer(ui, session, running, sendable, &mut commands);
                     });
                 egui::CentralPanel::default()
@@ -190,6 +196,207 @@ fn status_strip(
             );
         });
     ui.separator();
+}
+
+/// The oldest unanswered request, with the rest counted. Keyboard: Tab / Enter
+/// on the options, Esc declines.
+fn permission_cards(
+    ui: &mut egui::Ui,
+    session: &mut AgentSessionView,
+    root: Option<&std::path::Path>,
+    commands: &mut Vec<Command>,
+) {
+    let kind = session.kind;
+    let waiting = session.pending_permissions.len();
+    let Some(pending) = session.pending_permissions.first().cloned() else {
+        session.permission_focus = None;
+        return;
+    };
+    let focus_first = session.permission_focus.as_ref() != Some(&pending.id);
+    session.permission_focus = Some(pending.id.clone());
+    if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        commands.push(Command::AnswerAgentPermission(
+            kind,
+            pending.id.clone(),
+            None,
+        ));
+        return;
+    }
+    Frame::default()
+        .fill(theme::BG)
+        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(204, 167, 0)))
+        .corner_radius(3)
+        .inner_margin(Margin::symmetric(8, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            permission_body(ui, &pending, root, waiting);
+            let mut options = pending.request.options.clone();
+            options.sort_by_key(|option| match option.kind {
+                PermissionKind::AllowOnce => 0,
+                PermissionKind::AllowAlways => 1,
+                PermissionKind::RejectOnce => 2,
+                PermissionKind::RejectAlways => 3,
+            });
+            ui.horizontal_wrapped(|ui| {
+                for (index, option) in options.iter().enumerate() {
+                    let label = match option.kind {
+                        PermissionKind::AllowOnce | PermissionKind::AllowAlways => {
+                            format!("{} {}", icon::CHECK, option.name)
+                        }
+                        _ => format!("{} {}", icon::X, option.name),
+                    };
+                    let response = ui.button(label);
+                    if index == 0 && focus_first {
+                        response.request_focus();
+                    }
+                    if response.clicked() {
+                        commands.push(Command::AnswerAgentPermission(
+                            kind,
+                            pending.id.clone(),
+                            Some(option.id.clone()),
+                        ));
+                    }
+                }
+            });
+        });
+    ui.add_space(6.0);
+}
+
+fn permission_body(
+    ui: &mut egui::Ui,
+    pending: &PendingPermission,
+    root: Option<&std::path::Path>,
+    waiting: usize,
+) {
+    let call = &pending.request.tool_call;
+    let title = if call.title.is_empty() {
+        "Permission requested"
+    } else {
+        &call.title
+    };
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            RichText::new(kind_glyph(call.kind))
+                .size(12.0)
+                .color(theme::MUTED),
+        );
+        ui.label(RichText::new(title).strong().size(12.0).color(theme::TEXT));
+        if waiting > 1 {
+            ui.label(
+                RichText::new(format!("(+{} waiting)", waiting - 1))
+                    .size(10.5)
+                    .color(theme::MUTED),
+            );
+        }
+    });
+    for warning in &pending.warnings {
+        ui.label(
+            RichText::new(format!("⚠ {warning}"))
+                .size(11.0)
+                .color(Color32::from_rgb(204, 167, 0)),
+        );
+    }
+    for location in &call.locations {
+        let line = location
+            .line
+            .map_or(String::new(), |line| format!(":{line}"));
+        ui.label(
+            RichText::new(format!("{}{line}", display_path(&location.path, root)))
+                .size(10.5)
+                .color(theme::MUTED),
+        );
+    }
+    if let Some(command) = call
+        .raw_input
+        .as_ref()
+        .and_then(|input| input.get("command"))
+        .and_then(|command| command.as_str())
+    {
+        ui.add(
+            egui::Label::new(
+                RichText::new(format!("$ {command}"))
+                    .monospace()
+                    .size(11.0)
+                    .color(theme::TEXT),
+            )
+            .selectable(true),
+        );
+    }
+    for content in &call.content {
+        if let ToolContent::Diff {
+            path,
+            old_text,
+            new_text,
+        } = content
+        {
+            ui.label(
+                RichText::new(display_path(path, root))
+                    .size(10.5)
+                    .color(theme::MUTED),
+            );
+            diff_view(ui, old_text.as_deref(), new_text, path);
+        }
+    }
+}
+
+/// Unified diff with green/red rows; long diffs scroll and are capped.
+fn diff_view(ui: &mut egui::Ui, old: Option<&str>, new: &str, salt: &str) {
+    const MAX_ROWS: usize = 400;
+    let diff = line_diff::diff(old.unwrap_or(""), new, 2);
+    ui.label(
+        RichText::new(format!("+{} −{}", diff.added, diff.removed))
+            .size(10.5)
+            .color(theme::MUTED),
+    );
+    if diff.lines.is_empty() {
+        ui.label(RichText::new("No changes").size(10.5).color(theme::MUTED));
+        return;
+    }
+    let font = FontId::monospace(11.0);
+    ScrollArea::both()
+        .id_salt(("agent_diff", salt))
+        .max_height(180.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for line in diff.lines.iter().take(MAX_ROWS) {
+                let (text, color, background) = match line {
+                    DiffLine::Added(text) => (
+                        format!("+ {text}"),
+                        theme::DIFF_ADDED_TEXT,
+                        Some(theme::DIFF_ADDED_BG),
+                    ),
+                    DiffLine::Removed(text) => (
+                        format!("- {text}"),
+                        theme::DIFF_REMOVED_TEXT,
+                        Some(theme::DIFF_REMOVED_BG),
+                    ),
+                    DiffLine::Context(text) => (format!("  {text}"), theme::MUTED, None),
+                    DiffLine::Gap(count) => {
+                        (format!("  … {count} unchanged lines"), theme::MUTED, None)
+                    }
+                };
+                let galley = ui.painter().layout_no_wrap(text, font.clone(), color);
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(
+                        galley.size().x.max(ui.available_width()),
+                        galley.size().y + 1.0,
+                    ),
+                    egui::Sense::hover(),
+                );
+                if let Some(background) = background {
+                    ui.painter().rect_filled(rect, 0, background);
+                }
+                ui.painter().galley(rect.left_top(), galley, color);
+            }
+            if diff.lines.len() > MAX_ROWS {
+                ui.label(
+                    RichText::new(format!("… {} more lines", diff.lines.len() - MAX_ROWS))
+                        .size(10.5)
+                        .color(theme::MUTED),
+                );
+            }
+        });
 }
 
 fn composer(
@@ -853,5 +1060,127 @@ mod tests {
                 "{width}: {panel_width}"
             );
         }
+    }
+
+    use crate::services::agent_process::AgentEvent;
+    use serde_json::json;
+
+    impl Panel {
+        /// Start the agent via the fake launcher, finish the handshake, and have it
+        /// ask to write `notes.txt` (diff included), like Claude does.
+        fn with_permission_request(&mut self) {
+            self.app.editor.workspace = Some("/w".into());
+            self.app.view.agents.session_mut(AgentKind::Claude).draft = "go".into();
+            self.app
+                .execute(crate::app::command::Command::SendAgentPrompt, &self.ctx);
+            let id_of = |fake: &FakeAgentLauncher, method: &str| {
+                fake.sent
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .rev()
+                    .find(|m| m["method"] == method)
+                    .unwrap()["id"]
+                    .clone()
+            };
+            let init = id_of(&self.fake, "initialize");
+            self.deliver(json!({"jsonrpc":"2.0","id":init,"result":{"protocolVersion":1}}));
+            let new = id_of(&self.fake, "session/new");
+            self.deliver(json!({"jsonrpc":"2.0","id":new,"result":{"sessionId":"s1"}}));
+            self.deliver(json!({"jsonrpc":"2.0","id":7,"method":"session/request_permission","params":{
+                "sessionId":"s1",
+                "toolCall":{"toolCallId":"t","title":"Write notes.txt","kind":"edit",
+                    "locations":[{"path":"/w/notes.txt"}],
+                    "content":[{"type":"diff","path":"/w/notes.txt","oldText":"keep\nold line\n","newText":"keep\nnew line\n"}]},
+                "options":[{"optionId":"yes","name":"Yes","kind":"allow_once"},
+                           {"optionId":"always","name":"Always allow","kind":"allow_always"},
+                           {"optionId":"no","name":"No","kind":"reject_once"}]}}));
+        }
+
+        fn deliver(&mut self, message: serde_json::Value) {
+            self.fake
+                .queued
+                .lock()
+                .unwrap()
+                .push(AgentEvent::Message(message));
+            self.app.poll_agents(&self.ctx);
+        }
+
+        fn reply_option(&self, id: i64) -> Option<String> {
+            self.fake
+                .sent
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|m| m["id"] == id && m.get("result").is_some())
+                .map(|m| {
+                    m["result"]["outcome"]["optionId"]
+                        .as_str()
+                        .unwrap_or("cancelled")
+                        .to_owned()
+                })
+        }
+    }
+
+    #[test]
+    fn permission_card_shows_what_will_change_and_clicking_an_option_answers_the_agent() {
+        let mut panel = Panel::new();
+        panel.with_permission_request();
+        let shown = panel.texts();
+        for expected in [
+            "Write notes.txt",
+            "notes.txt",
+            "+1 −1",
+            "- old line",
+            "+ new line",
+            "Yes",
+            "Always allow",
+            "No",
+        ] {
+            assert!(shown.contains(expected), "missing {expected:?} in {shown}");
+        }
+        assert!(
+            panel.reply_option(7).is_none(),
+            "nothing is answered until the user clicks"
+        );
+        panel.click_text("Always allow");
+        assert_eq!(panel.reply_option(7).as_deref(), Some("always"));
+        assert!(
+            !panel.texts().contains("Always allow"),
+            "the card is gone once answered"
+        );
+    }
+
+    #[test]
+    fn escape_declines_the_open_request() {
+        let mut panel = Panel::new();
+        panel.with_permission_request();
+        panel.texts();
+        panel.frame(vec![key(egui::Key::Escape, egui::Modifiers::NONE)]);
+        assert_eq!(panel.reply_option(7).as_deref(), Some("no"));
+    }
+
+    #[test]
+    fn queued_requests_show_one_at_a_time_with_a_count() {
+        let mut panel = Panel::new();
+        panel.with_permission_request();
+        panel.deliver(
+            json!({"jsonrpc":"2.0","id":8,"method":"session/request_permission","params":{
+            "sessionId":"s1","toolCall":{"toolCallId":"u","title":"Run tests","kind":"execute",
+                "rawInput":{"command":"cargo test"}},
+            "options":[{"optionId":"yes","name":"Yes","kind":"allow_once"}]}}),
+        );
+        let shown = panel.texts();
+        assert!(shown.contains("Write notes.txt") && shown.contains("(+1 waiting)"));
+        assert!(
+            !shown.contains("cargo test"),
+            "the second card waits its turn"
+        );
+        panel.click_text("Yes");
+        let shown = panel.texts();
+        assert!(
+            shown.contains("Run tests") && shown.contains("$ cargo test"),
+            "{shown}"
+        );
     }
 }

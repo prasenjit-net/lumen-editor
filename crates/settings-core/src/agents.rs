@@ -17,6 +17,16 @@ pub(crate) const SCHEMA: SectionSchema = SectionSchema {
             document: false,
         },
         Setting {
+            id: "agent.allow_read_in_workspace",
+            default: DefaultValue::Bool(false),
+            name: "Auto-allow Reads in Folder",
+            category: "Agents",
+            help: "Answer read, search and think requests that only touch files inside the open folder without asking. Edits and commands always ask.",
+            aliases: "permission approve automatically read only",
+            control: Control::Bool,
+            document: false,
+        },
+        Setting {
             id: "agent.claude.command",
             default: DefaultValue::Text(""),
             name: "Claude Adapter Path",

@@ -26,9 +26,8 @@ use lumen_agent_protocol::{
         response_error,
     },
     types::{
-        AuthMethod, InitializeResult, PermissionKind, StopReason, parse_config_options,
-        parse_initialize, parse_new_session, parse_permission_request, parse_stop_reason,
-        parse_update,
+        AuthMethod, InitializeResult, StopReason, parse_config_options, parse_initialize,
+        parse_new_session, parse_stop_reason, parse_update,
     },
 };
 use serde_json::Value;
@@ -127,6 +126,8 @@ pub(crate) enum ConnectionState {
 /// Everything the panel shows for one agent.
 pub(crate) struct AgentSessionView {
     pub(crate) kind: AgentKind,
+    /// Requests the agent is blocked on, oldest first.
+    pub(crate) pending_permissions: Vec<super::agent_permission::PendingPermission>,
     pub(crate) state: ConnectionState,
     pub(crate) conversation: Conversation,
     pub(crate) running: bool,
@@ -137,12 +138,15 @@ pub(crate) struct AgentSessionView {
     pub(crate) cwd: Option<String>,
     pub(crate) agent_name: Option<String>,
     pub(crate) focus_composer: bool,
+    /// The request whose first option already received keyboard focus.
+    pub(crate) permission_focus: Option<RequestId>,
 }
 
 impl AgentSessionView {
     fn new(kind: AgentKind) -> Self {
         Self {
             kind,
+            pending_permissions: Vec::new(),
             state: ConnectionState::Idle,
             conversation: Conversation::default(),
             running: false,
@@ -152,6 +156,7 @@ impl AgentSessionView {
             cwd: None,
             agent_name: None,
             focus_composer: false,
+            permission_focus: None,
         }
     }
 }
@@ -173,6 +178,13 @@ impl Default for AgentsView {
 }
 
 impl AgentsView {
+    /// True while any agent is blocked waiting for the user (drives the badge).
+    pub(crate) fn needs_attention(&self) -> bool {
+        self.sessions
+            .iter()
+            .any(|session| !session.pending_permissions.is_empty())
+    }
+
     pub(crate) fn session(&self, kind: AgentKind) -> &AgentSessionView {
         &self.sessions[kind.index()]
     }
@@ -312,7 +324,7 @@ impl LumenApp {
         root.canonicalize().unwrap_or(root).display().to_string()
     }
 
-    fn agent_log(kind: AgentKind, level: LogLevel, message: &str) {
+    pub(super) fn agent_log(kind: AgentKind, level: LogLevel, message: &str) {
         logger::log(level, &kind.log_source(), message);
     }
 
@@ -362,6 +374,8 @@ impl LumenApp {
         if let Some(session_id) = self.runtime_slot(kind).session_id.clone() {
             self.agent_send(kind, &requests::session_cancel(&session_id));
             Self::agent_log(kind, LogLevel::Info, "Cancel requested");
+            // The protocol requires answering every open permission request.
+            self.cancel_pending_permissions(kind);
         }
     }
 
@@ -428,7 +442,7 @@ impl LumenApp {
             .register(method, Instant::now(), timeout)
     }
 
-    fn agent_send(&mut self, kind: AgentKind, message: &Value) {
+    pub(super) fn agent_send(&mut self, kind: AgentKind, message: &Value) {
         let result = match self.runtime_slot(kind).connection.as_mut() {
             Some(connection) => connection.send(message),
             None => Err("The agent is not running".to_owned()),
@@ -515,6 +529,7 @@ impl LumenApp {
         slot.init = None;
         let session = self.view.agents.session_mut(kind);
         session.running = false;
+        session.pending_permissions.clear();
         if matches!(
             session.state,
             ConnectionState::Starting | ConnectionState::Ready
@@ -613,7 +628,7 @@ impl LumenApp {
         }
     }
 
-    /// Phase 2 posture: decline permissions, support no client methods.
+    /// Permissions are queued for the user; every other client method is unsupported.
     fn handle_agent_request(
         &mut self,
         kind: AgentKind,
@@ -622,36 +637,7 @@ impl LumenApp {
         params: &Value,
     ) {
         if method == "session/request_permission" {
-            let (reply, title) = match parse_permission_request(params) {
-                Ok(request) => {
-                    let reject = request
-                        .options
-                        .iter()
-                        .find(|option| option.kind == PermissionKind::RejectOnce)
-                        .or_else(|| {
-                            request
-                                .options
-                                .iter()
-                                .find(|option| option.kind == PermissionKind::RejectAlways)
-                        });
-                    let reply = match reject {
-                        Some(option) => requests::permission_selected(id, &option.id),
-                        None => requests::permission_cancelled(id),
-                    };
-                    (reply, request.tool_call.title)
-                }
-                Err(_) => (requests::permission_cancelled(id), "an action".to_owned()),
-            };
-            let notice = format!(
-                "Declined permission for “{title}”. Editing and running commands from the panel is not enabled yet."
-            );
-            Self::agent_log(kind, LogLevel::Warn, &notice);
-            self.view
-                .agents
-                .session_mut(kind)
-                .conversation
-                .push_notice(&notice);
-            self.agent_send(kind, &reply);
+            self.queue_permission(kind, id, params);
         } else {
             Self::agent_log(
                 kind,
@@ -1093,43 +1079,10 @@ mod tests {
     }
 
     #[test]
-    fn permission_requests_are_declined_and_unsupported_methods_get_method_not_found() {
+    fn unsupported_client_methods_get_method_not_found() {
         let mut h = Harness::new();
-        h.say(AgentKind::Claude, "edit it");
+        h.say(AgentKind::Claude, "x");
         h.connect(AgentKind::Claude);
-        h.push(AgentEvent::Message(
-            json!({"jsonrpc":"2.0","id":0,"method":"session/request_permission","params":{
-            "sessionId":"s1","toolCall":{"toolCallId":"t","title":"Write notes.txt","kind":"edit"},
-            "options":[{"optionId":"allow-once","name":"Yes","kind":"allow_once"},
-                       {"optionId":"reject","name":"No","kind":"reject_once"}]}}),
-        ));
-        let reply = h
-            .sent()
-            .into_iter()
-            .find(|m| m["id"] == 0 && m.get("result").is_some())
-            .expect("a reply");
-        assert_eq!(
-            reply["result"]["outcome"],
-            json!({"outcome":"selected","optionId":"reject"})
-        );
-        let notices: Vec<_> = h
-            .app
-            .view
-            .agents
-            .session(AgentKind::Claude)
-            .conversation
-            .entries
-            .iter()
-            .filter_map(|e| {
-                if let Entry::Notice(t) = e {
-                    Some(t.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        assert!(notices[0].contains("Write notes.txt"));
-
         h.push(AgentEvent::Message(json!({"jsonrpc":"2.0","id":9,"method":"fs/write_text_file","params":{"path":"/x","content":"y"}})));
         let reply = h
             .sent()
@@ -1137,15 +1090,13 @@ mod tests {
             .find(|m| m["id"] == 9)
             .expect("a reply");
         assert_eq!(reply["error"]["code"], METHOD_NOT_FOUND);
-
-        // Options without a reject choice are answered with "cancelled".
         h.push(AgentEvent::Message(
-            json!({"jsonrpc":"2.0","id":10,"method":"session/request_permission","params":{
-            "sessionId":"s1","toolCall":{"toolCallId":"u","title":"X"},
-            "options":[{"optionId":"a","name":"Yes","kind":"allow_once"}]}}),
+            json!({"jsonrpc":"2.0","id":10,"method":"terminal/create","params":{}}),
         ));
-        let reply = h.sent().into_iter().find(|m| m["id"] == 10).unwrap();
-        assert_eq!(reply["result"]["outcome"]["outcome"], "cancelled");
+        assert_eq!(
+            h.sent().into_iter().find(|m| m["id"] == 10).unwrap()["error"]["code"],
+            METHOD_NOT_FOUND
+        );
     }
 
     #[test]
