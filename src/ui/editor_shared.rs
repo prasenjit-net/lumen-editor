@@ -1,14 +1,12 @@
 //! Feature-gated workbench adapter. The document core owns every mutation/history.
-use super::{
-    Workbench,
-    theme::{ACCENT, BG},
-};
+use super::Workbench;
 use crate::app::editor_action::{blocked, prepare_action, text_widget_id};
 use crate::icon;
-use eframe::egui::{self, Color32, Frame, Stroke, StrokeKind};
+use eframe::egui::{self, Frame, Stroke, StrokeKind};
 
 impl Workbench<'_> {
     pub(super) fn editor_shared(&mut self, ui: &mut egui::Ui, index: usize) {
+        let colors = crate::ui::theme::palette(ui.visuals());
         let ctx = ui.ctx().clone();
         self.editor.files[index].enable_shared_editing();
         let document = self.editor.files[index].id;
@@ -87,7 +85,7 @@ impl Workbench<'_> {
             .and_then(|result| result.as_ref().ok())
             .map(|comparison| &comparison.new_lines)
         });
-        surface.set_diff_lines(diff_lines, super::theme::DIFF_ADDED_BG);
+        surface.set_diff_lines(diff_lines, colors.diff_added_bg);
         let semantic = self
             .view
             .settings
@@ -104,12 +102,7 @@ impl Workbench<'_> {
                 .then(|| {
                     (
                         self.editor.files[index].language,
-                        super::theme::syntax_palette(
-                            &self
-                                .view
-                                .settings
-                                .document_choice("editor.color_scheme", path),
-                        ),
+                        super::theme::syntax_palette(super::theme::current(ui.visuals()).scheme()),
                     )
                 }),
         );
@@ -168,7 +161,7 @@ impl Workbench<'_> {
             surface.set_scroll_y(target.map(|line| line * diff_line_height));
         }
         let output = Frame::new()
-            .fill(BG)
+            .fill(colors.bg)
             .corner_radius(4)
             .show(ui, |ui| {
                 let document_state = &mut self.editor.files[index];
@@ -204,12 +197,12 @@ impl Workbench<'_> {
             for diagnostic in diagnostics {
                 let color = match diagnostic.severity {
                     lumen_language_services::diagnostics::DiagnosticSeverity::Error => {
-                        Color32::from_rgb(241, 76, 76)
+                        colors.diff_removed_text
                     }
                     lumen_language_services::diagnostics::DiagnosticSeverity::Warning => {
-                        Color32::from_rgb(204, 167, 0)
+                        colors.warning
                     }
-                    _ => Color32::from_rgb(117, 190, 255),
+                    _ => colors.info,
                 };
                 for rect in output.geometry.selection_rects(diagnostic.range.clone()) {
                     painter.line_segment(
@@ -239,7 +232,7 @@ impl Workbench<'_> {
                                 } else {
                                     1.0_f32
                                 },
-                                ACCENT,
+                                colors.accent,
                             ),
                             StrokeKind::Inside,
                         );

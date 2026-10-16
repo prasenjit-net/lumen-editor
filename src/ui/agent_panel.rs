@@ -36,6 +36,7 @@ const TEXT_SIZE: f32 = 12.5;
 
 impl Workbench<'_> {
     pub(crate) fn agent_panel(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         if !self.view.agents.open || !self.view.settings.boolean("agent.enabled") {
             return;
         }
@@ -44,63 +45,67 @@ impl Workbench<'_> {
             .default_width(DEFAULT_WIDTH)
             .width_range(MIN_WIDTH..=MAX_WIDTH)
             .resizable(true)
-            .frame(Frame::default().fill(theme::PANEL))
+            .frame(super::widgets::canvas(ctx))
             .show(ctx, |ui| {
-                self.agent_header(ui, active);
-                let root = self.editor.workspace.clone();
-                let folder = self
-                    .view
-                    .agents
-                    .session(active)
-                    .cwd
-                    .as_deref()
-                    .map(display_folder);
-                let session = self.view.agents.session(active);
-                let mut commands = Vec::new();
-                status_strip(ui, session, folder.as_deref(), &mut commands);
-                let running = session.running;
-                let sendable =
-                    !session.draft.trim().is_empty() && !running && session.held_prompt.is_none();
-                let paths = &self.view.navigation.paths;
-                TopBottomPanel::bottom("agent_composer")
-                    .frame(
-                        Frame::default()
-                            .fill(theme::PANEL)
-                            .inner_margin(Margin::symmetric(10, 8)),
-                    )
-                    .show_separator_line(false)
-                    .show_inside(ui, |ui| {
-                        let session = self.view.agents.session_mut(active);
-                        unsaved_card(ui, session, &mut commands);
-                        changes_card(ui, session, root.as_deref(), &mut commands);
-                        permission_cards(ui, session, root.as_deref(), &mut commands);
-                        composer(
-                            ui,
-                            session,
-                            running,
-                            sendable,
-                            root.as_deref(),
-                            paths,
-                            &mut commands,
-                        );
-                    });
-                egui::CentralPanel::default()
-                    .frame(
-                        Frame::default()
-                            .fill(theme::BG)
-                            .inner_margin(Margin::symmetric(10, 6)),
-                    )
-                    .show_inside(ui, |ui| {
-                        let session = self.view.agents.session_mut(active);
-                        if session.history.open {
-                            history_list(ui, session, &mut commands);
-                        } else {
-                            transcript(ui, session);
-                        }
-                    });
-                for command in commands {
-                    self.command(command);
-                }
+                super::widgets::surface(colors.panel).show(ui, |ui| {
+                    ui.set_min_size(ui.available_size());
+                    self.agent_header(ui, active);
+                    let root = self.editor.workspace.clone();
+                    let folder = self
+                        .view
+                        .agents
+                        .session(active)
+                        .cwd
+                        .as_deref()
+                        .map(display_folder);
+                    let session = self.view.agents.session(active);
+                    let mut commands = Vec::new();
+                    status_strip(ui, session, folder.as_deref(), &mut commands);
+                    let running = session.running;
+                    let sendable = !session.draft.trim().is_empty()
+                        && !running
+                        && session.held_prompt.is_none();
+                    let paths = &self.view.navigation.paths;
+                    TopBottomPanel::bottom("agent_composer")
+                        .frame(
+                            Frame::default()
+                                .fill(colors.panel)
+                                .inner_margin(Margin::symmetric(10, 8)),
+                        )
+                        .show_separator_line(false)
+                        .show_inside(ui, |ui| {
+                            let session = self.view.agents.session_mut(active);
+                            unsaved_card(ui, session, &mut commands);
+                            changes_card(ui, session, root.as_deref(), &mut commands);
+                            permission_cards(ui, session, root.as_deref(), &mut commands);
+                            composer(
+                                ui,
+                                session,
+                                running,
+                                sendable,
+                                root.as_deref(),
+                                paths,
+                                &mut commands,
+                            );
+                        });
+                    egui::CentralPanel::default()
+                        .frame(
+                            Frame::default()
+                                .fill(colors.bg)
+                                .inner_margin(Margin::symmetric(10, 6)),
+                        )
+                        .show_inside(ui, |ui| {
+                            let session = self.view.agents.session_mut(active);
+                            if session.history.open {
+                                history_list(ui, session, &mut commands);
+                            } else {
+                                transcript(ui, session);
+                            }
+                        });
+                    for command in commands {
+                        self.command(command);
+                    }
+                });
             });
     }
 
@@ -142,37 +147,35 @@ fn status_strip(
     folder: Option<&str>,
     commands: &mut Vec<Command>,
 ) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let (dot, text) = match &session.state {
-        ConnectionState::Idle => (theme::MUTED, "Starts when you send a message".to_owned()),
+        ConnectionState::Idle => (colors.muted, "Starts when you send a message".to_owned()),
         ConnectionState::Starting => (
-            Color32::from_rgb(204, 167, 0),
+            colors.warning,
             "Starting… the first run through npx can take several minutes".to_owned(),
         ),
         ConnectionState::Connected => (
-            Color32::from_rgb(35, 209, 139),
+            colors.success,
             "Connected. Pick an earlier session, or just start typing.".to_owned(),
         ),
         ConnectionState::Ready => (
-            Color32::from_rgb(35, 209, 139),
+            colors.success,
             match (&session.agent_name, folder) {
                 (Some(name), Some(folder)) => format!("{name} · {folder}"),
                 (Some(name), None) => name.clone(),
                 _ => "Ready".to_owned(),
             },
         ),
-        ConnectionState::NeedsAuth => (
-            Color32::from_rgb(204, 167, 0),
-            session.kind.sign_in_hint().to_owned(),
-        ),
-        ConnectionState::NotFound(message) => (theme::DIFF_REMOVED_TEXT, message.clone()),
-        ConnectionState::Failed(error) => (theme::DIFF_REMOVED_TEXT, error.clone()),
+        ConnectionState::NeedsAuth => (colors.warning, session.kind.sign_in_hint().to_owned()),
+        ConnectionState::NotFound(message) => (colors.diff_removed_text, message.clone()),
+        ConnectionState::Failed(error) => (colors.diff_removed_text, error.clone()),
     };
     Frame::default()
         .inner_margin(Margin::symmetric(12, 4))
         .show(ui, |ui| {
             ui.horizontal_top(|ui| {
                 ui.label(RichText::new("●").size(10.0).color(dot));
-                ui.add(egui::Label::new(RichText::new(text).size(11.0).color(theme::MUTED)).wrap());
+                ui.add(egui::Label::new(RichText::new(text).size(11.0).color(colors.muted)).wrap());
             });
             match &session.state {
                 ConnectionState::NeedsAuth => {
@@ -220,7 +223,7 @@ fn status_strip(
             ui.label(
                 RichText::new("Edits and commands ask for your approval first.")
                     .size(10.5)
-                    .color(theme::MUTED),
+                    .color(colors.muted),
             );
         });
     ui.separator();
@@ -228,12 +231,13 @@ fn status_strip(
 
 /// Asked when the message is held back because editor tabs have unsaved text.
 fn unsaved_card(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Vec<Command>) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let Some(held) = &session.held_prompt else {
         return;
     };
     Frame::default()
-        .fill(theme::BG)
-        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(204, 167, 0)))
+        .fill(colors.bg)
+        .stroke(egui::Stroke::new(1.0_f32, colors.warning))
         .corner_radius(3)
         .inner_margin(Margin::symmetric(8, 6))
         .show(ui, |ui| {
@@ -245,7 +249,7 @@ fn unsaved_card(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Ve
                     held.files.len()
                 ))
                 .size(11.0)
-                .color(theme::TEXT),
+                .color(colors.text),
             );
             ui.horizontal_wrapped(|ui| {
                 let mut choice = |ui: &mut egui::Ui, label: &str, hint: &str, choice| {
@@ -272,6 +276,7 @@ fn changes_card(
     root: Option<&std::path::Path>,
     commands: &mut Vec<Command>,
 ) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let kind = session.kind;
     if session.preparing || session.finishing {
         ui.label(
@@ -281,7 +286,7 @@ fn changes_card(
                 "Comparing files…"
             })
             .size(10.5)
-            .color(theme::MUTED),
+            .color(colors.muted),
         );
     }
     let Some(changes) = &session.changes else {
@@ -303,8 +308,8 @@ fn changes_card(
         .filter(|row| row.state == RowState::Pending)
         .count();
     Frame::default()
-        .fill(theme::BG)
-        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+        .fill(colors.bg)
+        .stroke(egui::Stroke::new(1.0_f32, colors.border))
         .corner_radius(3)
         .inner_margin(Margin::symmetric(8, 5))
         .show(ui, |ui| {
@@ -323,7 +328,7 @@ fn changes_card(
                                 changes.rows.len()
                             ))
                             .size(11.5)
-                            .color(theme::TEXT),
+                            .color(colors.text),
                         )
                         .selectable(false)
                         .sense(egui::Sense::click()),
@@ -353,7 +358,7 @@ fn changes_card(
                 ui.label(
                     RichText::new("⚠ This folder is large; some changes may not be listed.")
                         .size(10.5)
-                        .color(Color32::from_rgb(204, 167, 0)),
+                        .color(colors.warning),
                 );
             }
             if changes.open {
@@ -370,6 +375,7 @@ fn change_rows(
     root: Option<&std::path::Path>,
     commands: &mut Vec<Command>,
 ) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     use crate::services::workspace_snapshot::ChangeKind;
     ScrollArea::vertical()
         .id_salt(("agent_changes", kind))
@@ -379,9 +385,9 @@ fn change_rows(
             for (index, row) in changes.rows.iter().take(200).enumerate() {
                 ui.push_id(index, |ui| {
                     let (mark, color) = match row.change.kind {
-                        ChangeKind::Added => ("A", theme::DIFF_ADDED_TEXT),
-                        ChangeKind::Modified => ("M", Color32::from_rgb(204, 167, 0)),
-                        ChangeKind::Deleted => ("D", theme::DIFF_REMOVED_TEXT),
+                        ChangeKind::Added => ("A", colors.diff_added_text),
+                        ChangeKind::Modified => ("M", colors.warning),
+                        ChangeKind::Deleted => ("D", colors.diff_removed_text),
                     };
                     let path = row.change.path.display().to_string();
                     ui.horizontal(|ui| {
@@ -390,7 +396,7 @@ fn change_rows(
                         if ui
                             .add(
                                 egui::Label::new(
-                                    RichText::new(label).size(11.0).color(theme::TEXT),
+                                    RichText::new(label).size(11.0).color(colors.text),
                                 )
                                 .selectable(false)
                                 .sense(egui::Sense::click()),
@@ -430,13 +436,13 @@ fn change_rows(
                                 }
                             }
                             RowState::Reverted => {
-                                ui.label(RichText::new("reverted").size(10.5).color(theme::MUTED));
+                                ui.label(RichText::new("reverted").size(10.5).color(colors.muted));
                             }
                             RowState::Failed(reason) => {
                                 ui.label(
                                     RichText::new(format!("not reverted: {reason}"))
                                         .size(10.5)
-                                        .color(theme::DIFF_REMOVED_TEXT),
+                                        .color(colors.diff_removed_text),
                                 );
                             }
                         }
@@ -446,7 +452,7 @@ fn change_rows(
                             ui.label(
                                 RichText::new("Binary or large file")
                                     .size(10.5)
-                                    .color(theme::MUTED),
+                                    .color(colors.muted),
                             );
                         } else {
                             diff_view(
@@ -463,7 +469,7 @@ fn change_rows(
                 ui.label(
                     RichText::new(format!("… and {} more files", changes.rows.len() - 200))
                         .size(10.5)
-                        .color(theme::MUTED),
+                        .color(colors.muted),
                 );
             }
         });
@@ -477,6 +483,7 @@ fn permission_cards(
     root: Option<&std::path::Path>,
     commands: &mut Vec<Command>,
 ) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let kind = session.kind;
     let waiting = session.pending_permissions.len();
     let Some(pending) = session.pending_permissions.first().cloned() else {
@@ -494,8 +501,8 @@ fn permission_cards(
         return;
     }
     Frame::default()
-        .fill(theme::BG)
-        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(204, 167, 0)))
+        .fill(colors.bg)
+        .stroke(egui::Stroke::new(1.0_f32, colors.warning))
         .corner_radius(3)
         .inner_margin(Margin::symmetric(8, 6))
         .show(ui, |ui| {
@@ -539,6 +546,7 @@ fn permission_body(
     root: Option<&std::path::Path>,
     waiting: usize,
 ) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let call = &pending.request.tool_call;
     let title = if call.title.is_empty() {
         "Permission requested"
@@ -549,14 +557,14 @@ fn permission_body(
         ui.label(
             RichText::new(kind_glyph(call.kind))
                 .size(12.0)
-                .color(theme::MUTED),
+                .color(colors.muted),
         );
-        ui.label(RichText::new(title).strong().size(12.0).color(theme::TEXT));
+        ui.label(RichText::new(title).strong().size(12.0).color(colors.text));
         if waiting > 1 {
             ui.label(
                 RichText::new(format!("(+{} waiting)", waiting - 1))
                     .size(10.5)
-                    .color(theme::MUTED),
+                    .color(colors.muted),
             );
         }
     });
@@ -564,7 +572,7 @@ fn permission_body(
         ui.label(
             RichText::new(format!("⚠ {warning}"))
                 .size(11.0)
-                .color(Color32::from_rgb(204, 167, 0)),
+                .color(colors.warning),
         );
     }
     for location in &call.locations {
@@ -574,7 +582,7 @@ fn permission_body(
         ui.label(
             RichText::new(format!("{}{line}", display_path(&location.path, root)))
                 .size(10.5)
-                .color(theme::MUTED),
+                .color(colors.muted),
         );
     }
     if let Some(command) = call
@@ -588,7 +596,7 @@ fn permission_body(
                 RichText::new(format!("$ {command}"))
                     .monospace()
                     .size(11.0)
-                    .color(theme::TEXT),
+                    .color(colors.text),
             )
             .selectable(true),
         );
@@ -603,7 +611,7 @@ fn permission_body(
             ui.label(
                 RichText::new(display_path(path, root))
                     .size(10.5)
-                    .color(theme::MUTED),
+                    .color(colors.muted),
             );
             diff_view(ui, old_text.as_deref(), new_text, path);
         }
@@ -612,15 +620,16 @@ fn permission_body(
 
 /// Unified diff with green/red rows; long diffs scroll and are capped.
 fn diff_view(ui: &mut egui::Ui, old: Option<&str>, new: &str, salt: &str) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     const MAX_ROWS: usize = 400;
     let diff = line_diff::diff(old.unwrap_or(""), new, 2);
     ui.label(
         RichText::new(format!("+{} −{}", diff.added, diff.removed))
             .size(10.5)
-            .color(theme::MUTED),
+            .color(colors.muted),
     );
     if diff.lines.is_empty() {
-        ui.label(RichText::new("No changes").size(10.5).color(theme::MUTED));
+        ui.label(RichText::new("No changes").size(10.5).color(colors.muted));
         return;
     }
     let font = FontId::monospace(11.0);
@@ -634,17 +643,17 @@ fn diff_view(ui: &mut egui::Ui, old: Option<&str>, new: &str, salt: &str) {
                 let (text, color, background) = match line {
                     DiffLine::Added(text) => (
                         format!("+ {text}"),
-                        theme::DIFF_ADDED_TEXT,
-                        Some(theme::DIFF_ADDED_BG),
+                        colors.diff_added_text,
+                        Some(colors.diff_added_bg),
                     ),
                     DiffLine::Removed(text) => (
                         format!("- {text}"),
-                        theme::DIFF_REMOVED_TEXT,
-                        Some(theme::DIFF_REMOVED_BG),
+                        colors.diff_removed_text,
+                        Some(colors.diff_removed_bg),
                     ),
-                    DiffLine::Context(text) => (format!("  {text}"), theme::MUTED, None),
+                    DiffLine::Context(text) => (format!("  {text}"), colors.muted, None),
                     DiffLine::Gap(count) => {
-                        (format!("  … {count} unchanged lines"), theme::MUTED, None)
+                        (format!("  … {count} unchanged lines"), colors.muted, None)
                     }
                 };
                 let galley = ui.painter().layout_no_wrap(text, font.clone(), color);
@@ -664,7 +673,7 @@ fn diff_view(ui: &mut egui::Ui, old: Option<&str>, new: &str, salt: &str) {
                 ui.label(
                     RichText::new(format!("… {} more lines", diff.lines.len() - MAX_ROWS))
                         .size(10.5)
-                        .color(theme::MUTED),
+                        .color(colors.muted),
                 );
             }
         });
@@ -723,6 +732,7 @@ fn composer(
     paths: &[std::path::PathBuf],
     commands: &mut Vec<Command>,
 ) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let kind = session.kind;
     attachment_chips(ui, session, commands);
     config_row(ui, session, commands);
@@ -785,7 +795,7 @@ fn composer(
         ui.label(
             RichText::new("Enter to send · Shift+Enter for a new line")
                 .size(10.5)
-                .color(theme::MUTED),
+                .color(colors.muted),
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if running {
@@ -814,6 +824,7 @@ fn suggestion_list(
     selected: usize,
     chosen: &mut Option<usize>,
 ) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let rows: Vec<(String, String)> = match popup {
         Popup::None => return,
         Popup::Mentions(items) => items
@@ -826,8 +837,8 @@ fn suggestion_list(
             .collect(),
     };
     Frame::default()
-        .fill(theme::BG)
-        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+        .fill(colors.bg)
+        .stroke(egui::Stroke::new(1.0_f32, colors.border))
         .corner_radius(3)
         .inner_margin(Margin::symmetric(4, 3))
         .show(ui, |ui| {
@@ -844,10 +855,10 @@ fn suggestion_list(
                         RichText::new(text)
                             .monospace()
                             .size(11.0)
-                            .color(theme::TEXT),
+                            .color(colors.text),
                     )
                     .fill(if index == selected {
-                        theme::ACTIVE
+                        colors.active
                     } else {
                         Color32::TRANSPARENT
                     })
@@ -865,13 +876,14 @@ fn suggestion_list(
 
 /// Selections and files waiting to go with the next message.
 fn attachment_chips(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Vec<Command>) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     if session.attachments.is_empty() {
         return;
     }
     ui.horizontal_wrapped(|ui| {
         for (index, chip) in session.attachments.iter().enumerate() {
             Frame::default()
-                .fill(theme::INPUT)
+                .fill(colors.input)
                 .corner_radius(3)
                 .inner_margin(Margin::symmetric(6, 2))
                 .show(ui, |ui| {
@@ -879,7 +891,7 @@ fn attachment_chips(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mu
                         ui.label(
                             RichText::new(format!("{} {}", icon::FILE, chip.label))
                                 .size(11.0)
-                                .color(theme::TEXT),
+                                .color(colors.text),
                         );
                         let remove = ui
                             .add(egui::Button::new(icon::X).small().frame(false))
@@ -902,6 +914,7 @@ fn attachment_chips(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mu
 
 /// Mode / model / effort dropdowns from the agent's own `configOptions`.
 fn config_row(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Vec<Command>) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let options: Vec<_> = session
         .conversation
         .config_options
@@ -942,8 +955,8 @@ fn config_row(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Vec<
     });
     if let Some((_, _, label)) = &session.pending_config {
         Frame::default()
-            .fill(theme::BG)
-            .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(204, 167, 0)))
+            .fill(colors.bg)
+            .stroke(egui::Stroke::new(1.0_f32, colors.warning))
             .corner_radius(3)
             .inner_margin(Margin::symmetric(8, 5))
             .show(ui, |ui| {
@@ -952,7 +965,7 @@ fn config_row(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Vec<
                         "⚠ “{label}” lets the agent act without asking first. Edits still show up under “Changed by the agent”."
                     ))
                     .size(11.0)
-                    .color(theme::TEXT),
+                    .color(colors.text),
                 );
                 ui.horizontal(|ui| {
                     if ui.button("Enable").clicked() {
@@ -982,13 +995,14 @@ fn take_plain_enter(ui: &mut egui::Ui) -> bool {
 
 /// Earlier sessions of this agent in this folder; clicking one resumes it.
 fn history_list(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Vec<Command>) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let kind = session.kind;
     let history = &session.history;
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(format!("EARLIER {} SESSIONS", kind.label().to_uppercase()))
                 .size(10.5)
-                .color(theme::MUTED),
+                .color(colors.muted),
         );
         if ui.small_button("Back").clicked() {
             commands.push(Command::ToggleAgentHistory);
@@ -999,14 +1013,14 @@ fn history_list(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Ve
         ui.label(
             RichText::new(error)
                 .size(11.0)
-                .color(theme::DIFF_REMOVED_TEXT),
+                .color(colors.diff_removed_text),
         );
     }
     if history.unsupported {
         ui.label(
             RichText::new("This agent does not keep a list of earlier sessions.")
                 .size(11.0)
-                .color(theme::MUTED),
+                .color(colors.muted),
         );
         return;
     }
@@ -1014,13 +1028,13 @@ fn history_list(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Ve
         ui.label(
             RichText::new("Loading sessions…")
                 .size(11.0)
-                .color(theme::MUTED),
+                .color(colors.muted),
         );
     } else if history.sessions.is_empty() && history.error.is_none() {
         ui.label(
             RichText::new("No earlier sessions in this folder.")
                 .size(11.0)
-                .color(theme::MUTED),
+                .color(colors.muted),
         );
     }
     ScrollArea::vertical()
@@ -1044,7 +1058,7 @@ fn history_list(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Ve
                         egui::Button::new(
                             RichText::new(format!("{title}\n{when}"))
                                 .size(11.5)
-                                .color(theme::TEXT),
+                                .color(colors.text),
                         )
                         .frame(false)
                         .min_size(egui::vec2(ui.available_width(), 0.0))
@@ -1057,7 +1071,7 @@ fn history_list(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Ve
             }
             if history.next_cursor.is_some() {
                 if history.loading {
-                    ui.label(RichText::new("Loading…").size(11.0).color(theme::MUTED));
+                    ui.label(RichText::new("Loading…").size(11.0).color(colors.muted));
                 } else if ui.small_button("Show more").clicked() {
                     commands.push(Command::MoreAgentHistory);
                 }
@@ -1082,6 +1096,7 @@ const ENTRY_GAP: f32 = 6.0;
 const DRAW_MARGIN: f32 = 600.0;
 
 fn transcript(ui: &mut egui::Ui, session: &mut AgentSessionView) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let follow = std::mem::take(&mut session.follow_output);
     let count = session.conversation.entries.len();
     session.layout.prepare(ui.available_width(), count);
@@ -1098,7 +1113,7 @@ fn transcript(ui: &mut egui::Ui, session: &mut AgentSessionView) {
                 ui.label(
                     RichText::new(format!("Ask {} about your code.", session.kind.label()))
                         .size(11.5)
-                        .color(theme::MUTED),
+                        .color(colors.muted),
                 );
             }
             plan(ui, session);
@@ -1127,7 +1142,7 @@ fn transcript(ui: &mut egui::Ui, session: &mut AgentSessionView) {
                         } => thought(ui, text),
                         Entry::ToolCall(call) => tool_call(ui, call),
                         Entry::Notice(text) => {
-                            ui.label(RichText::new(text).italics().size(11.0).color(theme::MUTED));
+                            ui.label(RichText::new(text).italics().size(11.0).color(colors.muted));
                         }
                     }
                     ui.add_space(ENTRY_GAP);
@@ -1136,7 +1151,7 @@ fn transcript(ui: &mut egui::Ui, session: &mut AgentSessionView) {
             }
             ui.add_space(window.space_after);
             if session.running {
-                ui.label(RichText::new("Working…").size(11.0).color(theme::MUTED));
+                ui.label(RichText::new("Working…").size(11.0).color(colors.muted));
             }
             if follow {
                 ui.scroll_to_cursor(Some(Align::BOTTOM));
@@ -1145,10 +1160,11 @@ fn transcript(ui: &mut egui::Ui, session: &mut AgentSessionView) {
 }
 
 fn plan(ui: &mut egui::Ui, session: &AgentSessionView) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     if session.conversation.plan.is_empty() {
         return;
     }
-    ui.label(RichText::new("PLAN").size(10.5).color(theme::MUTED));
+    ui.label(RichText::new("PLAN").size(10.5).color(colors.muted));
     for entry in &session.conversation.plan {
         let mark = match entry.status {
             PlanStatus::Completed => "☑",
@@ -1158,43 +1174,49 @@ fn plan(ui: &mut egui::Ui, session: &AgentSessionView) {
         ui.label(
             RichText::new(format!("{mark} {}", entry.content))
                 .size(11.5)
-                .color(theme::TEXT),
+                .color(colors.text),
         );
     }
     ui.separator();
 }
 
 fn user_message(ui: &mut egui::Ui, text: &str) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     Frame::default()
-        .fill(theme::INPUT)
+        .fill(colors.input)
         .corner_radius(3)
         .inner_margin(Margin::symmetric(8, 5))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.add(
-                egui::Label::new(RichText::new(text).size(TEXT_SIZE).color(theme::TEXT))
+                egui::Label::new(RichText::new(text).size(TEXT_SIZE).color(colors.text))
                     .selectable(true),
             );
         });
 }
 
 fn agent_message(ui: &mut egui::Ui, text: &str) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     for block in markdown_lite::parse(text) {
         match block {
             Block::Paragraph(inlines) => {
-                ui.add(egui::Label::new(job(&inlines, TEXT_SIZE, theme::TEXT)).selectable(true));
+                ui.add(
+                    egui::Label::new(job(&inlines, TEXT_SIZE, colors.text, colors))
+                        .selectable(true),
+                );
             }
             Block::Heading(inlines) => {
                 ui.add(
-                    egui::Label::new(job(&inlines, TEXT_SIZE + 1.5, Color32::WHITE))
+                    egui::Label::new(job(&inlines, TEXT_SIZE + 1.5, colors.text, colors))
                         .selectable(true),
                 );
             }
             Block::Item { marker, content } => {
                 ui.horizontal_top(|ui| {
-                    ui.label(RichText::new(marker).size(TEXT_SIZE).color(theme::MUTED));
+                    ui.label(RichText::new(marker).size(TEXT_SIZE).color(colors.muted));
                     ui.add(
-                        egui::Label::new(job(&content, TEXT_SIZE, theme::TEXT)).selectable(true),
+                        egui::Label::new(job(&content, TEXT_SIZE, colors.text, colors))
+                            .selectable(true),
                     );
                 });
             }
@@ -1204,9 +1226,10 @@ fn agent_message(ui: &mut egui::Ui, text: &str) {
 }
 
 fn code_block(ui: &mut egui::Ui, language: &str, text: &str) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     Frame::default()
-        .fill(theme::PANEL)
-        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+        .fill(colors.panel)
+        .stroke(egui::Stroke::new(1.0_f32, colors.border))
         .corner_radius(3)
         .inner_margin(Margin::symmetric(8, 5))
         .show(ui, |ui| {
@@ -1219,7 +1242,7 @@ fn code_block(ui: &mut egui::Ui, language: &str, text: &str) {
                         language
                     })
                     .size(10.0)
-                    .color(theme::MUTED),
+                    .color(colors.muted),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui
@@ -1239,7 +1262,7 @@ fn code_block(ui: &mut egui::Ui, language: &str, text: &str) {
                             RichText::new(text)
                                 .monospace()
                                 .size(11.5)
-                                .color(theme::TEXT),
+                                .color(colors.text),
                         )
                         .wrap_mode(egui::TextWrapMode::Extend)
                         .selectable(true),
@@ -1249,23 +1272,25 @@ fn code_block(ui: &mut egui::Ui, language: &str, text: &str) {
 }
 
 fn thought(ui: &mut egui::Ui, text: &str) {
-    egui::CollapsingHeader::new(RichText::new("Thinking").size(11.0).color(theme::MUTED))
+    let colors = crate::ui::theme::palette(ui.visuals());
+    egui::CollapsingHeader::new(RichText::new("Thinking").size(11.0).color(colors.muted))
         .id_salt("thought")
         .default_open(false)
         .show(ui, |ui| {
             ui.add(
-                egui::Label::new(RichText::new(text).italics().size(11.0).color(theme::MUTED))
+                egui::Label::new(RichText::new(text).italics().size(11.0).color(colors.muted))
                     .selectable(true),
             );
         });
 }
 
 fn tool_call(ui: &mut egui::Ui, call: &ToolCall) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let (status, color) = match call.status {
-        ToolStatus::Pending => ("waiting", theme::MUTED),
-        ToolStatus::InProgress => ("running", Color32::from_rgb(204, 167, 0)),
-        ToolStatus::Completed => ("done", theme::MUTED),
-        ToolStatus::Failed => ("failed", theme::DIFF_REMOVED_TEXT),
+        ToolStatus::Pending => ("waiting", colors.muted),
+        ToolStatus::InProgress => ("running", colors.warning),
+        ToolStatus::Completed => ("done", colors.muted),
+        ToolStatus::Failed => ("failed", colors.diff_removed_text),
     };
     let title = if call.title.is_empty() {
         "Tool call"
@@ -1287,7 +1312,7 @@ fn tool_call(ui: &mut egui::Ui, call: &ToolCall) {
             ui.label(
                 RichText::new(format!("{}{line}", location.path))
                     .size(10.5)
-                    .color(theme::MUTED),
+                    .color(colors.muted),
             );
         }
         for content in &call.content {
@@ -1298,7 +1323,7 @@ fn tool_call(ui: &mut egui::Ui, call: &ToolCall) {
                             RichText::new(text)
                                 .monospace()
                                 .size(11.0)
-                                .color(theme::TEXT),
+                                .color(colors.text),
                         )
                         .selectable(true),
                     );
@@ -1313,21 +1338,21 @@ fn tool_call(ui: &mut egui::Ui, call: &ToolCall) {
                     ui.label(
                         RichText::new(format!("Edit {path}: +{added} −{removed} lines"))
                             .size(11.0)
-                            .color(theme::TEXT),
+                            .color(colors.text),
                     );
                 }
                 ToolContent::Terminal { .. } => {
                     ui.label(
                         RichText::new("Command output is shown by the agent.")
                             .size(10.5)
-                            .color(theme::MUTED),
+                            .color(colors.muted),
                     );
                 }
                 ToolContent::Other(kind) => {
                     ui.label(
                         RichText::new(format!("[{kind}]"))
                             .size(10.5)
-                            .color(theme::MUTED),
+                            .color(colors.muted),
                     );
                 }
             }
@@ -1343,7 +1368,7 @@ fn tool_call(ui: &mut egui::Ui, call: &ToolCall) {
                     RichText::new(format!("$ {command}"))
                         .monospace()
                         .size(11.0)
-                        .color(theme::TEXT),
+                        .color(colors.text),
                 )
                 .selectable(true),
             );
@@ -1360,7 +1385,7 @@ fn kind_glyph(kind: ToolKind) -> &'static str {
     }
 }
 
-fn job(inlines: &[Inline], size: f32, color: Color32) -> LayoutJob {
+fn job(inlines: &[Inline], size: f32, color: Color32, colors: theme::Palette) -> LayoutJob {
     let mut job = LayoutJob::default();
     for inline in inlines {
         let (text, format) = match inline {
@@ -1376,7 +1401,7 @@ fn job(inlines: &[Inline], size: f32, color: Color32) -> LayoutJob {
                 text,
                 TextFormat {
                     font_id: FontId::proportional(size),
-                    color: Color32::WHITE,
+                    color: colors.text,
                     ..Default::default()
                 },
             ),
@@ -1385,7 +1410,7 @@ fn job(inlines: &[Inline], size: f32, color: Color32) -> LayoutJob {
                 TextFormat {
                     font_id: FontId::monospace(size - 1.0),
                     color,
-                    background: theme::INPUT,
+                    background: colors.input,
                     ..Default::default()
                 },
             ),
@@ -2444,7 +2469,11 @@ mod tests {
             .filter(|(_, node)| format!("{:?}", node.role()) == "Button")
             .filter_map(|(_, node)| node.label().map(str::to_owned))
             .collect();
-        for expected in ["Coding Agents (Cmd/Ctrl+Shift+A)", "Output", "Settings"] {
+        let agents = format!(
+            "Coding Agents ({})",
+            crate::ui::shortcut::primary("Shift+A")
+        );
+        for expected in [agents.as_str(), "Output", "Settings"] {
             assert!(
                 names.iter().any(|n| n == expected),
                 "missing {expected:?} in {names:?}"

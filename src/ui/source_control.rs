@@ -1,4 +1,4 @@
-use super::{Workbench, theme, widgets::explorer_row};
+use super::{Workbench, widgets::explorer_row};
 use crate::{
     app::command::Command,
     services::source_control::{DiffSide, GitChange, GitSnapshot},
@@ -49,6 +49,7 @@ fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
 }
 
 fn source_heading(ui: &mut egui::Ui, title: &str, count: usize) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), egui::Sense::hover());
     ui.painter().text(
@@ -56,7 +57,7 @@ fn source_heading(ui: &mut egui::Ui, title: &str, count: usize) {
         egui::Align2::LEFT_CENTER,
         format!("{title}  {count}"),
         FontId::proportional(11.5),
-        theme::MUTED,
+        colors.muted,
     );
 }
 
@@ -82,28 +83,29 @@ fn source_label(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> egui::Re
 
 impl Workbench<'_> {
     pub(crate) fn source_control_panel(&mut self, ui: &mut egui::Ui) {
+        let colors = crate::ui::theme::palette(ui.visuals());
         self.view.source_control.commit_focused = false;
         let Some(workspace) = &self.editor.workspace else {
-            source_label(ui, "Open a folder to view source control", theme::MUTED);
+            source_label(ui, "Open a folder to view source control", colors.muted);
             return;
         };
         if self.view.source_control.loading && self.view.source_control.snapshot.is_none() {
-            source_label(ui, "Reading Git status…", theme::MUTED);
+            source_label(ui, "Reading Git status…", colors.muted);
             return;
         }
         if let Some(error) = &self.view.source_control.error {
-            source_label(ui, error, theme::DIFF_REMOVED_TEXT);
+            source_label(ui, error, colors.diff_removed_text);
             if self.view.source_control.snapshot.is_none() {
                 return;
             }
         }
         let Some(snapshot) = self.view.source_control.snapshot.clone() else {
-            source_label(ui, "No Git repository found", theme::MUTED);
-            source_label(ui, &workspace.display().to_string(), theme::MUTED);
+            source_label(ui, "No Git repository found", colors.muted);
+            source_label(ui, &workspace.display().to_string(), colors.muted);
             return;
         };
         let branch_text = format!("{}  {}", crate::icon::GIT_BRANCH, snapshot.branch);
-        let branch = source_label(ui, &branch_text, theme::TEXT);
+        let branch = source_label(ui, &branch_text, colors.text);
         branch.on_hover_text(snapshot.root.display().to_string());
         let staged_paths: Vec<_> = snapshot
             .changes
@@ -124,7 +126,7 @@ impl Workbench<'_> {
             .map(|change| change.path.clone())
             .collect();
         ui.horizontal(|ui| {
-            ui.label(RichText::new("SOURCE CONTROL").small().color(theme::MUTED));
+            ui.label(RichText::new("SOURCE CONTROL").small().color(colors.muted));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add_sized(
@@ -194,10 +196,10 @@ impl Workbench<'_> {
             }
         });
         if let Some(error) = &self.view.source_control.commit_error {
-            source_label(ui, error, theme::DIFF_REMOVED_TEXT);
+            source_label(ui, error, colors.diff_removed_text);
         }
         if snapshot.changes.is_empty() {
-            source_label(ui, "No changes", theme::MUTED);
+            source_label(ui, "No changes", colors.muted);
             return;
         }
         let rows = source_rows(&snapshot);
@@ -275,6 +277,7 @@ impl Workbench<'_> {
     }
 
     pub(crate) fn source_revert_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         let Some(prompt) = &self.view.source_control.revert_prompt else {
             return;
         };
@@ -286,14 +289,14 @@ impl Workbench<'_> {
             ui.set_width(400.0);
             let count = paths.len();
             ui.heading(if count == 1 { "Discard changes to this file?" } else { "Discard changes to these files?" });
-            ui.label(RichText::new("This restores the tracked file and its staged state from HEAD. This cannot be undone in Lumen.").color(theme::MUTED));
-            ui.label(RichText::new("Untracked files are not removed.").color(theme::MUTED));
+            ui.label(RichText::new("This restores the tracked file and its staged state from HEAD. This cannot be undone in Lumen.").color(colors.muted));
+            ui.label(RichText::new("Untracked files are not removed.").color(colors.muted));
             ui.add_space(6.0);
             for path in paths.iter().take(4) {
                 ui.label(path.display().to_string());
             }
             if count > 4 {
-                ui.label(RichText::new(format!("…and {} more", count - 4)).color(theme::MUTED));
+                ui.label(RichText::new(format!("…and {} more", count - 4)).color(colors.muted));
             }
             if let Some(error) = &error {
                 ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
@@ -312,6 +315,26 @@ impl Workbench<'_> {
     }
 
     pub(crate) fn source_diff_editor(&mut self, ui: &mut egui::Ui) {
+        let path = self
+            .view
+            .source_control
+            .diff
+            .as_ref()
+            .map(|diff| diff.root.join(&diff.path));
+        let path = path.as_deref();
+        let scheme = self
+            .view
+            .settings
+            .document_choice("editor.color_scheme", path);
+        let theme = crate::ui::theme::editor_theme(&scheme, ui.visuals());
+        let original = ui.style().clone();
+        *ui.visuals_mut() = crate::ui::theme::visuals(theme);
+        self.source_diff_editor_themed(ui);
+        ui.set_style(original);
+    }
+
+    pub(crate) fn source_diff_editor_themed(&mut self, ui: &mut egui::Ui) {
+        let colors = crate::ui::theme::palette(ui.visuals());
         let Some(diff) = &self.view.source_control.diff else {
             return;
         };
@@ -340,7 +363,7 @@ impl Workbench<'_> {
                     let editable_is_dirty =
                         document_index.is_some_and(|index| self.editor.files[index].dirty);
                     ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new("Hunks").small().color(theme::MUTED));
+                        ui.label(RichText::new("Hunks").small().color(colors.muted));
                         for (index, hunk) in comparison.hunks.iter().enumerate() {
                             if ui
                                 .add_enabled(
@@ -362,7 +385,7 @@ impl Workbench<'_> {
                             ui.label(
                                 RichText::new("Save or discard editor edits before staging a hunk")
                                     .small()
-                                    .color(theme::MUTED),
+                                    .color(colors.muted),
                             );
                         }
                     });
@@ -382,14 +405,14 @@ impl Workbench<'_> {
                             DiffSide::Untracked => "New file · no previous content",
                         })
                         .small()
-                        .color(theme::MUTED),
+                        .color(colors.muted),
                     );
                     let observed = read_only_source(
                         &mut columns[0],
                         &ReadOnlySource {
                             text: &comparison.base,
                             changed: &comparison.old_lines,
-                            changed_background: theme::DIFF_REMOVED_BG,
+                            changed_background: colors.diff_removed_bg,
                             id: "git_diff_base",
                             font: &font,
                             line_height,
@@ -410,7 +433,7 @@ impl Workbench<'_> {
                                 "Working Tree · editable"
                             })
                             .small()
-                            .color(theme::MUTED),
+                            .color(colors.muted),
                         );
                         let document = self.editor.files[index].id;
                         self.editor_find_bar(&mut columns[1], document);
@@ -429,14 +452,14 @@ impl Workbench<'_> {
                                 "Working Tree · file missing"
                             })
                             .small()
-                            .color(theme::MUTED),
+                            .color(colors.muted),
                         );
                         let observed = read_only_source(
                             &mut columns[1],
                             &ReadOnlySource {
                                 text: comparison.changed.as_deref().unwrap_or_default(),
                                 changed: &comparison.new_lines,
-                                changed_background: theme::DIFF_ADDED_BG,
+                                changed_background: colors.diff_added_bg,
                                 id: "git_diff_changed",
                                 font: &font,
                                 line_height,
@@ -453,7 +476,7 @@ impl Workbench<'_> {
                 }
             }
             Err(error) => {
-                ui.label(RichText::new(error).color(theme::DIFF_REMOVED_TEXT));
+                ui.label(RichText::new(error).color(colors.diff_removed_text));
             }
         }
     }
@@ -476,6 +499,7 @@ fn read_only_source(
     source: &ReadOnlySource,
     scroll_to_line: Option<f32>,
 ) -> f32 {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let ReadOnlySource {
         text,
         changed,
@@ -514,12 +538,12 @@ fn read_only_source(
                     ui.label(
                         RichText::new(format!("{:>4}", index + 1))
                             .font(font.clone())
-                            .color(theme::MUTED),
+                            .color(colors.muted),
                     );
                     ui.label(
                         RichText::new(lines[index])
                             .font(font.clone())
-                            .color(theme::TEXT),
+                            .color(colors.text),
                     );
                 });
             });
@@ -532,6 +556,7 @@ fn read_only_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::theme;
     use crate::{
         app::{
             LumenApp,

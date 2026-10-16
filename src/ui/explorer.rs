@@ -1,5 +1,4 @@
 use super::Workbench;
-use super::theme::{MUTED, PANEL};
 use super::widgets::{self, HeaderAction, canvas, explorer_row, panel_header, surface};
 use crate::app::command::Command;
 use crate::app::view_state::ExplorerEditKind;
@@ -37,10 +36,11 @@ impl Workbench<'_> {
     }
 
     pub(crate) fn explorer(&mut self, ui: &mut egui::Ui) {
+        let colors = crate::ui::theme::palette(ui.visuals());
         let Some(root) = self.editor.workspace.clone() else {
             ui.add_space(28.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("No folder opened").color(MUTED));
+                ui.label(RichText::new("No folder opened").color(colors.muted));
                 if ui
                     .button(format!("{}  Open Folder", icon::FOLDER_OPEN))
                     .clicked()
@@ -152,6 +152,7 @@ impl Workbench<'_> {
     }
 
     pub(crate) fn sidebar(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         if !self.view.sidebar_visible {
             return;
         }
@@ -160,9 +161,9 @@ impl Workbench<'_> {
             .width_range(180.0..=600.0)
             .resizable(true)
             .show_separator_line(false)
-            .frame(canvas())
+            .frame(canvas(ctx))
             .show(ctx, |ui| {
-                surface(PANEL).show(ui, |ui| {
+                surface(colors.panel).show(ui, |ui| {
                     // Width belongs to SidePanel's drag state. Setting a content
                     // minimum from `available_size` can grow it on hover/pass 2.
                     ui.set_min_height(ui.available_height());

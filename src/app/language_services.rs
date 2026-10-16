@@ -248,6 +248,11 @@ impl LumenApp {
                 (capabilities.text_document_sync.is_some(), "Document sync"),
                 (capabilities.save.is_some(), "Save notifications"),
                 (capabilities.hover, "Hover"),
+                (capabilities.completion, "Completion"),
+                (capabilities.references, "References"),
+                (capabilities.rename, "Rename"),
+                (capabilities.formatting, "Formatting"),
+                (capabilities.signature_help, "Signature help"),
                 (capabilities.definition, "Go to Definition"),
                 (capabilities.document_symbols, "Document symbols"),
                 (

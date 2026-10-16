@@ -3,10 +3,7 @@
 //! Keys are consumed before the editor sees them, but only while a popup is open
 //! and the editor owns focus. Accepting an item mutates the buffer through
 //! `app::completion::accept`, before any widget input in the same frame.
-use super::{
-    Workbench,
-    theme::{ACCENT, BORDER, MUTED, PANEL, TEXT},
-};
+use super::Workbench;
 use crate::app::{
     completion,
     editor_action::{blocked, text_widget_id},
@@ -101,6 +98,7 @@ impl Workbench<'_> {
         output: &SurfaceOutput,
         index: usize,
     ) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         let Some(buffer) = self.editor.files[index].editing.as_ref() else {
             return;
         };
@@ -116,11 +114,13 @@ impl Workbench<'_> {
                     popup_frame(ui, |ui| {
                         ui.set_max_width(520.0);
                         ui.horizontal(|ui| {
-                            ui.label(signature_label(&help));
-                            if ui
-                                .small_button(crate::icon::X)
-                                .on_hover_text("Close")
-                                .clicked()
+                            ui.label(signature_label(&help, colors));
+                            if super::widgets::named(
+                                ui.small_button(crate::icon::X).on_hover_text("Close"),
+                                true,
+                                "Close signature help",
+                            )
+                            .clicked()
                             {
                                 close = true;
                             }
@@ -129,11 +129,15 @@ impl Workbench<'_> {
                             ui.label(
                                 RichText::new(format!("{} of {}", help.index, help.count))
                                     .small()
-                                    .color(MUTED),
+                                    .color(colors.muted),
                             );
                         }
                         if let Some(documentation) = &help.documentation {
-                            ui.label(RichText::new(summary(documentation)).small().color(MUTED));
+                            ui.label(
+                                RichText::new(summary(documentation))
+                                    .small()
+                                    .color(colors.muted),
+                            );
                         }
                     });
                 });
@@ -168,15 +172,10 @@ impl Workbench<'_> {
                                     Sense::click(),
                                 );
                                 if selected {
-                                    ui.painter()
-                                        .rect_filled(rect, 2, ACCENT.gamma_multiply(0.55));
+                                    ui.painter().rect_filled(rect, 2, colors.active);
                                     ui.scroll_to_rect(rect, Some(Align::Center));
                                 } else if response.hovered() {
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        2,
-                                        Color32::from_white_alpha(12),
-                                    );
+                                    ui.painter().rect_filled(rect, 2, colors.hover);
                                 }
                                 let font = FontId::monospace(12.0);
                                 let label_end = ui.painter().text(
@@ -184,7 +183,7 @@ impl Workbench<'_> {
                                     egui::Align2::LEFT_CENTER,
                                     &item.label,
                                     font,
-                                    TEXT,
+                                    colors.text,
                                 );
                                 if let Some(detail) = &item.detail {
                                     ui.painter().text(
@@ -192,7 +191,7 @@ impl Workbench<'_> {
                                         egui::Align2::LEFT_CENTER,
                                         detail,
                                         FontId::proportional(11.0),
-                                        MUTED,
+                                        colors.muted,
                                     );
                                 }
                                 if response.clicked() {
@@ -210,16 +209,20 @@ impl Workbench<'_> {
 }
 
 fn popup_frame(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     egui::Frame::new()
-        .fill(PANEL)
-        .stroke(egui::Stroke::new(1.0_f32, BORDER))
+        .fill(colors.panel)
+        .stroke(egui::Stroke::new(1.0_f32, colors.border))
         .corner_radius(3)
         .inner_margin(egui::Margin::symmetric(4, 4))
         .show(ui, add);
 }
 
 /// Signature text with the active parameter highlighted.
-fn signature_label(help: &lumen_language_services::incoming::SignatureHelp) -> LayoutJob {
+fn signature_label(
+    help: &lumen_language_services::incoming::SignatureHelp,
+    colors: crate::ui::theme::Palette,
+) -> LayoutJob {
     let font = FontId::monospace(11.0);
     let mut job = LayoutJob::default();
     let mut append = |text: &str, color: Color32| {
@@ -237,11 +240,11 @@ fn signature_label(help: &lumen_language_services::incoming::SignatureHelp) -> L
     };
     match &help.active_parameter {
         Some(range) => {
-            append(&help.label[..range.start], TEXT);
-            append(&help.label[range.clone()], ACCENT.gamma_multiply(1.6));
-            append(&help.label[range.end..], TEXT);
+            append(&help.label[..range.start], colors.text);
+            append(&help.label[range.clone()], colors.accent);
+            append(&help.label[range.end..], colors.text);
         }
-        None => append(&help.label, TEXT),
+        None => append(&help.label, colors.text),
     }
     job
 }

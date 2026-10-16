@@ -14,6 +14,7 @@ const CELL_WIDTH_FACTOR: f32 = 0.58;
 
 impl Workbench<'_> {
     pub(crate) fn terminal_panel(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         if !self.view.terminal.open {
             return;
         }
@@ -25,7 +26,19 @@ impl Workbench<'_> {
             FontId::monospace(font_size)
         };
         let cursor_style = self.view.settings.choice("terminal.cursor_style");
-        let color_scheme = self.view.settings.choice("terminal.color_scheme");
+        let configured_scheme = self.view.settings.choice("terminal.color_scheme");
+        let terminal_theme = match configured_scheme.as_str() {
+            "workbench" => theme::current(&ctx.style().visuals),
+            "light" => theme::Theme::Light,
+            "high_contrast" => theme::Theme::HighContrast,
+            _ => theme::Theme::Dark,
+        };
+        let color_scheme = match terminal_theme {
+            theme::Theme::Light => "light",
+            theme::Theme::HighContrast => "high_contrast",
+            _ => "vscode_dark",
+        };
+        let terminal_colors = terminal_theme.palette();
         let cursor_blink = self.view.settings.boolean("terminal.cursor_blink");
         let auto_scroll = self.view.settings.boolean("terminal.auto_scroll");
         let panel_divider = self.view.settings.boolean("terminal.panel_divider");
@@ -38,130 +51,171 @@ impl Workbench<'_> {
             .height_range(MIN_TERMINAL_HEIGHT..=MAX_TERMINAL_HEIGHT)
             .resizable(true)
             .show_separator_line(panel_divider)
-            .frame(egui::Frame::default().fill(theme::PANEL))
+            .frame(super::widgets::canvas(ctx))
             .show(ctx, |ui| {
-                // A resizable TopBottomPanel stores the size of its rendered
-                // response. Claim the allocated height up-front so scrollback
-                // content can neither grow nor shrink the persisted panel.
-                ui.set_min_height(ui.available_height());
-                let actions = [
-                    HeaderAction {
-                        glyph: icon::CLEAR_ALL,
-                        tooltip: "Clear terminal output",
-                        command: Command::ClearTerminal,
-                        enabled: self.view.terminal.emulator.is_some(),
-                    },
-                    HeaderAction {
-                        glyph: icon::X,
-                        tooltip: "Close terminal",
-                        command: Command::CloseTerminal,
-                        enabled: true,
-                    },
-                ];
-                let tabs = [
-                    PanelTab {
-                        label: "TERMINAL",
-                        active: true,
-                        command: Command::ShowTerminal,
-                    },
-                    PanelTab {
-                        label: "OUTPUT",
-                        active: false,
-                        command: Command::ShowOutput,
-                    },
-                ];
-                if let Some(command) = tabbed_panel_header(ui, &tabs, &actions) {
-                    self.command(command);
-                }
-                if let Some(error) = &self.view.terminal.error {
-                    ui.label(
-                        RichText::new(error)
-                            .size(11.0)
-                            .color(theme::DIFF_REMOVED_TEXT),
-                    );
-                }
-                // The emulator owns both output and the active prompt. Keep a
-                // single fixed canvas so its scrollback cannot affect panel
-                // geometry, and derive PTY dimensions from that canvas.
-                let terminal_height = ui.available_height();
-                self.view.terminal.rows =
-                    ((terminal_height - 10.0) / line_height).floor().max(1.0) as u16;
-                self.view.terminal.columns = ((ui.available_width() - 14.0)
-                    / (font_size * CELL_WIDTH_FACTOR))
-                    .floor()
-                    .max(1.0) as u16;
-                let screen = self
-                    .view
-                    .terminal
-                    .emulator
-                    .as_ref()
-                    .map(lumen_terminal_core::Terminal::screen);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), terminal_height),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        let frame = egui::Frame::default()
-                            .fill(theme::BG)
-                            .corner_radius(egui::CornerRadius::same(3))
-                            .inner_margin(egui::Margin::symmetric(7, 5))
-                            .show(ui, |ui| {
-                                ScrollArea::vertical()
-                                    .id_salt("terminal_output")
-                                    // Stay pinned to the live prompt until the user
-                                    // scrolls back, instead of only on the frame
-                                    // that new output arrived.
-                                    .stick_to_bottom(
-                                        auto_scroll || self.view.terminal.scroll_to_bottom,
-                                    )
-                                    .max_height(ui.available_height())
-                                    .show(ui, |ui| {
-                                        // Rows touch: N rows of `line_height` must
-                                        // exactly fill the N rows the PTY was sized
-                                        // for, or the prompt scrolls out of view.
-                                        ui.spacing_mut().item_spacing.y = 0.0;
-                                        if let Some(screen) = screen {
-                                            for row in 0..screen.rows {
-                                                if let Some(cells) = screen.row(row) {
-                                                    ui.add(
-                                                        egui::Label::new(terminal_line(
-                                                            cells,
-                                                            &font,
-                                                            line_height,
-                                                            &cursor_style,
-                                                            cursor_visible,
-                                                            &color_scheme,
-                                                        ))
-                                                        .wrap_mode(egui::TextWrapMode::Extend),
-                                                    );
-                                                }
-                                            }
-                                        } else {
-                                            ui.label(
-                                                RichText::new("Starting terminal…")
-                                                    .color(theme::MUTED),
-                                            );
-                                        }
-                                    });
-                            });
-                        let canvas = ui.interact(
-                            frame.response.rect,
-                            egui::Id::new("terminal_canvas"),
-                            egui::Sense::click(),
+                super::widgets::surface(colors.panel).show(ui, |ui| {
+                    ui.set_min_size(ui.available_size());
+                    // A resizable TopBottomPanel stores the size of its rendered
+                    // response. Claim the allocated height up-front so scrollback
+                    // content can neither grow nor shrink the persisted panel.
+                    ui.set_min_height(ui.available_height());
+                    let actions = [
+                        HeaderAction {
+                            glyph: icon::CLEAR_ALL,
+                            tooltip: "Clear terminal output",
+                            command: Command::ClearTerminal,
+                            enabled: self.view.terminal.emulator.is_some(),
+                        },
+                        HeaderAction {
+                            glyph: icon::X,
+                            tooltip: "Close terminal",
+                            command: Command::CloseTerminal,
+                            enabled: true,
+                        },
+                    ];
+                    let tabs = [
+                        PanelTab {
+                            label: "TERMINAL",
+                            active: true,
+                            command: Command::ShowTerminal,
+                        },
+                        PanelTab {
+                            label: "OUTPUT",
+                            active: false,
+                            command: Command::ShowOutput,
+                        },
+                    ];
+                    if let Some(command) = tabbed_panel_header(ui, &tabs, &actions) {
+                        self.command(command);
+                    }
+                    if let Some(error) = &self.view.terminal.error {
+                        ui.label(
+                            RichText::new(error)
+                                .size(11.0)
+                                .color(colors.diff_removed_text),
                         );
-                        if canvas.clicked() {
-                            canvas.request_focus();
-                        }
-                        if canvas.has_focus() {
-                            for event in ctx.input(|input| input.events.clone()) {
-                                if let Some(bytes) = terminal_input_bytes(event) {
-                                    self.command(Command::SendTerminalInput(bytes));
+                    }
+                    // The emulator owns both output and the active prompt. Keep a
+                    // single fixed canvas so its scrollback cannot affect panel
+                    // geometry, and derive PTY dimensions from that canvas.
+                    let terminal_height = ui.available_height();
+                    self.view.terminal.rows =
+                        ((terminal_height - 10.0) / line_height).floor().max(1.0) as u16;
+                    let cell_width = cell_advance(ui, &font);
+                    self.view.terminal.columns = ((ui.available_width() - 14.0) / cell_width)
+                        .floor()
+                        .max(1.0) as u16;
+                    let screen = self
+                        .view
+                        .terminal
+                        .emulator
+                        .as_ref()
+                        .map(lumen_terminal_core::Terminal::screen);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), terminal_height),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            let colors = terminal_colors;
+                            *ui.visuals_mut() = theme::visuals(terminal_theme);
+                            let frame = egui::Frame::default()
+                                .fill(colors.bg)
+                                .corner_radius(egui::CornerRadius::same(3))
+                                .inner_margin(egui::Margin::symmetric(7, 5))
+                                .show(ui, |ui| {
+                                    ScrollArea::vertical()
+                                        .id_salt("terminal_output")
+                                        // Stay pinned to the live prompt until the user
+                                        // scrolls back, instead of only on the frame
+                                        // that new output arrived.
+                                        .stick_to_bottom(
+                                            auto_scroll || self.view.terminal.scroll_to_bottom,
+                                        )
+                                        .max_height(ui.available_height())
+                                        .show(ui, |ui| {
+                                            // Rows touch: N rows of `line_height` must
+                                            // exactly fill the N rows the PTY was sized
+                                            // for, or the prompt scrolls out of view.
+                                            ui.spacing_mut().item_spacing.y = 0.0;
+                                            if let Some(screen) = screen {
+                                                for row in 0..screen.rows {
+                                                    if let Some(cells) = screen.row(row) {
+                                                        ui.add(
+                                                            egui::Label::new(terminal_line(
+                                                                cells,
+                                                                &font,
+                                                                line_height,
+                                                                &cursor_style,
+                                                                cursor_visible,
+                                                                color_scheme,
+                                                                terminal_colors,
+                                                            ))
+                                                            .wrap_mode(egui::TextWrapMode::Extend),
+                                                        );
+                                                    }
+                                                }
+                                            } else {
+                                                ui.label(
+                                                    RichText::new("Starting terminal…")
+                                                        .color(colors.muted),
+                                                );
+                                            }
+                                        });
+                                });
+                            let canvas = ui.interact(
+                                frame.response.rect,
+                                egui::Id::new("terminal_canvas"),
+                                egui::Sense::click(),
+                            );
+                            if canvas.clicked() || canvas.secondary_clicked() {
+                                canvas.request_focus();
+                            }
+                            canvas.context_menu(|ui| {
+                                // Copy and Paste ask the platform for its own clipboard
+                                // events, so they follow the same paths as the keyboard
+                                // shortcuts and never bypass the terminal's focus rules.
+                                if ui.button("Copy").clicked() {
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::RequestCopy);
+                                    ui.close();
+                                }
+                                if ui.button("Paste").clicked() {
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui
+                                    .add_enabled(
+                                        self.view.terminal.emulator.is_some(),
+                                        egui::Button::new("Clear"),
+                                    )
+                                    .clicked()
+                                {
+                                    self.command(Command::ClearTerminal);
+                                    ui.close();
+                                }
+                            });
+                            if canvas.has_focus() {
+                                for event in ctx.input(|input| input.events.clone()) {
+                                    if let Some(bytes) = terminal_input_bytes(event) {
+                                        self.command(Command::SendTerminalInput(bytes));
+                                    }
                                 }
                             }
-                        }
-                    },
-                );
-                self.view.terminal.scroll_to_bottom = false;
+                        },
+                    );
+                    self.view.terminal.scroll_to_bottom = false;
+                });
             });
+    }
+}
+
+/// Horizontal advance of one terminal cell, measured from the selected font so
+/// the PTY column count matches what is drawn at any font size or family.
+fn cell_advance(ui: &egui::Ui, font: &FontId) -> f32 {
+    let measured = ui.fonts_mut(|fonts| fonts.glyph_width(font, 'M'));
+    if measured.is_finite() && measured > 1.0 {
+        measured
+    } else {
+        font.size * CELL_WIDTH_FACTOR
     }
 }
 
@@ -172,11 +226,12 @@ fn terminal_line(
     cursor_style: &str,
     cursor_visible: bool,
     color_scheme: &str,
+    colors: theme::Palette,
 ) -> LayoutJob {
     let mut job = LayoutJob::default();
     for cell in cells {
-        let foreground = color(cell.foreground, theme::TEXT, color_scheme);
-        let background = color(cell.background, theme::BG, color_scheme);
+        let foreground = color(cell.foreground, colors.text, color_scheme, colors);
+        let background = color(cell.background, colors.bg, color_scheme, colors);
         let cursor = cell.cursor && cursor_visible;
         let block_cursor = cursor && cursor_style == "block";
         job.append(
@@ -272,11 +327,12 @@ fn color(
     color: lumen_terminal_core::TerminalColor,
     fallback: Color32,
     color_scheme: &str,
+    colors: theme::Palette,
 ) -> Color32 {
     use lumen_terminal_core::TerminalColor;
     match color {
         TerminalColor::Rgb(red, green, blue) => Color32::from_rgb(red, green, blue),
-        TerminalColor::Indexed(index) => indexed_color(index, color_scheme),
+        TerminalColor::Indexed(index) => theme::terminal_indexed_color(index, color_scheme, colors),
         // Alacritty uses these special indexes for the active default colours.
         // Keeping the caller's fallback lets foreground and background retain
         // Lumen's terminal palette without hard-coding either one here.
@@ -291,59 +347,14 @@ fn color(
             if color_scheme == "high_contrast" {
                 Color32::BLACK
             } else {
-                theme::BG
+                colors.bg
             }
         }
-        TerminalColor::Named(index) => indexed_color(index as u8, color_scheme),
+        TerminalColor::Named(index) => {
+            theme::terminal_indexed_color(index as u8, color_scheme, colors)
+        }
     }
 }
-
-fn indexed_color(index: u8, color_scheme: &str) -> Color32 {
-    if color_scheme == "high_contrast" {
-        return HIGH_CONTRAST
-            .get(index as usize)
-            .copied()
-            .unwrap_or(theme::TEXT);
-    }
-    const ANSI: [Color32; 16] = [
-        Color32::from_rgb(0, 0, 0),
-        Color32::from_rgb(205, 49, 49),
-        Color32::from_rgb(13, 188, 121),
-        Color32::from_rgb(229, 229, 16),
-        Color32::from_rgb(36, 114, 200),
-        Color32::from_rgb(188, 63, 188),
-        Color32::from_rgb(17, 168, 205),
-        Color32::from_rgb(229, 229, 229),
-        Color32::from_rgb(102, 102, 102),
-        Color32::from_rgb(241, 76, 76),
-        Color32::from_rgb(35, 209, 139),
-        Color32::from_rgb(245, 245, 67),
-        Color32::from_rgb(59, 142, 234),
-        Color32::from_rgb(214, 112, 214),
-        Color32::from_rgb(41, 184, 219),
-        Color32::from_rgb(255, 255, 255),
-    ];
-    ANSI.get(index as usize).copied().unwrap_or(theme::TEXT)
-}
-
-const HIGH_CONTRAST: [Color32; 16] = [
-    Color32::BLACK,
-    Color32::from_rgb(255, 85, 85),
-    Color32::from_rgb(80, 255, 128),
-    Color32::from_rgb(255, 255, 85),
-    Color32::from_rgb(100, 170, 255),
-    Color32::from_rgb(255, 110, 255),
-    Color32::from_rgb(85, 255, 255),
-    Color32::from_rgb(235, 235, 235),
-    Color32::from_rgb(125, 125, 125),
-    Color32::from_rgb(255, 120, 120),
-    Color32::from_rgb(120, 255, 160),
-    Color32::from_rgb(255, 255, 120),
-    Color32::from_rgb(130, 190, 255),
-    Color32::from_rgb(255, 150, 255),
-    Color32::from_rgb(120, 255, 255),
-    Color32::WHITE,
-];
 
 #[cfg(test)]
 mod tests {
@@ -425,6 +436,29 @@ mod layout_tests {
         let ctx = egui::Context::default();
         crate::ui::theme::configure_ui(&ctx);
         (app, ctx)
+    }
+
+    #[test]
+    fn pty_columns_follow_the_measured_cell_width_of_the_font() {
+        let (mut app, ctx) = app_with_screen(24, "$ ");
+        let mut columns = |size: f64| {
+            app.view.settings.user.persisted.insert(
+                "terminal.font_size".into(),
+                lumen_settings_core::Value::Number(size),
+            );
+            for _ in 0..3 {
+                frame(&mut app, &ctx);
+            }
+            app.view.terminal.columns
+        };
+        let small = columns(12.0);
+        let large = columns(24.0);
+        assert!(small > large, "{small} columns at 12px vs {large} at 24px");
+        let ratio = f32::from(small) / f32::from(large);
+        assert!(
+            (1.7..2.3).contains(&ratio),
+            "columns scale with font size: {ratio}"
+        );
     }
 
     #[test]

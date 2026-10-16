@@ -231,12 +231,24 @@ impl LumenApp {
             }
             Command::Quit => self.request_quit(ctx),
             Command::Palette => {
+                if !self.view.command_palette {
+                    self.view.palette_previous_focus = ctx.memory(|memory| memory.focused());
+                    self.view.palette_query.clear();
+                    self.view.palette_selected = 0;
+                }
                 self.view.navigation.mode = None;
                 self.view.command_palette = true;
                 self.view.command_palette_focus = true;
             }
             Command::ToggleSidebar => self.view.sidebar_visible = !self.view.sidebar_visible,
-            Command::Welcome => self.view.status = "Lumen — New: ⌘N · Open: ⌘O · Save: ⌘S".into(),
+            Command::Welcome => {
+                self.view.status = format!(
+                    "Lumen — New: {} · Open: {} · Save: {}",
+                    crate::ui::shortcut::primary("N"),
+                    crate::ui::shortcut::primary("O"),
+                    crate::ui::shortcut::primary("S")
+                )
+            }
             Command::Copy | Command::Cut if explorer_clipboard => {
                 if let Some(selection) = &self.view.explorer_selection {
                     self.explorer_copy(selection.path().into(), command == Command::Cut);

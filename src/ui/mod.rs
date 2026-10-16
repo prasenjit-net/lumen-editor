@@ -23,6 +23,7 @@ mod output;
 mod palette;
 mod problems;
 mod settings;
+pub(crate) mod shortcut;
 mod source_control;
 mod terminal;
 pub(crate) mod theme;

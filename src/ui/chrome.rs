@@ -1,9 +1,4 @@
 use super::Workbench;
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-use super::theme::MUTED;
-use super::theme::STATUS;
-#[cfg(not(target_os = "windows"))]
-use super::theme::{TEXT, TITLE};
 use crate::app::view_state::LanguageServerStatus;
 use crate::{app::command::Command, icon};
 use eframe::egui::{self, Color32, Frame, Margin, RichText, TopBottomPanel};
@@ -11,6 +6,8 @@ use eframe::egui::{self, Color32, Frame, Margin, RichText, TopBottomPanel};
 use eframe::egui::{FontId, Vec2};
 impl Workbench<'_> {
     pub(crate) fn title_bar(&mut self, ctx: &egui::Context) {
+        #[cfg(not(target_os = "windows"))]
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         let title = self
             .active()
             .map(|file| {
@@ -28,7 +25,7 @@ impl Workbench<'_> {
         #[cfg(target_os = "macos")]
         TopBottomPanel::top("mac_titlebar")
             .exact_height(32.0)
-            .frame(Frame::default().fill(TITLE))
+            .frame(Frame::default().fill(colors.title))
             .show(ctx, |ui| {
                 let (rect, _) = ui.allocate_exact_size(
                     Vec2::new(ui.available_width(), 32.0),
@@ -39,7 +36,7 @@ impl Workbench<'_> {
                     egui::Align2::CENTER_CENTER,
                     &self.view.window_title,
                     FontId::proportional(13.0),
-                    TEXT,
+                    colors.text,
                 );
                 // Leave the leftmost 80px to AppKit's real traffic-light buttons.
                 let drag_rect = egui::Rect::from_min_max(rect.min + Vec2::new(80.0, 0.0), rect.max);
@@ -61,11 +58,11 @@ impl Workbench<'_> {
             .exact_height(35.0)
             .frame(
                 Frame::default()
-                    .fill(TITLE)
+                    .fill(colors.title)
                     .inner_margin(Margin::symmetric(8, 0)),
             )
             .show(ctx, |ui| {
-                Frame::default().fill(TITLE).show(ui, |ui| {
+                Frame::default().fill(colors.title).show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
                         if !self.view.safety_notices.is_empty() {
@@ -81,7 +78,7 @@ impl Workbench<'_> {
                         ui.label(
                             RichText::new(format!("{}  LUMEN", icon::BRACKETS_CURLY))
                                 .strong()
-                                .color(MUTED),
+                                .color(colors.muted),
                         );
                         ui.add_space(12.0);
                         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -90,7 +87,7 @@ impl Workbench<'_> {
                             for item in
                                 ["Edit", "Selection", "View", "Go", "Run", "Terminal", "Help"]
                             {
-                                ui.label(RichText::new(item).size(12.0).color(TEXT));
+                                ui.label(RichText::new(item).size(12.0).color(colors.text));
                                 ui.add_space(2.0);
                             }
                         }
@@ -105,22 +102,23 @@ impl Workbench<'_> {
                                     )
                                 })
                                 .unwrap_or_else(|| "Lumen".into());
-                            ui.label(RichText::new(title).color(MUTED).size(12.0));
+                            ui.label(RichText::new(title).color(colors.muted).size(12.0));
                         });
                     });
                 });
             });
     }
     pub(crate) fn status_bar(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         TopBottomPanel::bottom("status")
             .exact_height(22.0)
             .frame(
                 Frame::default()
-                    .fill(STATUS)
+                    .fill(colors.status)
                     .inner_margin(Margin::symmetric(8, 0)),
             )
             .show(ctx, |ui| {
-                Frame::default().fill(STATUS).show(ui, |ui| {
+                Frame::default().fill(colors.status).show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.label(

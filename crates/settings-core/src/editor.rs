@@ -85,12 +85,17 @@ pub(crate) const SCHEMA: SectionSchema = SectionSchema {
         },
         Setting {
             id: "editor.color_scheme",
-            default: DefaultValue::Choice("lumen-dark"),
+            default: DefaultValue::Choice("workbench"),
             name: "Code Color Scheme",
             category: "Editor",
-            help: "Token colors for syntax-highlighted code. Does not change editor behavior or document content.",
+            help: "Editor background and code colors. Workbench follows the appearance theme; explicit choices apply only to this editor.",
             aliases: "theme syntax highlight colors dark light contrast",
-            control: Control::Choice(&["lumen-dark", "lumen-light", "lumen-high-contrast"]),
+            control: Control::Choice(&[
+                "workbench",
+                "lumen-dark",
+                "lumen-light",
+                "lumen-high-contrast",
+            ]),
             document: true,
         },
         Setting {

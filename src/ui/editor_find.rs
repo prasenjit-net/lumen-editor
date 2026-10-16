@@ -1,7 +1,4 @@
-use super::{
-    Workbench,
-    theme::{ACCENT, MUTED, PANEL},
-};
+use super::Workbench;
 use crate::{
     app::find::{FindState, find_input_id},
     icon,
@@ -11,6 +8,7 @@ use eframe::egui::{self, Frame, Margin, Stroke, StrokeKind, TextEdit};
 
 impl Workbench<'_> {
     pub(super) fn editor_find_bar(&mut self, ui: &mut egui::Ui, document: DocumentId) {
+        let colors = crate::ui::theme::palette(ui.visuals());
         let blocked = self.view.command_palette
             || self.view.navigation.mode.is_some()
             || self.view.pending_close.is_some()
@@ -53,7 +51,7 @@ impl Workbench<'_> {
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     Frame::new()
-                        .fill(PANEL)
+                        .fill(colors.panel)
                         .inner_margin(Margin::same(4))
                         .corner_radius(3)
                         .show(ui, |ui| {
@@ -119,7 +117,7 @@ impl Workbench<'_> {
                                             )
                                         })
                                         .size(11.0)
-                                        .color(MUTED),
+                                        .color(colors.muted),
                                     );
                                     let matches = !state.matches.is_empty();
                                     if ui
@@ -136,10 +134,13 @@ impl Workbench<'_> {
                                     {
                                         state.navigate(false);
                                     }
-                                    if ui
-                                        .small_button(icon::X)
-                                        .on_hover_text("Close Find (Escape)")
-                                        .clicked()
+                                    if super::widgets::named(
+                                        ui.small_button(icon::X)
+                                            .on_hover_text("Close Find (Escape)"),
+                                        true,
+                                        "Close Find",
+                                    )
+                                    .clicked()
                                     {
                                         state.open = false;
                                         state.reveal = true;
@@ -185,6 +186,7 @@ pub(super) fn paint_find(
     state: &FindState,
     reveal: bool,
 ) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     if !state.open {
         return;
     }
@@ -226,7 +228,7 @@ pub(super) fn paint_find(
                             } else {
                                 1.0_f32
                             },
-                            ACCENT,
+                            colors.accent,
                         ),
                         StrokeKind::Inside,
                     );

@@ -72,3 +72,34 @@ fn search_exclusions_roundtrip_and_project_layer_wins() {
             .is_err()
     );
 }
+
+#[test]
+fn appearance_choices_roundtrip_and_preserve_explicit_legacy_schemes() {
+    for theme in ["dark", "light", "high-contrast", "system"] {
+        let source = format!(
+            "[workbench]\ntheme = '{theme}'\n[editor]\ncolor_scheme = 'lumen-dark'\n[terminal]\ncolor_scheme = 'vscode_dark'\n"
+        );
+        let (layer, warnings) = parse(Some(&source)).unwrap();
+        assert!(warnings.is_empty());
+        validate_layers(&layer, None).unwrap();
+        let encoded = serialize(Some(&source), &layer).unwrap();
+        assert_eq!(parse(Some(&encoded)).unwrap().0, layer);
+        assert_eq!(
+            layer.get("editor.color_scheme"),
+            Some(&Value::Choice("lumen-dark".into()))
+        );
+    }
+    assert!(parse(Some("[workbench]\ntheme = 'unknown'\n")).is_err());
+    assert_eq!(
+        setting("workbench.theme").default_value(),
+        Value::Choice("dark".into())
+    );
+    assert_eq!(
+        setting("editor.color_scheme").default_value(),
+        Value::Choice("workbench".into())
+    );
+    assert_eq!(
+        setting("terminal.color_scheme").default_value(),
+        Value::Choice("workbench".into())
+    );
+}

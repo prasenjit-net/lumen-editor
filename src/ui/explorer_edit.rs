@@ -1,4 +1,4 @@
-use super::{Workbench, theme::MUTED};
+use super::Workbench;
 use crate::{
     app::{command::Command, view_state::ExplorerEditKind},
     icon,
@@ -55,6 +55,7 @@ impl Workbench<'_> {
     }
 
     pub(crate) fn delete_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         let Some(prompt) = &self.view.delete_prompt else {
             return;
         };
@@ -77,7 +78,7 @@ impl Workbench<'_> {
             ui.set_width(360.0);
             ui.heading(format!("Delete {}?", display_name(&path)));
             ui.label(path.display().to_string());
-            ui.label(RichText::new("This item and its contents will move to Trash/Recycle Bin. Restore them there if needed.").color(MUTED));
+            ui.label(RichText::new("This item and its contents will move to Trash/Recycle Bin. Restore them there if needed.").color(colors.muted));
             if dirty > 0 { ui.label(format!("{dirty} unsaved editor buffer(s) will remain open as untitled files so your edits are not lost.")); }
             if let Some(error) = &prompt.error { ui.label(RichText::new(error).color(ui.visuals().error_fg_color)); }
             ui.add_space(8.0);

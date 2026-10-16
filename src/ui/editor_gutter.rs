@@ -1,4 +1,3 @@
-use super::theme::{BG, MUTED};
 use crate::{app::editor_action::text_widget_id, model::DocumentId};
 use eframe::egui::{self, FontId};
 use std::ops::Range;
@@ -15,8 +14,9 @@ pub(super) fn show_gutter(
     document: DocumentId,
     interaction_enabled: bool,
 ) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let painter = ui.painter_at(gutter.intersect(ui.clip_rect()));
-    painter.rect_filled(gutter, 0, BG);
+    painter.rect_filled(gutter, 0, colors.bg);
     for (index, row) in output.galley.rows.iter().enumerate() {
         let y = output.galley_pos.y + (row.min_y() + row.max_y()) * 0.5;
         if y >= gutter.top() - row.size.y && y <= gutter.bottom() + row.size.y {
@@ -25,7 +25,7 @@ pub(super) fn show_gutter(
                 egui::Align2::RIGHT_CENTER,
                 (index + 1).to_string(),
                 font.clone(),
-                MUTED,
+                colors.muted,
             );
         }
     }

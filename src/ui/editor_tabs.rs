@@ -1,9 +1,5 @@
 //! Compact, single-row editor tabs with clipped overflow and fixed toolbar actions.
-use super::{
-    Workbench,
-    theme::{ACCENT, BG, MUTED, TAB, TEXT},
-    widgets,
-};
+use super::{Workbench, widgets};
 use crate::{app::command::Command, icon, model::DocumentId};
 use eframe::egui::{self, CornerRadius, Frame, Margin, RichText, ScrollArea, Stroke};
 use std::path::Path;
@@ -90,6 +86,7 @@ impl TabSizing {
 
 impl Workbench<'_> {
     pub(crate) fn editor_tabs(&mut self, ui: &mut egui::Ui) -> egui::Rect {
+        let colors = crate::ui::theme::palette(ui.visuals());
         let hidden_document = self
             .view
             .source_control
@@ -137,7 +134,7 @@ impl Workbench<'_> {
             .map(|title| {
                 ui.fonts_mut(|fonts| {
                     fonts
-                        .layout_no_wrap(title.clone(), font.clone(), TEXT)
+                        .layout_no_wrap(title.clone(), font.clone(), colors.text)
                         .size()
                         .x
                         + 62.0
@@ -393,10 +390,11 @@ fn tab(
     close_tooltip: &str,
     dirty: bool,
 ) -> TabResponse {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let mut select = false;
     let mut close = false;
     let frame = Frame::new()
-        .fill(if selected { BG } else { TAB })
+        .fill(if selected { colors.bg } else { colors.tab })
         .inner_margin(Margin::symmetric(10, 6))
         .corner_radius(CornerRadius {
             nw: 3,
@@ -411,29 +409,32 @@ fn tab(
                     .add_sized(
                         [width - 50.0, 22.0],
                         egui::Button::new(RichText::new(title).color(if selected {
-                            TEXT
+                            colors.text
                         } else {
-                            MUTED
+                            colors.muted
                         }))
                         .frame(false)
                         .truncate(),
                     )
                     .on_hover_text(tooltip)
                     .clicked();
-                close = ui
-                    .add_sized(
+                close = widgets::named(
+                    ui.add_sized(
                         [ACTION_SIZE, 22.0],
                         egui::Button::new(if dirty { "●" } else { icon::X }).frame(false),
                     )
-                    .on_hover_text(close_tooltip)
-                    .clicked();
+                    .on_hover_text(close_tooltip),
+                    true,
+                    close_tooltip,
+                )
+                .clicked();
             });
         });
     if selected {
         ui.painter().hline(
             frame.response.rect.x_range(),
             frame.response.rect.top(),
-            Stroke::new(1.0_f32, ACCENT),
+            Stroke::new(1.0_f32, colors.accent),
         );
     }
     TabResponse {

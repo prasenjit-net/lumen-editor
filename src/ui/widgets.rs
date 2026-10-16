@@ -1,4 +1,4 @@
-use crate::{app::command::Command, icon, ui::theme::*};
+use crate::{app::command::Command, icon};
 use eframe::egui::{self, Color32, CornerRadius, FontId, Frame, Margin, RichText, Stroke, Vec2};
 use std::path::Path;
 
@@ -23,9 +23,10 @@ pub(crate) fn panel_header(
     title: &str,
     actions: &[HeaderAction],
 ) -> Option<Command> {
+    let colors = crate::ui::theme::palette(ui.visuals());
     header_row(ui, actions, |ui| {
         ui.add(
-            egui::Label::new(RichText::new(title).size(11.0).color(TEXT))
+            egui::Label::new(RichText::new(title).size(11.0).color(colors.text))
                 .halign(egui::Align::LEFT)
                 .truncate(),
         );
@@ -47,15 +48,16 @@ pub(crate) fn tabbed_panel_header(
     tabs: &[PanelTab],
     actions: &[HeaderAction],
 ) -> Option<Command> {
+    let colors = crate::ui::theme::palette(ui.visuals());
     header_row(ui, actions, |ui| {
         ui.spacing_mut().item_spacing.x = 14.0;
         let mut clicked = None;
         for tab in tabs {
             let response = ui.add(
                 egui::Label::new(RichText::new(tab.label).size(11.0).color(if tab.active {
-                    TEXT
+                    colors.text
                 } else {
-                    MUTED
+                    colors.muted
                 }))
                 // A selectable label would start a text selection on click, and
                 // that selection would then sweep over whatever panel replaces it.
@@ -68,7 +70,7 @@ pub(crate) fn tabbed_panel_header(
                 ui.painter().hline(
                     rect.x_range(),
                     rect.bottom() + 3.0,
-                    Stroke::new(1.0_f32, ACCENT),
+                    Stroke::new(1.0_f32, colors.accent),
                 );
             }
             if response
@@ -154,9 +156,9 @@ pub(crate) fn surface(fill: Color32) -> Frame {
         .fill(fill)
         .corner_radius(CornerRadius::same(5))
 }
-pub(crate) fn canvas() -> Frame {
+pub(crate) fn canvas(ctx: &egui::Context) -> Frame {
     Frame::default()
-        .fill(Color32::from_gray(24))
+        .fill(crate::ui::theme::palette(&ctx.style().visuals).canvas)
         .inner_margin(Margin::same(2))
 }
 pub(crate) fn explorer_row(
@@ -165,15 +167,32 @@ pub(crate) fn explorer_row(
     indent: usize,
     selected: bool,
 ) -> egui::Response {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), egui::Sense::click());
     if selected || response.hovered() {
         ui.painter().rect_filled(
             rect,
             CornerRadius::ZERO,
-            if selected { ACTIVE } else { HOVER },
+            if selected {
+                colors.active
+            } else {
+                colors.hover
+            },
         );
     }
+    if response.has_focus() {
+        // Keyboard focus is independent of selection and survives hover.
+        ui.painter().rect_stroke(
+            rect.shrink(1.0),
+            CornerRadius::same(2),
+            Stroke::new(1.0_f32, colors.accent),
+            egui::StrokeKind::Inside,
+        );
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &text)
+    });
     ui.painter()
         .with_clip_rect(rect.intersect(ui.clip_rect()))
         .text(
@@ -181,16 +200,17 @@ pub(crate) fn explorer_row(
             egui::Align2::LEFT_CENTER,
             text,
             FontId::proportional(13.0),
-            TEXT,
+            colors.text,
         );
     response
 }
 pub(crate) fn icon_button(ui: &mut egui::Ui, icon: &str, selected: bool) -> egui::Response {
+    let colors = crate::ui::theme::palette(ui.visuals());
     ui.add(
         egui::Button::new(RichText::new(icon).size(24.0).color(if selected {
-            Color32::from_gray(215)
+            colors.text
         } else {
-            MUTED
+            colors.muted
         }))
         .fill(Color32::TRANSPARENT)
         .stroke(Stroke::NONE)
@@ -215,6 +235,43 @@ pub(crate) fn file_icon(path: &Path) -> &'static str {
 mod tests {
     use super::*;
     use crate::{app::view_state::Activity, ui::theme::configure_ui};
+
+    #[test]
+    fn explorer_rows_expose_name_selection_and_a_keyboard_focus_ring() {
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        ctx.enable_accesskit();
+        let id = std::cell::Cell::new(None);
+        let run = |focus: Option<egui::Id>| {
+            ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let response = explorer_row(ui, "main.rs".into(), 0, true);
+                    id.set(Some(response.id));
+                    if let Some(focus) = focus {
+                        ctx.memory_mut(|memory| memory.request_focus(focus));
+                    }
+                });
+            })
+        };
+        let mut nodes = Vec::new();
+        let mut collect = |output: &egui::FullOutput| {
+            if let Some(update) = &output.platform_output.accesskit_update {
+                nodes.extend(update.nodes.iter().map(|(_, node)| node.clone()));
+            }
+        };
+        collect(&run(None));
+        collect(&run(id.get()));
+        let output = run(None);
+        collect(&output);
+        let accent = crate::ui::theme::Theme::Dark.palette().accent;
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::Shape::Rect(rect) if rect.stroke.color == accent
+        )));
+        assert!(nodes.iter().any(|node| {
+            node.label() == Some("main.rs") && format!("{:?}", node.toggled()) == "Some(True)"
+        }));
+    }
 
     fn actions() -> [HeaderAction; 3] {
         [

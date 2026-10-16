@@ -1,7 +1,6 @@
 //! Schema-driven presentation. Controls emit drafts; only commands persist them.
 use super::{
     Workbench,
-    theme::{MUTED, TEXT},
     widgets::{HeaderAction, panel_header},
 };
 use crate::{
@@ -24,15 +23,18 @@ impl Workbench<'_> {
                 ui.label("Settings drafts have not been applied. Quitting will discard them.");
                 ui.label("Reopen any previously edited project to apply its retained draft.");
                 ui.horizontal(|ui| {
-                    if ui.button("Keep Editing").clicked() {
+                    let keep = super::dialogs::primary_button(ui, "Keep Editing");
+                    let discard = ui.button("Discard Settings and Continue");
+                    let cancel = ui.button("Cancel");
+                    super::dialogs::keep_focus(ui.ctx(), &[&keep, &discard, &cancel], &keep);
+                    if keep.clicked() {
                         self.view.settings.pending_quit = false;
                         self.command(Command::Settings);
-                    }
-                    if ui.button("Discard Settings and Continue").clicked() {
+                    } else if discard.clicked() {
                         self.command(Command::DiscardSettingsAndQuit);
-                    }
-                    if ui.button("Cancel").clicked() {
+                    } else if cancel.clicked() || super::dialogs::escape_pressed(ui.ctx()) {
                         self.view.settings.pending_quit = false;
+                        self.view.focus_editor = true;
                     }
                 });
             });
@@ -123,6 +125,7 @@ fn matches(state: &SettingsState, setting: &Setting) -> bool {
     )
 }
 fn toolbar(ui: &mut egui::Ui, state: &mut SettingsState, wide: bool) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     ui.add_space(4.0);
     let response = ui
         .add(
@@ -162,7 +165,7 @@ fn toolbar(ui: &mut egui::Ui, state: &mut SettingsState, wide: bool) {
             egui::Label::new(
                 RichText::new(path.display().to_string())
                     .small()
-                    .color(MUTED),
+                    .color(colors.muted),
             )
             .truncate(),
         );
@@ -189,7 +192,7 @@ fn toolbar(ui: &mut egui::Ui, state: &mut SettingsState, wide: bool) {
     ui.label(
         RichText::new(format!("{count} settings found"))
             .small()
-            .color(MUTED),
+            .color(colors.muted),
     );
     ui.add_space(6.0);
 }
@@ -198,6 +201,7 @@ fn results(
     state: &mut SettingsState,
     language_server: Option<&LanguageServerSummary>,
 ) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     ScrollArea::vertical()
         .id_salt(("settings_results", state.scope.label()))
         .auto_shrink([false, false])
@@ -213,7 +217,12 @@ fn results(
                 if category != setting.category {
                     category = setting.category;
                     ui.add_space(8.0);
-                    ui.label(RichText::new(category).strong().size(16.0).color(TEXT));
+                    ui.label(
+                        RichText::new(category)
+                            .strong()
+                            .size(16.0)
+                            .color(colors.text),
+                    );
                     if category == "Language" {
                         language_server_status(ui, language_server);
                     }
@@ -227,19 +236,20 @@ fn results(
 }
 /// Read-only status for the active file's server; settings below stay the source of truth.
 fn language_server_status(ui: &mut egui::Ui, summary: Option<&LanguageServerSummary>) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     ui.add_space(4.0);
     let Some(summary) = summary else {
         ui.label(
             RichText::new("Open a Rust or Go file to see its language server status.")
                 .small()
-                .color(MUTED),
+                .color(colors.muted),
         );
         return;
     };
     let mut line = |label: &str, value: &str| {
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(label).small().color(MUTED));
-            ui.label(RichText::new(value).small().color(TEXT));
+            ui.label(RichText::new(label).small().color(colors.muted));
+            ui.label(RichText::new(value).small().color(colors.text));
         });
     };
     line("Active language", summary.language);
@@ -261,6 +271,7 @@ fn language_server_status(ui: &mut egui::Ui, summary: Option<&LanguageServerSumm
     }
 }
 fn setting_row(ui: &mut egui::Ui, state: &mut SettingsState, setting: &Setting) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let modified = state.selected().persisted.contains_key(setting.id);
     let pending =
         state.selected().draft.get(setting.id) != state.selected().persisted.get(setting.id);
@@ -268,13 +279,13 @@ fn setting_row(ui: &mut egui::Ui, state: &mut SettingsState, setting: &Setting) 
     ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new(setting.name).strong());
         if modified {
-            ui.label(RichText::new("Modified").small().color(MUTED));
+            ui.label(RichText::new("Modified").small().color(colors.muted));
         }
         if pending {
-            ui.label(RichText::new("Pending").small().color(MUTED));
+            ui.label(RichText::new("Pending").small().color(colors.muted));
         }
     });
-    ui.label(RichText::new(setting.id).small().color(MUTED));
+    ui.label(RichText::new(setting.id).small().color(colors.muted));
     ui.label(setting.help);
     let (effective, origin) = state.effective(setting, None);
     let mut value = state
@@ -294,7 +305,7 @@ fn setting_row(ui: &mut egui::Ui, state: &mut SettingsState, setting: &Setting) 
         ui.label(
             RichText::new(format!("Effective: {effective} · {origin} · Live"))
                 .small()
-                .color(MUTED),
+                .color(colors.muted),
         );
         ui.menu_button(icon::GEAR, |ui| {
             if ui.button("Remove Override (inherit)").clicked() {
@@ -353,6 +364,7 @@ fn control(ui: &mut egui::Ui, setting: &Setting, value: &mut Value) -> bool {
     }
 }
 fn footer(ui: &mut egui::Ui, state: &mut SettingsState) -> Option<Command> {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let pending = state.selected().pending();
     let can_save = pending > 0 && state.selected().path.is_some();
     let mut command = None;
@@ -373,7 +385,7 @@ fn footer(ui: &mut egui::Ui, state: &mut SettingsState) -> Option<Command> {
         ui.label(
             RichText::new(format!("{pending} pending changes"))
                 .small()
-                .color(MUTED),
+                .color(colors.muted),
         );
     });
     ScrollArea::vertical()
@@ -384,7 +396,7 @@ fn footer(ui: &mut egui::Ui, state: &mut SettingsState) -> Option<Command> {
                 ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
             }
             for warning in &state.selected().warnings {
-                ui.label(RichText::new(warning).small().color(MUTED));
+                ui.label(RichText::new(warning).small().color(colors.muted));
             }
         });
     command

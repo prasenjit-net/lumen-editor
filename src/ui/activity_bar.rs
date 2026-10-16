@@ -1,5 +1,4 @@
 use super::Workbench;
-use super::theme::{ACCENT, SIDEBAR};
 use super::widgets::{self, canvas, surface};
 use crate::app::command::Command;
 use crate::app::view_state::Activity;
@@ -7,13 +6,14 @@ use crate::icon;
 use eframe::egui::{self, Stroke};
 impl Workbench<'_> {
     pub(crate) fn activity_bar(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         egui::SidePanel::left("activity")
             .exact_width(52.0)
             .resizable(false)
             .show_separator_line(false)
-            .frame(canvas())
+            .frame(canvas(ctx))
             .show(ctx, |ui| {
-                surface(SIDEBAR).show(ui, |ui| {
+                surface(colors.sidebar).show(ui, |ui| {
                     ui.set_min_size(ui.available_size());
                     ui.vertical_centered(|ui| {
                         for (activity, glyph) in [
@@ -36,14 +36,14 @@ impl Workbench<'_> {
                                 ui.painter().circle_filled(
                                     response.rect.right_top() + egui::vec2(-12.0, 12.0),
                                     4.5,
-                                    egui::Color32::from_rgb(204, 167, 0),
+                                    colors.warning,
                                 );
                             }
                             if selected {
                                 ui.painter().vline(
                                     response.rect.left(),
                                     response.rect.y_range(),
-                                    Stroke::new(2.0_f32, ACCENT),
+                                    Stroke::new(2.0_f32, colors.accent),
                                 );
                             }
                             if response.clicked() {
@@ -58,19 +58,19 @@ impl Workbench<'_> {
                             (
                                 icon::AGENT,
                                 self.view.agents.open,
-                                "Coding Agents (Cmd/Ctrl+Shift+A)",
+                                format!("Coding Agents ({})", super::shortcut::primary("Shift+A")),
                                 Command::ToggleAgentPanel,
                             ),
                             (
                                 icon::TERMINAL,
                                 self.view.terminal.open,
-                                "Terminal (Ctrl+`); opens in your home folder when no folder is open",
+                                "Terminal (Ctrl+`); opens in your home folder when no folder is open".into(),
                                 Command::ToggleTerminal,
                             ),
                             (
                                 icon::OUTPUT,
                                 self.view.output.open,
-                                "Output",
+                                "Output".into(),
                                 Command::ToggleOutput,
                             ),
                         ]
@@ -78,15 +78,15 @@ impl Workbench<'_> {
                         .filter(|(glyph, ..)| agents_enabled || *glyph != icon::AGENT)
                         {
                             let response = widgets::named(
-                                widgets::icon_button(ui, glyph, selected).on_hover_text(tooltip),
+                                widgets::icon_button(ui, glyph, selected).on_hover_text(&tooltip),
                                 true,
-                                tooltip,
+                                &tooltip,
                             );
                             if selected {
                                 ui.painter().vline(
                                     response.rect.left(),
                                     response.rect.y_range(),
-                                    Stroke::new(2.0_f32, ACCENT),
+                                    Stroke::new(2.0_f32, colors.accent),
                                 );
                             }
                             if response.clicked() {
@@ -95,7 +95,7 @@ impl Workbench<'_> {
                         }
                         if widgets::named(
                             widgets::icon_button(ui, icon::GEAR, self.view.settings.open)
-                                .on_hover_text("Settings (Cmd/Ctrl+,)"),
+                                .on_hover_text(format!("Settings ({})", super::shortcut::primary(","))),
                             true,
                             "Settings",
                         )
@@ -165,7 +165,7 @@ mod tests {
 
     fn active_stripes(output: &egui::FullOutput) -> usize {
         output.shapes.iter().filter(|shape| matches!(&shape.shape,
-            egui::Shape::LineSegment { stroke, .. } if stroke.color == ACCENT && stroke.width == 2.0
+            egui::Shape::LineSegment { stroke, .. } if stroke.color == crate::ui::theme::Theme::Dark.palette().accent && stroke.width == 2.0
         )).count()
     }
 
