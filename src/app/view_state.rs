@@ -272,6 +272,15 @@ impl ExplorerEdit {
     }
 }
 
+/// A document closed without losing content: enough to open it again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ClosedTab {
+    pub(crate) path: PathBuf,
+    pub(crate) caret: usize,
+}
+
+pub(crate) const MAX_CLOSED_TABS: usize = 20;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum Activity {
     #[default]
@@ -369,6 +378,8 @@ pub(crate) struct ViewState {
     /// or closing other tabs cannot retarget the prompt.
     pub(crate) pending_close: Option<crate::model::DocumentId>,
     pub(crate) bulk_close: crate::app::tab_close::BulkClose,
+    /// Recently closed saved documents, newest last, for Reopen Closed Tab.
+    pub(crate) closed_tabs: Vec<ClosedTab>,
     pub(crate) window_title: String,
     pub(crate) pending_quit: bool,
     pub(crate) save_conflict: Option<SaveConflict>,
@@ -450,6 +461,7 @@ impl Default for ViewState {
             safety_details_open: false,
             pending_close: None,
             bulk_close: Default::default(),
+            closed_tabs: Vec::new(),
             window_title: String::new(),
             pending_quit: false,
             save_conflict: None,

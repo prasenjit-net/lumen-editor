@@ -1,4 +1,4 @@
-use super::{LumenApp, command::Command};
+use super::{LumenApp, command::Command, tab_close::TabCloseScope};
 use eframe::egui;
 
 impl LumenApp {
@@ -217,6 +217,14 @@ impl LumenApp {
             Command::RequestClose(id) => self.request_close(id),
             Command::CloseFile(id) => self.close_file(id),
             Command::CloseTabs(scope) => self.begin_bulk_close(scope),
+            Command::CloseOtherTabs => self.close_tabs_relative(TabCloseScope::Others),
+            Command::CloseTabsToLeft => self.close_tabs_relative(TabCloseScope::ToTheLeft),
+            Command::CloseTabsToRight => self.close_tabs_relative(TabCloseScope::ToTheRight),
+            Command::CloseSavedTabs => self.begin_bulk_close(TabCloseScope::Saved),
+            Command::CloseAllTabs => self.begin_bulk_close(TabCloseScope::All),
+            Command::NextTab => self.cycle_tab(1),
+            Command::PreviousTab => self.cycle_tab(-1),
+            Command::ReopenClosedTab => self.reopen_closed_tab(),
             Command::CloseEditor => {
                 if self.view.settings.open {
                     self.view.settings.tab_open = false;

@@ -134,6 +134,25 @@ impl Workbench<'_> {
         if matches!(command, CloseEditor) && self.active().is_none() && !self.view.settings.open {
             return Some("No editor is open");
         }
+        if matches!(
+            command,
+            NextTab
+                | PreviousTab
+                | CloseOtherTabs
+                | CloseTabsToLeft
+                | CloseTabsToRight
+                | CloseSavedTabs
+                | CloseAllTabs
+        ) && self.editor.files.is_empty()
+        {
+            return Some("No tabs are open");
+        }
+        if matches!(command, CloseOtherTabs) && self.editor.files.len() < 2 {
+            return Some("There are no other tabs");
+        }
+        if matches!(command, ReopenClosedTab) && self.view.closed_tabs.is_empty() {
+            return Some("No recently closed tabs");
+        }
         if matches!(command, ClearRecentHistory)
             && self.view.navigation.recent.is_empty()
             && self.view.navigation.recent_folders.is_empty()
@@ -314,6 +333,7 @@ fn command_shortcut(command: &Command) -> String {
         Find => "F",
         ShowWorkspaceSearch => "Shift+F",
         ShowDocumentSymbols => "Shift+O",
+        ReopenClosedTab => "Shift+T",
         ToggleAgentPanel => "Shift+A",
         ToggleOutput => "Shift+U",
         Replace => {
@@ -323,6 +343,8 @@ fn command_shortcut(command: &Command) -> String {
                 "Ctrl+H".into()
             };
         }
+        NextTab => return "Ctrl+Tab".into(),
+        PreviousTab => return "Ctrl+Shift+Tab".into(),
         GoToDefinition => return "F12".into(),
         FindReferences => return "Shift+F12".into(),
         RenameSymbol => return "F2".into(),
@@ -391,6 +413,20 @@ fn palette_commands() -> Vec<(String, Command)> {
             format!("{}  File: Close Document", icon::X),
             Command::CloseEditor,
         ),
+        ("Tab: Next Tab".into(), Command::NextTab),
+        ("Tab: Previous Tab".into(), Command::PreviousTab),
+        ("Tab: Reopen Closed Tab".into(), Command::ReopenClosedTab),
+        ("Tab: Close Other Tabs".into(), Command::CloseOtherTabs),
+        (
+            "Tab: Close Tabs to the Left".into(),
+            Command::CloseTabsToLeft,
+        ),
+        (
+            "Tab: Close Tabs to the Right".into(),
+            Command::CloseTabsToRight,
+        ),
+        ("Tab: Close Saved Tabs".into(), Command::CloseSavedTabs),
+        ("Tab: Close All Tabs".into(), Command::CloseAllTabs),
         (
             format!("{}  Editor: Find", icon::MAGNIFYING_GLASS),
             Command::Find,
@@ -507,8 +543,15 @@ mod tests {
     #[test]
     fn matching_is_case_insensitive_and_matches_all_words() {
         let results = matching_commands("  SAVE ");
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].1, Command::Save);
+        assert!(results.iter().any(|(_, command)| *command == Command::Save));
+        assert!(
+            results
+                .iter()
+                .all(|(label, _)| label.to_lowercase().contains("save"))
+        );
+        let exact = matching_commands("  FILE: SAVE ");
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0].1, Command::Save);
         assert_eq!(matching_commands("folder explorer").len(), 1);
         assert!(matching_commands("nonexistent command").is_empty());
     }
@@ -629,5 +672,53 @@ mod tests {
             }],
         );
         assert!(!app.view.command_palette);
+    }
+
+    #[test]
+    fn tab_commands_are_listed_and_explain_when_they_cannot_run() {
+        let labels: Vec<_> = matching_commands("tab:").into_iter().collect();
+        for command in [
+            Command::NextTab,
+            Command::PreviousTab,
+            Command::ReopenClosedTab,
+            Command::CloseOtherTabs,
+            Command::CloseTabsToLeft,
+            Command::CloseTabsToRight,
+            Command::CloseSavedTabs,
+            Command::CloseAllTabs,
+        ] {
+            assert!(
+                labels.iter().any(|(_, listed)| *listed == command),
+                "{command:?} missing from the palette"
+            );
+        }
+        let (mut app, ctx) = opened();
+        let reason = |app: &mut LumenApp, command: Command| {
+            let mut found = None;
+            app.render_component(&ctx, |workbench| {
+                found = workbench.palette_disabled_reason(&command);
+            });
+            found
+        };
+        assert_eq!(reason(&mut app, Command::NextTab), Some("No tabs are open"));
+        assert_eq!(
+            reason(&mut app, Command::ReopenClosedTab),
+            Some("No recently closed tabs")
+        );
+        app.editor.new_file();
+        assert_eq!(reason(&mut app, Command::NextTab), None);
+        assert_eq!(
+            reason(&mut app, Command::CloseOtherTabs),
+            Some("There are no other tabs")
+        );
+        app.editor.new_file();
+        assert_eq!(reason(&mut app, Command::CloseOtherTabs), None);
+        app.view
+            .closed_tabs
+            .push(crate::app::view_state::ClosedTab {
+                path: "/x".into(),
+                caret: 0,
+            });
+        assert_eq!(reason(&mut app, Command::ReopenClosedTab), None);
     }
 }

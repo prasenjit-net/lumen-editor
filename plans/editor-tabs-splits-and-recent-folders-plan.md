@@ -100,6 +100,31 @@ Missing from today's menu and keyboard story:
 abandons the remainder; reopen stack cap and missing-path error; shortcut parity between
 menu, palette and key event.
 
+**Status: done except the keyboard-invoked tab menu (branch `f-tab-commands`).**
+- Tab menu is now Close, Close Others, Close to the Left, Close to the Right, Close Saved,
+  Close All (then Copy Path, Copy Relative Path, Reveal). `TabCloseScope` gained `ToTheLeft`
+  and `Saved`; Close Saved never prompts and keeps every unsaved tab; scopes that find
+  nothing say "No tabs to close".
+- **Reopen Closed Tab** (Cmd/Ctrl+Shift+T): a 20-entry stack in `view.closed_tabs`, recorded
+  only when a document with a path and no unsaved changes closes (untitled and discarded
+  buffers are not resurrectable). Reopening skips entries already open again, restores the
+  caret through `pending_goto` clamped to a character boundary, and a vanished file is
+  reported by the normal open path and dropped. Re-closing the same path moves it to the end.
+- **Next/Previous Tab** (Ctrl+Tab / Ctrl+Shift+Tab; Cmd+Alt+Right/Left on macOS): strip order,
+  wrapping, stepping over the hidden diff-only document, and leaving Settings/diff views for
+  the chosen document. Shortcuts are ignored while the palette, a navigation overlay, a close
+  prompt, the quit prompt or the terminal has the keyboard; Previous is matched first so Shift
+  is not read as Next.
+- Palette: "Tab: ..." entries for all eight commands with availability reasons ("No tabs are
+  open", "There are no other tabs", "No recently closed tabs"); native View menu gained
+  Next Tab, Previous Tab and Reopen Closed Tab (their shortcuts live in the event loop, so
+  the items carry no accelerator).
+- **Not done:** the keyboard-invoked tab context menu (menu key / Shift+F10). It needs a
+  visible, focusable tab first; carry it into Phase 2 together with keyboard Move Left/Right.
+- Tests cover scope selection with unsaved tabs, no-prompt Close Saved, the reopen rules above
+  (cap, dedupe, dirty/untitled exclusion, caret boundary, vanished file), cycling and
+  wrapping, blocked-state shortcuts, Shift-reverses-Tab, and palette availability.
+
 ## Phase 2 - Tab reordering (M)
 
 Order is the position in `files`, so reordering is moving an element; no new ordering

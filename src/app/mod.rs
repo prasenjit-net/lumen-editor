@@ -25,6 +25,7 @@ pub(crate) mod scroll_sync;
 pub(crate) mod settings;
 pub(crate) mod source_control;
 pub(crate) mod tab_close;
+mod tab_commands;
 pub(crate) mod terminal;
 #[cfg(test)]
 mod tests;

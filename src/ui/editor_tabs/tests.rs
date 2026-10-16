@@ -286,7 +286,9 @@ fn right_click_opens_a_tab_menu_without_activating_the_tab_or_changing_content()
     for entry in [
         "Close",
         "Close Others",
+        "Close to the Left",
         "Close to the Right",
+        "Close Saved",
         "Close All",
         "Copy Path",
         "Copy Relative Path",

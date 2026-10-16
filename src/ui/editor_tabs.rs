@@ -180,6 +180,10 @@ impl Workbench<'_> {
             || (self.view.settings.open && self.view.settings.focus_search);
         ui.ctx()
             .data_mut(|data| data.insert_temp(reveal_id, signature));
+        let saved = visible_files
+            .iter()
+            .filter(|index| !self.editor.files[**index].dirty)
+            .count();
         let mut select = None;
         let mut close = None;
         let mut menu_command: Option<Command> = None;
@@ -225,6 +229,7 @@ impl Workbench<'_> {
                                                 path: file.path.as_deref(),
                                                 position: tab_index,
                                                 count: visible_files.len(),
+                                                saved,
                                             },
                                             self.editor.workspace.is_some(),
                                             &mut menu_command,
@@ -397,6 +402,8 @@ struct TabMenuTarget<'a> {
     /// Position among the visible tabs, and how many there are.
     position: usize,
     count: usize,
+    /// Tabs without unsaved changes.
+    saved: usize,
 }
 
 /// Context menu for a document tab. It only records the chosen command; the
@@ -430,10 +437,24 @@ fn tab_menu(
     );
     item(
         ui,
+        "Close to the Left",
+        target.position > 0,
+        "There are no tabs to the left",
+        Command::CloseTabs(TabCloseScope::ToTheLeft(target.id)),
+    );
+    item(
+        ui,
         "Close to the Right",
         target.position + 1 < target.count,
         "There are no tabs to the right",
         Command::CloseTabs(TabCloseScope::ToTheRight(target.id)),
+    );
+    item(
+        ui,
+        "Close Saved",
+        target.saved > 0,
+        "Every open tab has unsaved changes",
+        Command::CloseTabs(TabCloseScope::Saved),
     );
     item(
         ui,
