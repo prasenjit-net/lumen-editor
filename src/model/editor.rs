@@ -76,6 +76,26 @@ impl EditorState {
             (None, count) => Some(index.min(count - 1)),
         };
     }
+    /// Move a document so it lands at `to`, an index into `files` as it is
+    /// *before* the move. Content, dirty flags and the active document are
+    /// untouched; only the order changes. Returns whether anything moved.
+    pub(crate) fn move_document(&mut self, id: DocumentId, to: usize) -> bool {
+        let Some(from) = self.index_of(id) else {
+            return false;
+        };
+        let to = to.min(self.files.len() - 1);
+        if from == to {
+            return false;
+        }
+        let active = self.active_id();
+        let document = self.files.remove(from);
+        self.files.insert(to, document);
+        if let Some(active) = active {
+            self.activate(active);
+        }
+        true
+    }
+
     pub(crate) fn close_document(&mut self, id: DocumentId) {
         if let Some(index) = self.index_of(id) {
             self.close_file(index);
@@ -188,5 +208,45 @@ mod tests {
         editor.set_active_index(Some(5));
         assert_eq!(editor.active_index(), None);
         assert!(editor.active().is_none());
+    }
+
+    #[test]
+    fn moving_a_document_changes_only_the_order() {
+        let mut editor = editor(4);
+        let ids = ids(&editor);
+        editor.files[1].dirty = true;
+        editor.files[1].text = "edited".into();
+        editor.activate(ids[2]);
+        // Right: lands after the document that was at the target index.
+        assert!(editor.move_document(ids[0], 2));
+        assert_eq!(super::tests::ids(&editor), [ids[1], ids[2], ids[0], ids[3]]);
+        // Left.
+        assert!(editor.move_document(ids[3], 0));
+        assert_eq!(super::tests::ids(&editor), [ids[3], ids[1], ids[2], ids[0]]);
+        assert_eq!(
+            editor.active_id(),
+            Some(ids[2]),
+            "active document follows its tab"
+        );
+        let moved = editor.index_of(ids[1]).unwrap();
+        assert!(editor.files[moved].dirty);
+        assert_eq!(editor.files[moved].text, "edited");
+    }
+
+    #[test]
+    fn moving_to_the_same_place_an_unknown_id_or_past_the_end_is_safe() {
+        let mut editor = editor(3);
+        let ids = ids(&editor);
+        assert!(!editor.move_document(ids[1], 1), "already there");
+        let mut other = EditorState::default();
+        other.new_file();
+        assert!(!editor.move_document(other.files[0].id, 0), "unknown id");
+        assert!(
+            editor.move_document(ids[0], 99),
+            "clamps to the last position"
+        );
+        assert_eq!(super::tests::ids(&editor), [ids[1], ids[2], ids[0]]);
+        let mut empty = EditorState::default();
+        assert!(!empty.move_document(ids[0], 0));
     }
 }

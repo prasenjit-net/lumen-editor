@@ -147,6 +147,21 @@ impl Workbench<'_> {
         {
             return Some("No tabs are open");
         }
+        if matches!(command, MoveActiveTabLeft | MoveActiveTabRight) {
+            let tabs = crate::app::tab_close::visible_documents(self.editor, self.view);
+            let position = self
+                .editor
+                .active_id()
+                .and_then(|id| tabs.iter().position(|tab| *tab == id));
+            match (command, position) {
+                (_, None) => return Some("No tab is active"),
+                (MoveActiveTabLeft, Some(0)) => return Some("This is already the first tab"),
+                (MoveActiveTabRight, Some(position)) if position + 1 == tabs.len() => {
+                    return Some("This is already the last tab");
+                }
+                _ => {}
+            }
+        }
         if matches!(command, CloseOtherTabs) && self.editor.files.len() < 2 {
             return Some("There are no other tabs");
         }
@@ -343,6 +358,8 @@ fn command_shortcut(command: &Command) -> String {
                 "Ctrl+H".into()
             };
         }
+        MoveActiveTabLeft => return super::shortcut::primary("Shift+Alt+Left"),
+        MoveActiveTabRight => return super::shortcut::primary("Shift+Alt+Right"),
         NextTab => return "Ctrl+Tab".into(),
         PreviousTab => return "Ctrl+Shift+Tab".into(),
         GoToDefinition => return "F12".into(),
@@ -416,6 +433,8 @@ fn palette_commands() -> Vec<(String, Command)> {
         ("Tab: Next Tab".into(), Command::NextTab),
         ("Tab: Previous Tab".into(), Command::PreviousTab),
         ("Tab: Reopen Closed Tab".into(), Command::ReopenClosedTab),
+        ("Tab: Move Tab Left".into(), Command::MoveActiveTabLeft),
+        ("Tab: Move Tab Right".into(), Command::MoveActiveTabRight),
         ("Tab: Close Other Tabs".into(), Command::CloseOtherTabs),
         (
             "Tab: Close Tabs to the Left".into(),
@@ -680,6 +699,8 @@ mod tests {
         for command in [
             Command::NextTab,
             Command::PreviousTab,
+            Command::MoveActiveTabLeft,
+            Command::MoveActiveTabRight,
             Command::ReopenClosedTab,
             Command::CloseOtherTabs,
             Command::CloseTabsToLeft,
@@ -706,6 +727,14 @@ mod tests {
             Some("No recently closed tabs")
         );
         app.editor.new_file();
+        assert_eq!(
+            reason(&mut app, Command::MoveActiveTabLeft),
+            Some("This is already the first tab")
+        );
+        assert_eq!(
+            reason(&mut app, Command::MoveActiveTabRight),
+            Some("This is already the last tab")
+        );
         assert_eq!(reason(&mut app, Command::NextTab), None);
         assert_eq!(
             reason(&mut app, Command::CloseOtherTabs),
@@ -713,6 +742,12 @@ mod tests {
         );
         app.editor.new_file();
         assert_eq!(reason(&mut app, Command::CloseOtherTabs), None);
+        assert_eq!(reason(&mut app, Command::MoveActiveTabLeft), None);
+        assert_eq!(
+            reason(&mut app, Command::MoveActiveTabRight),
+            Some("This is already the last tab"),
+            "the newest tab is active and last"
+        );
         app.view
             .closed_tabs
             .push(crate::app::view_state::ClosedTab {

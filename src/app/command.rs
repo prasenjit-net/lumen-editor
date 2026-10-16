@@ -1,5 +1,6 @@
 use super::agent::AgentKind;
 use super::editor_action::EditorAction;
+use super::tab_commands::TabMove;
 use super::view_state::{Activity, ClosedTab, ExplorerEdit, MAX_CLOSED_TABS, ViewState};
 use super::workspace_search::ReplaceScope;
 use crate::model::{Document, DocumentId, EditorState};
@@ -158,6 +159,10 @@ pub(crate) enum Command {
     NextTab,
     PreviousTab,
     ReopenClosedTab,
+    /// Reorder a document tab, by stable ID.
+    MoveTab(DocumentId, TabMove),
+    MoveActiveTabLeft,
+    MoveActiveTabRight,
     CloseFile(DocumentId),
     SaveAndClose(DocumentId),
     SaveAllAndQuit,

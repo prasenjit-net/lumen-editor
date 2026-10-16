@@ -231,8 +231,15 @@ impl LumenApp {
         let shortcut = egui::KeyboardShortcut::new;
         let ctrl = egui::Modifiers::CTRL;
         let mut command = None;
+        // Moving a tab uses the primary modifier with Shift+Alt; it is checked first
+        // because Cmd+Alt+Arrow (macOS next/previous tab) would also match it.
+        let moving = egui::Modifiers::COMMAND | egui::Modifiers::ALT | egui::Modifiers::SHIFT;
         ctx.input_mut(|input| {
-            command = if input
+            command = if input.consume_shortcut(&shortcut(moving, egui::Key::ArrowLeft)) {
+                Some(Command::MoveActiveTabLeft)
+            } else if input.consume_shortcut(&shortcut(moving, egui::Key::ArrowRight)) {
+                Some(Command::MoveActiveTabRight)
+            } else if input
                 .consume_shortcut(&shortcut(ctrl | egui::Modifiers::SHIFT, egui::Key::Tab))
             {
                 Some(Command::PreviousTab)
@@ -381,5 +388,25 @@ mod tests {
             Some(file.as_path())
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn moving_a_tab_by_keyboard_does_not_also_switch_tabs() {
+        let mut app = three_tabs();
+        let ids: Vec<_> = app.editor.files.iter().map(|f| f.id).collect();
+        app.editor.set_active_index(Some(1));
+        let moving = egui::Modifiers::COMMAND | egui::Modifiers::ALT | egui::Modifiers::SHIFT;
+        press(&mut app, egui::Key::ArrowLeft, moving);
+        let order: Vec<_> = app.editor.files.iter().map(|f| f.id).collect();
+        assert_eq!(order, [ids[1], ids[0], ids[2]]);
+        assert_eq!(
+            app.editor.active_id(),
+            Some(ids[1]),
+            "same document stays active"
+        );
+        press(&mut app, egui::Key::ArrowRight, moving);
+        let order: Vec<_> = app.editor.files.iter().map(|f| f.id).collect();
+        assert_eq!(order, ids);
+        assert_eq!(app.editor.active_id(), Some(ids[1]));
     }
 }

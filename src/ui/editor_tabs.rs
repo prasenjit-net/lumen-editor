@@ -1,6 +1,10 @@
 //! Compact, single-row editor tabs with clipped overflow and fixed toolbar actions.
 use super::{Workbench, widgets};
-use crate::{app::command::Command, icon, model::DocumentId};
+use crate::{
+    app::{command::Command, tab_commands::TabMove},
+    icon,
+    model::DocumentId,
+};
 use eframe::egui::{self, CornerRadius, Frame, Margin, RichText, ScrollArea, Stroke};
 use std::path::Path;
 
@@ -187,6 +191,8 @@ impl Workbench<'_> {
         let mut select = None;
         let mut close = None;
         let mut menu_command: Option<Command> = None;
+        // A completed tab drag: the document and its new position among the tabs.
+        let mut tab_drop: Option<(usize, usize)> = None;
         let mut open_settings = false;
         let mut close_settings = false;
         let mut open_diff = false;
@@ -206,6 +212,8 @@ impl Workbench<'_> {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = GAP;
+                                let mut tab_rects: Vec<egui::Rect> = Vec::new();
+                                let mut dragged_tab: Option<(usize, bool)> = None;
                                 for (tab_index, &file_index) in visible_files.iter().enumerate() {
                                     let file = &self.editor.files[file_index];
                                     let selected = active == Some(TabTarget::Document(file.id));
@@ -243,6 +251,21 @@ impl Workbench<'_> {
                                     }
                                     if selected && reveal {
                                         ui.scroll_to_rect(response.rect, None);
+                                    }
+                                    tab_rects.push(response.rect);
+                                    if response.title.drag_started() {
+                                        set_drag_cancelled(ui.ctx(), false);
+                                    }
+                                    if response.title.dragged() {
+                                        dragged_tab = Some((tab_index, false));
+                                    } else if response.title.drag_stopped() {
+                                        dragged_tab = Some((tab_index, true));
+                                    }
+                                }
+                                if let Some((from, released)) = dragged_tab {
+                                    let dropped_at = drive_tab_drag(ui, &tab_rects, from, released);
+                                    if let Some(position) = dropped_at {
+                                        tab_drop = Some((visible_files[from], position));
                                     }
                                 }
                                 if let Some(diff) = &self.view.source_control.diff {
@@ -373,6 +396,10 @@ impl Workbench<'_> {
         if let Some(command) = menu_command {
             self.command(command);
         }
+        if let Some((file_index, position)) = tab_drop {
+            let id = self.editor.files[file_index].id;
+            self.command(Command::MoveTab(id, TabMove::To(position)));
+        }
         if close_diff {
             crate::app::source_control::close_diff_preview(self.editor, self.view);
         } else if open_diff {
@@ -394,6 +421,81 @@ impl Workbench<'_> {
         }
         strip.response.rect
     }
+}
+
+/// Escape cannot abort an egui drag, so the cancel is remembered and honoured
+/// when the button is released.
+fn set_drag_cancelled(ctx: &egui::Context, cancelled: bool) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("tab_drag_cancelled"), cancelled));
+}
+
+fn is_drag_cancelled(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<bool>(egui::Id::new("tab_drag_cancelled")))
+        .unwrap_or(false)
+}
+
+/// Show the insertion marker and scroll the strip while a tab is held, and on
+/// release return the position to move it to. `None` while still dragging, for
+/// a drop outside the strip, after Escape, or when the tab would not move.
+fn drive_tab_drag(
+    ui: &mut egui::Ui,
+    rects: &[egui::Rect],
+    from: usize,
+    released: bool,
+) -> Option<usize> {
+    use super::tab_drag::{edge_scroll_speed, insertion_gap, marker_x, resulting_position};
+    let colors = crate::ui::theme::palette(ui.visuals());
+    if !released {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+    // egui itself ends a drag on Escape and reports it as a stop, so an Escape in
+    // the same frame as the "release" is a cancel, not a drop. Consuming it also
+    // keeps it from closing Find in the editor below.
+    if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        set_drag_cancelled(ui.ctx(), true);
+    }
+    let pointer = ui.ctx().pointer_latest_pos()?;
+    // The strip is as tall as its tabs and as wide as the visible viewport; the
+    // clip rectangle alone spans the whole window height.
+    let tabs_top = rects
+        .iter()
+        .map(|rect| rect.top())
+        .fold(f32::INFINITY, f32::min);
+    let tabs_bottom = rects
+        .iter()
+        .map(|rect| rect.bottom())
+        .fold(f32::NEG_INFINITY, f32::max);
+    let viewport = egui::Rect::from_x_y_ranges(ui.clip_rect().x_range(), tabs_top..=tabs_bottom);
+    let cancelled = is_drag_cancelled(ui.ctx());
+    if released {
+        set_drag_cancelled(ui.ctx(), false);
+        // Dropping well away from the strip abandons the move.
+        let inside = viewport.expand2(egui::vec2(0.0, 24.0)).contains(pointer);
+        if cancelled || !inside {
+            return None;
+        }
+    }
+    let centres: Vec<f32> = rects.iter().map(|rect| rect.center().x).collect();
+    let gap = insertion_gap(&centres, pointer.x);
+    if released {
+        let position = resulting_position(from, gap);
+        return (position != from).then_some(position);
+    }
+    if !cancelled {
+        if let Some(x) = marker_x(rects, gap) {
+            ui.painter().vline(
+                x,
+                viewport.y_range(),
+                egui::Stroke::new(2.0_f32, colors.accent),
+            );
+        }
+        let speed = edge_scroll_speed(pointer.x, viewport.left(), viewport.right(), 28.0, 480.0);
+        if speed != 0.0 {
+            ui.scroll_with_delta(egui::vec2(speed * ui.input(|input| input.stable_dt), 0.0));
+            ui.ctx().request_repaint();
+        }
+    }
+    None
 }
 
 struct TabMenuTarget<'a> {
@@ -462,6 +564,21 @@ fn tab_menu(
         true,
         "",
         Command::CloseTabs(TabCloseScope::All),
+    );
+    ui.separator();
+    item(
+        ui,
+        "Move Left",
+        target.position > 0,
+        "This is already the first tab",
+        Command::MoveTab(target.id, TabMove::Left),
+    );
+    item(
+        ui,
+        "Move Right",
+        target.position + 1 < target.count,
+        "This is already the last tab",
+        Command::MoveTab(target.id, TabMove::Right),
     );
     ui.separator();
     let unsaved = "This file has not been saved yet";
@@ -543,7 +660,8 @@ fn tab(
                             colors.muted
                         }))
                         .frame(false)
-                        .truncate(),
+                        .truncate()
+                        .sense(egui::Sense::click_and_drag()),
                     )
                     .on_hover_text(tooltip);
                 select = response.clicked();

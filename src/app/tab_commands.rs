@@ -3,7 +3,48 @@
 use super::{LumenApp, tab_close::TabCloseScope, view_state::ClosedTab};
 use crate::model::DocumentId;
 
+/// Where to put a tab. Positions count visible tabs only: the document behind a
+/// diff view has no tab and is never a destination.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TabMove {
+    Left,
+    Right,
+    /// The tab's position among the visible tabs after the move.
+    To(usize),
+}
+
 impl LumenApp {
+    /// Reorder one tab. Does not activate it, change content, or touch dirty flags.
+    pub(crate) fn move_tab(&mut self, id: DocumentId, movement: TabMove) {
+        let tabs = self.visible_documents();
+        let Some(from) = tabs.iter().position(|tab| *tab == id) else {
+            return;
+        };
+        let target = match movement {
+            TabMove::Left => from.checked_sub(1),
+            TabMove::Right => (from + 1 < tabs.len()).then_some(from + 1),
+            TabMove::To(position) => Some(position.min(tabs.len() - 1)),
+        };
+        let Some(target) = target.filter(|target| *target != from) else {
+            return;
+        };
+        // The destination is expressed through the tab currently there, so a
+        // hidden diff-only document in between cannot shift the result.
+        let Some(anchor) = self.editor.index_of(tabs[target]) else {
+            return;
+        };
+        if self.editor.move_document(id, anchor) {
+            self.view.status = "Moved tab".into();
+        }
+    }
+
+    pub(crate) fn move_active_tab(&mut self, movement: TabMove) {
+        match self.editor.active_id() {
+            Some(id) => self.move_tab(id, movement),
+            None => self.view.status = "No tab is active".into(),
+        }
+    }
+
     /// Make `id` the visible tab, leaving Settings or a diff view if one was showing.
     pub(crate) fn show_document_tab(&mut self, id: DocumentId) {
         if !self.editor.activate(id) {
@@ -229,5 +270,81 @@ mod tests {
         app.cycle_tab(1);
         assert_eq!(app.view.status, "No tabs are open");
         assert!(app.editor.active_id().is_none());
+    }
+
+    #[test]
+    fn move_left_and_right_swap_neighbours_and_stop_at_the_ends() {
+        let mut app = app_with_saved(&["/p/a.rs", "/p/b.rs", "/p/c.rs"]);
+        let ids = ids(&app);
+        app.move_tab(ids[0], TabMove::Left);
+        assert_eq!(
+            super::super::tab_close::visible_documents(&app.editor, &app.view),
+            ids
+        );
+        app.move_tab(ids[0], TabMove::Right);
+        assert_eq!(self::ids(&app), [ids[1], ids[0], ids[2]]);
+        app.move_tab(ids[2], TabMove::Right);
+        assert_eq!(
+            self::ids(&app),
+            [ids[1], ids[0], ids[2]],
+            "last tab stays last"
+        );
+        app.move_tab(ids[2], TabMove::To(0));
+        assert_eq!(self::ids(&app), [ids[2], ids[1], ids[0]]);
+        app.move_tab(ids[2], TabMove::To(99));
+        assert_eq!(self::ids(&app), [ids[1], ids[0], ids[2]]);
+    }
+
+    #[test]
+    fn a_hidden_diff_document_never_becomes_a_destination() {
+        let mut app = app_with_saved(&["/p/a.rs", "/p/hidden.rs", "/p/c.rs"]);
+        let ids = ids(&app);
+        app.view.source_control.diff = Some(crate::app::view_state::SourceDiffView {
+            root: "/p".into(),
+            path: "hidden.rs".into(),
+            side: crate::services::source_control::DiffSide::Staged,
+            comparison: Err("unused".into()),
+            document: Some(ids[1]),
+            diff_only_document: Some(ids[1]),
+            opened_revision: None,
+            active: false,
+        });
+        // Visible tabs are a and c; moving a right swaps it past c, hidden or not.
+        app.move_tab(ids[0], TabMove::Right);
+        let visible = super::super::tab_close::visible_documents(&app.editor, &app.view);
+        assert_eq!(visible, [ids[2], ids[0]]);
+        app.move_tab(ids[0], TabMove::Right);
+        assert_eq!(
+            super::super::tab_close::visible_documents(&app.editor, &app.view),
+            [ids[2], ids[0]],
+            "already last"
+        );
+    }
+
+    #[test]
+    fn reordering_keeps_the_active_tab_and_a_pending_close_prompt_on_their_documents() {
+        let mut app = app_with_saved(&["/p/a.rs", "/p/b.rs", "/p/c.rs"]);
+        let ids = ids(&app);
+        app.editor.files[1].dirty = true;
+        app.request_close(ids[1]);
+        assert_eq!(app.view.pending_close, Some(ids[1]));
+        app.editor.activate(ids[2]);
+        app.move_tab(ids[0], TabMove::To(2));
+        app.move_tab(ids[1], TabMove::Left);
+        assert_eq!(app.editor.active_id(), Some(ids[2]));
+        assert_eq!(app.view.pending_close, Some(ids[1]));
+        assert!(app.editor.files[app.editor.index_of(ids[1]).unwrap()].dirty);
+    }
+
+    #[test]
+    fn moving_the_active_tab_needs_an_active_tab() {
+        let mut app = LumenApp::default();
+        app.move_active_tab(TabMove::Left);
+        assert_eq!(app.view.status, "No tab is active");
+        let mut app = app_with_saved(&["/p/a.rs", "/p/b.rs"]);
+        let ids = ids(&app);
+        app.move_active_tab(TabMove::Right);
+        assert_eq!(self::ids(&app), [ids[1], ids[0]]);
+        assert_eq!(app.editor.active_id(), Some(ids[0]));
     }
 }

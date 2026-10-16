@@ -362,3 +362,179 @@ fn middle_click_closes_a_clean_tab_and_prompts_for_a_dirty_one() {
     );
     assert_eq!(app.editor.files.len(), 1);
 }
+
+fn pointer(pos: egui::Pos2) -> egui::Event {
+    egui::Event::PointerMoved(pos)
+}
+
+fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {
+    egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+fn order(app: &LumenApp) -> Vec<String> {
+    app.editor
+        .files
+        .iter()
+        .map(|file| file.name.clone())
+        .collect()
+}
+
+/// Drag a tab's title to `to`, optionally pressing Escape before releasing, and
+/// leave the pointer there for `release_at` (which may differ from `to`).
+fn drag_tab(
+    app: &mut LumenApp,
+    ctx: &egui::Context,
+    from: &str,
+    to: egui::Pos2,
+    escape: bool,
+    release_at: egui::Pos2,
+) {
+    let (_, output) = frame(app, ctx, 900.0, vec![]);
+    let start = label_rect(&output, from).center();
+    frame(app, ctx, 900.0, vec![pointer(start), press(start, true)]);
+    frame(
+        app,
+        ctx,
+        900.0,
+        vec![pointer(start + egui::vec2(24.0, 0.0))],
+    );
+    frame(app, ctx, 900.0, vec![pointer(to)]);
+    frame(app, ctx, 900.0, vec![pointer(to)]);
+    if escape {
+        frame(
+            app,
+            ctx,
+            900.0,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+    }
+    frame(
+        app,
+        ctx,
+        900.0,
+        vec![pointer(release_at), press(release_at, false)],
+    );
+    frame(app, ctx, 900.0, vec![]);
+}
+
+fn settled(count: usize) -> (LumenApp, egui::Context, egui::FullOutput) {
+    let (mut app, ctx) = fixture(count);
+    let mut output = frame(&mut app, &ctx, 900.0, vec![]).1;
+    for _ in 0..3 {
+        output = frame(&mut app, &ctx, 900.0, vec![]).1;
+    }
+    (app, ctx, output)
+}
+
+#[test]
+fn dragging_a_tab_past_its_neighbours_reorders_without_touching_content() {
+    let (mut app, ctx, output) = settled(3);
+    app.editor.files[0].dirty = true;
+    let target = label_rect(&output, "file_2.rs").center() + egui::vec2(60.0, 0.0);
+    let active = app.editor.active_id();
+    drag_tab(&mut app, &ctx, "file_0.rs", target, false, target);
+    assert_eq!(order(&app), ["file_1.rs", "file_2.rs", "file_0.rs"]);
+    assert_eq!(
+        app.editor.active_id(),
+        active,
+        "dragging does not change the active tab"
+    );
+    let moved = app
+        .editor
+        .files
+        .iter()
+        .find(|f| f.name == "file_0.rs")
+        .unwrap();
+    assert!(moved.dirty);
+    assert_eq!(moved.text, "untouched");
+}
+
+#[test]
+fn dragging_left_moves_a_later_tab_to_the_front() {
+    let (mut app, ctx, output) = settled(3);
+    let target = label_rect(&output, "file_0.rs").center() - egui::vec2(40.0, 0.0);
+    drag_tab(&mut app, &ctx, "file_2.rs", target, false, target);
+    assert_eq!(order(&app), ["file_2.rs", "file_0.rs", "file_1.rs"]);
+}
+
+#[test]
+fn releasing_over_the_tabs_own_slot_changes_nothing() {
+    let (mut app, ctx, output) = settled(3);
+    let own = label_rect(&output, "file_1.rs").center() + egui::vec2(30.0, 0.0);
+    drag_tab(&mut app, &ctx, "file_1.rs", own, false, own);
+    assert_eq!(order(&app), ["file_0.rs", "file_1.rs", "file_2.rs"]);
+}
+
+#[test]
+fn escape_while_dragging_cancels_the_move() {
+    let (mut app, ctx, output) = settled(3);
+    let target = label_rect(&output, "file_2.rs").center() + egui::vec2(60.0, 0.0);
+    drag_tab(&mut app, &ctx, "file_0.rs", target, true, target);
+    assert_eq!(order(&app), ["file_0.rs", "file_1.rs", "file_2.rs"]);
+    // The cancel does not leak into the next drag.
+    drag_tab(&mut app, &ctx, "file_0.rs", target, false, target);
+    assert_eq!(order(&app), ["file_1.rs", "file_2.rs", "file_0.rs"]);
+}
+
+#[test]
+fn dropping_well_outside_the_strip_abandons_the_move() {
+    let (mut app, ctx, output) = settled(3);
+    let target = label_rect(&output, "file_2.rs").center() + egui::vec2(60.0, 0.0);
+    let far_below = egui::pos2(target.x, 400.0);
+    drag_tab(&mut app, &ctx, "file_0.rs", target, false, far_below);
+    assert_eq!(order(&app), ["file_0.rs", "file_1.rs", "file_2.rs"]);
+}
+
+#[test]
+fn a_plain_click_still_selects_and_never_reorders() {
+    let (mut app, ctx, output) = settled(3);
+    let title = label_rect(&output, "file_0.rs").center();
+    frame(
+        &mut app,
+        &ctx,
+        900.0,
+        vec![pointer(title), press(title, true)],
+    );
+    frame(&mut app, &ctx, 900.0, vec![press(title, false)]);
+    frame(&mut app, &ctx, 900.0, vec![]);
+    assert_eq!(order(&app), ["file_0.rs", "file_1.rs", "file_2.rs"]);
+    assert_eq!(app.editor.active_index(), Some(0));
+}
+
+#[test]
+fn the_tab_menu_offers_move_left_and_right_with_end_states() {
+    let (mut app, ctx, output) = settled(3);
+    let first = label_rect(&output, "file_0.rs").center();
+    for pressed in [true, false] {
+        frame(
+            &mut app,
+            &ctx,
+            900.0,
+            vec![
+                pointer(first),
+                egui::Event::PointerButton {
+                    pos: first,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
+    let (_, menu) = frame(&mut app, &ctx, 900.0, vec![]);
+    label_rect(&menu, "Move Left");
+    let right = label_rect(&menu, "Move Right");
+    click(&mut app, &ctx, 900.0, right.center());
+    assert_eq!(order(&app), ["file_1.rs", "file_0.rs", "file_2.rs"]);
+}

@@ -28,21 +28,27 @@ impl BulkClose {
     }
 }
 
+/// Tabs shown in the strip: the document backing an open diff is hidden.
+pub(crate) fn visible_documents(
+    editor: &crate::model::EditorState,
+    view: &super::view_state::ViewState,
+) -> Vec<DocumentId> {
+    let hidden = view
+        .source_control
+        .diff
+        .as_ref()
+        .and_then(|diff| diff.diff_only_document);
+    editor
+        .files
+        .iter()
+        .map(|file| file.id)
+        .filter(|id| Some(*id) != hidden)
+        .collect()
+}
+
 impl LumenApp {
-    /// Tabs shown in the strip: the document backing an open diff is hidden.
     pub(crate) fn visible_documents(&self) -> Vec<DocumentId> {
-        let hidden = self
-            .view
-            .source_control
-            .diff
-            .as_ref()
-            .and_then(|diff| diff.diff_only_document);
-        self.editor
-            .files
-            .iter()
-            .map(|file| file.id)
-            .filter(|id| Some(*id) != hidden)
-            .collect()
+        visible_documents(&self.editor, &self.view)
     }
 
     pub(crate) fn begin_bulk_close(&mut self, scope: TabCloseScope) {

@@ -156,6 +156,36 @@ Escape/outside drop is a no-op; insertion marker at first/middle/last; narrow st
 overflow; reorder while a close prompt is pending keeps the prompt on the same document.
 **Visual:** drag marker in light/dark/high-contrast via the screenshot technique below.
 
+**Status: done except pinning and the keyboard-invoked tab menu (branch `f-tab-reorder`).**
+- Model: `EditorState::move_document(id, to)` changes only the order (content, dirty flags
+  and the active document are untouched; unknown ids and no-op moves return false).
+  App: `TabMove::{Left, Right, To(position)}` counts visible tabs only and resolves the
+  destination through the tab currently there, so a hidden diff-only document never
+  shifts the result. Commands: `MoveTab(id, TabMove)`, `MoveActiveTabLeft/Right`.
+- Menu and keyboard first: "Move Left" / "Move Right" in the tab menu (disabled with reasons
+  at the ends), palette "Tab: Move Tab Left/Right" with the same reasons, and
+  Cmd/Ctrl+Alt+Shift+Left/Right. That chord is matched before macOS's Cmd+Alt+Arrow
+  next/previous so it never also switches tabs.
+- Drag (`ui/editor_tabs.rs`, geometry in `ui/tab_drag.rs`): the tab title senses drag, so a
+  plain click still selects (egui's own threshold); a 2 px accent insertion marker shows the
+  drop gap; holding near either edge auto-scrolls the strip with bounded, proximity-scaled
+  speed; one `MoveTab` is emitted on release. Releasing next to the tab's own slot, well
+  outside the strip, or after Escape does nothing. egui itself ends a drag on Escape and
+  reports it as a stop, so an Escape in that frame is treated as a cancel (and consumed so it
+  cannot also close Find). Virtual tabs (diff, Settings) stay after the documents and are not
+  drag targets.
+- Not done: **pinned tabs** (still its own PR) and the **keyboard-invoked tab context menu**:
+  egui 0.33 has no context-menu key and no public way to open a context menu from the keyboard
+  without private popup IDs. Every tab command, including Move Left/Right, is reachable from
+  the palette and shortcuts, which covers the accessibility need.
+- Tests: model order/active/dirty/unknown-id/clamping; app Left/Right/To including ends and a
+  hidden diff document; a pending close prompt and the active tab survive reordering; real
+  pointer-event drags right, left, onto its own slot, with Escape (and that the cancel does not
+  leak into the next drag), dropped far outside, plain click; the tab menu's Move Right; the
+  keyboard chord; palette reasons; and the pure drag geometry. The marker itself was not
+  captured visually (screenshots cannot inject pointer events), so its drawing is verified only
+  indirectly.
+
 ## Phase 3 - Split editor (L, staged; the largest piece)
 
 ### Decision: editor groups over a shared document store

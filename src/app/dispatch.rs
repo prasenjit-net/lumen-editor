@@ -1,4 +1,4 @@
-use super::{LumenApp, command::Command, tab_close::TabCloseScope};
+use super::{LumenApp, command::Command, tab_close::TabCloseScope, tab_commands::TabMove};
 use eframe::egui;
 
 impl LumenApp {
@@ -225,6 +225,9 @@ impl LumenApp {
             Command::NextTab => self.cycle_tab(1),
             Command::PreviousTab => self.cycle_tab(-1),
             Command::ReopenClosedTab => self.reopen_closed_tab(),
+            Command::MoveTab(id, movement) => self.move_tab(id, movement),
+            Command::MoveActiveTabLeft => self.move_active_tab(TabMove::Left),
+            Command::MoveActiveTabRight => self.move_active_tab(TabMove::Right),
             Command::CloseEditor => {
                 if self.view.settings.open {
                     self.view.settings.tab_open = false;
