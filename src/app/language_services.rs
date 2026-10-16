@@ -1391,7 +1391,11 @@ fn flatten_symbols(
 }
 
 pub(super) fn file_uri(path: &std::path::Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
+    let mut text = path.to_string_lossy().replace('\\', "/");
+    // A drive path needs the authority-empty form `file:///C%3A/...`.
+    if has_drive_prefix(&text) {
+        text.insert(0, '/');
+    }
     let escaped = text.bytes().fold(String::new(), |mut uri, byte| {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~') {
             uri.push(byte as char);
@@ -1418,9 +1422,18 @@ pub(super) fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
         }
     }
     let path = String::from_utf8(bytes).ok()?;
+    // `/C:/dir` is a Windows drive path; a plain `/dir` stays rooted as written.
     #[cfg(windows)]
-    let path = path.strip_prefix('/').unwrap_or(&path).to_owned();
+    let path = match path.strip_prefix('/') {
+        Some(rest) if has_drive_prefix(rest) => rest.to_owned(),
+        _ => path,
+    };
     Some(std::path::PathBuf::from(path))
+}
+
+fn has_drive_prefix(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 fn hex(byte: u8) -> Option<u8> {
@@ -1553,6 +1566,16 @@ mod tests {
         let path = std::path::PathBuf::from("/workspace/a b/🌍%25.rs");
         assert_eq!(file_uri_to_path(&file_uri(&path)), Some(path));
         assert!(file_uri_to_path("https://example.com/main.rs").is_none());
+        // Drive paths use the three-slash form servers expect on Windows.
+        assert_eq!(
+            file_uri(std::path::Path::new("C:\\proj\\a b.rs")),
+            "file:///C%3A/proj/a%20b.rs"
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            file_uri_to_path("file:///C%3A/proj/a%20b.rs"),
+            Some(std::path::PathBuf::from("C:/proj/a b.rs"))
+        );
         assert!(file_uri_to_path("file:///bad%Q0.rs").is_none());
     }
 
@@ -2074,6 +2097,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(feature = "shared-editor")]
     fn completion_app(text: &str, caret: usize) -> (LumenApp, RecordedMessages, QueuedEvents) {
         let (mut app, messages, events) = rust_app();
         app.editor.files[0].text = text.into();
@@ -2090,6 +2114,7 @@ mod tests {
         (app, messages, events)
     }
 
+    #[cfg(feature = "shared-editor")]
     #[test]
     fn completion_request_reply_opens_a_session_and_stale_replies_do_not() {
         let (mut app, messages, events) = completion_app("x.pu", 4);
@@ -2142,6 +2167,7 @@ mod tests {
         assert!(request_ids(&messages, "textDocument/signatureHelp").is_empty());
     }
 
+    #[cfg(feature = "shared-editor")]
     #[test]
     fn signature_help_reply_is_stored_for_its_revision() {
         let (mut app, messages, events) = completion_app("f(", 2);
@@ -2174,6 +2200,7 @@ mod tests {
     }
 
     /// Workspace with an open `a.rs` and a closed `b.rs`, both using `foo`.
+    #[cfg(feature = "shared-editor")]
     fn rename_app() -> (LumenApp, RecordedMessages, QueuedEvents, std::path::PathBuf) {
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let base = std::env::temp_dir().join(format!(
@@ -2199,6 +2226,7 @@ mod tests {
         (app, messages, events, base)
     }
 
+    #[cfg(feature = "shared-editor")]
     fn set_caret(app: &mut LumenApp, byte: usize) {
         app.editor.files[0]
             .editing
@@ -2208,6 +2236,7 @@ mod tests {
             .unwrap();
     }
 
+    #[cfg(feature = "shared-editor")]
     fn rename_edit(base: &std::path::Path) -> serde_json::Value {
         let range = |l: u32, s: u32, e: u32| serde_json::json!({"start":{"line":l,"character":s},"end":{"line":l,"character":e}});
         serde_json::json!({"changes":{
@@ -2224,6 +2253,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "shared-editor")]
     #[test]
     fn references_always_open_the_picker_even_for_one_location() {
         let (mut app, messages, events, base) = rename_app();
@@ -2243,6 +2273,7 @@ mod tests {
         std::fs::remove_dir_all(&base).unwrap();
     }
 
+    #[cfg(feature = "shared-editor")]
     #[test]
     fn formatting_applies_as_one_undo_step_and_ignores_stale_replies() {
         let (mut app, messages, events, base) = rename_app();
@@ -2279,6 +2310,7 @@ mod tests {
         std::fs::remove_dir_all(&base).unwrap();
     }
 
+    #[cfg(feature = "shared-editor")]
     #[test]
     fn rename_is_previewed_validated_and_applied_across_open_and_closed_files() {
         let (mut app, messages, events, base) = rename_app();
@@ -2327,6 +2359,7 @@ mod tests {
         std::fs::remove_dir_all(&base).unwrap();
     }
 
+    #[cfg(feature = "shared-editor")]
     #[test]
     fn rename_apply_refuses_when_files_changed_after_the_preview() {
         let (mut app, messages, events, base) = rename_app();
@@ -2369,6 +2402,7 @@ mod tests {
         std::fs::remove_dir_all(&base).unwrap();
     }
 
+    #[cfg(feature = "shared-editor")]
     #[test]
     fn rename_rejects_outside_workspace_and_file_operations() {
         let (mut app, _messages, _events, base) = rename_app();

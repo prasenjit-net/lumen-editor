@@ -7,7 +7,7 @@ use super::{
     LumenApp,
     language_services::{CaretContext, LanguageRequestKind, file_uri_to_path},
     view_state::RenamePrompt,
-    workspace_edit::{EditPlan, PlannedFile, apply_to_buffer, apply_to_text},
+    workspace_edit::{EditPlan, PlannedFile, apply_to_text},
 };
 use lumen_language_services::{
     incoming::{self, WorkspaceEditError},
@@ -63,12 +63,8 @@ impl LumenApp {
             self.view.status = "Language server returned invalid formatting edits".into();
             return;
         };
-        let Some(buffer) = document.editing.as_mut() else {
-            return;
-        };
-        match apply_to_buffer(buffer, &edits) {
+        match apply_edits_to_document(document, &edits) {
             Ok(true) => {
-                document.sync_shared_editing();
                 self.view.status = format!("Formatted document ({} edits)", edits.len());
             }
             Ok(false) => self.view.status = "Document is already formatted".into(),
@@ -310,16 +306,10 @@ impl LumenApp {
                     .files
                     .iter_mut()
                     .find(|document| document.id == id)
-                    .and_then(|document| {
-                        let result = document
-                            .editing
-                            .as_mut()
-                            .map(|buffer| apply_to_buffer(buffer, &file.edits));
-                        document.sync_shared_editing();
-                        result
-                    })
-                    .map_or(Err("document closed".to_owned()), |result| {
-                        result.map(|_| ()).map_err(str::to_owned)
+                    .map_or(Err("document closed".to_owned()), |document| {
+                        apply_edits_to_document(document, &file.edits)
+                            .map(|_| ())
+                            .map_err(str::to_owned)
                     }),
                 None => apply_to_text(&file.base, &file.edits)
                     .ok_or_else(|| "edit no longer fits the file".to_owned())
@@ -348,4 +338,28 @@ impl LumenApp {
             )
         };
     }
+}
+
+/// Open buffers are edited through the document core, the sole history owner.
+#[cfg(feature = "shared-editor")]
+fn apply_edits_to_document(
+    document: &mut crate::model::Document,
+    edits: &[lumen_language_services::incoming::TextEdit],
+) -> Result<bool, &'static str> {
+    let buffer = document
+        .editing
+        .as_mut()
+        .ok_or("document is not editable")?;
+    let changed = super::workspace_edit::apply_to_buffer(buffer, edits)?;
+    document.sync_shared_editing();
+    Ok(changed)
+}
+
+/// The legacy widget editor owns its own history, so server edits are refused.
+#[cfg(not(feature = "shared-editor"))]
+fn apply_edits_to_document(
+    _document: &mut crate::model::Document,
+    _edits: &[lumen_language_services::incoming::TextEdit],
+) -> Result<bool, &'static str> {
+    Err("language-server edits need the shared editor")
 }

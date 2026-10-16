@@ -959,8 +959,13 @@ mod tests {
     #[test]
     fn nearest_marker_defines_the_root_and_never_escapes_the_boundary() {
         let go = LanguageRegistry::by_id(LanguageId::GO).unwrap();
-        let markers = ["/ws/go.work", "/ws/svc/go.mod", "/outside/go.mod"];
-        let has = |dir: &Path, marker: &str| markers.contains(&dir.join(marker).to_str().unwrap());
+        let markers = [
+            Path::new("/ws/go.work"),
+            Path::new("/ws/svc/go.mod"),
+            Path::new("/outside/go.mod"),
+        ];
+        // Compare as paths: Windows joins with a backslash.
+        let has = |dir: &Path, marker: &str| markers.contains(&dir.join(marker).as_path());
         let root = |file: &str, boundary: &str| {
             go.workspace_root(Path::new(file), Path::new(boundary), has)
         };
