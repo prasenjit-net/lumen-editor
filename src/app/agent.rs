@@ -25,8 +25,8 @@ use lumen_agent_protocol::{
         response_error,
     },
     types::{
-        AuthMethod, InitializeResult, StopReason, parse_config_options, parse_initialize,
-        parse_new_session, parse_stop_reason, parse_update,
+        AuthMethod, InitializeResult, NewSession, StopReason, parse_config_options,
+        parse_initialize, parse_new_session, parse_stop_reason, parse_update,
     },
 };
 use serde_json::Value;
@@ -115,6 +115,8 @@ impl AgentKind {
 pub(crate) enum ConnectionState {
     Idle,
     Starting,
+    /// Handshake done but no conversation yet (browsing history).
+    Connected,
     NeedsAuth,
     Ready,
     /// The adapter is not installed; the text explains how to get it.
@@ -125,6 +127,9 @@ pub(crate) enum ConnectionState {
 /// Everything the panel shows for one agent.
 pub(crate) struct AgentSessionView {
     pub(crate) kind: AgentKind,
+    pub(crate) history: super::agent_history::HistoryView,
+    /// An earlier session's messages are being replayed into the transcript.
+    pub(crate) replaying: bool,
     /// Tool calls whose file was already shown (see `agent.follow_locations`).
     pub(crate) followed_calls: std::collections::HashSet<String>,
     /// Selections and files attached to the next message.
@@ -161,6 +166,8 @@ impl AgentSessionView {
     fn new(kind: AgentKind) -> Self {
         Self {
             kind,
+            history: Default::default(),
+            replaying: false,
             followed_calls: Default::default(),
             attachments: Vec::new(),
             mention_selected: 0,
@@ -274,6 +281,7 @@ struct Slot {
 pub(crate) struct AgentRuntime {
     pub(crate) launcher: Arc<dyn AgentLauncher>,
     pub(super) tracking: [super::agent_changes::Tracking; 2],
+    pub(super) history: [super::agent_history::HistoryIntent; 2],
     slots: [Slot; 2],
     /// Session-level permission to download the adapter with npx.
     npx_consent: [bool; 2],
@@ -284,6 +292,7 @@ impl Default for AgentRuntime {
         Self {
             launcher: Arc::new(LocalAgentLauncher),
             tracking: Default::default(),
+            history: Default::default(),
             slots: Default::default(),
             npx_consent: [false; 2],
         }
@@ -584,6 +593,11 @@ impl LumenApp {
             ConnectionState::Starting | ConnectionState::NeedsAuth => {
                 self.runtime_slot(kind).queued_prompt = Some(prompt);
             }
+            ConnectionState::Connected => {
+                // Handshake is done but there is no conversation yet: open one.
+                self.runtime_slot(kind).queued_prompt = Some(prompt);
+                self.request_session(kind);
+            }
             ConnectionState::Idle | ConnectionState::Failed(_) | ConnectionState::NotFound(_) => {
                 self.runtime_slot(kind).queued_prompt = Some(prompt);
                 self.start_agent(kind, ctx);
@@ -674,6 +688,32 @@ impl LumenApp {
 
     pub(super) fn agent_register_request(&mut self, kind: AgentKind, method: &str) -> i64 {
         self.register(kind, method, None)
+    }
+
+    pub(super) fn agent_register_request_with(
+        &mut self,
+        kind: AgentKind,
+        method: &str,
+        timeout: Option<Duration>,
+    ) -> i64 {
+        self.register(kind, method, timeout)
+    }
+
+    pub(super) fn agent_init(&mut self, kind: AgentKind) -> Option<&InitializeResult> {
+        self.runtime_slot(kind).init.as_ref()
+    }
+
+    pub(super) fn agent_has_queued_prompt(&mut self, kind: AgentKind) -> bool {
+        self.runtime_slot(kind).queued_prompt.is_some()
+    }
+
+    pub(super) fn agent_cwd(&self, kind: AgentKind) -> String {
+        self.view
+            .agents
+            .session(kind)
+            .cwd
+            .clone()
+            .unwrap_or_else(|| self.session_cwd())
     }
 
     fn runtime_slot(&mut self, kind: AgentKind) -> &mut Slot {
@@ -775,9 +815,13 @@ impl LumenApp {
         let session = self.view.agents.session_mut(kind);
         session.running = false;
         session.pending_permissions.clear();
+        session.replaying = false;
+        session.history.loading = false;
+        self.agent_runtime.history[kind.index()] = Default::default();
+        let session = self.view.agents.session_mut(kind);
         if matches!(
             session.state,
-            ConnectionState::Starting | ConnectionState::Ready
+            ConnectionState::Starting | ConnectionState::Connected | ConnectionState::Ready
         ) {
             session.state = ConnectionState::Idle;
         }
@@ -904,7 +948,9 @@ impl LumenApp {
     /// With `agent.follow_locations` on, show the file an agent is working on. Each
     /// tool call is followed once, and only files inside the open folder.
     fn follow_tool_location(&mut self, kind: AgentKind, tool_id: &str) {
-        if !self.view.settings.boolean("agent.follow_locations") {
+        if !self.view.settings.boolean("agent.follow_locations")
+            || self.view.agents.session(kind).replaying
+        {
             return;
         }
         let session = self.view.agents.session_mut(kind);
@@ -1008,6 +1054,10 @@ impl LumenApp {
                         .push_notice(&format!("The agent reported an error: {}", error.message));
                 }
             }
+            ("session/list", Ok(result)) => self.on_session_list(kind, &result),
+            ("session/list", Err(error)) => self.on_session_list_error(kind, &error),
+            ("session/load", Ok(result)) => self.on_session_loaded(kind, &result),
+            ("session/load", Err(error)) => self.on_session_load_failed(kind, &error),
             ("session/set_config_option", Ok(result)) => {
                 if let Some(options) = result.get("configOptions") {
                     self.view
@@ -1054,7 +1104,9 @@ impl LumenApp {
             ),
         );
         self.runtime_slot(kind).init = Some(init);
-        self.request_session(kind);
+        if !self.continue_after_initialize(kind) {
+            self.request_session(kind);
+        }
     }
 
     fn request_session(&mut self, kind: AgentKind) {
@@ -1088,21 +1140,29 @@ impl LumenApp {
     }
 
     fn on_session_ready(&mut self, kind: AgentKind, result: &Value) {
-        let new = match parse_new_session(result) {
-            Ok(new) => new,
-            Err(error) => return self.fail_agent(kind, error.to_string()),
-        };
+        match parse_new_session(result) {
+            Ok(new) => self.adopt_session(kind, new, false),
+            Err(error) => self.fail_agent(kind, error.to_string()),
+        }
+    }
+
+    /// A session is now the live conversation (new, or resumed with `session/load`).
+    pub(super) fn adopt_session(&mut self, kind: AgentKind, new: NewSession, resumed: bool) {
         self.runtime_slot(kind).session_id = Some(new.session_id.clone());
         let session = self.view.agents.session_mut(kind);
         session.state = ConnectionState::Ready;
-        session.conversation.config_options = new.config_options.clone();
+        if !new.config_options.is_empty() || !resumed {
+            session.conversation.config_options = new.config_options.clone();
+        }
         Self::agent_log(
             kind,
             LogLevel::Info,
             &format!("Session {} ready", new.session_id),
         );
-        // Belt and braces for starting in read-only (the env var above also sets it).
-        if kind == AgentKind::Codex
+        // New Codex sessions start read-only (the env var above also sets it). A
+        // resumed one keeps whatever mode it had; the dropdown shows it.
+        if !resumed
+            && kind == AgentKind::Codex
             && new.config_options.iter().any(|option| {
                 option.id == "mode"
                     && option.values.iter().any(|v| v.value == "read-only")

@@ -493,12 +493,29 @@ Codex edits after; no unsaved buffer is overwritten; guarded reverts.
   "Open diff" in the side-by-side viewer, slash-command argument hints, visual
   inspection of the new popups and chips.
 
-### Phase 5 - sessions and persistence
+### Phase 5 - sessions and history - done 2026-10-16
 
-- [ ] `session/load` when advertised: history list per workspace, replay
-  rendering, resume across restarts. Persist session ids only (never transcript
-  secrets) unless the agent owns the history.
-- [ ] Draft preservation per session; clear/new session actions.
+- [x] History: a header button lists the agent's own sessions for this folder
+  (`session/list` with `cwd`, paged by `nextCursor`, filtered again client-side
+  because some agents list every folder); clicking one resumes it with
+  `session/load`. The agent replays the old messages as ordinary updates into a
+  fresh transcript (tool-call replays never open files), then the loaded session is
+  the live one and the next message continues it.
+- [x] Works without a conversation: opening the history connects the agent (new
+  `Connected` state) but does not create a session; typing then creates one.
+  Resuming with no connection starts the agent and loads instead of creating.
+- [x] Resume rules: refused mid-turn; auth/startup problems explain themselves; a
+  failed load leaves the connection usable. A resumed Codex session keeps its own
+  mode (new sessions still start read-only; the option dropdown shows it).
+- [x] Decision: Lumen persists no session data. The agent owns the history and the
+  list is fetched on demand, so no conversation text or ids are stored by Lumen
+  (the plan's "persist session ids" was unnecessary). Drafts and chips are kept per
+  agent for the life of the app.
+- [x] Live (ignored) check with both real agents: say something, start a new
+  session, find the old one in the list, resume it, and the earlier answer is
+  replayed.
+- [ ] Not done: deleting/forking sessions (`session/delete`, `session/fork` are
+  advertised), relative times in the list, searching the list.
 
 ### Phase 6 - terminal capability and polish
 

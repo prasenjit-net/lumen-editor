@@ -7,8 +7,8 @@ use lumen_agent_protocol::{
     rpc::{Incoming, RequestId, RpcError, parse_incoming},
     types::{
         PermissionKind, StopReason, ToolContent, ToolKind, ToolStatus, Update, parse_initialize,
-        parse_new_session, parse_permission_request, parse_session_list, parse_stop_reason,
-        parse_update,
+        parse_loaded_session, parse_new_session, parse_permission_request, parse_session_list,
+        parse_session_page, parse_stop_reason, parse_update,
     },
 };
 use serde_json::Value;
@@ -41,7 +41,7 @@ fn fixture(name: &str) -> Vec<Line> {
         .collect()
 }
 
-const ALL: [&str; 10] = [
+const ALL: [&str; 12] = [
     "claude-init",
     "codex-init",
     "claude-edit",
@@ -52,6 +52,8 @@ const ALL: [&str; 10] = [
     "codex-cancel2",
     "claude-loggedout",
     "codex-loggedout",
+    "claude-load",
+    "codex-load",
 ];
 
 fn incoming(lines: &[Line]) -> impl Iterator<Item = Incoming> + '_ {
@@ -372,4 +374,51 @@ fn unknown_update_kinds_in_real_traffic_are_ignored_not_fatal() {
         seen_ignored,
         "usage_update and friends exist in the captures"
     );
+}
+
+#[test]
+fn listing_and_loading_a_session_replays_the_history_for_both_agents() {
+    for (name, paged) in [("claude-load", false), ("codex-load", true)] {
+        let lines = fixture(name);
+        let list = response(&lines, 2).unwrap().unwrap();
+        let cwd = list["sessions"][0]["cwd"].as_str().unwrap().to_owned();
+        let page = parse_session_page(&list, &cwd);
+        assert!(!page.sessions.is_empty(), "{name}");
+        assert!(
+            page.sessions
+                .iter()
+                .all(|s| s.cwd == cwd && s.title.is_some()),
+            "{name}"
+        );
+        assert_eq!(
+            page.next_cursor.is_some(),
+            paged,
+            "{name}: Codex pages its list"
+        );
+        assert!(parse_session_page(&list, "/elsewhere").sessions.is_empty());
+
+        // The replay arrives as ordinary updates before the load response.
+        let requested = page.sessions[0].session_id.clone();
+        let (conversation, _) = replay(name);
+        let user_messages = conversation
+            .entries
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    Entry::Message {
+                        role: lumen_agent_protocol::reducer::Role::User,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert!(user_messages >= 1, "{name}: the earlier prompt is replayed");
+        let loaded = parse_loaded_session(&response(&lines, 3).unwrap().unwrap(), &requested);
+        assert_eq!(loaded.session_id, requested, "{name}");
+        assert!(
+            loaded.config_options.iter().any(|o| o.id == "mode"),
+            "{name}"
+        );
+    }
 }

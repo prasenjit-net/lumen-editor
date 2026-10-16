@@ -21,6 +21,7 @@ pub const REPO_PULL: &str = "\u{eb40}";
 pub const REPO_PUSH: &str = "\u{eb41}";
 pub const TERMINAL: &str = "\u{ea85}";
 pub const CHECK: &str = "\u{eab2}";
+pub const HISTORY: &str = "\u{ea82}";
 pub const OUTPUT: &str = "\u{eb9d}";
 pub const AGENT: &str = "\u{eb7d}";
 pub const SEND: &str = "\u{ec0f}";

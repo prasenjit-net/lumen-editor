@@ -38,6 +38,9 @@ pub(crate) enum Command {
         Option<String>,
     ),
     AllowAgentNpx,
+    ToggleAgentHistory,
+    MoreAgentHistory,
+    ResumeAgentSession(AgentKind, String),
     ResolveUnsavedFiles(super::agent::UnsavedChoice),
     /// Attach the editor selection (or current file) to the next agent message.
     AskAgentAboutSelection,

@@ -92,7 +92,11 @@ impl Workbench<'_> {
                     )
                     .show_inside(ui, |ui| {
                         let session = self.view.agents.session_mut(active);
-                        transcript(ui, session);
+                        if session.history.open {
+                            history_list(ui, session, &mut commands);
+                        } else {
+                            transcript(ui, session);
+                        }
                     });
                 for command in commands {
                     self.command(command);
@@ -111,6 +115,12 @@ impl Workbench<'_> {
                 glyph: icon::PLUS,
                 tooltip: "New session (discards this conversation)",
                 command: Command::NewAgentSession,
+                enabled: true,
+            },
+            HeaderAction {
+                glyph: icon::HISTORY,
+                tooltip: "Earlier sessions in this folder",
+                command: Command::ToggleAgentHistory,
                 enabled: true,
             },
             HeaderAction {
@@ -137,6 +147,10 @@ fn status_strip(
         ConnectionState::Starting => (
             Color32::from_rgb(204, 167, 0),
             "Starting… the first run through npx can take several minutes".to_owned(),
+        ),
+        ConnectionState::Connected => (
+            Color32::from_rgb(35, 209, 139),
+            "Connected. Pick an earlier session, or just start typing.".to_owned(),
         ),
         ConnectionState::Ready => (
             Color32::from_rgb(35, 209, 139),
@@ -959,6 +973,101 @@ fn take_plain_enter(ui: &mut egui::Ui) -> bool {
         });
         position.map(|index| input.events.remove(index)).is_some()
     })
+}
+
+/// Earlier sessions of this agent in this folder; clicking one resumes it.
+fn history_list(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Vec<Command>) {
+    let kind = session.kind;
+    let history = &session.history;
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(format!("EARLIER {} SESSIONS", kind.label().to_uppercase()))
+                .size(10.5)
+                .color(theme::MUTED),
+        );
+        if ui.small_button("Back").clicked() {
+            commands.push(Command::ToggleAgentHistory);
+        }
+    });
+    ui.separator();
+    if let Some(error) = &history.error {
+        ui.label(
+            RichText::new(error)
+                .size(11.0)
+                .color(theme::DIFF_REMOVED_TEXT),
+        );
+    }
+    if history.unsupported {
+        ui.label(
+            RichText::new("This agent does not keep a list of earlier sessions.")
+                .size(11.0)
+                .color(theme::MUTED),
+        );
+        return;
+    }
+    if history.loading && history.sessions.is_empty() {
+        ui.label(
+            RichText::new("Loading sessions…")
+                .size(11.0)
+                .color(theme::MUTED),
+        );
+    } else if history.sessions.is_empty() && history.error.is_none() {
+        ui.label(
+            RichText::new("No earlier sessions in this folder.")
+                .size(11.0)
+                .color(theme::MUTED),
+        );
+    }
+    ScrollArea::vertical()
+        .id_salt(("agent_history", kind))
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            for entry in &history.sessions {
+                let title = entry
+                    .title
+                    .as_deref()
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or("Untitled session");
+                let when = entry
+                    .updated_at
+                    .as_deref()
+                    .map(format_when)
+                    .unwrap_or_default();
+                let response = ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new(format!("{title}\n{when}"))
+                                .size(11.5)
+                                .color(theme::TEXT),
+                        )
+                        .frame(false)
+                        .min_size(egui::vec2(ui.available_width(), 0.0))
+                        .wrap(),
+                    )
+                    .on_hover_text("Resume this conversation");
+                if response.clicked() {
+                    commands.push(Command::ResumeAgentSession(kind, entry.session_id.clone()));
+                }
+            }
+            if history.next_cursor.is_some() {
+                if history.loading {
+                    ui.label(RichText::new("Loading…").size(11.0).color(theme::MUTED));
+                } else if ui.small_button("Show more").clicked() {
+                    commands.push(Command::MoreAgentHistory);
+                }
+            }
+        });
+}
+
+/// `2026-10-16T16:25:19.335Z` -> `2026-10-16 16:25 UTC`; anything else is shown as is.
+fn format_when(timestamp: &str) -> String {
+    match (timestamp.get(..10), timestamp.get(11..16)) {
+        (Some(date), Some(time)) if timestamp.as_bytes().get(10) == Some(&b'T') => {
+            format!("{date} {time} UTC")
+        }
+        _ => timestamp.to_owned(),
+    }
 }
 
 fn transcript(ui: &mut egui::Ui, session: &mut AgentSessionView) {
@@ -2000,6 +2109,92 @@ mod tests {
                 .session(AgentKind::Claude)
                 .pending_config
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn the_history_view_lists_sessions_and_clicking_one_resumes_it() {
+        let mut panel = Panel::new();
+        panel.app.editor.workspace = Some("/w".into());
+        let session = panel.app.view.agents.session_mut(AgentKind::Claude);
+        session.history.open = true;
+        session.history.sessions = vec![
+            lumen_agent_protocol::types::SessionSummary {
+                session_id: "s1".into(),
+                cwd: "/w".into(),
+                title: Some("Fix the parser".into()),
+                updated_at: Some("2026-10-16T16:25:19.335Z".into()),
+            },
+            lumen_agent_protocol::types::SessionSummary {
+                session_id: "s2".into(),
+                cwd: "/w".into(),
+                title: None,
+                updated_at: None,
+            },
+        ];
+        session.history.next_cursor = Some("more".into());
+        let shown = panel.texts();
+        for expected in [
+            "EARLIER CLAUDE CODE SESSIONS",
+            "Fix the parser",
+            "2026-10-16 16:25 UTC",
+            "Untitled session",
+            "Show more",
+            "Back",
+        ] {
+            assert!(shown.contains(expected), "missing {expected:?} in {shown}");
+        }
+        assert!(
+            !shown.contains("Ask Claude Code about your code."),
+            "the list replaces the transcript"
+        );
+
+        // Resuming needs a connection; with the fake launcher the agent starts.
+        panel.click_text("Fix the parser");
+        assert_eq!(panel.fake.launched.lock().unwrap().len(), 1);
+        assert!(
+            !panel
+                .app
+                .view
+                .agents
+                .session(AgentKind::Claude)
+                .history
+                .open
+        );
+        assert!(panel.app.view.agents.session(AgentKind::Claude).replaying);
+    }
+
+    #[test]
+    fn history_explains_empty_loading_and_unsupported_states() {
+        let mut panel = Panel::new();
+        let session = panel.app.view.agents.session_mut(AgentKind::Claude);
+        session.history.open = true;
+        session.history.loading = true;
+        assert!(panel.texts().contains("Loading sessions…"));
+        let history = &mut panel.app.view.agents.session_mut(AgentKind::Claude).history;
+        history.loading = false;
+        assert!(
+            panel
+                .texts()
+                .contains("No earlier sessions in this folder.")
+        );
+        panel
+            .app
+            .view
+            .agents
+            .session_mut(AgentKind::Claude)
+            .history
+            .unsupported = true;
+        assert!(panel.texts().contains("does not keep a list"));
+        panel.click_text("Back");
+        assert!(
+            !panel
+                .app
+                .view
+                .agents
+                .session(AgentKind::Claude)
+                .history
+                .open
         );
     }
 }

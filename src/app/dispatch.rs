@@ -85,6 +85,9 @@ impl LumenApp {
             Command::PickAgentMention(kind, relative) => self.pick_agent_mention(kind, &relative),
             Command::PickSlash(kind, name) => self.pick_agent_command(kind, &name),
             Command::ResolveUnsavedFiles(choice) => self.resolve_unsaved_choice(choice, ctx),
+            Command::ToggleAgentHistory => self.toggle_agent_history(ctx),
+            Command::MoreAgentHistory => self.more_agent_history(ctx),
+            Command::ResumeAgentSession(kind, id) => self.resume_agent_session(kind, &id, ctx),
             Command::AllowAgentNpx => self.allow_agent_npx(ctx),
             Command::ToggleOutput => {
                 super::output::clear_text_selection(ctx);

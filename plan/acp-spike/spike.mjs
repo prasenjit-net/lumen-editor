@@ -97,7 +97,16 @@ const init = await request('initialize', {
   clientInfo: { name: 'lumen-spike', title: 'Lumen ACP spike', version: '0.0.0' },
 });
 summary.initialize = init.result ?? init.error;
-const created = await request('session/new', { cwd: workspace, mcpServers: [] });
+let created;
+if (arg('--load')) {
+  const listing = await request('session/list', { cwd: workspace });
+  summary.sessionList = listing.result ?? listing.error;
+  const loaded = await request('session/load', { sessionId: arg('--load') === 'first' ? listing.result.sessions[0].sessionId : arg('--load'), cwd: workspace, mcpServers: [] });
+  summary.sessionLoad = loaded.result ?? loaded.error;
+  created = { result: { sessionId: arg('--load') === 'first' ? listing.result.sessions[0].sessionId : arg('--load') } };
+} else {
+  created = await request('session/new', { cwd: workspace, mcpServers: [] });
+}
 summary.sessionNew = created.result ?? created.error;
 if (created.error && arg('--auth')) {
   summary.authenticate = await request('authenticate', { methodId: arg('--auth') });

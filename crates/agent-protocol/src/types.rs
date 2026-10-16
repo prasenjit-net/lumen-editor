@@ -246,6 +246,39 @@ pub fn parse_session_list(result: &Value, workspace: &str) -> Vec<SessionSummary
         .collect()
 }
 
+/// One page of `session/list`: this workspace's sessions plus the cursor for more.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionPage {
+    pub sessions: Vec<SessionSummary>,
+    pub next_cursor: Option<String>,
+}
+
+#[must_use]
+pub fn parse_session_page(result: &Value, workspace: &str) -> SessionPage {
+    SessionPage {
+        sessions: parse_session_list(result, workspace),
+        next_cursor: text(result, "nextCursor").filter(|cursor| !cursor.is_empty()),
+    }
+}
+
+/// The result of `session/load`. Unlike `session/new` it may omit `sessionId`
+/// (Codex does); the id that was asked for is the session.
+pub fn parse_loaded_session(result: &Value, requested: &str) -> NewSession {
+    let mut session = parse_new_session(result).unwrap_or_else(|_| NewSession {
+        session_id: requested.to_owned(),
+        config_options: result
+            .get("configOptions")
+            .map(parse_config_options)
+            .unwrap_or_default(),
+        current_mode: None,
+        modes: Vec::new(),
+    });
+    if session.session_id.is_empty() {
+        session.session_id = requested.to_owned();
+    }
+    session
+}
+
 // ------------------------------------------------------------------- content
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -757,5 +790,32 @@ mod tests {
             parse_permission_request(&json!({"options": [{"optionId":"a","kind":"allow_once"}]}))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn session_pages_carry_a_cursor_and_loaded_sessions_fall_back_to_the_requested_id() {
+        let page = parse_session_page(
+            &json!({"sessions":[{"sessionId":"1","cwd":"/w"},{"sessionId":"2","cwd":"/x"}],"nextCursor":"abc"}),
+            "/w",
+        );
+        assert_eq!(
+            (page.sessions.len(), page.next_cursor.as_deref()),
+            (1, Some("abc"))
+        );
+        assert_eq!(
+            parse_session_page(&json!({"sessions":[],"nextCursor":""}), "/w").next_cursor,
+            None
+        );
+
+        let codex_style = parse_loaded_session(
+            &json!({"modes":{"currentModeId":"agent"},"configOptions":[
+                {"id":"mode","name":"Mode","currentValue":"agent","options":[{"value":"agent","name":"Auto"}]}]}),
+            "asked-for",
+        );
+        assert_eq!(codex_style.session_id, "asked-for");
+        assert_eq!(codex_style.config_options.len(), 1);
+        let claude_style = parse_loaded_session(&json!({"sessionId":"echoed"}), "asked-for");
+        assert_eq!(claude_style.session_id, "echoed");
+        assert_eq!(parse_loaded_session(&json!({}), "x").session_id, "x");
     }
 }

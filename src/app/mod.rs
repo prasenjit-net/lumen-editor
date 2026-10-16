@@ -2,6 +2,7 @@
 pub(crate) mod agent;
 pub(crate) mod agent_changes;
 pub(crate) mod agent_context;
+pub(crate) mod agent_history;
 pub(crate) mod agent_permission;
 mod clipboard;
 pub(crate) mod command;

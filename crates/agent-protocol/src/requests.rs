@@ -49,6 +49,16 @@ pub fn session_list(id: i64, cwd: &str) -> Value {
     rpc::request(id, "session/list", json!({"cwd": cwd}))
 }
 
+/// `session/list` for one folder; `cursor` fetches the next page.
+#[must_use]
+pub fn session_list_page(id: i64, cwd: &str, cursor: Option<&str>) -> Value {
+    let mut params = json!({"cwd": cwd});
+    if let Some(cursor) = cursor {
+        params["cursor"] = json!(cursor);
+    }
+    rpc::request(id, "session/list", params)
+}
+
 #[must_use]
 pub fn session_prompt(id: i64, session_id: &str, blocks: Vec<Value>) -> Value {
     rpc::request(
@@ -127,6 +137,24 @@ mod tests {
             (json!("session/new"), json!("/w"))
         );
         assert_eq!(new["params"]["mcpServers"], json!([]));
+    }
+
+    #[test]
+    fn session_list_pages_and_loads_are_addressed_to_one_folder() {
+        assert_eq!(
+            session_list_page(4, "/w", None)["params"],
+            json!({"cwd":"/w"})
+        );
+        assert_eq!(
+            session_list_page(4, "/w", Some("c1"))["params"]["cursor"],
+            "c1"
+        );
+        let load = session_load(5, "s1", "/w");
+        assert_eq!(
+            (load["method"].clone(), load["params"]["sessionId"].clone()),
+            (json!("session/load"), json!("s1"))
+        );
+        assert_eq!(load["params"]["cwd"], "/w");
     }
 
     #[test]
