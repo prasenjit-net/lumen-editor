@@ -432,4 +432,104 @@ mod tests {
         );
         assert_eq!(wakes.load(Ordering::Relaxed), 2);
     }
+
+    /// Live checks against real servers; run with
+    /// `cargo test live_ -- --ignored --nocapture` (add `~/go/bin` to PATH for gopls).
+    #[test]
+    #[ignore = "requires rust-analyzer and a Rust toolchain on PATH"]
+    fn live_rust_analyzer_publishes_diagnostics_for_a_broken_file() {
+        live_diagnostics(
+            lumen_language_services::LanguageId::RUST,
+            &[(
+                "Cargo.toml",
+                "[package]\nname = \"live\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )],
+            "src/main.rs",
+            "fn main() { let x: u32 = \"no\"; }\n",
+        );
+    }
+
+    #[test]
+    #[ignore = "requires gopls and a Go toolchain on PATH"]
+    fn live_gopls_publishes_diagnostics_for_a_broken_file() {
+        live_diagnostics(
+            lumen_language_services::LanguageId::GO,
+            &[("go.mod", "module live\n\ngo 1.21\n")],
+            "main.go",
+            "package main\n\nfunc main() { var x int = \"no\"; _ = x }\n",
+        );
+    }
+
+    fn live_diagnostics(
+        language_id: lumen_language_services::LanguageId,
+        project_files: &[(&str, &str)],
+        source_name: &str,
+        text: &str,
+    ) {
+        use lumen_language_services::{DocumentUri, ServerDocumentVersion, incoming, lsp};
+        use std::time::{Duration, Instant};
+
+        let language = LanguageRegistry::by_id(language_id).unwrap();
+        let ServerAvailability::Available { executable } =
+            LocalLanguageServer.availability(language)
+        else {
+            panic!("{} not on PATH", language.label);
+        };
+        let root = env::temp_dir().join(format!(
+            "lumen-live-{}-{}",
+            language_id.as_str(),
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        for (name, contents) in project_files {
+            std::fs::write(root.join(name), contents).unwrap();
+        }
+        let file = root.join(source_name);
+        std::fs::write(&file, text).unwrap();
+        let root_uri = format!("file://{}", root.display());
+        let file_uri = DocumentUri::new(format!("file://{}", file.display())).unwrap();
+
+        let mut server = ServerProcess::start(&executable, &root, Arc::new(|| {})).unwrap();
+        server.send(&lsp::initialize_request(0, &root_uri)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let mut initialized = false;
+        let mut diagnostics = None;
+        let mut server_requests = Vec::new();
+        while Instant::now() < deadline && diagnostics.is_none() {
+            for event in server.drain_events() {
+                let ServerEvent::Message(message) = event else {
+                    continue;
+                };
+                let method = message.get("method").and_then(Value::as_str);
+                if message.get("id") == Some(&serde_json::json!(0)) && !initialized {
+                    initialized = true;
+                    server.send(&lsp::initialized_notification()).unwrap();
+                    server
+                        .send(&lsp::did_open(
+                            &file_uri,
+                            language_id,
+                            ServerDocumentVersion(1),
+                            text,
+                        ))
+                        .unwrap();
+                } else if method == Some("textDocument/publishDiagnostics")
+                    && incoming::parse_publish_diagnostics(&message, text)
+                        .is_ok_and(|published| !published.diagnostics.is_empty())
+                {
+                    diagnostics = Some(message);
+                } else if let Some(reply) = lsp::server_request_response(&message) {
+                    server_requests.push(method.unwrap_or_default().to_owned());
+                    server.send(&reply).unwrap();
+                }
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        println!("server-initiated requests: {server_requests:?}");
+        println!("diagnostics: {diagnostics:?}");
+        let stderr = server.stderr_text();
+        let _ = server.begin_shutdown();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(initialized, "initialize never answered");
+        assert!(diagnostics.is_some(), "no diagnostics: {stderr}");
+    }
 }

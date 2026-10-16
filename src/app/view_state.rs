@@ -91,6 +91,18 @@ pub(crate) enum LanguageServerStatus {
     Error(String),
 }
 
+/// Settings-page snapshot of the active file's language server; built by the
+/// controller so rendering never probes PATH or reads session state.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LanguageServerSummary {
+    pub(crate) language: &'static str,
+    pub(crate) state: String,
+    pub(crate) command: Option<String>,
+    pub(crate) capabilities: Vec<&'static str>,
+    pub(crate) error: Option<String>,
+    pub(crate) project_path_ignored: bool,
+}
+
 #[derive(Clone)]
 pub(crate) struct LanguageLocation {
     pub(crate) label: String,
@@ -274,6 +286,7 @@ pub(crate) struct ViewState {
     pub(crate) problems: ProblemsView,
     pub(crate) language_server_document: Option<crate::model::DocumentId>,
     pub(crate) language_server_status: Option<LanguageServerStatus>,
+    pub(crate) language_server_summary: Option<LanguageServerSummary>,
     pub(crate) language_server_details_open: bool,
     pub(crate) language_hover: Option<String>,
     pub(crate) language_navigation: LanguageNavigationView,
@@ -346,6 +359,7 @@ impl Default for ViewState {
             problems: ProblemsView::default(),
             language_server_document: None,
             language_server_status: None,
+            language_server_summary: None,
             language_server_details_open: false,
             language_hover: None,
             language_navigation: Default::default(),

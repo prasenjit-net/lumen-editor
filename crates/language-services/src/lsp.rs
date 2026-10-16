@@ -26,6 +26,41 @@ pub fn initialize_request(request_id: u64, workspace_uri: &str) -> Value {
     })
 }
 
+/// Reply to a server-initiated request. JSON-RPC requires every request to be
+/// answered; servers such as rust-analyzer wait on some of them. Lumen supports
+/// none of these features yet, so refreshes and capability registration are
+/// acknowledged without effect, configuration queries answer "no value" per
+/// item, and everything else is rejected as an unknown method.
+#[must_use]
+pub fn server_request_response(request: &Value) -> Option<Value> {
+    let method = request.get("method")?.as_str()?;
+    let id = request.get("id")?;
+    let result = match method {
+        "client/registerCapability"
+        | "client/unregisterCapability"
+        | "window/workDoneProgress/create"
+        | "workspace/diagnostic/refresh"
+        | "workspace/semanticTokens/refresh"
+        | "workspace/inlayHint/refresh"
+        | "workspace/codeLens/refresh" => Value::Null,
+        "workspace/configuration" => {
+            let items = request
+                .pointer("/params/items")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            Value::Array(vec![Value::Null; items])
+        }
+        _ => {
+            return Some(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32601, "message": "Method not supported by Lumen" }
+            }));
+        }
+    };
+    Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+}
+
 #[must_use]
 pub fn initialized_notification() -> Value {
     json!({
@@ -215,5 +250,23 @@ mod tests {
             document_symbols_request(4, &uri)["method"],
             "textDocument/documentSymbol"
         );
+    }
+
+    #[test]
+    fn server_requests_are_always_answered() {
+        let reply = |value: Value| server_request_response(&value).unwrap();
+        assert_eq!(
+            reply(json!({"id":3,"method":"workspace/diagnostic/refresh"})),
+            json!({"jsonrpc":"2.0","id":3,"result":null})
+        );
+        assert_eq!(
+            reply(json!({"id":"a","method":"workspace/configuration","params":{"items":[{},{}]}}))
+                ["result"],
+            json!([null, null])
+        );
+        let unknown = reply(json!({"id":4,"method":"workspace/applyEdit"}));
+        assert_eq!(unknown["error"]["code"], -32601);
+        assert_eq!(unknown["id"], 4);
+        assert!(server_request_response(&json!({"method":"window/logMessage"})).is_none());
     }
 }

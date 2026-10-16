@@ -4,7 +4,10 @@
 //! This crate deliberately owns neither native processes nor UI state. The app
 //! and service layers use these types to keep document versions, UTF-16 protocol
 //! positions, token snapshots, and language registration consistent.
-use std::{ops::Range, path::Path};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 pub mod capabilities;
 pub mod diagnostics;
@@ -117,6 +120,38 @@ const BUILTIN_LANGUAGES: &[LanguageDescriptor] = &[RUST, GO, JSON];
 /// Static language catalog. Language contributions will extend this catalog in
 /// one location, instead of scattering file-type checks throughout the app.
 pub struct LanguageRegistry;
+
+impl LanguageDescriptor {
+    /// Nearest ancestor of `file` (never above `boundary`) holding one of this
+    /// language's workspace markers; the boundary itself when none matches.
+    /// Marker lookup is injected so this crate performs no filesystem I/O.
+    #[must_use]
+    pub fn workspace_root(
+        &self,
+        file: &Path,
+        boundary: &Path,
+        has_marker: impl Fn(&Path, &str) -> bool,
+    ) -> PathBuf {
+        let mut directory = file.parent();
+        while let Some(current) = directory {
+            if !current.starts_with(boundary) {
+                break;
+            }
+            if self
+                .workspace_markers
+                .iter()
+                .any(|marker| has_marker(current, marker))
+            {
+                return current.to_path_buf();
+            }
+            if current == boundary {
+                break;
+            }
+            directory = current.parent();
+        }
+        boundary.to_path_buf()
+    }
+}
 
 impl LanguageRegistry {
     #[must_use]
@@ -748,6 +783,24 @@ mod tests {
                 ],
             ),
             Err(TokenSnapshotError::InvalidOrder)
+        );
+    }
+
+    #[test]
+    fn nearest_marker_defines_the_root_and_never_escapes_the_boundary() {
+        let go = LanguageRegistry::by_id(LanguageId::GO).unwrap();
+        let markers = ["/ws/go.work", "/ws/svc/go.mod", "/outside/go.mod"];
+        let has = |dir: &Path, marker: &str| markers.contains(&dir.join(marker).to_str().unwrap());
+        let root = |file: &str, boundary: &str| {
+            go.workspace_root(Path::new(file), Path::new(boundary), has)
+        };
+        assert_eq!(root("/ws/svc/pkg/a.go", "/ws"), Path::new("/ws/svc"));
+        assert_eq!(root("/ws/other/a.go", "/ws"), Path::new("/ws"));
+        assert_eq!(root("/ws/a.go", "/ws"), Path::new("/ws"));
+        assert_eq!(root("/outside/a.go", "/ws"), Path::new("/ws"));
+        assert_eq!(
+            root("/ws/svc/a.go", "/ws/svc/pkg"),
+            Path::new("/ws/svc/pkg")
         );
     }
 }

@@ -152,6 +152,77 @@ impl LumenApp {
     }
 
     pub(crate) fn refresh_language_server_status(&mut self, ctx: &eframe::egui::Context) {
+        self.refresh_language_server_status_inner(ctx);
+        self.view.language_server_summary = self
+            .editor
+            .active()
+            .and_then(|document| document.path.as_ref())
+            .and_then(|path| LanguageRegistry::detect(path))
+            .and_then(|language| self.language_server_summary(language));
+    }
+
+    fn language_server_summary(
+        &self,
+        language: &'static lumen_language_services::LanguageDescriptor,
+    ) -> Option<crate::app::view_state::LanguageServerSummary> {
+        use crate::app::view_state::LanguageServerSummary;
+        let prefix = Self::language_setting_prefix(language.id)?;
+        let project_path_ignored = self
+            .view
+            .settings
+            .project_text_override(&format!("{prefix}.server_path"));
+        let mut summary = LanguageServerSummary {
+            language: language.label,
+            project_path_ignored,
+            ..Default::default()
+        };
+        if !self.language_server_enabled(language.id) {
+            summary.state = "Disabled in settings".into();
+            return Some(summary);
+        }
+        match self.language_server_availability(language) {
+            ServerAvailability::Available { executable } => {
+                summary.command = Some(executable.display().to_string());
+            }
+            ServerAvailability::Missing { candidates } => {
+                summary.state = "Not found".into();
+                summary.command = Some(candidates.join(" or "));
+                return Some(summary);
+            }
+            ServerAvailability::NotSupported => return None,
+        }
+        match &self.view.language_server_status {
+            Some(LanguageServerStatus::Starting(_)) => summary.state = "Starting".into(),
+            Some(LanguageServerStatus::Ready(_)) => summary.state = "Ready".into(),
+            Some(LanguageServerStatus::Error(error)) => {
+                summary.state = "Error".into();
+                summary.error = Some(error.clone());
+            }
+            _ => summary.state = "Not started".into(),
+        }
+        if self.language_server_language == Some(language.id)
+            && let Some(capabilities) = &self.language_server_capabilities
+        {
+            let features = [
+                (capabilities.text_document_sync.is_some(), "Document sync"),
+                (capabilities.save.is_some(), "Save notifications"),
+                (capabilities.hover, "Hover"),
+                (capabilities.definition, "Go to Definition"),
+                (capabilities.document_symbols, "Document symbols"),
+                (
+                    capabilities.semantic_tokens,
+                    "Semantic tokens (not used yet)",
+                ),
+            ];
+            summary.capabilities = features
+                .into_iter()
+                .filter_map(|(enabled, name)| enabled.then_some(name))
+                .collect();
+        }
+        Some(summary)
+    }
+
+    fn refresh_language_server_status_inner(&mut self, ctx: &eframe::egui::Context) {
         let active = self.editor.active().and_then(|document| {
             document
                 .path
@@ -177,7 +248,20 @@ impl LumenApp {
                 |language| match self.language_server_availability(language) {
                     ServerAvailability::Available { executable } => {
                         let name = executable.file_name()?.to_str()?.to_owned();
-                        self.start_language_server(executable, language.id, name.clone(), ctx);
+                        let root = self.editor.workspace.as_deref().map(|workspace| {
+                            language.workspace_root(&path, workspace, |directory, marker| {
+                                directory.join(marker).is_file()
+                            })
+                        });
+                        if let Some(root) = root {
+                            self.start_language_server(
+                                root,
+                                executable,
+                                language.id,
+                                name.clone(),
+                                ctx,
+                            );
+                        }
                         Some(
                             self.view
                                 .language_server_status
@@ -215,7 +299,11 @@ impl LumenApp {
         language: &lumen_language_services::LanguageDescriptor,
     ) -> ServerAvailability {
         let configured = Self::language_setting_prefix(language.id)
-            .map(|prefix| self.view.settings.text(&format!("{prefix}.server_path")))
+            .map(|prefix| {
+                self.view
+                    .settings
+                    .user_text(&format!("{prefix}.server_path"))
+            })
             .map(|path| path.trim().to_owned())
             .filter(|path| !path.is_empty());
         match configured {
@@ -265,14 +353,12 @@ impl LumenApp {
 
     fn start_language_server(
         &mut self,
+        workspace: std::path::PathBuf,
         executable: std::path::PathBuf,
         language: LanguageId,
         name: String,
         ctx: &eframe::egui::Context,
     ) {
-        let Some(workspace) = self.editor.workspace.clone() else {
-            return;
-        };
         let target = LanguageServerTarget {
             executable: executable.clone(),
             workspace: workspace.clone(),
@@ -452,6 +538,15 @@ impl LumenApp {
                     self.stop_language_server(&reason);
                     break;
                 }
+                ServerEvent::Message(message)
+                    if message.get("method").is_some() && message.get("id").is_some() =>
+                {
+                    if let Some(reply) = lsp::server_request_response(&message)
+                        && let Some(process) = &mut self.language_server_process
+                    {
+                        let _ = process.send(&reply);
+                    }
+                }
                 ServerEvent::Message(message) => {
                     if !self.accept_language_response(&message) {
                         self.accept_diagnostics(message);
@@ -494,8 +589,12 @@ impl LumenApp {
             .iter()
             .filter_map(|document| {
                 let path = document.path.as_ref()?;
-                (LanguageRegistry::detect(path).map(|descriptor| descriptor.id) == Some(language))
-                    .then(|| {
+                (LanguageRegistry::detect(path).map(|descriptor| descriptor.id) == Some(language)
+                    && self
+                        .language_server_workspace
+                        .as_ref()
+                        .is_none_or(|root| path.starts_with(root)))
+                .then(|| {
                     DocumentUri::new(file_uri(path))
                         .ok()
                         .map(|uri| (document.id, document.revision, uri, document.text.clone()))
@@ -1438,5 +1537,105 @@ mod tests {
             lumen_settings_core::Value::Number(30.0),
         );
         assert_eq!(app.initialize_timeout(), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn session_root_is_the_nearest_marker_and_sync_stays_inside_it() {
+        let base = std::env::temp_dir().join(format!("lumen-root-{}", std::process::id()));
+        let service = base.join("svc");
+        std::fs::create_dir_all(service.join("pkg")).unwrap();
+        std::fs::write(service.join("go.mod"), "module svc").unwrap();
+        let (mut app, messages, events) = fake_app();
+        app.editor.workspace = Some(base.clone());
+        for path in [service.join("pkg/a.go"), base.join("loose.go")] {
+            app.editor
+                .files
+                .push(crate::model::Document::from_path(path, "package a".into()));
+        }
+        app.editor.active_file = Some(0);
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        assert_eq!(
+            app.language_server_workspace.as_deref(),
+            Some(service.as_path())
+        );
+        let init = messages.lock().unwrap()[0].clone();
+        assert_eq!(
+            init["params"]["rootUri"].as_str(),
+            Some(file_uri(&service).as_str())
+        );
+        events.lock().unwrap().push(initialized());
+        app.poll_language_server(&ctx);
+        let opened = messages
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|message| message["method"] == "textDocument/didOpen")
+            .count();
+        assert_eq!(opened, 1);
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn server_initiated_requests_receive_replies() {
+        let (mut app, messages, events) = rust_app();
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        events.lock().unwrap().push(initialized());
+        events
+            .lock()
+            .unwrap()
+            .push(ServerEvent::Message(serde_json::json!({
+                "jsonrpc":"2.0","id":7,"method":"client/registerCapability","params":{}
+            })));
+        app.poll_language_server(&ctx);
+        assert!(messages.lock().unwrap().iter().any(|message| {
+            message["id"] == 7 && message.get("result").is_some() && message.get("method").is_none()
+        }));
+    }
+
+    #[test]
+    fn project_settings_cannot_choose_the_server_executable() {
+        let (mut app, _messages, _events) = rust_app();
+        app.view.settings.root = Some("/workspace".into());
+        app.view.settings.project.persisted.insert(
+            "language.rust.server_path".into(),
+            lumen_settings_core::Value::Text("/tmp/evil-analyzer".into()),
+        );
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        let summary = app.view.language_server_summary.clone().unwrap();
+        assert!(summary.project_path_ignored);
+        assert_eq!(summary.command.as_deref(), Some("fake-lsp"));
+        assert!(app.language_server_process.is_some());
+    }
+
+    #[test]
+    fn summary_reports_state_command_capabilities_and_errors() {
+        let (mut app, _messages, events) = rust_app();
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        assert_eq!(
+            app.view.language_server_summary.as_ref().unwrap().state,
+            "Starting"
+        );
+        events.lock().unwrap().push(initialized());
+        app.poll_language_server(&ctx);
+        app.refresh_language_server_status(&ctx);
+        let summary = app.view.language_server_summary.clone().unwrap();
+        assert_eq!(summary.language, "Rust");
+        assert_eq!(summary.state, "Ready");
+        assert!(summary.capabilities.contains(&"Hover"));
+        assert!(summary.error.is_none());
+
+        app.view.settings.user.persisted.insert(
+            "language.rust.enabled".into(),
+            lumen_settings_core::Value::Bool(false),
+        );
+        app.refresh_language_server_status(&ctx);
+        assert_eq!(
+            app.view.language_server_summary.unwrap().state,
+            "Disabled in settings"
+        );
     }
 }

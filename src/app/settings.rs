@@ -115,11 +115,18 @@ impl SettingsState {
             _ => unreachable!(),
         }
     }
-    pub(crate) fn text(&self, id: &str) -> String {
-        match self.effective(setting(id), None).0 {
+    /// User-scope value only. Executable paths never come from a project file,
+    /// so opening an untrusted folder cannot choose which program Lumen runs.
+    pub(crate) fn user_text(&self, id: &str) -> String {
+        match settings::resolve(setting(id), &self.user.persisted, None).0 {
             Value::Text(value) => value,
             _ => unreachable!(),
         }
+    }
+    /// Whether the open project's settings file sets a non-empty text value.
+    pub(crate) fn project_text_override(&self, id: &str) -> bool {
+        self.root.is_some()
+            && matches!(self.project.persisted.get(id), Some(Value::Text(value)) if !value.trim().is_empty())
     }
     pub(crate) fn search_exclude(&self) -> String {
         match self.effective(setting("search.exclude"), None).0 {

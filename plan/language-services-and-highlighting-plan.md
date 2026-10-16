@@ -323,8 +323,16 @@ specified by a project unless the user’s server-command policy permits it.
   `language.server.startup_timeout_seconds` settings. Disabling a language stops its
   session; a configured path must be an absolute existing file. Server args, trace
   and project-command trust policy remain open.
-- [ ] Apply and live-validate Rust diagnostics with `rust-analyzer`, then Go
-  diagnostics with `gopls`.
+- [x] Resolve the session root from the nearest workspace marker (`Cargo.toml`,
+  `go.work`, `go.mod`) at or below the opened folder; only documents under that
+  root sync. One session exists at a time, so switching between roots restarts it.
+- [x] Live-validated Rust diagnostics: an ignored test
+  (`cargo test live_rust_analyzer -- --ignored`) drives a real rust-analyzer through
+  the service transport and message builders. It found that servers send requests
+  (e.g. `workspace/diagnostic/refresh`); the app now answers all of them.
+  Not yet exercised through the full app/UI path.
+- [x] Live-validated Go diagnostics with gopls 0.24.0 (`cargo test live_ -- --ignored`,
+  with `~/go/bin` on PATH); ranges decode correctly. Full app/UI path still unexercised.
 - [x] Add bounded exponential restart backoff, initialization/request deadlines,
   request cancellation, UI wakeups and injectable fake-server coverage for
   initialization, crash/restart, stale diagnostics, dirty buffers, save, rename
