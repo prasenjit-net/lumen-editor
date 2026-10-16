@@ -683,7 +683,7 @@ impl LumenApp {
         let cwd = self.session_cwd();
         let mut env = vec![("PATH".into(), path)];
         if kind == AgentKind::Codex {
-            // Preview posture: Codex asks before editing, and Lumen declines.
+            // Codex asks before editing in its read-only mode; Lumen shows the request.
             env.push(("INITIAL_AGENT_MODE".into(), "read-only".into()));
         }
         let agent_command = AgentCommand {
@@ -993,7 +993,7 @@ impl LumenApp {
             LogLevel::Info,
             &format!("Session {} ready", new.session_id),
         );
-        // Belt and braces for the read-only preview posture (also set via env).
+        // Belt and braces for starting in read-only (the env var above also sets it).
         if kind == AgentKind::Codex
             && new.config_options.iter().any(|option| {
                 option.id == "mode"
