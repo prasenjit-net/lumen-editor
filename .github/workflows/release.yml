@@ -122,12 +122,17 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target\release\lumen-editor.exe "dist\Lumen-v$env:RELEASE_VERSION-windows-$env:RUNNER_ARCH.exe"
-          & "$env:WIX_BIN\candle.exe" -nologo "-dSourceDir=$PWD\target\release" "-dVersion=$env:RELEASE_VERSION" packaging\windows\Lumen.wxs -out dist\Lumen.wixobj
-          & "$env:WIX_BIN\light.exe" -nologo -out "dist\Lumen-v$env:RELEASE_VERSION-windows-$env:RUNNER_ARCH.msi" dist\Lumen.wixobj
+          $wixObject = Join-Path $env:RUNNER_TEMP "Lumen.wixobj"
+          & "$env:WIX_BIN\candle.exe" -nologo "-dSourceDir=$PWD\target\release" "-dVersion=$env:RELEASE_VERSION" packaging\windows\Lumen.wxs -out $wixObject
+          if ($LASTEXITCODE -ne 0) { throw "WiX candle failed with exit code $LASTEXITCODE" }
+          & "$env:WIX_BIN\light.exe" -nologo -spdb -out "dist\Lumen-v$env:RELEASE_VERSION-windows-$env:RUNNER_ARCH.msi" $wixObject
+          if ($LASTEXITCODE -ne 0) { throw "WiX light failed with exit code $LASTEXITCODE" }
       - uses: actions/upload-artifact@v7
         with:
           name: lumen-windows
-          path: dist/*
+          path: |
+            dist/Lumen-*.exe
+            dist/Lumen-*.msi
           if-no-files-found: error
 
   linux:
@@ -190,8 +195,7 @@ jobs:
           test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 7
           test "${#assets[@]}" -eq 4
           for extension in dmg msi deb rpm; do
-            packages=(dist/Lumen-*.$extension)
-            test "${#packages[@]}" -eq 1
+            test "$(find dist -maxdepth 1 -type f -name "Lumen-*.$extension" | wc -l)" -eq 1
           done
           test "$(find dist -maxdepth 1 -type f -name 'Lumen-*-macos-*' ! -name '*.dmg' | wc -l)" -eq 1
           test "$(find dist -maxdepth 1 -type f -name 'Lumen-*-linux-*' ! -name '*.deb' ! -name '*.rpm' | wc -l)" -eq 1
