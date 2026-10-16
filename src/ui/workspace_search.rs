@@ -1,7 +1,4 @@
-use super::{
-    Workbench,
-    theme::{DIFF_ADDED_TEXT, DIFF_REMOVED_TEXT, MUTED},
-};
+use super::Workbench;
 use crate::{
     app::{command::Command, view_state::WorkspaceSearchView, workspace_search::ReplaceScope},
     icon,
@@ -18,6 +15,7 @@ const MAX_MATCHES_PER_HUNK: usize = 8;
 
 impl Workbench<'_> {
     pub(crate) fn workspace_search_panel(&mut self, ui: &mut egui::Ui) {
+        let colors = crate::ui::theme::palette(ui.visuals());
         let mut start = false;
         let mut cancel = false;
         let mut clear = false;
@@ -119,7 +117,7 @@ impl Workbench<'_> {
                             "Searching… {} files · {} matches",
                             progress.scanned, progress.matches
                         ))
-                        .color(MUTED)
+                        .color(colors.muted)
                         .size(11.0),
                     )
                     .truncate(),
@@ -130,7 +128,7 @@ impl Workbench<'_> {
                 ui.label(format!("Replaced in {} file(s)", state.replaced_files));
             }
             for error in state.report.iter().take(5) {
-                ui.label(RichText::new(error).color(MUTED).size(11.0));
+                ui.label(RichText::new(error).color(colors.muted).size(11.0));
             }
             if state.report.len() > 5 {
                 ui.label(format!(
@@ -142,7 +140,7 @@ impl Workbench<'_> {
                 let count: usize = results.files.iter().map(|file| file.hits.len()).sum();
                 ui.label(
                     RichText::new(format!("{count} results in {} files", results.files.len()))
-                        .color(MUTED)
+                        .color(colors.muted)
                         .size(11.0),
                 )
                 .on_hover_text(format!(
@@ -174,7 +172,7 @@ impl Workbench<'_> {
                             results.errors.len(),
                             results.errors[0]
                         ))
-                        .color(MUTED)
+                        .color(colors.muted)
                         .size(11.0),
                     );
                 }
@@ -258,7 +256,7 @@ impl Workbench<'_> {
                         }
                     });
             } else if self.editor.workspace.is_none() {
-                ui.label(RichText::new("Open a folder to search its files.").color(MUTED));
+                ui.label(RichText::new("Open a folder to search its files.").color(colors.muted));
             }
         }
         if clear {
@@ -336,6 +334,7 @@ fn show_workspace_replace_preview(
     ui: &mut egui::Ui,
     state: &mut WorkspaceSearchView,
 ) -> (bool, bool) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     ui.add(
         egui::Label::new(
             "Only selected files will be changed. Open tabs are skipped; changed files are rejected.",
@@ -368,18 +367,18 @@ fn show_workspace_replace_preview(
                 state.selected.len(),
                 hunks.len()
             ))
-            .color(MUTED)
+            .color(colors.muted)
             .size(11.0),
         );
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new("− Removed")
-                    .color(DIFF_REMOVED_TEXT)
+                    .color(colors.diff_removed_text)
                     .size(11.0),
             );
             ui.label(
                 RichText::new("+ Replacement")
-                    .color(DIFF_ADDED_TEXT)
+                    .color(colors.diff_added_text)
                     .size(11.0),
             );
         });
@@ -387,7 +386,7 @@ fn show_workspace_replace_preview(
         ui.add(
             egui::Label::new(
                 RichText::new("Unchanged lines are shown for context. Long groups use per-match excerpts; full files are checked before writing.")
-                    .color(MUTED)
+                    .color(colors.muted)
                     .size(11.0),
             )
             .wrap(),
@@ -413,6 +412,7 @@ fn show_preview_hunk_page(
     page: usize,
     replacement: &str,
 ) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     ScrollArea::vertical()
         .id_salt(("workspace_replace_preview", page))
         .max_height(320.0)
@@ -439,7 +439,7 @@ fn show_preview_hunk_page(
                         hunk.line,
                         hunk.hits.len()
                     ))
-                    .color(MUTED)
+                    .color(colors.muted)
                     .size(11.0),
                 );
                 super::workspace_search_diff::show_hunk(

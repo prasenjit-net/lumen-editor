@@ -45,7 +45,7 @@ impl eframe::App for Spike {
                 .on_hover_text("This isolated in-memory fixture cannot change production documents. Native clipboard transport, IME composition, accessibility and shaping are not approved.");
         });
         egui::TopBottomPanel::bottom("spike_status")
-            .frame(egui::Frame::new().fill(theme::STATUS))
+            .frame(egui::Frame::new().fill(theme::palette(&ctx.style().visuals).status))
             .exact_height(
                 if self.surface.notice.is_some() || self.diagnostic_preedit {
                     38.0

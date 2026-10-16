@@ -71,40 +71,41 @@ impl Workbench<'_> {
         can_redo: bool,
     ) {
         response.context_menu(|ui| {
-            let command_key = if cfg!(target_os = "macos") {
-                "⌘"
-            } else {
-                "Ctrl+"
-            };
             for (action, title, shortcut, enabled) in [
                 (
                     EditorAction::Undo,
                     "Undo",
-                    format!("{command_key}Z"),
+                    super::shortcut::primary("Z"),
                     can_undo,
                 ),
                 (
                     EditorAction::Redo,
                     "Redo",
-                    if cfg!(target_os = "macos") {
-                        "Shift+⌘Z".into()
-                    } else {
-                        "Ctrl+Shift+Z".into()
-                    },
+                    super::shortcut::primary("Shift+Z"),
                     can_redo,
                 ),
-                (EditorAction::Cut, "Cut", format!("{command_key}X"), true),
-                (EditorAction::Copy, "Copy", format!("{command_key}C"), true),
+                (
+                    EditorAction::Cut,
+                    "Cut",
+                    super::shortcut::primary("X"),
+                    true,
+                ),
+                (
+                    EditorAction::Copy,
+                    "Copy",
+                    super::shortcut::primary("C"),
+                    true,
+                ),
                 (
                     EditorAction::Paste,
                     "Paste",
-                    format!("{command_key}V"),
+                    super::shortcut::primary("V"),
                     true,
                 ),
                 (
                     EditorAction::SelectAll,
                     "Select All",
-                    format!("{command_key}A"),
+                    super::shortcut::primary("A"),
                     true,
                 ),
             ] {
@@ -121,12 +122,12 @@ impl Workbench<'_> {
             }
             ui.separator();
             for (command, title, shortcut) in [
-                (Command::Find, "Find", format!("{command_key}F")),
+                (Command::Find, "Find", super::shortcut::primary("F")),
                 (
                     Command::Replace,
                     "Replace",
                     if cfg!(target_os = "macos") {
-                        "Alt+⌘F".into()
+                        super::shortcut::primary("Alt+F")
                     } else {
                         "Ctrl+H".into()
                     },
@@ -146,7 +147,7 @@ impl Workbench<'_> {
                 (
                     Command::ShowDocumentSymbols,
                     "Go to Symbol in Editor",
-                    format!("Shift+{command_key}O"),
+                    super::shortcut::primary("Shift+O"),
                 ),
                 (
                     Command::AskAgentAboutSelection,
@@ -154,10 +155,17 @@ impl Workbench<'_> {
                     String::new(),
                 ),
             ] {
-                if ui
-                    .add(egui::Button::new(title).shortcut_text(shortcut))
-                    .clicked()
-                {
+                // Same availability rules as the command palette, with the reason.
+                let reason = self.palette_disabled_reason(&command);
+                let response = ui.add_enabled(
+                    reason.is_none(),
+                    egui::Button::new(title).shortcut_text(shortcut),
+                );
+                let response = match reason {
+                    Some(reason) => response.on_disabled_hover_text(reason),
+                    None => response,
+                };
+                if response.clicked() {
                     self.command(command);
                     ui.close();
                 }

@@ -1,8 +1,5 @@
 //! One scroll/layout authority for text, gutter, search highlights and hit tests.
-use super::{
-    Workbench,
-    theme::{BG, MUTED, TEXT},
-};
+use super::Workbench;
 use crate::app::{
     editor_action::{blocked, prepare_action, text_widget_id},
     editor_clipboard::{finish_clipboard, prepare_clipboard},
@@ -13,6 +10,20 @@ use eframe::egui::{self, FontId, Frame, Margin, ScrollArea, TextEdit};
 
 impl Workbench<'_> {
     pub(super) fn editor_viewport(&mut self, ui: &mut egui::Ui, index: usize) {
+        let path = self.editor.files[index].path.as_deref();
+        let scheme = self
+            .view
+            .settings
+            .document_choice("editor.color_scheme", path);
+        let theme = crate::ui::theme::editor_theme(&scheme, ui.visuals());
+        let original = ui.style().clone();
+        *ui.visuals_mut() = crate::ui::theme::visuals(theme);
+        self.editor_viewport_themed(ui, index);
+        ui.set_style(original);
+    }
+
+    pub(super) fn editor_viewport_themed(&mut self, ui: &mut egui::Ui, index: usize) {
+        let colors = crate::ui::theme::palette(ui.visuals());
         #[cfg(feature = "shared-editor")]
         if self.view.shared_editor || self.editor.files[index].editing.is_some() {
             self.editor_shared(ui, index);
@@ -43,7 +54,7 @@ impl Workbench<'_> {
         let height = ui.available_height();
         ui.push_id(("editor_viewport", document), |ui| {
             Frame::new()
-                .fill(BG)
+                .fill(colors.bg)
                 .corner_radius(4)
                 .inner_margin(Margin::ZERO)
                 .show(ui, |ui| {
@@ -60,7 +71,7 @@ impl Workbench<'_> {
                     let line_count = self.editor.files[index].text.split('\n').count();
                     let number_width = ui.fonts_mut(|fonts| {
                         fonts
-                            .layout_no_wrap(line_count.to_string(), font.clone(), MUTED)
+                            .layout_no_wrap(line_count.to_string(), font.clone(), colors.muted)
                             .size()
                             .x
                     });
@@ -96,7 +107,7 @@ impl Workbench<'_> {
                                 let mut job = egui::text::LayoutJob::simple(
                                     text.as_str().into(),
                                     font.clone(),
-                                    TEXT,
+                                    colors.text,
                                     f32::INFINITY,
                                 );
                                 job.sections[0].format.line_height = Some(line_height);
@@ -112,7 +123,7 @@ impl Workbench<'_> {
                                 let edit = TextEdit::multiline(&mut self.editor.files[index].text)
                                     .id(id)
                                     .font(font.clone())
-                                    .text_color(TEXT)
+                                    .text_color(colors.text)
                                     .desired_width(f32::INFINITY)
                                     .min_size(egui::vec2(0.0, viewport.height()))
                                     .frame(false)

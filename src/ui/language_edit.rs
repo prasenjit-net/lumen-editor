@@ -1,22 +1,21 @@
 //! Rename prompt and the review dialog for language-server edits.
-use super::{
-    Workbench,
-    theme::{BORDER, DIFF_ADDED_TEXT, DIFF_REMOVED_TEXT, MUTED, PANEL, TEXT},
-};
+use super::Workbench;
 use crate::app::command::Command;
 use eframe::egui::{self, CornerRadius, Frame, RichText, ScrollArea, Stroke, TextEdit, Vec2};
 
 const MAX_PREVIEW_ROWS: usize = 400;
 
 fn window_frame(ctx: &egui::Context) -> Frame {
+    let colors = crate::ui::theme::palette(&ctx.style().visuals);
     Frame::window(&ctx.style())
-        .fill(PANEL)
+        .fill(colors.panel)
         .corner_radius(CornerRadius::same(6))
-        .stroke(Stroke::new(1.0_f32, BORDER))
+        .stroke(Stroke::new(1.0_f32, colors.border))
 }
 
 impl Workbench<'_> {
     pub(crate) fn rename_prompt(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         let Some(prompt) = self.view.rename_prompt.as_mut() else {
             return;
         };
@@ -35,7 +34,7 @@ impl Workbench<'_> {
                         "Rename “{}” everywhere the server finds it",
                         prompt.original
                     ))
-                    .color(MUTED),
+                    .color(colors.muted),
                 );
                 let input = ui.add(
                     TextEdit::singleline(&mut prompt.name)
@@ -64,6 +63,7 @@ impl Workbench<'_> {
     }
 
     pub(crate) fn language_edit_preview(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         let Some(plan) = self.view.language_edit_plan.as_ref() else {
             return;
         };
@@ -86,7 +86,7 @@ impl Workbench<'_> {
                     RichText::new(format!(
                         "{edits} edit(s) in {files} file(s). Open files change in their buffers and stay unsaved; other files are written when you apply."
                     ))
-                    .color(MUTED),
+                    .color(colors.muted),
                 );
                 ui.separator();
                 ScrollArea::vertical()
@@ -102,19 +102,19 @@ impl Workbench<'_> {
                                     .and_then(|root| row.path.strip_prefix(root).ok())
                                     .unwrap_or(&row.path);
                                 ui.add_space(4.0);
-                                ui.label(RichText::new(shown.display().to_string()).strong().color(TEXT));
+                                ui.label(RichText::new(shown.display().to_string()).strong().color(colors.text));
                             }
                             ui.label(
                                 RichText::new(format!("{:>5} - {}", row.line, row.before))
                                     .monospace()
                                     .size(11.0)
-                                    .color(DIFF_REMOVED_TEXT),
+                                    .color(colors.error),
                             );
                             ui.label(
                                 RichText::new(format!("{:>5} + {}", row.line, row.after))
                                     .monospace()
                                     .size(11.0)
-                                    .color(DIFF_ADDED_TEXT),
+                                    .color(colors.diff_added_text),
                             );
                         }
                         if rows.len() > MAX_PREVIEW_ROWS {
@@ -123,7 +123,7 @@ impl Workbench<'_> {
                                     "… and {} more edits (all are applied)",
                                     rows.len() - MAX_PREVIEW_ROWS
                                 ))
-                                .color(MUTED),
+                                .color(colors.muted),
                             );
                         }
                     });

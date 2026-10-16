@@ -1,13 +1,11 @@
 //! Searchable language-server location picker.
-use super::{
-    Workbench,
-    theme::{BORDER, MUTED, PANEL, TEXT},
-};
+use super::Workbench;
 use crate::app::command::Command;
 use eframe::egui::{self, CornerRadius, Frame, RichText, Stroke, TextEdit, Vec2};
 
 impl Workbench<'_> {
     pub(crate) fn language_navigation(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         if !self.view.language_navigation.open {
             return;
         }
@@ -59,9 +57,9 @@ impl Workbench<'_> {
             .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 72.0))
             .frame(
                 Frame::window(&ctx.style())
-                    .fill(PANEL)
+                    .fill(colors.panel)
                     .corner_radius(CornerRadius::same(6))
-                    .stroke(Stroke::new(1.0_f32, BORDER)),
+                    .stroke(Stroke::new(1.0_f32, colors.border)),
             )
             .show(ctx, |ui| {
                 let search = ui.add(
@@ -77,7 +75,7 @@ impl Workbench<'_> {
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     if matches.is_empty() {
-                        ui.label(RichText::new("No matching locations").color(MUTED));
+                        ui.label(RichText::new("No matching locations").color(colors.muted));
                     }
                     for (row, index) in matches.iter().copied().enumerate() {
                         let location = &self.view.language_navigation.locations[index];
@@ -90,7 +88,7 @@ impl Workbench<'_> {
                         let response = ui
                             .selectable_label(
                                 row == self.view.language_navigation.selected,
-                                RichText::new(&location.label).color(TEXT),
+                                RichText::new(&location.label).color(colors.text),
                             )
                             .on_hover_text(path.display().to_string());
                         if response.clicked() {

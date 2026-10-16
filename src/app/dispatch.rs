@@ -190,6 +190,7 @@ impl LumenApp {
             Command::OpenFolder => self.choose_folder(),
             Command::CloseFolder => self.close_folder(),
             Command::OpenPath(path) => self.open_file(path),
+            Command::RevealInExplorer(path) => self.reveal_in_explorer(path),
             Command::Save if self.view.settings.open => {
                 if self.view.settings.selected().pending() > 0 {
                     self.apply_settings();
@@ -209,6 +210,7 @@ impl LumenApp {
             Command::DismissConflict => self.view.save_conflict = None,
             Command::RequestClose(index) => self.request_close(index),
             Command::CloseFile(index) => self.close_file(index),
+            Command::CloseTabs(scope) => self.begin_bulk_close(scope),
             Command::CloseEditor => {
                 if self.view.settings.open {
                     self.view.settings.tab_open = false;
@@ -231,12 +233,24 @@ impl LumenApp {
             }
             Command::Quit => self.request_quit(ctx),
             Command::Palette => {
+                if !self.view.command_palette {
+                    self.view.palette_previous_focus = ctx.memory(|memory| memory.focused());
+                    self.view.palette_query.clear();
+                    self.view.palette_selected = 0;
+                }
                 self.view.navigation.mode = None;
                 self.view.command_palette = true;
                 self.view.command_palette_focus = true;
             }
             Command::ToggleSidebar => self.view.sidebar_visible = !self.view.sidebar_visible,
-            Command::Welcome => self.view.status = "Lumen — New: ⌘N · Open: ⌘O · Save: ⌘S".into(),
+            Command::Welcome => {
+                self.view.status = format!(
+                    "Lumen — New: {} · Open: {} · Save: {}",
+                    crate::ui::shortcut::primary("N"),
+                    crate::ui::shortcut::primary("O"),
+                    crate::ui::shortcut::primary("S")
+                )
+            }
             Command::Copy | Command::Cut if explorer_clipboard => {
                 if let Some(selection) = &self.view.explorer_selection {
                     self.explorer_copy(selection.path().into(), command == Command::Cut);

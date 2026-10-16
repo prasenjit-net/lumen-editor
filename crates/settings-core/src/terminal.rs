@@ -56,12 +56,12 @@ pub(crate) const SCHEMA: SectionSchema = SectionSchema {
         },
         Setting {
             id: "terminal.color_scheme",
-            default: DefaultValue::Choice("vscode_dark"),
+            default: DefaultValue::Choice("workbench"),
             name: "Color Scheme",
             category: "Terminal",
             help: "ANSI color palette for terminal output. Shell color codes remain shell-owned.",
             aliases: "ansi colour theme contrast output",
-            control: Control::Choice(&["vscode_dark", "high_contrast"]),
+            control: Control::Choice(&["workbench", "vscode_dark", "light", "high_contrast"]),
             document: false,
         },
         Setting {

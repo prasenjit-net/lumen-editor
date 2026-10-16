@@ -1,8 +1,4 @@
 //! Compact, read-only diff rows for workspace replacement previews.
-use super::theme::{
-    DIFF_ADDED_BG, DIFF_ADDED_HIGHLIGHT, DIFF_ADDED_TEXT, DIFF_REMOVED_BG, DIFF_REMOVED_HIGHLIGHT,
-    DIFF_REMOVED_TEXT, MUTED, PANEL, TEXT,
-};
 use crate::services::workspace_search::{SearchFile, SearchHit};
 use eframe::egui::{self, Color32, FontId, Frame, Margin, RichText, ScrollArea, TextFormat};
 use std::ops::Range;
@@ -48,6 +44,7 @@ pub(super) fn show_hunk(
     range: Range<usize>,
     replacement: &str,
 ) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let Some(first) = hits.first() else { return };
     let id = egui::Id::new((
         "workspace_replace_diff",
@@ -57,7 +54,7 @@ pub(super) fn show_hunk(
     let rows = if range.end.saturating_sub(range.start) > MAX_FULL_HUNK_BYTES {
         ui.label(
             RichText::new("Long group · excerpts around each match")
-                .color(MUTED)
+                .color(colors.muted)
                 .size(11.0),
         );
         let Some(rows) = hits
@@ -65,7 +62,9 @@ pub(super) fn show_hunk(
             .map(|hit| excerpt_rows(&file.original, hit, replacement))
             .collect::<Option<Vec<_>>>()
         else {
-            ui.label(RichText::new("Preview unavailable: invalid match ranges").color(MUTED));
+            ui.label(
+                RichText::new("Preview unavailable: invalid match ranges").color(colors.muted),
+            );
             return;
         };
         rows.into_iter().flatten().collect()
@@ -73,7 +72,9 @@ pub(super) fn show_hunk(
         match diff_rows(&file.original, hits, range, replacement) {
             Some(rows) => rows,
             None => {
-                ui.label(RichText::new("Preview unavailable: invalid match ranges").color(MUTED));
+                ui.label(
+                    RichText::new("Preview unavailable: invalid match ranges").color(colors.muted),
+                );
                 return;
             }
         }
@@ -202,10 +203,11 @@ fn leading_excerpt(text: &str, limit: usize) -> String {
 }
 
 fn show_row(ui: &mut egui::Ui, row: &DiffRow, id: egui::Id) {
+    let colors = crate::ui::theme::palette(ui.visuals());
     let (marker, background, color) = match row.kind {
-        DiffKind::Context => (" ", PANEL, MUTED),
-        DiffKind::Removed => ("−", DIFF_REMOVED_BG, DIFF_REMOVED_TEXT),
-        DiffKind::Added => ("+", DIFF_ADDED_BG, DIFF_ADDED_TEXT),
+        DiffKind::Context => (" ", colors.panel, colors.muted),
+        DiffKind::Removed => ("−", colors.diff_removed_bg, colors.diff_removed_text),
+        DiffKind::Added => ("+", colors.diff_added_bg, colors.diff_added_text),
     };
     let width = ui.available_width();
     Frame::new()
@@ -222,17 +224,17 @@ fn show_row(ui: &mut egui::Ui, row: &DiffRow, id: egui::Id) {
                         (
                             color,
                             match row.kind {
-                                DiffKind::Removed => DIFF_REMOVED_HIGHLIGHT,
-                                DiffKind::Added => DIFF_ADDED_HIGHLIGHT,
+                                DiffKind::Removed => colors.diff_removed_highlight,
+                                DiffKind::Added => colors.diff_added_highlight,
                                 DiffKind::Context => Color32::TRANSPARENT,
                             },
                         )
                     } else {
                         (
                             if row.kind == DiffKind::Context {
-                                MUTED
+                                colors.muted
                             } else {
-                                TEXT
+                                colors.text
                             },
                             Color32::TRANSPARENT,
                         )
@@ -368,7 +370,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(fills.contains(&DIFF_REMOVED_BG));
-        assert!(fills.contains(&DIFF_ADDED_BG));
+        assert!(fills.contains(&crate::ui::theme::Theme::Dark.palette().diff_removed_bg));
+        assert!(fills.contains(&crate::ui::theme::Theme::Dark.palette().diff_added_bg));
     }
 }

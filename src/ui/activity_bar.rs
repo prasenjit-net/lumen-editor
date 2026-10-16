@@ -1,5 +1,4 @@
 use super::Workbench;
-use super::theme::{ACCENT, SIDEBAR};
 use super::widgets::{self, canvas, surface};
 use crate::app::command::Command;
 use crate::app::view_state::Activity;
@@ -7,13 +6,14 @@ use crate::icon;
 use eframe::egui::{self, Stroke};
 impl Workbench<'_> {
     pub(crate) fn activity_bar(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         egui::SidePanel::left("activity")
             .exact_width(52.0)
             .resizable(false)
             .show_separator_line(false)
-            .frame(canvas())
+            .frame(canvas(ctx))
             .show(ctx, |ui| {
-                surface(SIDEBAR).show(ui, |ui| {
+                surface(colors.sidebar).show(ui, |ui| {
                     ui.set_min_size(ui.available_size());
                     ui.vertical_centered(|ui| {
                         for (activity, glyph) in [
@@ -31,19 +31,11 @@ impl Workbench<'_> {
                                 true,
                                 activity.title(),
                             );
-                            if glyph == icon::AGENT && self.view.agents.needs_attention() {
-                                // An agent is blocked on a permission request.
-                                ui.painter().circle_filled(
-                                    response.rect.right_top() + egui::vec2(-12.0, 12.0),
-                                    4.5,
-                                    egui::Color32::from_rgb(204, 167, 0),
-                                );
-                            }
                             if selected {
                                 ui.painter().vline(
                                     response.rect.left(),
                                     response.rect.y_range(),
-                                    Stroke::new(2.0_f32, ACCENT),
+                                    Stroke::new(2.0_f32, colors.accent),
                                 );
                             }
                             if response.clicked() {
@@ -58,35 +50,50 @@ impl Workbench<'_> {
                             (
                                 icon::AGENT,
                                 self.view.agents.open,
-                                "Coding Agents (Cmd/Ctrl+Shift+A)",
+                                format!("Coding Agents ({})", super::shortcut::primary("Shift+A")),
                                 Command::ToggleAgentPanel,
                             ),
                             (
                                 icon::TERMINAL,
                                 self.view.terminal.open,
-                                "Terminal (Ctrl+`); opens in your home folder when no folder is open",
+                                "Terminal (Ctrl+`); opens in your home folder when no folder is open".into(),
                                 Command::ToggleTerminal,
                             ),
                             (
                                 icon::OUTPUT,
                                 self.view.output.open,
-                                "Output",
+                                "Output".into(),
                                 Command::ToggleOutput,
                             ),
                         ]
                         .into_iter()
                         .filter(|(glyph, ..)| agents_enabled || *glyph != icon::AGENT)
                         {
+                            let waiting =
+                                glyph == icon::AGENT && self.view.agents.needs_attention();
+                            let name = if waiting {
+                                format!("{tooltip} - waiting for your approval")
+                            } else {
+                                tooltip.clone()
+                            };
                             let response = widgets::named(
-                                widgets::icon_button(ui, glyph, selected).on_hover_text(tooltip),
+                                widgets::icon_button(ui, glyph, selected).on_hover_text(&name),
                                 true,
-                                tooltip,
+                                &name,
                             );
+                            if waiting {
+                                // An agent is blocked on a permission request.
+                                ui.painter().circle_filled(
+                                    response.rect.right_top() + egui::vec2(-12.0, 12.0),
+                                    4.5,
+                                    colors.warning,
+                                );
+                            }
                             if selected {
                                 ui.painter().vline(
                                     response.rect.left(),
                                     response.rect.y_range(),
-                                    Stroke::new(2.0_f32, ACCENT),
+                                    Stroke::new(2.0_f32, colors.accent),
                                 );
                             }
                             if response.clicked() {
@@ -95,7 +102,7 @@ impl Workbench<'_> {
                         }
                         if widgets::named(
                             widgets::icon_button(ui, icon::GEAR, self.view.settings.open)
-                                .on_hover_text("Settings (Cmd/Ctrl+,)"),
+                                .on_hover_text(format!("Settings ({})", super::shortcut::primary(","))),
                             true,
                             "Settings",
                         )
@@ -165,7 +172,7 @@ mod tests {
 
     fn active_stripes(output: &egui::FullOutput) -> usize {
         output.shapes.iter().filter(|shape| matches!(&shape.shape,
-            egui::Shape::LineSegment { stroke, .. } if stroke.color == ACCENT && stroke.width == 2.0
+            egui::Shape::LineSegment { stroke, .. } if stroke.color == crate::ui::theme::Theme::Dark.palette().accent && stroke.width == 2.0
         )).count()
     }
 
@@ -332,5 +339,46 @@ mod tests {
         app.execute(Command::ToggleAgentPanel, &ctx);
         assert!(!app.view.agents.open);
         assert!(app.view.status.contains("turned off"));
+    }
+
+    #[test]
+    fn a_pending_agent_permission_shows_a_badge_on_the_closed_agent_button() {
+        use crate::app::{agent::AgentKind, agent_permission::PendingPermission};
+        let mut app = LumenApp::default();
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let warning = crate::ui::theme::Theme::Dark.palette().warning;
+        let badges = |output: &egui::FullOutput| {
+            output
+                .shapes
+                .iter()
+                .filter(|shape| {
+                    matches!(&shape.shape,
+                    egui::Shape::Circle(circle) if circle.fill == warning)
+                })
+                .count()
+        };
+        assert!(!app.view.agents.open);
+        assert_eq!(badges(&frame(&mut app, &ctx, 900.0, vec![])), 0);
+        let params = serde_json::json!({"sessionId":"s1",
+            "toolCall":{"toolCallId":"t1","title":"Write","kind":"edit"},
+            "options":[{"optionId":"o","name":"Yes","kind":"allow_once"}]});
+        let request = lumen_agent_protocol::types::parse_permission_request(&params).unwrap();
+        app.view
+            .agents
+            .session_mut(AgentKind::Claude)
+            .pending_permissions
+            .push(PendingPermission {
+                id: lumen_agent_protocol::rpc::RequestId::Number(1),
+                request,
+                warnings: vec![],
+            });
+        assert_eq!(badges(&frame(&mut app, &ctx, 900.0, vec![])), 1);
+        app.view
+            .agents
+            .session_mut(AgentKind::Claude)
+            .pending_permissions
+            .clear();
+        assert_eq!(badges(&frame(&mut app, &ctx, 900.0, vec![])), 0);
     }
 }

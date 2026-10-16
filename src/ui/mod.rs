@@ -1,6 +1,7 @@
 //! Workbench components and shared drawing primitives.
 mod activity_bar;
 mod agent_panel;
+mod breadcrumbs;
 mod chrome;
 #[cfg(feature = "shared-editor")]
 mod completion;
@@ -21,8 +22,11 @@ mod language_navigation;
 mod navigation;
 mod output;
 mod palette;
+#[cfg(feature = "shared-editor")]
+mod popup_place;
 mod problems;
 mod settings;
+pub(crate) mod shortcut;
 mod source_control;
 mod terminal;
 pub(crate) mod theme;

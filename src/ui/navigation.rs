@@ -1,8 +1,5 @@
 //! Compact Quick Open and Go to Line overlays.
-use super::{
-    Workbench,
-    theme::{BORDER, MUTED, PANEL, TEXT},
-};
+use super::Workbench;
 use crate::{
     app::{
         command::Command,
@@ -14,6 +11,7 @@ use eframe::egui::{self, CornerRadius, Frame, RichText, Stroke, TextEdit, Vec2};
 
 impl Workbench<'_> {
     pub(crate) fn navigation_palette(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         let Some(mode) = self.view.navigation.mode else {
             return;
         };
@@ -33,9 +31,9 @@ impl Workbench<'_> {
             .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 48.0))
             .frame(
                 Frame::window(&ctx.style())
-                    .fill(PANEL)
+                    .fill(colors.panel)
                     .corner_radius(CornerRadius::same(6))
-                    .stroke(Stroke::new(1.0_f32, BORDER)),
+                    .stroke(Stroke::new(1.0_f32, colors.border)),
             )
             .show(ctx, |ui| {
                 ui.set_width(width - 16.0);
@@ -87,7 +85,7 @@ impl Workbench<'_> {
                         ui.label(
                             RichText::new("Line and column are 1-based; out-of-range values stop at the document end.")
                                 .size(11.0)
-                                .color(MUTED),
+                                .color(colors.muted),
                         );
                         if enter {
                             if let Some(document) = document {
@@ -99,7 +97,7 @@ impl Workbench<'_> {
                     }
                 }
                 if let Some(error) = &nav.error {
-                    ui.label(RichText::new(error).color(crate::ui::theme::DIFF_REMOVED_TEXT));
+                    ui.label(RichText::new(error).color(colors.error));
                 }
             });
         if !open {
@@ -121,6 +119,7 @@ fn show_quick_results(
     enter: bool,
     selection_moved: bool,
 ) -> Option<Command> {
+    let colors = crate::ui::theme::palette(ui.visuals());
     nav.refresh(root);
     let mut action = nav
         .matches
@@ -138,16 +137,16 @@ fn show_quick_results(
     } else {
         "Recent files and workspace matches"
     };
-    ui.label(RichText::new(hint).size(11.0).color(MUTED));
+    ui.label(RichText::new(hint).size(11.0).color(colors.muted));
     if nav.errors > 0 {
         ui.label(
             RichText::new(format!("{} paths could not be indexed", nav.errors))
                 .size(11.0)
-                .color(MUTED),
+                .color(colors.muted),
         );
     }
     if let Some(warning) = &nav.recent_warning {
-        ui.label(RichText::new(warning).size(11.0).color(MUTED));
+        ui.label(RichText::new(warning).size(11.0).color(colors.muted));
     }
     egui::ScrollArea::vertical()
         .max_height(330.0)
@@ -176,15 +175,16 @@ fn show_quick_results(
             }
         });
     if nav.matches.is_empty() && !nav.running {
-        ui.label(RichText::new("No matching files").color(MUTED));
+        ui.label(RichText::new("No matching files").color(colors.muted));
     }
     action
 }
 
 fn quick_result_row(ui: &mut egui::Ui, label: String, selected: bool) -> egui::Response {
+    let colors = crate::ui::theme::palette(ui.visuals());
     ui.add_sized(
         [ui.available_width(), 22.0],
-        egui::Button::new((RichText::new(label).color(TEXT), egui::Atom::grow()))
+        egui::Button::new((RichText::new(label).color(colors.text), egui::Atom::grow()))
             .selected(selected)
             .truncate(),
     )

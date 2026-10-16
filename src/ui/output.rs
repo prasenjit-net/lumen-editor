@@ -14,17 +14,21 @@ const DEFAULT_HEIGHT: f32 = 220.0;
 const MIN_HEIGHT: f32 = 120.0;
 const MAX_HEIGHT: f32 = 520.0;
 
-fn level_color(level: LogLevel) -> Color32 {
+fn level_color(level: LogLevel, colors: theme::Palette) -> Color32 {
     match level {
-        LogLevel::Info => theme::TEXT,
-        LogLevel::Warn => Color32::from_rgb(204, 167, 0),
-        LogLevel::Error => theme::DIFF_REMOVED_TEXT,
+        LogLevel::Info => colors.text,
+        LogLevel::Warn => colors.warning,
+        LogLevel::Error => colors.error,
     }
 }
 
 /// One entry as a single selectable row. Pieces are separated exactly like
 /// `LogEntry::line`, so copied text matches what is on screen.
-fn entry_job(entry: &crate::model::output_log::LogEntry, font: &FontId) -> LayoutJob {
+fn entry_job(
+    entry: &crate::model::output_log::LogEntry,
+    font: &FontId,
+    colors: theme::Palette,
+) -> LayoutJob {
     let mut job = LayoutJob::default();
     let piece = |text: String, color: Color32| {
         (
@@ -37,13 +41,13 @@ fn entry_job(entry: &crate::model::output_log::LogEntry, font: &FontId) -> Layou
         )
     };
     for (text, format) in [
-        piece(format!("{} ", entry.timestamp), theme::MUTED),
+        piece(format!("{} ", entry.timestamp), colors.muted),
         piece(
             format!("[{}] ", entry.level.label()),
-            level_color(entry.level),
+            level_color(entry.level, colors),
         ),
-        piece(format!("{}: ", entry.source), theme::MUTED),
-        piece(entry.message.clone(), level_color(entry.level)),
+        piece(format!("{}: ", entry.source), colors.muted),
+        piece(entry.message.clone(), level_color(entry.level, colors)),
     ] {
         job.append(&text, 0.0, format);
     }
@@ -52,6 +56,7 @@ fn entry_job(entry: &crate::model::output_log::LogEntry, font: &FontId) -> Layou
 
 impl Workbench<'_> {
     pub(crate) fn output_panel(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
         if !self.view.output.open {
             return;
         }
@@ -67,7 +72,7 @@ impl Workbench<'_> {
             .height_range(MIN_HEIGHT..=MAX_HEIGHT)
             .resizable(true)
             .show_separator_line(panel_divider)
-            .frame(egui::Frame::default().fill(theme::PANEL))
+            .frame(egui::Frame::default().fill(colors.panel))
             .show(ctx, |ui| {
                 ui.set_min_height(ui.available_height());
                 let tabs = [
@@ -107,7 +112,7 @@ impl Workbench<'_> {
                 }
                 let scroll_to_bottom = std::mem::take(&mut self.view.output.scroll_to_bottom);
                 egui::Frame::default()
-                    .fill(theme::BG)
+                    .fill(colors.bg)
                     .corner_radius(egui::CornerRadius::same(3))
                     .inner_margin(egui::Margin::symmetric(7, 5))
                     .show(ui, |ui| {
@@ -120,7 +125,7 @@ impl Workbench<'_> {
                                 if self.view.output.entries.is_empty() {
                                     ui.label(
                                         egui::RichText::new("No output yet.")
-                                            .color(theme::MUTED)
+                                            .color(colors.muted)
                                             .size(11.0),
                                     );
                                 }
@@ -129,7 +134,7 @@ impl Workbench<'_> {
                                     // Wrapping off keeps one entry on one row;
                                     // long messages scroll horizontally.
                                     ui.add(
-                                        egui::Label::new(entry_job(entry, &font))
+                                        egui::Label::new(entry_job(entry, &font, colors))
                                             .wrap_mode(egui::TextWrapMode::Extend)
                                             .selectable(true),
                                     );

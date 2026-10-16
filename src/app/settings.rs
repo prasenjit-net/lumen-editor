@@ -42,6 +42,7 @@ pub(crate) struct SettingsState {
     projects: BTreeMap<PathBuf, ConfigDraft>,
     applied_sidebar: Option<bool>,
     applied_scale: Option<f64>,
+    applied_theme: Option<(crate::ui::theme::Theme, bool)>,
 }
 impl SettingsState {
     pub(crate) fn has_drafts(&self) -> bool {
@@ -300,6 +301,13 @@ impl LumenApp {
         if !self.view.settings.initialized {
             return;
         }
+        let choice = self.view.settings.choice("workbench.theme");
+        let theme = crate::ui::theme::Theme::resolve(&choice, ctx.system_theme());
+        let follow_system = choice == "system";
+        if self.view.settings.applied_theme != Some((theme, follow_system)) {
+            crate::ui::theme::configure_theme(ctx, theme, follow_system);
+            self.view.settings.applied_theme = Some((theme, follow_system));
+        }
         let sidebar = self.view.settings.boolean("workbench.sidebar_visible");
         if self.view.settings.applied_sidebar != Some(sidebar) {
             self.view.sidebar_visible = sidebar;
@@ -358,6 +366,101 @@ mod tests {
         app.initialize_settings(Some(PathBuf::from("/user/.lumen/settings.toml")));
         (app, store)
     }
+    #[test]
+    fn theme_apply_failure_cancel_and_system_changes_preserve_editor_and_drafts() {
+        use crate::ui::theme::{self, Theme};
+        let (mut app, store) = fixture();
+        let ctx = eframe::egui::Context::default();
+        theme::configure_ui(&ctx);
+        app.editor.new_file();
+        app.editor.files[0].text = "unsaved text".into();
+        app.editor.files[0].dirty = true;
+        let document = app.editor.files[0].id;
+        let focus = super::super::editor_action::text_widget_id(document);
+        ctx.memory_mut(|memory| memory.request_focus(focus));
+        app.view
+            .settings
+            .user
+            .draft
+            .insert("workbench.theme".into(), Value::Choice("light".into()));
+        app.apply_workbench_settings(&ctx);
+        assert_eq!(theme::current(&ctx.style().visuals), Theme::Dark);
+        store.0.borrow_mut().fail = true;
+        app.apply_settings();
+        app.apply_workbench_settings(&ctx);
+        assert_eq!(theme::current(&ctx.style().visuals), Theme::Dark);
+        assert!(app.view.settings.has_drafts());
+        store.0.borrow_mut().fail = false;
+        app.apply_settings();
+        app.apply_workbench_settings(&ctx);
+        assert_eq!(theme::current(&ctx.style().visuals), Theme::Light);
+        assert!(ctx.memory(|memory| memory.has_focus(focus)));
+        app.view.settings.user.draft.insert(
+            "workbench.theme".into(),
+            Value::Choice("high-contrast".into()),
+        );
+        app.view.settings.discard_drafts();
+        app.apply_workbench_settings(&ctx);
+        assert_eq!(theme::current(&ctx.style().visuals), Theme::Light);
+        app.view
+            .settings
+            .user
+            .draft
+            .insert("workbench.theme".into(), Value::Choice("system".into()));
+        app.apply_settings();
+        app.view
+            .settings
+            .user
+            .draft
+            .insert("editor.font_size".into(), Value::Number(15.0));
+        for (system, expected) in [
+            (eframe::egui::Theme::Dark, Theme::Dark),
+            (eframe::egui::Theme::Light, Theme::Light),
+        ] {
+            let _ = ctx.run(
+                eframe::egui::RawInput {
+                    system_theme: Some(system),
+                    ..Default::default()
+                },
+                |ctx| app.apply_workbench_settings(ctx),
+            );
+            assert_eq!(theme::current(&ctx.style().visuals), expected);
+            assert_eq!(app.view.settings.user.pending(), 1);
+        }
+        assert_eq!(app.editor.files[0].id, document);
+        assert_eq!(app.editor.files[0].text, "unsaved text");
+        assert!(app.editor.files[0].dirty);
+    }
+
+    #[test]
+    fn project_editor_scheme_is_local_to_workspace_documents() {
+        let (mut app, store) = fixture();
+        store.0.borrow_mut().files.insert(
+            "/project/.lumen/settings.toml".into(),
+            "[workbench]\ntheme = 'high-contrast'\n[editor]\ncolor_scheme = 'lumen-light'\n".into(),
+        );
+        app.editor.workspace = Some("/project".into());
+        app.sync_project_settings();
+        let ctx = eframe::egui::Context::default();
+        app.apply_workbench_settings(&ctx);
+        assert_eq!(
+            crate::ui::theme::current(&ctx.style().visuals),
+            crate::ui::theme::Theme::HighContrast
+        );
+        assert_eq!(
+            app.view
+                .settings
+                .document_choice("editor.color_scheme", Some(Path::new("/project/main.rs"))),
+            "lumen-light"
+        );
+        assert_eq!(
+            app.view
+                .settings
+                .document_choice("editor.color_scheme", Some(Path::new("/other/main.rs"))),
+            "workbench"
+        );
+    }
+
     #[test]
     fn project_priority_outside_files_and_no_discovery_or_implicit_creation() {
         let (mut app, store) = fixture();
