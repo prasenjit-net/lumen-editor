@@ -69,6 +69,34 @@ impl LumenApp {
         }
     }
 
+    /// Scan the folder in the background unless its index is already current.
+    pub(crate) fn ensure_file_index(&mut self, ctx: &egui::Context) {
+        let root = self.editor.workspace.clone();
+        if self.view.navigation.indexed_root == root {
+            return;
+        }
+        self.cancel_file_index();
+        self.view.navigation.indexed_root = root.clone();
+        self.view.navigation.paths.clear();
+        self.view.navigation.running = root.is_some();
+        if let Some(root) = root {
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let worker_cancelled = Arc::clone(&cancelled);
+            let (sender, receiver) = mpsc::channel();
+            let scan_root = root.clone();
+            std::thread::spawn(move || {
+                let result = file_index::scan(&scan_root, &worker_cancelled);
+                let _ = sender.send(result);
+            });
+            self.file_index_job = Some(FileIndexJob {
+                root,
+                cancelled,
+                receiver,
+            });
+            ctx.request_repaint();
+        }
+    }
+
     pub(crate) fn open_quick_open(&mut self, ctx: &egui::Context) {
         self.view.command_palette = false;
         let navigation = &mut self.view.navigation;
@@ -78,29 +106,7 @@ impl LumenApp {
         navigation.selected = 0;
         navigation.focus = true;
         navigation.matched_query = None;
-        let root = self.editor.workspace.clone();
-        if navigation.indexed_root != root {
-            self.cancel_file_index();
-            self.view.navigation.indexed_root = root.clone();
-            self.view.navigation.paths.clear();
-            self.view.navigation.running = root.is_some();
-            if let Some(root) = root {
-                let cancelled = Arc::new(AtomicBool::new(false));
-                let worker_cancelled = Arc::clone(&cancelled);
-                let (sender, receiver) = mpsc::channel();
-                let scan_root = root.clone();
-                std::thread::spawn(move || {
-                    let result = file_index::scan(&scan_root, &worker_cancelled);
-                    let _ = sender.send(result);
-                });
-                self.file_index_job = Some(FileIndexJob {
-                    root,
-                    cancelled,
-                    receiver,
-                });
-                ctx.request_repaint();
-            }
-        }
+        self.ensure_file_index(ctx);
         self.view
             .navigation
             .refresh(self.editor.workspace.as_deref());

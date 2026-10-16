@@ -148,6 +148,11 @@ impl Workbench<'_> {
                     "Go to Symbol in Editor",
                     format!("Shift+{command_key}O"),
                 ),
+                (
+                    Command::AskAgentAboutSelection,
+                    "Ask Agent About Selection",
+                    String::new(),
+                ),
             ] {
                 if ui
                     .add(egui::Button::new(title).shortcut_text(shortcut))

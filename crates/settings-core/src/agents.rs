@@ -27,6 +27,16 @@ pub(crate) const SCHEMA: SectionSchema = SectionSchema {
             document: false,
         },
         Setting {
+            id: "agent.follow_locations",
+            default: DefaultValue::Bool(false),
+            name: "Follow Agent in Editor",
+            category: "Agents",
+            help: "Open the file an agent is reading or editing, at the line it reports. This switches your active tab, so it is off by default.",
+            aliases: "follow open files agent working",
+            control: Control::Bool,
+            document: false,
+        },
+        Setting {
             id: "agent.track_changes",
             default: DefaultValue::Bool(true),
             name: "Track Agent Changes",

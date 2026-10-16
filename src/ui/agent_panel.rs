@@ -10,6 +10,7 @@ use crate::{
     app::{
         agent::{AgentKind, AgentSessionView, ConnectionState, UnsavedChoice, display_folder},
         agent_changes::{ChangeAction, RowState, TurnChanges},
+        agent_context,
         agent_permission::{PendingPermission, display_path},
         command::Command,
     },
@@ -60,6 +61,7 @@ impl Workbench<'_> {
                 let running = session.running;
                 let sendable =
                     !session.draft.trim().is_empty() && !running && session.held_prompt.is_none();
+                let paths = &self.view.navigation.paths;
                 TopBottomPanel::bottom("agent_composer")
                     .frame(
                         Frame::default()
@@ -72,7 +74,15 @@ impl Workbench<'_> {
                         unsaved_card(ui, session, &mut commands);
                         changes_card(ui, session, root.as_deref(), &mut commands);
                         permission_cards(ui, session, root.as_deref(), &mut commands);
-                        composer(ui, session, running, sendable, &mut commands);
+                        composer(
+                            ui,
+                            session,
+                            running,
+                            sendable,
+                            root.as_deref(),
+                            paths,
+                            &mut commands,
+                        );
                     });
                 egui::CentralPanel::default()
                     .frame(
@@ -646,23 +656,109 @@ fn diff_view(ui: &mut egui::Ui, old: Option<&str>, new: &str, salt: &str) {
         });
 }
 
+/// Suggestions shown above the box while an `@file` or `/command` is being typed.
+enum Popup {
+    None,
+    /// Folder-relative paths.
+    Mentions(Vec<String>),
+    /// (name, description).
+    Commands(Vec<(String, String)>),
+}
+
+impl Popup {
+    fn len(&self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::Mentions(items) => items.len(),
+            Self::Commands(items) => items.len(),
+        }
+    }
+}
+
+fn popup_for(
+    session: &AgentSessionView,
+    root: Option<&std::path::Path>,
+    paths: &[std::path::PathBuf],
+) -> Popup {
+    if let (Some((_, query)), Some(root)) = (agent_context::active_mention(&session.draft), root) {
+        let found = agent_context::mention_candidates(paths, root, query, 8);
+        if !found.is_empty() {
+            return Popup::Mentions(found);
+        }
+    }
+    let commands = agent_context::slash_matches(&session.conversation.commands, &session.draft);
+    if commands.is_empty() {
+        Popup::None
+    } else {
+        Popup::Commands(
+            commands
+                .into_iter()
+                .take(8)
+                .map(|command| (command.name.clone(), command.description.clone()))
+                .collect(),
+        )
+    }
+}
+
 fn composer(
     ui: &mut egui::Ui,
     session: &mut AgentSessionView,
     running: bool,
     sendable: bool,
+    root: Option<&std::path::Path>,
+    paths: &[std::path::PathBuf],
     commands: &mut Vec<Command>,
 ) {
-    let id = egui::Id::new(("agent_composer_input", session.kind));
+    let kind = session.kind;
+    attachment_chips(ui, session, commands);
+    config_row(ui, session, commands);
+    let id = egui::Id::new(("agent_composer_input", kind));
     let focused = ui.ctx().memory(|memory| memory.has_focus(id));
-    // Enter sends; Shift+Enter inserts a newline. Consume before the widget sees it.
-    if focused && sendable && take_plain_enter(ui) {
+    let popup = popup_for(session, root, paths);
+    let popup_len = popup.len();
+    let selected_slot = match popup {
+        Popup::Mentions(_) => &mut session.mention_selected,
+        _ => &mut session.slash_selected,
+    };
+    *selected_slot = (*selected_slot).min(popup_len.saturating_sub(1));
+    let mut chosen = None;
+    if focused && popup_len > 0 {
+        // Navigation and completion keys belong to the suggestion list while it is open.
+        let key =
+            |ui: &mut egui::Ui, key| ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key));
+        if key(ui, egui::Key::ArrowDown) {
+            *selected_slot = (*selected_slot + 1) % popup_len;
+        }
+        if key(ui, egui::Key::ArrowUp) {
+            *selected_slot = (*selected_slot + popup_len - 1) % popup_len;
+        }
+        if key(ui, egui::Key::Tab) || take_plain_enter(ui) {
+            chosen = Some(*selected_slot);
+        }
+    } else if focused && sendable && take_plain_enter(ui) {
+        // Enter sends; Shift+Enter inserts a newline. Consume before the widget sees it.
         commands.push(Command::SendAgentPrompt);
+    }
+    let selected = *selected_slot;
+    suggestion_list(ui, kind, &popup, selected, &mut chosen);
+    if let Some(index) = chosen {
+        match &popup {
+            Popup::Mentions(items) => {
+                commands.push(Command::PickAgentMention(kind, items[index].clone()));
+            }
+            Popup::Commands(items) => {
+                commands.push(Command::PickSlash(kind, items[index].0.clone()));
+            }
+            Popup::None => {}
+        }
     }
     let response = ui.add(
         egui::TextEdit::multiline(&mut session.draft)
             .id(id)
-            .hint_text(format!("Message {}…", session.kind.label()))
+            .hint_text(format!(
+                "Message {}… (@ to mention a file, / for commands)",
+                kind.label()
+            ))
             .desired_rows(3)
             .desired_width(f32::INFINITY)
             .font(FontId::proportional(TEXT_SIZE)),
@@ -695,6 +791,161 @@ fn composer(
             }
         });
     });
+}
+
+fn suggestion_list(
+    ui: &mut egui::Ui,
+    kind: AgentKind,
+    popup: &Popup,
+    selected: usize,
+    chosen: &mut Option<usize>,
+) {
+    let rows: Vec<(String, String)> = match popup {
+        Popup::None => return,
+        Popup::Mentions(items) => items
+            .iter()
+            .map(|item| (format!("@{item}"), String::new()))
+            .collect(),
+        Popup::Commands(items) => items
+            .iter()
+            .map(|(name, description)| (format!("/{name}"), description.clone()))
+            .collect(),
+    };
+    Frame::default()
+        .fill(theme::BG)
+        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+        .corner_radius(3)
+        .inner_margin(Margin::symmetric(4, 3))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (index, (label, hint)) in rows.iter().enumerate() {
+                let text = if hint.is_empty() {
+                    label.clone()
+                } else {
+                    format!("{label}  {hint}")
+                };
+                let response = ui.add(
+                    egui::Button::new(
+                        RichText::new(text)
+                            .monospace()
+                            .size(11.0)
+                            .color(theme::TEXT),
+                    )
+                    .fill(if index == selected {
+                        theme::ACTIVE
+                    } else {
+                        Color32::TRANSPARENT
+                    })
+                    .frame(index == selected)
+                    .min_size(egui::vec2(ui.available_width(), 0.0)),
+                );
+                if response.clicked() {
+                    *chosen = Some(index);
+                }
+            }
+        });
+    let _ = kind;
+    ui.add_space(4.0);
+}
+
+/// Selections and files waiting to go with the next message.
+fn attachment_chips(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Vec<Command>) {
+    if session.attachments.is_empty() {
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        for (index, chip) in session.attachments.iter().enumerate() {
+            Frame::default()
+                .fill(theme::INPUT)
+                .corner_radius(3)
+                .inner_margin(Margin::symmetric(6, 2))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("{} {}", icon::FILE, chip.label))
+                                .size(11.0)
+                                .color(theme::TEXT),
+                        );
+                        if ui
+                            .add(egui::Button::new(icon::X).small().frame(false))
+                            .on_hover_text("Remove from this message")
+                            .clicked()
+                        {
+                            commands.push(Command::RemoveAgentAttachment(session.kind, index));
+                        }
+                    });
+                });
+        }
+    });
+    ui.add_space(4.0);
+}
+
+/// Mode / model / effort dropdowns from the agent's own `configOptions`.
+fn config_row(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Vec<Command>) {
+    let options: Vec<_> = session
+        .conversation
+        .config_options
+        .iter()
+        .filter(|option| option.kind == "select" && !option.values.is_empty())
+        .collect();
+    if options.is_empty() {
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        for option in options {
+            let current = option
+                .values
+                .iter()
+                .find(|value| value.value == option.current)
+                .map_or(option.current.as_str(), |value| value.name.as_str());
+            egui::ComboBox::from_id_salt(("agent_config", session.kind, &option.id))
+                .selected_text(RichText::new(format!("{}: {current}", option.name)).size(10.5))
+                .width(130.0)
+                .show_ui(ui, |ui| {
+                    for value in &option.values {
+                        let response =
+                            ui.selectable_label(value.value == option.current, &value.name);
+                        let response = match &value.description {
+                            Some(description) => response.on_hover_text(description),
+                            None => response,
+                        };
+                        if response.clicked() {
+                            commands.push(Command::SetAgentConfig(
+                                session.kind,
+                                option.id.clone(),
+                                value.value.clone(),
+                            ));
+                        }
+                    }
+                });
+        }
+    });
+    if let Some((_, _, label)) = &session.pending_config {
+        Frame::default()
+            .fill(theme::BG)
+            .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(204, 167, 0)))
+            .corner_radius(3)
+            .inner_margin(Margin::symmetric(8, 5))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "⚠ “{label}” lets the agent act without asking first. Edits still show up under “Changed by the agent”."
+                    ))
+                    .size(11.0)
+                    .color(theme::TEXT),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Enable").clicked() {
+                        commands.push(Command::ConfirmAgentConfig(true));
+                    }
+                    if ui.button("Cancel").clicked() {
+                        commands.push(Command::ConfirmAgentConfig(false));
+                    }
+                });
+            });
+    }
+    ui.add_space(4.0);
 }
 
 /// Remove an unmodified Enter key press. `consume_key` would also match
@@ -1079,6 +1330,36 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
                 .join("\n")
+        }
+
+        /// Like `click_text`, but picks the lowest match on screen (header buttons
+        /// share glyphs with chip buttons).
+        fn click_last_text(&mut self, label: &str) {
+            self.frame(vec![]);
+            self.frame(vec![]);
+            let output = self.frame(vec![]);
+            let pos = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text.contains(label) => {
+                        Some(egui::Rect::from_min_size(text.pos, text.galley.size()).center())
+                    }
+                    _ => None,
+                })
+                .max_by(|a, b| a.y.total_cmp(&b.y))
+                .unwrap_or_else(|| panic!("{label:?} is visible"));
+            for pressed in [true, false] {
+                self.frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
         }
 
         fn click_text(&mut self, label: &str) {
@@ -1575,6 +1856,150 @@ mod tests {
             panel.fake.launched.lock().unwrap().len(),
             1,
             "the agent starts after the choice"
+        );
+    }
+
+    #[test]
+    fn chips_show_what_will_be_sent_and_can_be_removed() {
+        let mut panel = Panel::new();
+        panel
+            .app
+            .add_attachment(crate::app::agent_context::file_attachment(
+                std::path::Path::new("/w/src/a.rs"),
+                Some(std::path::Path::new("/w")),
+            ));
+        assert!(panel.texts().contains("src/a.rs"));
+        panel.click_last_text(crate::icon::X);
+        assert!(
+            panel
+                .app
+                .view
+                .agents
+                .session(AgentKind::Claude)
+                .attachments
+                .is_empty()
+        );
+        assert!(!panel.texts().contains("src/a.rs"));
+    }
+
+    #[test]
+    fn typing_at_lists_matching_files_and_tab_or_click_completes_the_mention() {
+        let mut panel = Panel::new();
+        panel.app.editor.workspace = Some("/w".into());
+        panel.app.view.navigation.paths = vec![
+            "/w/src/main.rs".into(),
+            "/w/src/lib.rs".into(),
+            "/w/README.md".into(),
+        ];
+        panel.app.view.agents.session_mut(AgentKind::Claude).draft = "see @ma".into();
+        panel
+            .app
+            .view
+            .agents
+            .session_mut(AgentKind::Claude)
+            .focus_composer = true;
+        let shown = panel.texts();
+        assert!(shown.contains("@src/main.rs"), "{shown}");
+        assert!(
+            !shown.contains("@README.md") && !shown.contains("@src/lib.rs"),
+            "{shown}"
+        );
+        panel.frame(vec![key(egui::Key::Tab, egui::Modifiers::NONE)]);
+        panel.frame(vec![]);
+        assert_eq!(
+            panel.app.view.agents.session(AgentKind::Claude).draft,
+            "see @src/main.rs "
+        );
+        assert!(
+            !panel.texts().contains("@src/lib.rs"),
+            "the list closes after completing"
+        );
+
+        // Clicking a row works too.
+        panel.app.view.agents.session_mut(AgentKind::Claude).draft = "@".into();
+        panel.click_text("@README.md");
+        assert_eq!(
+            panel.app.view.agents.session(AgentKind::Claude).draft,
+            "@README.md "
+        );
+    }
+
+    #[test]
+    fn enter_completes_a_slash_command_instead_of_sending() {
+        let mut panel = Panel::new();
+        let session = panel.app.view.agents.session_mut(AgentKind::Claude);
+        session.conversation.commands = vec![
+            lumen_agent_protocol::types::AvailableCommand {
+                name: "review".into(),
+                description: "Review changes".into(),
+                input_hint: None,
+            },
+            lumen_agent_protocol::types::AvailableCommand {
+                name: "init".into(),
+                description: "Create AGENTS.md".into(),
+                input_hint: None,
+            },
+        ];
+        session.draft = "/re".into();
+        session.focus_composer = true;
+        let shown = panel.texts();
+        assert!(
+            shown.contains("/review  Review changes") && !shown.contains("/init"),
+            "{shown}"
+        );
+        panel.frame(vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        assert_eq!(
+            panel.app.view.agents.session(AgentKind::Claude).draft,
+            "/review "
+        );
+        assert!(
+            panel.fake.launched.lock().unwrap().is_empty(),
+            "completing is not sending"
+        );
+        // With arguments started, Enter sends.
+        panel.app.view.agents.session_mut(AgentKind::Claude).draft = "/review now".into();
+        panel.texts();
+        panel.frame(vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        assert_eq!(panel.fake.launched.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn option_dropdowns_come_from_the_agent_and_risky_choices_show_a_warning() {
+        let mut panel = Panel::new();
+        let session = panel.app.view.agents.session_mut(AgentKind::Claude);
+        session.conversation.config_options = lumen_agent_protocol::types::parse_config_options(
+            &json!([
+            {"id":"mode","name":"Mode","currentValue":"default","options":[
+                {"value":"default","name":"Manual"},{"value":"bypassPermissions","name":"Bypass permissions"}]},
+            {"id":"fast","name":"Fast","type":"boolean","currentValue":false}]),
+        );
+        let shown = panel.texts();
+        assert!(shown.contains("Mode: Manual"), "{shown}");
+        assert!(!shown.contains("Fast"), "only select options are shown");
+        panel
+            .app
+            .view
+            .agents
+            .session_mut(AgentKind::Claude)
+            .pending_config = Some((
+            "mode".into(),
+            "bypassPermissions".into(),
+            "Bypass permissions".into(),
+        ));
+        let shown = panel.texts();
+        assert!(
+            shown.contains("lets the agent act without asking") && shown.contains("Enable"),
+            "{shown}"
+        );
+        panel.click_text("Cancel");
+        assert!(
+            panel
+                .app
+                .view
+                .agents
+                .session(AgentKind::Claude)
+                .pending_config
+                .is_none()
         );
     }
 }

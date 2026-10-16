@@ -468,13 +468,30 @@ Exit met: chat works end to end with Claude Code and Codex, read-only.
 Exit met for the revised design: Claude edits are reviewed before they happen and
 Codex edits after; no unsaved buffer is overwritten; guarded reverts.
 
-### Phase 4 - editor integration
+### Phase 4 - editor integration - done 2026-10-16
 
-- [ ] Context menu / palette: ask about selection or file; `@` file mentions;
-  `resource` blocks for selections.
-- [ ] Problems -> "Fix with agent" prefilled prompt.
-- [ ] Follow locations (open file at line on tool calls, optional setting).
-- [ ] `configOptions` UI (mode/model/effort) and slash-command popup.
+- [x] Ask about the selection: editor context menu "Ask Agent About Selection" and a
+  palette command attach the selection as a `resource` block (uri with `#Lx-Ly`
+  anchor, 100 KiB cap), or the whole file as a `resource_link` when nothing is
+  selected. Explorer context menu "Add to Agent Chat" attaches a file. Attachments
+  are chips in the composer, removable, sent with the next message and listed in the
+  transcript as "Context: ...".
+- [x] `@` mentions: typing `@` lists matching files from the folder index (name
+  prefix, name, path, then subsequence); Tab/Enter/click completes. `@path` words that
+  name real files inside the folder are also sent as `resource_link` blocks.
+- [x] Slash commands: the agent's `available_commands_update` drives a filtered list
+  while the draft is `/partial`; Tab/Enter completes, then the full text is sent as
+  an ordinary prompt.
+- [x] "Fix with agent" on a Problems row prefills the request (file, line, message)
+  and attaches the file; nothing is sent until the user does.
+- [x] Session options: mode / model / effort dropdowns from `configOptions`, applied
+  with `session/set_config_option`; `bypassPermissions` and `agent-full-access` ask
+  for confirmation first.
+- [x] Optional "follow the agent" (`agent.follow_locations`, off by default): opens the
+  file of each tool call at its line, once per call, only inside the folder.
+- [ ] Not done: Codex still starts in `read-only` (the dropdown can change it), no
+  "Open diff" in the side-by-side viewer, slash-command argument hints, visual
+  inspection of the new popups and chips.
 
 ### Phase 5 - sessions and persistence
 

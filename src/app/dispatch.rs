@@ -72,6 +72,18 @@ impl LumenApp {
                 self.answer_agent_permission(kind, &id, option.as_deref());
             }
             Command::AgentChanges(kind, action) => self.apply_change_action(kind, action),
+            Command::AskAgentAboutSelection => self.ask_agent_about_selection(),
+            Command::AddFileToAgent(path) => self.add_file_to_agent(path),
+            Command::FixProblemWithAgent(document, range) => {
+                self.fix_problem_with_agent(document, range);
+            }
+            Command::RemoveAgentAttachment(kind, index) => {
+                self.remove_agent_attachment(kind, index);
+            }
+            Command::SetAgentConfig(kind, id, value) => self.set_agent_config(kind, &id, &value),
+            Command::ConfirmAgentConfig(accepted) => self.confirm_agent_config(accepted),
+            Command::PickAgentMention(kind, relative) => self.pick_agent_mention(kind, &relative),
+            Command::PickSlash(kind, name) => self.pick_agent_command(kind, &name),
             Command::ResolveUnsavedFiles(choice) => self.resolve_unsaved_choice(choice, ctx),
             Command::AllowAgentNpx => self.allow_agent_npx(ctx),
             Command::ToggleOutput => {

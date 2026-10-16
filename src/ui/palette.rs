@@ -172,6 +172,10 @@ impl Workbench<'_> {
                         Command::ToggleAgentPanel,
                     ),
                     (
+                        format!("{}  Agent: Ask About Selection", icon::AGENT),
+                        Command::AskAgentAboutSelection,
+                    ),
+                    (
                         format!("{}  View: Output", icon::OUTPUT),
                         Command::ToggleOutput,
                     ),
