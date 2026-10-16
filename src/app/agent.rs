@@ -1,9 +1,8 @@
 //! Agent controller: one ACP connection per supported agent (Claude Code, Codex).
 //!
-//! Phase 2 scope: connect, sign in, chat, cancel. Agents run in a *preview*
-//! posture - permission requests are declined and the Codex session is put in its
-//! read-only mode - until the edit-review workflow lands. Nothing here touches
-//! documents or files.
+//! Connect, sign in, chat, cancel. Agents ask before editing or running
+//! anything (Codex is started in its `read-only` mode so it asks too); requests
+//! become permission cards, and what an agent changed is reviewed afterwards.
 use super::LumenApp;
 use crate::{
     model::output_log::{self, LogLevel},

@@ -194,7 +194,7 @@ fn status_strip(
                 _ => {}
             }
             ui.label(
-                RichText::new("Preview: chat only. Edits and commands are declined for now.")
+                RichText::new("Edits and commands ask for your approval first.")
                     .size(10.5)
                     .color(theme::MUTED),
             );
@@ -1144,7 +1144,7 @@ mod tests {
         ] {
             assert!(shown.contains(expected), "missing {expected:?} in {shown}");
         }
-        assert!(shown.contains("Preview: chat only"));
+        assert!(shown.contains("ask for your approval"));
     }
 
     #[test]
