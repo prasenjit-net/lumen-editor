@@ -266,6 +266,33 @@ relative order of its documents in `files`; each non-focused group remembers its
   unfocused group (today both groups' selected tab keep the accent line; the outline marks the
   focused group). Layout is session-only. Windows/Linux not exercised.
 
+### S2 (cross-group drag) and S3 (stacked layout): done (branch `f-split-drag`)
+
+- **Dragging a tab between groups.** Each tab strip reports its geometry every frame
+  (`view.tab_strips`) and the drag in progress (`view.tab_drag`); a drag released away from its
+  own strip is queued (`view.tab_drop_request`) and resolved once *both* groups have drawn.
+  Dropping on the other group's strip picks the position among its tabs (insertion gap, same
+  maths as in-strip reorder); dropping on its editor body appends. While dragging, the target
+  group is outlined and the insertion marker shows in its strip. Releasing over the tab's own
+  group (outside its strip), after Escape, or in a single-group editor does nothing; the move
+  is one `MoveTabToGroupAt(id, group, position)` command, gated by `workbench.split_editor`.
+  Model: `move_to_group_at(id, group, position)` (position among the destination's other tabs,
+  `None`/past the end = last); dragging a group's last tab away closes that group.
+- **Stacked layout (S3).** `view.split_vertical` flips the two groups to top/bottom with the
+  same divider, 140 px minimum height each (even split when too short for two minimums), a
+  vertical resize cursor, and "View: Toggle Editor Group Layout" in the palette (disabled with
+  "The editor is not split" otherwise). Everything else (focus, typing, tab commands, drops) is
+  layout-independent.
+- Tests: `move_to_group_at` positions (front, middle, end, past the end, opening the group);
+  real-pointer drags to the other group's body, to a chosen position in its strip, Escape and
+  own-group drops (no-ops), the group closing when its last tab is dragged away, the highlight
+  while dragging; and for the stacked layout: ordering and in-window checks at heights
+  420/600/900, typing routing, a drop between stacked groups, vertical divider drag within the
+  minimums, and the toggle command. Verified visually with a stacked-layout screenshot.
+- Not done: S4 (the same document in both panes), which needs per-view selection and scroll
+  state; styling that distinguishes the selected tab of the unfocused group; persisting the
+  layout across restarts.
+
 ### Things that must be reworked (and tested) for S1
 
 - **Single-instance view state:** `shared_surface` becomes per focused group;

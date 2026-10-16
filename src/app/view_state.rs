@@ -272,6 +272,20 @@ impl ExplorerEdit {
     }
 }
 
+/// Geometry of one group's tab strip in the current frame.
+#[derive(Clone, Debug)]
+pub(crate) struct TabStripGeometry {
+    pub(crate) group: usize,
+    /// Visible strip: as wide as its viewport and as tall as its tabs.
+    pub(crate) band: eframe::egui::Rect,
+    pub(crate) tabs: Vec<(crate::model::DocumentId, eframe::egui::Rect)>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TabDrag {
+    pub(crate) source_group: usize,
+}
+
 /// A document closed without losing content: enough to open it again.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ClosedTab {
@@ -315,6 +329,14 @@ pub(crate) struct ViewState {
     pub(crate) group_surfaces: Vec<Option<lumen_editor_surface::EditorSurface>>,
     /// Set while a non-first editor group draws, so it shows no Settings/Diff tab.
     pub(crate) hide_virtual_tabs: bool,
+    /// Where each editor group's tabs were drawn this frame, for drops between groups.
+    pub(crate) tab_strips: Vec<TabStripGeometry>,
+    /// The tab being dragged this frame, if any.
+    pub(crate) tab_drag: Option<TabDrag>,
+    /// A drag released away from its own strip: resolved once every group has drawn.
+    pub(crate) tab_drop_request: Option<(crate::model::DocumentId, eframe::egui::Pos2)>,
+    /// Stack the two editor groups top to bottom instead of side by side.
+    pub(crate) split_vertical: bool,
     /// Share of the editor area given to the first group when split (0..1).
     pub(crate) split_ratio: f32,
     #[cfg(feature = "shared-editor")]
@@ -420,6 +442,10 @@ impl Default for ViewState {
             #[cfg(feature = "shared-editor")]
             group_surfaces: Vec::new(),
             hide_virtual_tabs: false,
+            tab_strips: Vec::new(),
+            tab_drag: None,
+            tab_drop_request: None,
+            split_vertical: false,
             split_ratio: 0.5,
             #[cfg(feature = "shared-editor")]
             shared_output: None,

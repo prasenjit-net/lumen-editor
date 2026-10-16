@@ -174,7 +174,9 @@ impl Workbench<'_> {
                 return Some("Open another tab to split the editor");
             }
         }
-        if matches!(command, FocusNextGroup) && self.editor.group_count() < 2 {
+        if matches!(command, FocusNextGroup | ToggleSplitOrientation)
+            && self.editor.group_count() < 2
+        {
             return Some("The editor is not split");
         }
         if matches!(command, CloseOtherTabs) && self.editor.files.len() < 2 {
@@ -456,6 +458,10 @@ fn palette_commands() -> Vec<(String, Command)> {
         (
             "View: Focus Next Editor Group".into(),
             Command::FocusNextGroup,
+        ),
+        (
+            "View: Toggle Editor Group Layout (Side by Side / Stacked)".into(),
+            Command::ToggleSplitOrientation,
         ),
         ("Tab: Move Tab Left".into(), Command::MoveActiveTabLeft),
         ("Tab: Move Tab Right".into(), Command::MoveActiveTabRight),

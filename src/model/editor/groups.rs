@@ -138,6 +138,17 @@ impl EditorState {
     /// becomes the active tab of `target`, which takes focus, and is placed after
     /// that group's last tab.
     pub(crate) fn move_to_group(&mut self, id: DocumentId, target: usize) -> bool {
+        self.move_to_group_at(id, target, None)
+    }
+
+    /// Like `move_to_group`, but the tab lands at `position` among the
+    /// destination's other tabs (`None`, or a position past the end, means last).
+    pub(crate) fn move_to_group_at(
+        &mut self,
+        id: DocumentId,
+        target: usize,
+        position: Option<usize>,
+    ) -> bool {
         if target >= MAX_GROUPS || self.index_of(id).is_none() {
             return false;
         }
@@ -154,16 +165,25 @@ impl EditorState {
         self.groups.split = true;
         self.groups.assignment.insert(id, target);
         self.groups.active[from] = successor;
-        // Land after the last tab already in the destination.
-        let anchor = self
+        let others: Vec<DocumentId> = self
             .documents_in(target)
             .into_iter()
-            .rfind(|other| *other != id)
-            .and_then(|last| self.index_of(last));
-        if let Some(anchor) = anchor {
-            let from = self.index_of(id).expect("document is open");
-            // Moving left inserts before the anchor, so step past it.
-            self.reposition(id, if from > anchor { anchor + 1 } else { anchor });
+            .filter(|other| *other != id)
+            .collect();
+        let from = self.index_of(id).expect("document is open");
+        match position.and_then(|position| others.get(position)) {
+            // Land just before the tab currently at `position`.
+            Some(before) => {
+                let before = self.index_of(*before).expect("document is open");
+                self.reposition(id, if from > before { before } else { before - 1 });
+            }
+            // Land after the destination's last tab.
+            None => {
+                if let Some(last) = others.last().and_then(|last| self.index_of(*last)) {
+                    // Moving left inserts before the anchor, so step past it.
+                    self.reposition(id, if from > last { last + 1 } else { last });
+                }
+            }
         }
         self.collapse_empty_groups();
         if self.groups.split {
@@ -329,5 +349,39 @@ mod tests {
         assert!(editor.move_document(ids[2], anchor));
         assert_eq!(editor.documents_in(0), [ids[2], ids[0]]);
         assert_eq!(editor.documents_in(1), [ids[1], ids[3]]);
+    }
+
+    #[test]
+    fn a_tab_can_land_at_a_chosen_position_in_the_other_group() {
+        for (position, expected) in [
+            (Some(0), [3, 1, 2]),
+            (Some(1), [1, 3, 2]),
+            (Some(2), [1, 2, 3]),
+            (Some(9), [1, 2, 3]),
+            (None, [1, 2, 3]),
+        ] {
+            let (mut editor, ids) = editor(5);
+            // Left group: 0 4; right group: 1 2.
+            editor.move_to_group(ids[1], 1);
+            editor.move_to_group(ids[2], 1);
+            assert!(editor.move_to_group_at(ids[3], 1, position));
+            assert_eq!(
+                editor.documents_in(1),
+                expected.map(|n| ids[n]),
+                "position {position:?}"
+            );
+            assert_eq!(editor.documents_in(0), [ids[0], ids[4]]);
+            assert_eq!(editor.active_id(), Some(ids[3]));
+        }
+    }
+
+    #[test]
+    fn dropping_at_a_position_can_also_open_the_second_group() {
+        let (mut editor, ids) = editor(3);
+        assert!(editor.move_to_group_at(ids[2], 1, Some(0)));
+        assert_eq!(editor.group_count(), 2);
+        assert_eq!(editor.documents_in(1), [ids[2]]);
+        // Moving into the group it is already in changes nothing.
+        assert!(!editor.move_to_group_at(ids[2], 1, Some(0)));
     }
 }

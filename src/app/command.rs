@@ -167,7 +167,11 @@ pub(crate) enum Command {
     SplitEditor,
     /// Send a tab to the other editor group (opening it if needed).
     MoveTabToGroup(DocumentId),
+    /// Drop a tab into `group` at `position` among that group's tabs.
+    MoveTabToGroupAt(DocumentId, usize, usize),
     FocusNextGroup,
+    /// Switch the two editor groups between side by side and stacked.
+    ToggleSplitOrientation,
     FocusGroup(usize),
     CloseFile(DocumentId),
     SaveAndClose(DocumentId),

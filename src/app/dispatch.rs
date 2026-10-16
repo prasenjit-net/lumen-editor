@@ -230,7 +230,22 @@ impl LumenApp {
             Command::MoveActiveTabRight => self.move_active_tab(TabMove::Right),
             Command::SplitEditor => self.split_editor(),
             Command::MoveTabToGroup(id) => self.move_tab_to_group(id),
+            Command::MoveTabToGroupAt(id, group, position) => {
+                self.move_tab_to_group_at(id, group, position)
+            }
             Command::FocusNextGroup => self.focus_next_group(),
+            Command::ToggleSplitOrientation => {
+                if self.editor.group_count() < 2 {
+                    self.view.status = "The editor is not split".into();
+                } else {
+                    self.view.split_vertical = !self.view.split_vertical;
+                    self.view.status = if self.view.split_vertical {
+                        "Editor groups stacked".into()
+                    } else {
+                        "Editor groups side by side".into()
+                    };
+                }
+            }
             Command::FocusGroup(group) => self.focus_group_command(group),
             Command::CloseEditor => {
                 if self.view.settings.open {

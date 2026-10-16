@@ -1,7 +1,11 @@
 //! Compact, single-row editor tabs with clipped overflow and fixed toolbar actions.
 use super::{Workbench, widgets};
 use crate::{
-    app::{command::Command, tab_commands::TabMove},
+    app::{
+        command::Command,
+        tab_commands::TabMove,
+        view_state::{TabDrag, TabStripGeometry},
+    },
     icon,
     model::DocumentId,
 };
@@ -205,6 +209,9 @@ impl Workbench<'_> {
         let mut menu_command: Option<Command> = None;
         // A completed tab drag: the document and its new position among the tabs.
         let mut tab_drop: Option<(usize, usize)> = None;
+        let mut strip_geometry: Option<TabStripGeometry> = None;
+        let mut drag_state: Option<TabDrag> = None;
+        let mut outside_drop: Option<(DocumentId, egui::Pos2)> = None;
         let mut open_settings = false;
         let mut close_settings = false;
         let mut open_diff = false;
@@ -276,10 +283,44 @@ impl Workbench<'_> {
                                         dragged_tab = Some((tab_index, true));
                                     }
                                 }
+                                if !tab_rects.is_empty() {
+                                    let band = egui::Rect::from_x_y_ranges(
+                                        ui.clip_rect().x_range(),
+                                        tab_rects
+                                            .iter()
+                                            .map(|rect| rect.top())
+                                            .fold(f32::INFINITY, f32::min)
+                                            ..=tab_rects
+                                                .iter()
+                                                .map(|rect| rect.bottom())
+                                                .fold(f32::NEG_INFINITY, f32::max),
+                                    );
+                                    strip_geometry = Some(TabStripGeometry {
+                                        group: self.editor.focused_group(),
+                                        band,
+                                        tabs: visible_files
+                                            .iter()
+                                            .map(|index| self.editor.files[*index].id)
+                                            .zip(tab_rects.iter().copied())
+                                            .collect(),
+                                    });
+                                }
                                 if let Some((from, released)) = dragged_tab {
-                                    let dropped_at = drive_tab_drag(ui, &tab_rects, from, released);
-                                    if let Some(position) = dropped_at {
-                                        tab_drop = Some((visible_files[from], position));
+                                    let id = visible_files[from];
+                                    let id = self.editor.files[id].id;
+                                    if !released {
+                                        drag_state = Some(TabDrag {
+                                            source_group: self.editor.focused_group(),
+                                        });
+                                    }
+                                    match drive_tab_drag(ui, &tab_rects, from, released) {
+                                        DragOutcome::Move(position) => {
+                                            tab_drop = Some((visible_files[from], position));
+                                        }
+                                        DragOutcome::Outside(pointer) => {
+                                            outside_drop = Some((id, pointer));
+                                        }
+                                        DragOutcome::Holding | DragOutcome::Nothing => {}
                                     }
                                 }
                                 if let Some(diff) = self
@@ -417,6 +458,20 @@ impl Workbench<'_> {
         if let Some(command) = menu_command {
             self.command(command);
         }
+        if let Some(geometry) = strip_geometry {
+            self.view
+                .tab_strips
+                .retain(|strip| strip.group != geometry.group);
+            self.view.tab_strips.push(geometry);
+        }
+        if drag_state.is_some() {
+            self.view.tab_drag = drag_state;
+        }
+        // A release away from this strip may be a drop onto another group, which
+        // is only known once every group has drawn.
+        if outside_drop.is_some() && self.editor.group_count() > 1 {
+            self.view.tab_drop_request = outside_drop;
+        }
         if let Some((file_index, position)) = tab_drop {
             let id = self.editor.files[file_index].id;
             self.command(Command::MoveTab(id, TabMove::To(position)));
@@ -458,12 +513,24 @@ fn is_drag_cancelled(ctx: &egui::Context) -> bool {
 /// Show the insertion marker and scroll the strip while a tab is held, and on
 /// release return the position to move it to. `None` while still dragging, for
 /// a drop outside the strip, after Escape, or when the tab would not move.
+/// What a drag amounted to this frame.
+enum DragOutcome {
+    /// Still held; nothing to do yet.
+    Holding,
+    /// Released over its own strip: move to this position among the tabs.
+    Move(usize),
+    /// Released away from its own strip, at this pointer position.
+    Outside(egui::Pos2),
+    /// Cancelled, or dropped where it already was.
+    Nothing,
+}
+
 fn drive_tab_drag(
     ui: &mut egui::Ui,
     rects: &[egui::Rect],
     from: usize,
     released: bool,
-) -> Option<usize> {
+) -> DragOutcome {
     use super::tab_drag::{edge_scroll_speed, insertion_gap, marker_x, resulting_position};
     let colors = crate::ui::theme::palette(ui.visuals());
     if !released {
@@ -475,7 +542,9 @@ fn drive_tab_drag(
     if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         set_drag_cancelled(ui.ctx(), true);
     }
-    let pointer = ui.ctx().pointer_latest_pos()?;
+    let Some(pointer) = ui.ctx().pointer_latest_pos() else {
+        return DragOutcome::Nothing;
+    };
     // The strip is as tall as its tabs and as wide as the visible viewport; the
     // clip rectangle alone spans the whole window height.
     let tabs_top = rects
@@ -488,35 +557,45 @@ fn drive_tab_drag(
         .fold(f32::NEG_INFINITY, f32::max);
     let viewport = egui::Rect::from_x_y_ranges(ui.clip_rect().x_range(), tabs_top..=tabs_bottom);
     let cancelled = is_drag_cancelled(ui.ctx());
+    let inside = viewport.expand2(egui::vec2(0.0, 24.0)).contains(pointer);
     if released {
         set_drag_cancelled(ui.ctx(), false);
-        // Dropping well away from the strip abandons the move.
-        let inside = viewport.expand2(egui::vec2(0.0, 24.0)).contains(pointer);
-        if cancelled || !inside {
-            return None;
+        if cancelled {
+            return DragOutcome::Nothing;
+        }
+        // Away from the strip: possibly onto another group, else abandoned.
+        if !inside {
+            return DragOutcome::Outside(pointer);
         }
     }
     let centres: Vec<f32> = rects.iter().map(|rect| rect.center().x).collect();
     let gap = insertion_gap(&centres, pointer.x);
     if released {
         let position = resulting_position(from, gap);
-        return (position != from).then_some(position);
+        return if position != from {
+            DragOutcome::Move(position)
+        } else {
+            DragOutcome::Nothing
+        };
+    }
+    if !cancelled
+        && inside
+        && let Some(x) = marker_x(rects, gap)
+    {
+        ui.painter().vline(
+            x,
+            viewport.y_range(),
+            egui::Stroke::new(2.0_f32, colors.accent),
+        );
     }
     if !cancelled {
-        if let Some(x) = marker_x(rects, gap) {
-            ui.painter().vline(
-                x,
-                viewport.y_range(),
-                egui::Stroke::new(2.0_f32, colors.accent),
-            );
-        }
         let speed = edge_scroll_speed(pointer.x, viewport.left(), viewport.right(), 28.0, 480.0);
-        if speed != 0.0 {
+        if speed != 0.0 && inside {
             ui.scroll_with_delta(egui::vec2(speed * ui.input(|input| input.stable_dt), 0.0));
             ui.ctx().request_repaint();
         }
     }
-    None
+    DragOutcome::Holding
 }
 
 struct TabMenuTarget<'a> {

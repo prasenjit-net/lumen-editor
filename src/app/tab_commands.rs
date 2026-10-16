@@ -76,6 +76,18 @@ impl LumenApp {
         }
     }
 
+    /// A tab dropped onto a group: it joins that group at `position`.
+    pub(crate) fn move_tab_to_group_at(&mut self, id: DocumentId, group: usize, position: usize) {
+        if !self.split_enabled() {
+            self.view.status = "Turn on Split Editor in Settings first".into();
+            return;
+        }
+        if self.editor.move_to_group_at(id, group, Some(position)) {
+            self.view.focus_editor = true;
+            self.view.status = "Moved tab to the other editor group".into();
+        }
+    }
+
     pub(crate) fn focus_next_group(&mut self) {
         let count = self.editor.group_count();
         if count < 2 {
