@@ -40,6 +40,8 @@ pub(crate) struct LanguageServerRestart {
 pub(crate) struct PendingLanguageRequest {
     kind: LanguageRequestKind,
     deadline: Instant,
+    /// Caret byte for caret-relative requests, to reject replies after it moved.
+    caret: Option<usize>,
 }
 
 pub(crate) struct RetiringLanguageServer {
@@ -54,6 +56,8 @@ pub(crate) enum LanguageRequestKind {
     Definition,
     Symbols,
     SemanticTokens,
+    Completion,
+    SignatureHelp,
 }
 
 /// The last semantic-token request, so a failed or empty reply is not retried
@@ -862,6 +866,8 @@ impl LumenApp {
             .is_some_and(|capabilities| match kind {
                 LanguageRequestKind::Hover => capabilities.hover,
                 LanguageRequestKind::Definition => capabilities.definition,
+                LanguageRequestKind::Completion => capabilities.completion,
+                LanguageRequestKind::SignatureHelp => capabilities.signature_help,
                 LanguageRequestKind::Symbols | LanguageRequestKind::SemanticTokens => false,
             });
         if !capability {
@@ -899,11 +905,25 @@ impl LumenApp {
         let message = match kind {
             LanguageRequestKind::Hover => lsp::hover_request(request_id, &uri, position),
             LanguageRequestKind::Definition => lsp::definition_request(request_id, &uri, position),
+            LanguageRequestKind::Completion => lsp::completion_request(request_id, &uri, position),
+            LanguageRequestKind::SignatureHelp => {
+                lsp::signature_help_request(request_id, &uri, position)
+            }
             LanguageRequestKind::Symbols | LanguageRequestKind::SemanticTokens => {
                 unreachable!("this request does not use a caret position")
             }
         };
-        self.send_language_request(request_id, kind, &message);
+        self.send_language_request_at(request_id, kind, Some(byte), &message);
+    }
+
+    pub(crate) fn request_language_completion(&mut self) {
+        self.view.language_completion = None;
+        self.request_at_caret(LanguageRequestKind::Completion);
+    }
+
+    pub(crate) fn request_language_signature_help(&mut self) {
+        self.view.language_signature = None;
+        self.request_at_caret(LanguageRequestKind::SignatureHelp);
     }
 
     /// Ask for fresh full-document tokens for the active document when they are
@@ -964,6 +984,73 @@ impl LumenApp {
             at: Instant::now(),
         });
         self.send_language_request(request_id, LanguageRequestKind::SemanticTokens, &message);
+    }
+
+    /// Caret byte of the active document's primary selection, only when it is a
+    /// plain caret equal to `expected`; replies for a moved caret are dropped.
+    fn caret_is_still_at(&self, expected: Option<usize>) -> Option<usize> {
+        #[cfg(feature = "shared-editor")]
+        {
+            let buffer = self.editor.active()?.editing.as_ref()?;
+            let set = buffer.selections();
+            let selection = set.selections()[set.primary_index()];
+            (set.selections().len() == 1
+                && selection.anchor == selection.head
+                && Some(selection.head) == expected)
+                .then_some(selection.head)
+        }
+        #[cfg(not(feature = "shared-editor"))]
+        {
+            let _ = expected;
+            None
+        }
+    }
+
+    fn apply_completion_response(&mut self, message: &serde_json::Value, caret: Option<usize>) {
+        let Some(caret) = self.caret_is_still_at(caret) else {
+            self.view.status = "Completion discarded: the caret moved".into();
+            return;
+        };
+        let Some(document) = self.editor.active() else {
+            return;
+        };
+        let Ok(items) =
+            lumen_language_services::incoming::parse_completion_response(message, &document.text)
+        else {
+            self.view.status = "Language server returned invalid completions".into();
+            return;
+        };
+        if items.is_empty() {
+            self.view.status = "No completions".into();
+            return;
+        }
+        self.view.status = format!("{} completions", items.len());
+        self.view.language_completion = Some(super::view_state::CompletionSession {
+            document: document.id,
+            origin: caret,
+            word_start: super::completion::word_start(&document.text, caret),
+            items,
+            selected: 0,
+            pending_accept: None,
+        });
+    }
+
+    fn apply_signature_help_response(&mut self, message: &serde_json::Value, caret: Option<usize>) {
+        if self.caret_is_still_at(caret).is_none() {
+            self.view.status = "Signature help discarded: the caret moved".into();
+            return;
+        }
+        let Some(document) = self.editor.active() else {
+            return;
+        };
+        match lumen_language_services::incoming::parse_signature_help_response(message) {
+            Ok(Some(help)) => {
+                self.view.language_signature = Some((document.id, document.revision, help));
+                self.view.status = "Signature help ready".into();
+            }
+            Ok(None) => self.view.status = "No signature help".into(),
+            Err(_) => self.view.status = "Language server returned invalid signature help".into(),
+        }
     }
 
     fn apply_semantic_tokens_response(&mut self, message: &serde_json::Value) {
@@ -1031,6 +1118,16 @@ impl LumenApp {
         kind: LanguageRequestKind,
         message: &serde_json::Value,
     ) {
+        self.send_language_request_at(request_id, kind, None, message);
+    }
+
+    fn send_language_request_at(
+        &mut self,
+        request_id: u64,
+        kind: LanguageRequestKind,
+        caret: Option<usize>,
+        message: &serde_json::Value,
+    ) {
         let superseded = self
             .language_server_request_kinds
             .iter()
@@ -1055,6 +1152,7 @@ impl LumenApp {
                     PendingLanguageRequest {
                         kind,
                         deadline: Instant::now() + REQUEST_TIMEOUT,
+                        caret,
                     },
                 );
                 // Background refreshes stay silent; only user-invoked requests report.
@@ -1062,6 +1160,8 @@ impl LumenApp {
                     LanguageRequestKind::Hover => Some("Loading hover…"),
                     LanguageRequestKind::Definition => Some("Finding definition…"),
                     LanguageRequestKind::Symbols => Some("Loading document symbols…"),
+                    LanguageRequestKind::Completion => Some("Loading completions…"),
+                    LanguageRequestKind::SignatureHelp => Some("Loading signature help…"),
                     LanguageRequestKind::SemanticTokens => None,
                 } {
                     self.view.status = status.into();
@@ -1109,6 +1209,12 @@ impl LumenApp {
             LanguageRequestKind::Definition => self.apply_definition_response(message),
             LanguageRequestKind::Symbols => self.apply_document_symbols_response(message),
             LanguageRequestKind::SemanticTokens => self.apply_semantic_tokens_response(message),
+            LanguageRequestKind::Completion => {
+                self.apply_completion_response(message, request.caret)
+            }
+            LanguageRequestKind::SignatureHelp => {
+                self.apply_signature_help_response(message, request.caret)
+            }
         }
         true
     }
@@ -1880,5 +1986,113 @@ mod tests {
         app.poll_language_server(&ctx);
         assert!(app.view.language_semantic_tokens.is_empty());
         assert_eq!(app.view.status, status);
+    }
+
+    fn completion_initialized() -> ServerEvent {
+        ServerEvent::Message(serde_json::json!({
+            "jsonrpc":"2.0", "id":0, "result":{"capabilities":{
+                "textDocumentSync":{"openClose":true,"change":1,"save":{"includeText":true}},
+                "completionProvider":{"triggerCharacters":["."]},
+                "signatureHelpProvider":{"triggerCharacters":["("]}
+            }}
+        }))
+    }
+
+    fn request_ids(messages: &RecordedMessages, method: &str) -> Vec<u64> {
+        messages
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|message| message["method"] == method)
+            .filter_map(|message| message["id"].as_u64())
+            .collect()
+    }
+
+    fn completion_app(text: &str, caret: usize) -> (LumenApp, RecordedMessages, QueuedEvents) {
+        let (mut app, messages, events) = rust_app();
+        app.editor.files[0].text = text.into();
+        app.editor.files[0].enable_shared_editing();
+        let buffer = app.editor.files[0].editing.as_mut().unwrap();
+        buffer
+            .set_selections(vec![lumen_editor_core::Selection::caret(caret)], 0)
+            .unwrap();
+        app.editor.files[0].sync_shared_editing();
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        events.lock().unwrap().push(completion_initialized());
+        app.poll_language_server(&ctx);
+        (app, messages, events)
+    }
+
+    #[test]
+    fn completion_request_reply_opens_a_session_and_stale_replies_do_not() {
+        let (mut app, messages, events) = completion_app("x.pu", 4);
+        let ctx = eframe::egui::Context::default();
+        app.request_language_completion();
+        let id = request_ids(&messages, "textDocument/completion")[0];
+        events
+            .lock()
+            .unwrap()
+            .push(ServerEvent::Message(serde_json::json!({
+                "jsonrpc":"2.0","id":id,"result":[{"label":"push"},{"label":"pull"}]
+            })));
+        app.poll_language_server(&ctx);
+        let session = app.view.language_completion.clone().expect("session");
+        assert_eq!(
+            (session.word_start, session.origin, session.items.len()),
+            (2, 4, 2)
+        );
+
+        // Moving the caret before the reply arrives discards it.
+        app.view.language_completion = None;
+        app.request_language_completion();
+        let id = request_ids(&messages, "textDocument/completion")[1];
+        app.editor.files[0]
+            .editing
+            .as_mut()
+            .unwrap()
+            .set_selections(vec![lumen_editor_core::Selection::caret(1)], 0)
+            .unwrap();
+        events
+            .lock()
+            .unwrap()
+            .push(ServerEvent::Message(serde_json::json!({
+                "jsonrpc":"2.0","id":id,"result":[{"label":"push"}]
+            })));
+        app.poll_language_server(&ctx);
+        assert!(app.view.language_completion.is_none());
+    }
+
+    #[test]
+    fn completion_and_signature_need_server_capabilities() {
+        let (mut app, messages, events) = rust_app();
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        events.lock().unwrap().push(initialized());
+        app.poll_language_server(&ctx);
+        app.request_language_completion();
+        app.request_language_signature_help();
+        assert!(request_ids(&messages, "textDocument/completion").is_empty());
+        assert!(request_ids(&messages, "textDocument/signatureHelp").is_empty());
+    }
+
+    #[test]
+    fn signature_help_reply_is_stored_for_its_revision() {
+        let (mut app, messages, events) = completion_app("f(", 2);
+        let ctx = eframe::egui::Context::default();
+        app.request_language_signature_help();
+        let id = request_ids(&messages, "textDocument/signatureHelp")[0];
+        events
+            .lock()
+            .unwrap()
+            .push(ServerEvent::Message(serde_json::json!({
+                "jsonrpc":"2.0","id":id,"result":{"signatures":[{
+                    "label":"f(a: u8)","parameters":[{"label":"a: u8"}],"activeParameter":0}]}
+            })));
+        app.poll_language_server(&ctx);
+        let (document, revision, help) = app.view.language_signature.clone().unwrap();
+        assert_eq!(document, app.editor.files[0].id);
+        assert_eq!(revision, app.editor.files[0].revision);
+        assert_eq!(&help.label[help.active_parameter.unwrap()], "a: u8");
     }
 }

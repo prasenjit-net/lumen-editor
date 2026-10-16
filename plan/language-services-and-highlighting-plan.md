@@ -271,8 +271,12 @@ specified by a project unless the user’s server-command policy permits it.
 - [x] Route Rust/Go parser spans through `editor-surface`, including the shaped
   renderer, while preserving its single viewport/layout authority. The legacy
   lexer remains the fallback for all other languages and parser errors.
-- [ ] Measure incremental edit and shaping interactions before adding a snapshot
-  cache or selecting parser highlighting as the default for further languages.
+- [x] Measured parser highlighting (release build, Rust). The original per-frame cost was
+  335 ms at 1k lines and 7.9 s at 5k lines: a quadratic span-splitting scan plus an
+  8 ms query recompile per call. Fixed with a sweep (12 ms / 62 ms), a cached compiled
+  query, and an 8-entry content-hash snapshot cache, so unchanged text costs a hash.
+  A typing keystroke still re-parses the whole file (no incremental tree edits yet);
+  `measure_highlight_cost` is an ignored timing probe.
 - [x] Define token classes and three selectable palettes in the existing theme
   system (Lumen Dark, Light and High Contrast).
 - [ ] Add visual fixtures for code, config/resource and build files in each scheme.
@@ -284,8 +288,9 @@ specified by a project unless the user’s server-command policy permits it.
 - [ ] Move all language detection and embedded lexical resources into contributions.
 - [x] Ship Rust, Go and JSON parser/query resources; JSON deliberately has no
   language-server descriptor.
-- [ ] Ship CMake, Makefile, Dockerfile, TOML and YAML parser/query resources;
-  retain fallback definitions for the remaining current formats.
+- [x] Ship CMake, Makefile, Dockerfile, TOML and YAML parsers (Dockerfile uses
+  tree-sitter-containerfile; the older dockerfile crate targets tree-sitter 0.20).
+  Other formats keep the lexical fallback. No visual comparison done yet.
 - [x] Route parsed Rust/Go spans through `editor-surface` without changing its
   single viewport/layout authority. Compare old/new screenshots before expanding
   parser coverage to further languages.
@@ -355,7 +360,15 @@ specified by a project unless the user’s server-command policy permits it.
 
 ### Phase 4 — editing services and hardening — Planned
 
-- [ ] Add completion/signature help, then references, rename preview, code-action and
+- [x] Completion and signature help: explicit Ctrl+Space / Ctrl+Shift+Space (also the
+  palette and editor menu). Completion is a filterable popup with Up/Down/Enter/Tab/
+  Escape consumed only while open; accepting is one undoable buffer edit, honoring the
+  server's range only while the caret is unmoved, applying import-style extra edits
+  only when they precede the word. Snippet items are skipped (snippets are not
+  advertised). Signature help highlights the active parameter and clears on edit.
+  Live-validated with rust-analyzer and gopls. No automatic trigger-character popups
+  or `completionItem/resolve` yet; a reply is discarded if the caret moves first.
+- [ ] Then references, rename preview, code-action and
   formatting transactions. Each mutating edit goes through the app’s existing
   save/conflict/document identity protections.
 - [ ] Add native acceptance on macOS and Windows, representative large workspaces,

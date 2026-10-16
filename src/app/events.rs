@@ -18,6 +18,18 @@ impl LumenApp {
         if editor_has_focus && ctx.input_mut(|input| input.consume_shortcut(&symbols)) {
             self.execute(Command::ShowDocumentSymbols, ctx);
         }
+        for (modifiers, command) in [
+            (egui::Modifiers::CTRL, Command::TriggerCompletion),
+            (
+                egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+                Command::ShowSignatureHelp,
+            ),
+        ] {
+            let shortcut = egui::KeyboardShortcut::new(modifiers, egui::Key::Space);
+            if editor_has_focus && ctx.input_mut(|input| input.consume_shortcut(&shortcut)) {
+                self.execute(command, ctx);
+            }
+        }
         let terminal_focused = self.view.terminal.open
             && ctx.memory(|memory| memory.has_focus(egui::Id::new("terminal_canvas")));
         // VS Code uses Ctrl+` on every desktop platform. Keep it available

@@ -570,3 +570,91 @@ fn replace_that_splits_a_grapheme_reports_failure_without_history_or_text_change
     assert!(!buffer(&app).can_undo());
     assert!(app.view.status.contains("splits a grapheme"));
 }
+
+fn open_completion(app: &mut LumenApp, word_start: usize, origin: usize, labels: &[&str]) {
+    let document = app.editor.active().unwrap().id;
+    app.view.language_completion = Some(crate::app::view_state::CompletionSession {
+        document,
+        origin,
+        word_start,
+        items: labels
+            .iter()
+            .map(|label| lumen_language_services::incoming::CompletionItem {
+                label: (*label).into(),
+                detail: None,
+                kind: None,
+                filter_text: (*label).into(),
+                insert_text: (*label).into(),
+                edit_range: None,
+                additional_edits: Vec::new(),
+            })
+            .collect(),
+        selected: 0,
+        pending_accept: None,
+    });
+}
+
+#[test]
+fn completion_keys_navigate_accept_and_undo_without_reaching_the_editor() {
+    let (mut app, _, ctx) = fixture("x.pu");
+    select(&mut app, vec![Selection::caret(4)], 0);
+    open_completion(&mut app, 2, 4, &["pull", "push"]);
+    let none = egui::Modifiers::NONE;
+    editor_frame(&mut app, &ctx, vec![key(egui::Key::ArrowDown, none)]);
+    assert_eq!(app.view.language_completion.as_ref().unwrap().selected, 1);
+    // Arrow keys were consumed: the caret did not move.
+    assert_eq!(
+        buffer(&app).selections().selections()[0],
+        Selection::caret(4)
+    );
+    editor_frame(&mut app, &ctx, vec![key(egui::Key::Enter, none)]);
+    assert_eq!(
+        buffer(&app).text(),
+        "x.push",
+        "Enter accepts instead of inserting a newline"
+    );
+    assert!(app.view.language_completion.is_none());
+    assert_eq!(app.editor.active().unwrap().text, "x.push");
+    let id = app.editor.active().unwrap().id;
+    app.execute(Command::EditorAction(id, EditorAction::Undo), &ctx);
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(buffer(&app).text(), "x.pu");
+}
+
+#[test]
+fn completion_closes_on_escape_caret_exit_and_foreign_documents() {
+    let none = egui::Modifiers::NONE;
+    let (mut app, _, ctx) = fixture("x.pu");
+    select(&mut app, vec![Selection::caret(4)], 0);
+    open_completion(&mut app, 2, 4, &["push"]);
+    editor_frame(&mut app, &ctx, vec![key(egui::Key::Escape, none)]);
+    assert!(app.view.language_completion.is_none());
+    assert_eq!(buffer(&app).text(), "x.pu");
+
+    open_completion(&mut app, 2, 4, &["push"]);
+    select(&mut app, vec![Selection::caret(1)], 0);
+    editor_frame(&mut app, &ctx, vec![]);
+    assert!(app.view.language_completion.is_none());
+
+    select(&mut app, vec![Selection::caret(4)], 0);
+    open_completion(&mut app, 2, 4, &["push"]);
+    app.view.language_completion.as_mut().unwrap().document =
+        crate::model::Document::untitled(0).id;
+    editor_frame(&mut app, &ctx, vec![]);
+    assert!(app.view.language_completion.is_none());
+}
+
+#[test]
+fn clicked_completion_applies_before_editor_input_and_typing_filters() {
+    let (mut app, _, ctx) = fixture("x.pu");
+    select(&mut app, vec![Selection::caret(4)], 0);
+    open_completion(&mut app, 2, 4, &["pull", "push", "len"]);
+    app.view
+        .language_completion
+        .as_mut()
+        .unwrap()
+        .pending_accept = Some(0);
+    editor_frame(&mut app, &ctx, vec![]);
+    assert_eq!(buffer(&app).text(), "x.pull");
+    assert!(app.view.language_completion.is_none());
+}

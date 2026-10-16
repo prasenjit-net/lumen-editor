@@ -21,6 +21,8 @@ pub struct ServerCapabilities {
     pub hover: bool,
     pub definition: bool,
     pub document_symbols: bool,
+    pub completion: bool,
+    pub signature_help: bool,
     /// True only when the server offers full-document semantic tokens and a legend.
     pub semantic_tokens: bool,
     pub semantic_legend: Option<crate::SemanticTokenLegend>,
@@ -60,6 +62,8 @@ impl ServerCapabilities {
             hover: provider_enabled(capabilities.get("hoverProvider")),
             definition: provider_enabled(capabilities.get("definitionProvider")),
             document_symbols: provider_enabled(capabilities.get("documentSymbolProvider")),
+            completion: provider_enabled(capabilities.get("completionProvider")),
+            signature_help: provider_enabled(capabilities.get("signatureHelpProvider")),
             semantic_tokens: semantic.is_some(),
             semantic_legend: semantic,
         })
@@ -157,6 +161,8 @@ mod tests {
                 hover: true,
                 definition: true,
                 document_symbols: false,
+                completion: true,
+                signature_help: false,
                 semantic_tokens: true,
                 semantic_legend: Some(crate::SemanticTokenLegend {
                     token_types: vec!["function".into()],

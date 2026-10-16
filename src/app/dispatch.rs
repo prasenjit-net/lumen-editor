@@ -81,6 +81,8 @@ impl LumenApp {
             Command::GoToLine => self.open_go_to_line(),
             Command::GoToDefinition => self.request_language_definition(),
             Command::ShowHover => self.request_language_hover(),
+            Command::TriggerCompletion => self.request_language_completion(),
+            Command::ShowSignatureHelp => self.request_language_signature_help(),
             Command::ShowDocumentSymbols => self.request_document_symbols(),
             Command::OpenLanguageLocation(index) => self.open_language_location(index),
             Command::OpenQuickPath(path) => self.open_quick_path(path),

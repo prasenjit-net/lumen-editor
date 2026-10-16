@@ -1,6 +1,7 @@
 //! Application orchestration: shared commands, workflows and frame ordering.
 mod clipboard;
 pub(crate) mod command;
+pub(crate) mod completion;
 mod dispatch;
 mod documents;
 pub(crate) mod editor_action;

@@ -91,6 +91,20 @@ pub(crate) enum LanguageServerStatus {
     Error(String),
 }
 
+/// An open completion popup. Typing narrows `items` through
+/// `completion::visible`; `selected` indexes that filtered list.
+#[derive(Clone, Debug)]
+pub(crate) struct CompletionSession {
+    pub(crate) document: crate::model::DocumentId,
+    /// Caret byte when the server was asked; its edit ranges are valid there.
+    pub(crate) origin: usize,
+    pub(crate) word_start: usize,
+    pub(crate) items: Vec<lumen_language_services::incoming::CompletionItem>,
+    pub(crate) selected: usize,
+    /// Item index chosen with the pointer, applied before the next editor input.
+    pub(crate) pending_accept: Option<usize>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SemanticSnapshot {
     pub(crate) revision: u64,
@@ -295,6 +309,13 @@ pub(crate) struct ViewState {
     /// Latest semantic tokens per document; valid only for the stored revision.
     pub(crate) language_semantic_tokens:
         std::collections::HashMap<crate::model::DocumentId, SemanticSnapshot>,
+    pub(crate) language_completion: Option<CompletionSession>,
+    /// Signature help is shown for the revision it was requested at.
+    pub(crate) language_signature: Option<(
+        crate::model::DocumentId,
+        u64,
+        lumen_language_services::incoming::SignatureHelp,
+    )>,
     pub(crate) language_server_summary: Option<LanguageServerSummary>,
     pub(crate) language_server_details_open: bool,
     pub(crate) language_hover: Option<String>,
@@ -369,6 +390,8 @@ impl Default for ViewState {
             language_server_document: None,
             language_server_status: None,
             language_semantic_tokens: std::collections::HashMap::new(),
+            language_completion: None,
+            language_signature: None,
             language_server_summary: None,
             language_server_details_open: false,
             language_hover: None,

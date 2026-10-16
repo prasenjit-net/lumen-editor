@@ -25,6 +25,11 @@ impl LanguageId {
     pub const RUST: Self = Self("rust");
     pub const GO: Self = Self("go");
     pub const JSON: Self = Self("json");
+    pub const TOML: Self = Self("toml");
+    pub const YAML: Self = Self("yaml");
+    pub const CMAKE: Self = Self("cmake");
+    pub const MAKEFILE: Self = Self("makefile");
+    pub const DOCKERFILE: Self = Self("dockerfile");
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -45,6 +50,11 @@ pub enum ParserKind {
     TreeSitterRust,
     TreeSitterGo,
     TreeSitterJson,
+    TreeSitterToml,
+    TreeSitterYaml,
+    TreeSitterCmake,
+    TreeSitterMake,
+    TreeSitterDockerfile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,7 +130,83 @@ const JSON: LanguageDescriptor = LanguageDescriptor {
     server: None,
 };
 
-const BUILTIN_LANGUAGES: &[LanguageDescriptor] = &[RUST, GO, JSON];
+/// Parser-only contribution: deliberately no language server.
+const TOML: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::TOML,
+    label: "TOML",
+    aliases: &[],
+    filenames: &["Cargo.lock"],
+    filename_prefixes: &[],
+    extensions: &["toml"],
+    workspace_markers: &[],
+    parser: Some(ParserDescriptor {
+        kind: ParserKind::TreeSitterToml,
+    }),
+    server: None,
+};
+
+/// Parser-only contribution: deliberately no language server.
+const YAML: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::YAML,
+    label: "YAML",
+    aliases: &["yml"],
+    filenames: &[".clang-format"],
+    filename_prefixes: &[],
+    extensions: &["yaml", "yml"],
+    workspace_markers: &[],
+    parser: Some(ParserDescriptor {
+        kind: ParserKind::TreeSitterYaml,
+    }),
+    server: None,
+};
+
+/// Parser-only contribution: deliberately no language server.
+const CMAKE: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::CMAKE,
+    label: "CMake",
+    aliases: &[],
+    filenames: &["CMakeLists.txt"],
+    filename_prefixes: &[],
+    extensions: &["cmake"],
+    workspace_markers: &[],
+    parser: Some(ParserDescriptor {
+        kind: ParserKind::TreeSitterCmake,
+    }),
+    server: None,
+};
+
+/// Parser-only contribution: deliberately no language server.
+const MAKEFILE: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::MAKEFILE,
+    label: "Makefile",
+    aliases: &["make"],
+    filenames: &["Makefile", "makefile", "GNUmakefile"],
+    filename_prefixes: &[],
+    extensions: &["mk", "make"],
+    workspace_markers: &[],
+    parser: Some(ParserDescriptor {
+        kind: ParserKind::TreeSitterMake,
+    }),
+    server: None,
+};
+
+/// Parser-only contribution: deliberately no language server.
+const DOCKERFILE: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::DOCKERFILE,
+    label: "Dockerfile",
+    aliases: &["containerfile"],
+    filenames: &["Dockerfile", "Containerfile"],
+    filename_prefixes: &["Dockerfile.", "Containerfile."],
+    extensions: &["dockerfile"],
+    workspace_markers: &[],
+    parser: Some(ParserDescriptor {
+        kind: ParserKind::TreeSitterDockerfile,
+    }),
+    server: None,
+};
+
+const BUILTIN_LANGUAGES: &[LanguageDescriptor] =
+    &[RUST, GO, JSON, TOML, YAML, CMAKE, MAKEFILE, DOCKERFILE];
 
 /// Static language catalog. Language contributions will extend this catalog in
 /// one location, instead of scattering file-type checks throughout the app.
@@ -670,7 +756,7 @@ mod tests {
             LanguageRegistry::detect(Path::new("settings.json")).map(|item| item.id),
             Some(LanguageId::JSON)
         );
-        assert!(LanguageRegistry::detect(Path::new("CMakeLists.txt")).is_none());
+        assert!(LanguageRegistry::detect(Path::new("script.py")).is_none());
         assert_eq!(
             LanguageRegistry::by_id(LanguageId::GO)
                 .and_then(|language| language.server)

@@ -152,6 +152,7 @@ impl Workbench<'_> {
                 surface.reveal(range.start);
             }
         }
+        self.completion_before_input(&ctx, index);
         let output = Frame::new()
             .fill(BG)
             .corner_radius(4)
@@ -202,6 +203,7 @@ impl Workbench<'_> {
             }
         }
         self.view.shared_surface = Some(surface);
+        self.completion_popups(&ctx, &output, index);
         if let Some(find) = self.view.find.get_mut(&document) {
             find.refresh(&self.editor.files[index]);
             if find.open {

@@ -48,6 +48,20 @@ pub fn initialize_request_with_options(
                 "workspace": { "workspaceFolders": true },
                 "textDocument": {
                     "publishDiagnostics": { "relatedInformation": true },
+                    "completion": {
+                        "completionItem": {
+                            "snippetSupport": false,
+                            "documentationFormat": ["plaintext"],
+                            "insertReplaceSupport": false
+                        }
+                    },
+                    "signatureHelp": {
+                        "signatureInformation": {
+                            "documentationFormat": ["plaintext"],
+                            "parameterInformation": { "labelOffsetSupport": true },
+                            "activeParameterSupport": true
+                        }
+                    },
                     "semanticTokens": {
                         "requests": { "full": true },
                         "tokenTypes": SEMANTIC_TOKEN_TYPES,
@@ -196,6 +210,35 @@ pub fn semantic_tokens_request(request_id: u64, uri: &DocumentUri) -> Value {
     })
 }
 
+/// Explicitly invoked completion (`triggerKind` 1).
+#[must_use]
+pub fn completion_request(request_id: u64, uri: &DocumentUri, position: Position) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": uri.as_str() },
+            "position": { "line": position.line, "character": position.character },
+            "context": { "triggerKind": 1 }
+        }
+    })
+}
+
+#[must_use]
+pub fn signature_help_request(request_id: u64, uri: &DocumentUri, position: Position) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/signatureHelp",
+        "params": {
+            "textDocument": { "uri": uri.as_str() },
+            "position": { "line": position.line, "character": position.character },
+            "context": { "triggerKind": 1, "isRetrigger": false }
+        }
+    })
+}
+
 #[must_use]
 pub fn hover_request(request_id: u64, uri: &DocumentUri, position: Position) -> Value {
     text_position_request(request_id, "textDocument/hover", uri, position)
@@ -245,7 +288,14 @@ mod tests {
         assert_eq!(message["id"], 9);
         assert_eq!(message["method"], "initialize");
         assert_eq!(message["params"]["rootUri"], "file:///workspace");
-        assert!(message["params"]["capabilities"]["textDocument"]["completion"].is_null());
+        let text_document = &message["params"]["capabilities"]["textDocument"];
+        // Snippets are not supported, so servers must send plain text edits.
+        assert_eq!(
+            text_document["completion"]["completionItem"]["snippetSupport"],
+            false
+        );
+        assert!(text_document["rename"].is_null());
+        assert!(text_document["codeAction"].is_null());
         assert_eq!(initialized_notification()["method"], "initialized");
     }
 

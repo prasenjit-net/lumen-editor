@@ -44,6 +44,8 @@ pub(crate) enum Command {
     GoToLine,
     GoToDefinition,
     ShowHover,
+    TriggerCompletion,
+    ShowSignatureHelp,
     ShowDocumentSymbols,
     OpenLanguageLocation(usize),
     OpenQuickPath(PathBuf),

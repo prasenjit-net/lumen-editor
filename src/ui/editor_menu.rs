@@ -134,6 +134,16 @@ impl Workbench<'_> {
                 (Command::GoToDefinition, "Go to Definition", "F12".into()),
                 (Command::ShowHover, "Show Hover", String::new()),
                 (
+                    Command::TriggerCompletion,
+                    "Trigger Suggest",
+                    "Ctrl+Space".into(),
+                ),
+                (
+                    Command::ShowSignatureHelp,
+                    "Show Signature Help",
+                    "Ctrl+Shift+Space".into(),
+                ),
+                (
                     Command::ShowDocumentSymbols,
                     "Go to Symbol in Editor",
                     format!("Shift+{command_key}O"),

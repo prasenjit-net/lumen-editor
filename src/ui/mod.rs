@@ -1,6 +1,7 @@
 //! Workbench components and shared drawing primitives.
 mod activity_bar;
 mod chrome;
+mod completion;
 mod dialogs;
 mod editor;
 mod editor_find;

@@ -571,4 +571,155 @@ mod tests {
         assert!(initialized, "initialize never answered");
         assert!(diagnostics.is_some(), "no diagnostics: {stderr}");
     }
+
+    #[test]
+    #[ignore = "requires rust-analyzer and a Rust toolchain on PATH"]
+    fn live_rust_analyzer_completes_and_shows_signature_help() {
+        live_completion(
+            lumen_language_services::LanguageId::RUST,
+            &[(
+                "Cargo.toml",
+                "[package]\nname = \"live\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )],
+            "src/main.rs",
+            "fn main() {\n    let mut v: Vec<u32> = Vec::new();\n    v.pu\n    v.push(\n}\n",
+            ("v.pu", "push"),
+            ("v.push(", "push"),
+        );
+    }
+
+    #[test]
+    #[ignore = "requires gopls and a Go toolchain on PATH"]
+    fn live_gopls_completes_and_shows_signature_help() {
+        live_completion(
+            lumen_language_services::LanguageId::GO,
+            &[("go.mod", "module live\n\ngo 1.21\n")],
+            "main.go",
+            "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Prin\n\tfmt.Println(\n}\n",
+            ("fmt.Prin", "Println"),
+            ("fmt.Println(", "Println"),
+        );
+    }
+
+    /// `completion` and `signature` are (anchor text whose end is the caret, expected substring).
+    fn live_completion(
+        language_id: lumen_language_services::LanguageId,
+        project_files: &[(&str, &str)],
+        source_name: &str,
+        text: &str,
+        completion: (&str, &str),
+        signature: (&str, &str),
+    ) {
+        use lumen_language_services::{
+            DocumentUri, ServerDocumentVersion, byte_to_position, incoming, lsp,
+        };
+        use std::time::{Duration, Instant};
+
+        let language = LanguageRegistry::by_id(language_id).unwrap();
+        let ServerAvailability::Available { executable } =
+            LocalLanguageServer.availability(language)
+        else {
+            panic!("{} not on PATH", language.label);
+        };
+        let root = env::temp_dir().join(format!(
+            "lumen-live-complete-{}-{}",
+            language_id.as_str(),
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        for (name, contents) in project_files {
+            std::fs::write(root.join(name), contents).unwrap();
+        }
+        let file = root.join(source_name);
+        std::fs::write(&file, text).unwrap();
+        let root_uri = format!("file://{}", root.display());
+        let uri = DocumentUri::new(format!("file://{}", file.display())).unwrap();
+        let caret_after = |anchor: &str| {
+            let end = text.find(anchor).expect("anchor in source") + anchor.len();
+            byte_to_position(text, end).unwrap()
+        };
+
+        let mut server = ServerProcess::start(&executable, &root, Arc::new(|| {})).unwrap();
+        server
+            .send(&lsp::initialize_request_with_options(
+                0,
+                &root_uri,
+                language
+                    .server
+                    .and_then(|server| server.initialization_options),
+            ))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let mut next_id = 10_u64;
+        let mut pending: Option<(u64, &str)> = None;
+        let mut initialized = false;
+        let (mut completed, mut signed) = (None, None);
+        while Instant::now() < deadline && (completed.is_none() || signed.is_none()) {
+            for event in server.drain_events() {
+                let ServerEvent::Message(message) = event else {
+                    continue;
+                };
+                if message.get("id") == Some(&serde_json::json!(0)) && !initialized {
+                    initialized = true;
+                    server.send(&lsp::initialized_notification()).unwrap();
+                    server
+                        .send(&lsp::did_open(
+                            &uri,
+                            language_id,
+                            ServerDocumentVersion(1),
+                            text,
+                        ))
+                        .unwrap();
+                } else if let Some((id, kind)) = pending
+                    && message.get("id") == Some(&serde_json::json!(id))
+                {
+                    pending = None;
+                    if kind == "completion" {
+                        let items = incoming::parse_completion_response(&message, text).unwrap();
+                        println!("completion items: {}", items.len());
+                        if let Some(item) =
+                            items.iter().find(|item| item.label.contains(completion.1))
+                        {
+                            println!("matched: {item:?}");
+                            completed = Some(item.clone());
+                        }
+                    } else if let Some(help) =
+                        incoming::parse_signature_help_response(&message).unwrap()
+                    {
+                        println!("signature: {help:?}");
+                        if help.label.contains(signature.1) {
+                            signed = Some(help);
+                        }
+                    }
+                } else if let Some(reply) = lsp::server_request_response(&message) {
+                    server.send(&reply).unwrap();
+                }
+            }
+            if initialized && pending.is_none() {
+                // Servers answer empty until indexing finishes, so keep asking.
+                next_id += 1;
+                let (kind, request) = if completed.is_none() {
+                    (
+                        "completion",
+                        lsp::completion_request(next_id, &uri, caret_after(completion.0)),
+                    )
+                } else {
+                    (
+                        "signature",
+                        lsp::signature_help_request(next_id, &uri, caret_after(signature.0)),
+                    )
+                };
+                server.send(&request).unwrap();
+                pending = Some((next_id, kind));
+                thread::sleep(Duration::from_millis(300));
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        let stderr = server.stderr_text();
+        let _ = server.begin_shutdown();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(completed.is_some(), "no matching completion: {stderr}");
+        let help = signed.expect("no signature help");
+        assert!(help.active_parameter.is_some() || help.label.contains(signature.1));
+    }
 }
