@@ -94,7 +94,7 @@ impl Workbench<'_> {
             return;
         }
         if let Some(error) = &self.view.source_control.error {
-            source_label(ui, error, colors.diff_removed_text);
+            source_label(ui, error, colors.error);
             if self.view.source_control.snapshot.is_none() {
                 return;
             }
@@ -196,7 +196,7 @@ impl Workbench<'_> {
             }
         });
         if let Some(error) = &self.view.source_control.commit_error {
-            source_label(ui, error, colors.diff_removed_text);
+            source_label(ui, error, colors.error);
         }
         if snapshot.changes.is_empty() {
             source_label(ui, "No changes", colors.muted);
@@ -476,7 +476,7 @@ impl Workbench<'_> {
                 }
             }
             Err(error) => {
-                ui.label(RichText::new(error).color(colors.diff_removed_text));
+                ui.label(RichText::new(error).color(colors.error));
             }
         }
     }

@@ -97,7 +97,7 @@ impl Workbench<'_> {
                     }
                 }
                 if let Some(error) = &nav.error {
-                    ui.label(RichText::new(error).color(colors.diff_removed_text));
+                    ui.label(RichText::new(error).color(colors.error));
                 }
             });
         if !open {

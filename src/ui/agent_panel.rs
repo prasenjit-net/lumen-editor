@@ -167,8 +167,8 @@ fn status_strip(
             },
         ),
         ConnectionState::NeedsAuth => (colors.warning, session.kind.sign_in_hint().to_owned()),
-        ConnectionState::NotFound(message) => (colors.diff_removed_text, message.clone()),
-        ConnectionState::Failed(error) => (colors.diff_removed_text, error.clone()),
+        ConnectionState::NotFound(message) => (colors.error, message.clone()),
+        ConnectionState::Failed(error) => (colors.error, error.clone()),
     };
     Frame::default()
         .inner_margin(Margin::symmetric(12, 4))
@@ -442,7 +442,7 @@ fn change_rows(
                                 ui.label(
                                     RichText::new(format!("not reverted: {reason}"))
                                         .size(10.5)
-                                        .color(colors.diff_removed_text),
+                                        .color(colors.error),
                                 );
                             }
                         }
@@ -1010,11 +1010,7 @@ fn history_list(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Ve
     });
     ui.separator();
     if let Some(error) = &history.error {
-        ui.label(
-            RichText::new(error)
-                .size(11.0)
-                .color(colors.diff_removed_text),
-        );
+        ui.label(RichText::new(error).size(11.0).color(colors.error));
     }
     if history.unsupported {
         ui.label(
@@ -1290,7 +1286,7 @@ fn tool_call(ui: &mut egui::Ui, call: &ToolCall) {
         ToolStatus::Pending => ("waiting", colors.muted),
         ToolStatus::InProgress => ("running", colors.warning),
         ToolStatus::Completed => ("done", colors.muted),
-        ToolStatus::Failed => ("failed", colors.diff_removed_text),
+        ToolStatus::Failed => ("failed", colors.error),
     };
     let title = if call.title.is_empty() {
         "Tool call"

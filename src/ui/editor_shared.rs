@@ -196,9 +196,7 @@ impl Workbench<'_> {
             let painter = ui.painter_at(output.text_clip);
             for diagnostic in diagnostics {
                 let color = match diagnostic.severity {
-                    lumen_language_services::diagnostics::DiagnosticSeverity::Error => {
-                        colors.diff_removed_text
-                    }
+                    lumen_language_services::diagnostics::DiagnosticSeverity::Error => colors.error,
                     lumen_language_services::diagnostics::DiagnosticSeverity::Warning => {
                         colors.warning
                     }

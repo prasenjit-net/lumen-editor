@@ -30,6 +30,7 @@ pub(crate) struct Palette {
     pub(crate) diff_removed_highlight: Color32,
     pub(crate) diff_added_highlight: Color32,
     pub(crate) canvas: Color32,
+    pub(crate) error: Color32,
     pub(crate) warning: Color32,
     pub(crate) success: Color32,
     pub(crate) info: Color32,
@@ -74,6 +75,7 @@ impl Theme {
             diff_removed_highlight: Color32::from_rgb(105, 45, 45),
             diff_added_highlight: Color32::from_rgb(46, 91, 57),
             canvas: Color32::from_gray(24),
+            error: Color32::from_rgb(244, 135, 113),
             warning: Color32::from_rgb(204, 167, 0),
             success: Color32::from_rgb(35, 209, 139),
             info: Color32::from_rgb(117, 190, 255),
@@ -95,6 +97,7 @@ impl Theme {
                 hover: Color32::from_gray(224),
                 active: Color32::from_rgb(190, 220, 245),
                 accent: Color32::from_rgb(0, 95, 160),
+                error: Color32::from_rgb(165, 25, 25),
                 warning: Color32::from_rgb(125, 88, 0),
                 success: Color32::from_rgb(0, 112, 64),
                 info: Color32::from_rgb(0, 95, 160),
@@ -121,6 +124,7 @@ impl Theme {
                 hover: Color32::from_gray(55),
                 active: Color32::from_rgb(0, 65, 100),
                 accent: Color32::YELLOW,
+                error: Color32::from_rgb(255, 120, 120),
                 warning: Color32::YELLOW,
                 success: Color32::GREEN,
                 info: Color32::from_rgb(0, 255, 255),
@@ -230,6 +234,12 @@ mod tests {
                 );
             }
             assert!(contrast(colors.text, colors.active) >= 4.5);
+            for status in [colors.error, colors.warning] {
+                assert!(
+                    contrast(status, colors.panel) >= 4.5,
+                    "{theme:?}: {status:?}"
+                );
+            }
             assert_eq!(current(&visuals(theme)), theme);
         }
     }

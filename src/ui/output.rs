@@ -18,7 +18,7 @@ fn level_color(level: LogLevel, colors: theme::Palette) -> Color32 {
     match level {
         LogLevel::Info => colors.text,
         LogLevel::Warn => colors.warning,
-        LogLevel::Error => colors.diff_removed_text,
+        LogLevel::Error => colors.error,
     }
 }
 
