@@ -55,7 +55,7 @@ Nested `.gitignore` files use Git-style pattern matching, including anchoring,
 escaped names, character classes and negation. The result-count tooltip breaks
 down skipped entries; descendants of a skipped directory are not counted.
 Git's global excludes and `.git/info/exclude` are not read. See
-[the roadmap](plan/vscode-core-feature-roadmap.md) for remaining validation.
+[the roadmap](plans/vscode-core-feature-roadmap.md) for remaining validation.
 
 The shared editor colors comments, strings, numbers, keywords, types, functions,
 properties and markup using a compact dark syntax palette. Rust, TOML, Markdown,
@@ -143,7 +143,7 @@ chevrons for bracket-delimited and Python/YAML indentation blocks. Folded rows
 retain original line numbers; Find/Go-to and caret entry reveal hidden targets.
 Fold state is per open tab and does not alter document text or undo history.
 Folding is not available in the optional legacy TextEdit fallback. See
-[the editor plan](plan/text-editor-improvement-plan.md) for the remaining work.
+[the editor plan](plans/text-editor-improvement-plan.md) for the remaining work.
 
 Run from source:
 
@@ -314,7 +314,7 @@ isolated validation, using the same shared backend as the normal build.
 The shared editor retains core caret affinity, uses visual grapheme
 arrows and caches unchanged shaped layouts/character geometry. Large-file,
 many-cursor and long-line probes are recorded in the
-[performance baseline](plan/editor-performance-baseline.md).
+[performance baseline](plans/editor-performance-baseline.md).
 The user requested default promotion on 2026-10-12 with native acceptance still
 pending. This is a default configuration change, not a claim of completed native
 IME/VoiceOver validation. Earlier manual passes apply to the preceding prototype.
@@ -322,7 +322,7 @@ Clipboard metadata is session-only; the service reread still has its
 documented latency/snapshot race. A current-match replacement inside a grapheme
 is rejected with feedback; the user explicitly accepted that grapheme-safe rule.
 Windows is compilation-
-checked, not runtime-tested. See [native validation](plan/native-editor-validation.md).
+checked, not runtime-tested. See [native validation](plans/native-editor-validation.md).
 
 ### Settings
 
@@ -374,13 +374,13 @@ Reload discards that tab's unsaved edits. An explicit Overwrite rechecks the
 disk version before replacing it. Save/Save As stage writes in the target
 directory and replace the file only after the write succeeds. There is no
 automatic merge or hunk-level diff yet; the remaining work and native
-acceptance are tracked in the [core feature roadmap](plan/vscode-core-feature-roadmap.md).
+acceptance are tracked in the [core feature roadmap](plans/vscode-core-feature-roadmap.md).
 
 External changes currently require Reload (config files saved in Lumen reload
 automatically). Invalid files and disk conflicts are reported without replacing
 valid settings or drafts. Close an open config tab before applying its form draft,
 or edit/save that config directly. Broader settings capabilities and native
-acceptance are tracked in [the settings plan](plan/settings-feature-plan.md).
+acceptance are tracked in [the settings plan](plans/settings-feature-plan.md).
 
 ### Standalone multi-cursor fixture
 
@@ -394,4 +394,4 @@ cargo run -p lumen-editor-surface --example spike
 It reuses Lumen's theme/fonts but does not open files or alter workbench buffers.
 Add `--features shaped` to exercise the new renderer. Native validation and
 platform runtime checks remain open. See
-[the spike evaluation](plan/multi-cursor-backend-spike.md) before backend migration.
+[the spike evaluation](plans/multi-cursor-backend-spike.md) before backend migration.

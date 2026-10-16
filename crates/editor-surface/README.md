@@ -72,5 +72,5 @@ embedding/control-heavy bidi conformance, complete platform font coverage and
 exhaustive workbench parity. Windows has compilation
 checks, not native runtime validation.
 
-See [the integration report](../../plan/shared-editor-integration.md) and
-[the backend evaluation](../../plan/multi-cursor-backend-spike.md).
+See [the integration report](../../plans/shared-editor-integration.md) and
+[the backend evaluation](../../plans/multi-cursor-backend-spike.md).

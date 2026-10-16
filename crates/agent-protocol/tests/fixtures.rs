@@ -1,5 +1,5 @@
 //! Replays transcripts captured from the real Claude and Codex adapters
-//! (see plan/acp-spike) through the protocol crate.
+//! (see plans/acp-spike) through the protocol crate.
 use lumen_agent_protocol::{
     framing::{LineDecoder, encode},
     handshake::{check_version, is_auth_required},
