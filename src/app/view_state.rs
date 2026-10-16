@@ -54,6 +54,7 @@ pub(crate) struct DeletePrompt {
 pub(crate) enum NavigationMode {
     QuickOpen,
     GoToLine,
+    RecentFolders,
 }
 
 #[derive(Default)]
@@ -70,6 +71,8 @@ pub(crate) struct NavigationView {
     pub(crate) limited: bool,
     pub(crate) errors: usize,
     pub(crate) recent: Vec<PathBuf>,
+    /// Recently opened workspace folders, most recent first.
+    pub(crate) recent_folders: Vec<PathBuf>,
     pub(crate) recent_warning: Option<String>,
     pub(crate) error: Option<String>,
 }

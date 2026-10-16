@@ -136,43 +136,49 @@ impl Workbench<'_> {
 }
 
 impl Workbench<'_> {
-    /// Up to a handful of recently opened files. Whether one still exists is only
-    /// known when it is opened, which reports a recoverable error and leaves
-    /// every buffer untouched.
+    /// Recently opened folders, then files. Whether an entry still exists is only
+    /// known when it is opened; a missing folder is reported and pruned, a missing
+    /// file reports a recoverable error, and neither disturbs open buffers.
     fn recent_files_list(&mut self, ui: &mut egui::Ui) {
         const SHOWN: usize = 5;
         let colors = crate::ui::theme::palette(ui.visuals());
-        let recent: Vec<std::path::PathBuf> = self
-            .view
-            .navigation
-            .recent
-            .iter()
-            .take(SHOWN)
-            .cloned()
-            .collect();
-        if recent.is_empty() {
-            return;
-        }
-        ui.add_space(18.0);
-        ui.label(RichText::new("Recent").size(11.0).color(colors.muted));
-        for path in recent {
-            let name = display_name(&path);
-            let parent = path
-                .parent()
-                .map(display_name)
-                .filter(|parent| !parent.is_empty())
-                .unwrap_or_default();
-            let label = if parent.is_empty() {
-                name
-            } else {
-                format!("{name}  \u{b7}  {parent}")
-            };
-            if ui
-                .add(egui::Button::new(RichText::new(label).size(12.0)).frame(false))
-                .on_hover_text(path.display().to_string())
-                .clicked()
-            {
-                self.command(Command::OpenPath(path));
+        let take = |paths: &[std::path::PathBuf]| -> Vec<std::path::PathBuf> {
+            paths.iter().take(SHOWN).cloned().collect()
+        };
+        let folders = take(&self.view.navigation.recent_folders);
+        let files = take(&self.view.navigation.recent);
+        for (title, paths, is_folder) in [
+            ("Recent folders", folders, true),
+            ("Recent files", files, false),
+        ] {
+            if paths.is_empty() {
+                continue;
+            }
+            ui.add_space(18.0);
+            ui.label(RichText::new(title).size(11.0).color(colors.muted));
+            for path in paths {
+                let name = display_name(&path);
+                let parent = path
+                    .parent()
+                    .map(display_name)
+                    .filter(|parent| !parent.is_empty())
+                    .unwrap_or_default();
+                let label = if parent.is_empty() {
+                    name
+                } else {
+                    format!("{name}  \u{b7}  {parent}")
+                };
+                if ui
+                    .add(egui::Button::new(RichText::new(label).size(12.0)).frame(false))
+                    .on_hover_text(path.display().to_string())
+                    .clicked()
+                {
+                    self.command(if is_folder {
+                        Command::OpenRecentFolder(path)
+                    } else {
+                        Command::OpenPath(path)
+                    });
+                }
             }
         }
     }

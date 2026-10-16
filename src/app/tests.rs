@@ -613,10 +613,11 @@ fn failed_save_as_preserves_original_path_and_dirty_content() {
 #[test]
 fn opening_a_folder_resets_explorer_state_but_keeps_buffers() {
     let folder = PathBuf::from("project");
-    let (mut app, _) = test_app(TestDialogs {
+    let (mut app, storage) = test_app(TestDialogs {
         folder: Some(folder.clone()),
         ..Default::default()
     });
+    storage.0.borrow_mut().directories.insert(folder.clone());
     app.new_file();
     app.view.sidebar_visible = false;
     app.view.activity = Activity::Search;

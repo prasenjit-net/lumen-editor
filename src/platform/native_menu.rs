@@ -53,6 +53,7 @@ impl NativeMenu {
             &item(Command::NewUntitled, "New Text File", Code::KeyN, false),
             &item(Command::OpenFile, "Open File…", Code::KeyO, false),
             &item(Command::OpenFolder, "Open Folder…", Code::KeyO, true),
+            &plain_item(Command::ShowRecentFolders, "Open Recent Folder…"),
             &close_folder,
             &PredefinedMenuItem::separator(),
             &save,

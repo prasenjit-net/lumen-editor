@@ -141,6 +141,10 @@ pub(crate) enum Command {
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     SelectAll,
     OpenPath(PathBuf),
+    /// Open a previously used workspace folder.
+    OpenRecentFolder(PathBuf),
+    ShowRecentFolders,
+    ClearRecentHistory,
     /// Show a workspace file or folder in the Explorer sidebar.
     RevealInExplorer(PathBuf),
     RequestClose(DocumentId),
@@ -245,6 +249,7 @@ impl Command {
             Self::OpenFile => Some("open"),
             Self::OpenFolder => Some("folder"),
             Self::CloseFolder => Some("close_folder"),
+            Self::ShowRecentFolders => Some("recent_folders"),
             Self::Save => Some("save"),
             Self::SaveAs => Some("save_as"),
             Self::CloseEditor => Some("close"),
@@ -277,6 +282,7 @@ impl Command {
             "open" => Self::OpenFile,
             "folder" => Self::OpenFolder,
             "close_folder" => Self::CloseFolder,
+            "recent_folders" => Self::ShowRecentFolders,
             "save" => Self::Save,
             "save_as" => Self::SaveAs,
             "close" => Self::CloseEditor,

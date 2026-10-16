@@ -40,6 +40,13 @@ impl Workbench<'_> {
                 ui.close();
             }
             if ui
+                .button(format!("{}  Open Recent Folder…", icon::FOLDER_OPEN))
+                .clicked()
+            {
+                self.command(Command::ShowRecentFolders);
+                ui.close();
+            }
+            if ui
                 .add_enabled(
                     self.editor.workspace.is_some(),
                     egui::Button::new(format!("{}  Close Folder", icon::X)),
@@ -126,6 +133,12 @@ impl Workbench<'_> {
         }
         if matches!(command, CloseEditor) && self.active().is_none() && !self.view.settings.open {
             return Some("No editor is open");
+        }
+        if matches!(command, ClearRecentHistory)
+            && self.view.navigation.recent.is_empty()
+            && self.view.navigation.recent_folders.is_empty()
+        {
+            return Some("There is no history to clear");
         }
         if matches!(command, NewFolder | CloseFolder | ShowWorkspaceSearch)
             && self.editor.workspace.is_none()
@@ -362,8 +375,16 @@ fn palette_commands() -> Vec<(String, Command)> {
             Command::OpenFolder,
         ),
         (
+            format!("{}  File: Open Recent Folder…", icon::FOLDER_OPEN),
+            Command::ShowRecentFolders,
+        ),
+        (
             format!("{}  File: Close Folder", icon::X),
             Command::CloseFolder,
+        ),
+        (
+            format!("{}  File: Clear Recently Opened", icon::X),
+            Command::ClearRecentHistory,
         ),
         (format!("{}  File: Save", icon::FLOPPY_DISK), Command::Save),
         (

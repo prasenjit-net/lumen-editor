@@ -46,13 +46,15 @@ pub(crate) fn run() -> eframe::Result<()> {
                 let path = PathBuf::from(argument);
                 let path = std::path::absolute(&path).unwrap_or(path);
                 if path.is_dir() {
-                    app.editor.workspace = Some(path.clone());
-                    app.view.expanded_dirs.insert(path);
+                    app.open_folder_path(path);
                 } else {
                     app.open_file(path);
                 }
             }
             app.initialize_settings(crate::services::settings::user_path());
+            if std::env::args_os().len() <= 1 {
+                app.reopen_last_folder_if_enabled();
+            }
             app.restore_recovery();
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             {

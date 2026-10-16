@@ -228,6 +228,31 @@ workspace-scoped state exactly like the dialog path; symlinked history file reje
 welcome list and palette entry visible with/without history. No test may touch the real
 `~/.lumen`.
 
+
+**Status: done (branch `f-recent-folders`).**
+- `RecentHistory { files, folders }` in `services/recent_files.rs`; old files (no `folders`
+  key) still load, unknown keys survive a save, a corrupt file is replaced; same 64 KiB cap,
+  atomic write and symlink rejection. Folders are capped at 15, de-duplicated, newest first.
+- `open_folder_path` is the single open-folder path (dialog, welcome list, picker, command
+  line directory argument). A missing folder reports `Folder not found`, is pruned from disk
+  history, and changes nothing else.
+- Surfaces: welcome "Recent folders" above "Recent files"; palette "File: Open Recent
+  Folder..." (a filterable picker with arrows/Enter/Escape and an empty state) and "File:
+  Clear Recently Opened" (disabled with a reason when there is nothing to clear); the
+  non-native File menu entry; and a native menu item **"Open Recent Folder..."** that opens
+  the same picker.
+- **Deviation from the plan:** the native menus get that one static item instead of a
+  dynamic "Open Recent" submenu. A rebuilt submenu needs data-carrying native menu IDs and
+  could not be verified here (the menu bar is outside any window capture); the searchable
+  picker covers the same need. Revisit if wanted.
+- Setting `workbench.reopen_last_folder` (default off): on startup, with no command line
+  arguments, reopens the newest recent folder; a vanished folder is reported and skipped.
+- Tests: store round trips, old format, unknown keys, corruption; cap/dedupe/order/restart;
+  prune-on-missing leaves workspace, buffers and expanded folders untouched and stays pruned
+  after restart; clear history on disk; welcome click opens or prunes; picker filter, keyboard
+  and empty state; palette availability; the startup setting. Verified visually with a
+  screenshot of the welcome view and picker. No test touches the real `~/.lumen`.
+
 ## Suggested order
 
 1. Phase 0 (identity) - unblocks everything and fixes the close-active quirk.

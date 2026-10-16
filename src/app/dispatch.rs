@@ -191,6 +191,12 @@ impl LumenApp {
             Command::CloseFolder => self.close_folder(),
             Command::OpenPath(path) => self.open_file(path),
             Command::RevealInExplorer(path) => self.reveal_in_explorer(path),
+            Command::OpenRecentFolder(path) => {
+                self.view.navigation.mode = None;
+                self.open_folder_path(path);
+            }
+            Command::ShowRecentFolders => self.open_recent_folder_picker(),
+            Command::ClearRecentHistory => self.clear_recent_history(),
             Command::Save if self.view.settings.open => {
                 if self.view.settings.selected().pending() > 0 {
                     self.apply_settings();
