@@ -10,25 +10,29 @@ The biggest immediate opportunities are a functional command palette, coherent e
 
 ## Implementation status and remaining gaps
 
-Reviewed 2026-10-16 against the uncommitted working tree on `main` (35 modified files, +1449/-554; not yet committed). Local checks on that tree: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` (473 app tests plus crate tests) all pass. No screenshots, live-window or Windows runtime checks have been done for it.
+Reviewed 2026-10-16 against the working tree that became branch `f-ui-polish` (35 modified files, +1449/-554; not yet committed). Local checks on that tree: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` (473 app tests plus crate tests) all pass. No screenshots, live-window or Windows runtime checks have been done for it.
 
 | # | Finding | Status | Remaining gap |
 |---|---------|--------|---------------|
 | 1 | Command palette | **Done** (see item 1) | Windows runtime unverified. |
 | 2 | Themes / scheme mismatch | **Mostly done.** `workbench.theme` (dark, light, high-contrast, system) in settings-core; `Palette`/`Theme` in `theme.rs`; `editor.color_scheme` and `terminal.color_scheme` default to `workbench`; project-scoped editor scheme; apply-failure, cancel and system-change tests; contrast test (>= 4.5) for syntax colors. | Screenshot review of every pane in light and high-contrast; confirm diffs, popups and the native window appearance follow the theme; the `Palette` accessor still reads visuals per widget, so audit remaining hard-coded colors (e.g. `Color32::from_gray`, local warning colors in Problems). |
-| 3 | Status bar | **Not started.** `chrome.rs` still prints the literal `UTF-8   LF`. | Derive EOL, add line/column and selection length, click-to-Go-to-Line, truncate transient message. |
-| 4 | Misleading controls | **Not started.** "Run project" button and Extensions search remain enabled and unwired; non-native menu names are plain labels. | Disable or explain; make fallback menus functional or visibly inert. |
+| 3 | Status bar | **Done** (2026-10-16). Line ending is detected from the active text (LF, CRLF, CR, Mixed, No EOL); `Ln, Col` and selection length (shared editor) click through to Go to Line; no encoding/EOL claim without a document; right-hand facts are measured and reserved first, the transient message truncates (full text on hover). Pure logic in `model/status_info.rs`. | Encoding is still a fixed `UTF-8` label (not interactive); conversion not implemented; no test for the live position text. |
+| 4 | Misleading controls | **Done.** Run and Debug and Extensions show an explanation; the Run button is disabled with a reason; the dead Extensions search and its `view.search` field are removed; non-native-platform menu names other than File are muted with an explanatory tooltip. | File is the only functional menu on those platforms. |
 | 5 | Hover/focus/disabled states | **Mostly done** (2026-10-16). `explorer_row` draws a 1px accent keyboard-focus ring independent of selection and exposes name plus selected state to AccessKit; glyph-only Find close, tab close and signature-help close are named. Regression test covers ring and accessible state. | No separate inactive-selection role; disabled explanations exist for the palette only; remaining icon-only controls not audited. |
-| 6 | Explorer | **Not started.** `visible_explorer_entries` (`src/ui/explorer_actions.rs`) still ignores `explorer.show_hidden`; no path tooltips or reserved badge area. | Share one visible-entry model; tooltips; badge layout; blank-area menu. |
+| 6 | Explorer | **Partly done.** One `explorer_entry_hidden` rule now drives drawing and arrow-key traversal (tested); rows show the full path on hover. | Reserved badge area at narrow widths, git-letter explanations and a blank-area context menu remain. |
 | 7 | Context menus | **Not started** (no tab context menu or middle-click close). | As planned. |
 | 8 | Hover/completion anchoring | **Not started.** Completion code only re-coloured. | As planned. |
 | 9 | Typography / shortcut labels | **Shortcuts done.** `ui/shortcut.rs::primary` is the single formatter (⌘/⇧/⌥ glyphs on macOS, `Ctrl+` elsewhere), used by the palette, editor context menu, fallback File menu, welcome hint, activity tooltips and the Welcome status message. | Typography role centralisation and a Linux font fallback strategy remain open. |
 | 10 | Pane geometry | **Mostly done.** Terminal, Problems and Agent panels now use `canvas(ctx)` + `surface(panel)` like the sidebar, so 5px corners and the 2px gutter show. | Visual check at several widths still owed. A reset-layout command is not feasible yet: egui's persisted panel state type is private, so it needs its own stored sizes first. |
 | 11 | Problems / source control | **Not started** (only recoloured). | Responsive filters, copy actions, semantic diagnostic colors. |
 | 12 | Terminal | **Mostly done.** PTY columns use the font's measured advance (`glyph_width`) instead of `font_size * 0.58` (test scales columns with font size); right-click menu offers Copy, Paste (via the platform's own clipboard events, same path as the shortcuts) and Clear. | Terminal selection/copy across rows is still egui label selection (not audited); wide/combining characters unverified; output jump-to-latest not added. |
-| 13 | Agent attention | **Not fixed.** `activity_bar.rs` still tests `glyph == icon::AGENT` in the top loop, which never contains the agent glyph, so the badge cannot show. | Move the dot to the lower-loop agent button, name it for accessibility, add a regression test. |
+| 13 | Agent attention | **Done.** The badge is drawn on the real (lower) agent button, stays visible with the panel closed, and the accessible name adds "waiting for your approval"; regression test covers appear/clear. | - |
 | 14 | Dialogs / settings | **Mostly done.** Unsaved-changes, quit, save-conflict and unapplied-settings prompts: Escape cancels (and is consumed), focus starts on the safe primary button (Save / Save All / Keep Editing), Tab stays inside the dialog, long names wrap, focus returns to the editor on cancel; tests cover Escape and that Enter cannot discard. | Background input blocking across every route not re-audited; settings pending-count/scope hints and font/theme previews not added. |
 | 15 | Breadcrumbs / welcome | **Not started** (optional). | |
+
+### Verification note
+
+A live screenshot pass was attempted twice on macOS but is blocked in the agent environment (`screencapture` cannot create an image and the app does not render frames), so visual checks of the new pane surfaces, focus ring, themes and status bar are still owed.
 
 ### Suggested next order
 
