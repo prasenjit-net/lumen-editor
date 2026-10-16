@@ -38,19 +38,34 @@ impl Workbench<'_> {
                 ui.close();
             }
             ui.separator();
-            if ui.add_enabled(!root, egui::Button::new("Cut")).clicked() {
+            if ui
+                .add_enabled(
+                    !root,
+                    egui::Button::new("Cut").shortcut_text(super::shortcut::primary("X")),
+                )
+                .on_disabled_hover_text("The workspace folder cannot be moved")
+                .clicked()
+            {
                 self.command(Command::ExplorerCut(path.into()));
                 ui.close();
             }
-            if ui.add_enabled(!root, egui::Button::new("Copy")).clicked() {
+            if ui
+                .add_enabled(
+                    !root,
+                    egui::Button::new("Copy").shortcut_text(super::shortcut::primary("C")),
+                )
+                .on_disabled_hover_text("The workspace folder cannot be copied")
+                .clicked()
+            {
                 self.command(Command::ExplorerCopy(path.into()));
                 ui.close();
             }
             if ui
                 .add_enabled(
                     self.view.explorer_clipboard.is_some(),
-                    egui::Button::new("Paste"),
+                    egui::Button::new("Paste").shortcut_text(super::shortcut::primary("V")),
                 )
+                .on_disabled_hover_text("Cut or copy something first")
                 .clicked()
             {
                 self.command(Command::ExplorerPaste);
@@ -86,7 +101,11 @@ impl Workbench<'_> {
                 self.command(Command::RenamePath(path.into()));
                 ui.close();
             }
-            if ui.add_enabled(!root, egui::Button::new("Delete")).clicked() {
+            if ui
+                .add_enabled(!root, egui::Button::new("Delete"))
+                .on_disabled_hover_text("The workspace folder cannot be deleted")
+                .clicked()
+            {
                 self.command(Command::DeletePath(path.into()));
                 ui.close();
             }

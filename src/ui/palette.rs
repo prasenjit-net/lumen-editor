@@ -104,7 +104,7 @@ impl Workbench<'_> {
         }
     }
 
-    fn palette_disabled_reason(&self, command: &Command) -> Option<&'static str> {
+    pub(super) fn palette_disabled_reason(&self, command: &Command) -> Option<&'static str> {
         use Command::*;
         let needs_document = matches!(
             command,

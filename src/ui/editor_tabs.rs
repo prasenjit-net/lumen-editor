@@ -182,6 +182,7 @@ impl Workbench<'_> {
             .data_mut(|data| data.insert_temp(reveal_id, signature));
         let mut select = None;
         let mut close = None;
+        let mut menu_command: Option<Command> = None;
         let mut open_settings = false;
         let mut close_settings = false;
         let mut open_diff = false;
@@ -216,6 +217,20 @@ impl Workbench<'_> {
                                         "Close editor",
                                         file.dirty,
                                     );
+                                    response.title.context_menu(|ui| {
+                                        tab_menu(
+                                            ui,
+                                            TabMenuTarget {
+                                                index: file_index,
+                                                id: file.id,
+                                                path: file.path.as_deref(),
+                                                position: tab_index,
+                                                count: visible_files.len(),
+                                            },
+                                            self.editor.workspace.is_some(),
+                                            &mut menu_command,
+                                        );
+                                    });
                                     if response.select {
                                         select = Some(file_index);
                                     }
@@ -351,6 +366,9 @@ impl Workbench<'_> {
         if let Some(index) = close {
             self.command(Command::RequestClose(index));
         }
+        if let Some(command) = menu_command {
+            self.command(command);
+        }
         if close_diff {
             crate::app::source_control::close_diff_preview(self.editor, self.view);
         } else if open_diff {
@@ -373,10 +391,100 @@ impl Workbench<'_> {
     }
 }
 
+struct TabMenuTarget<'a> {
+    index: usize,
+    id: DocumentId,
+    path: Option<&'a Path>,
+    /// Position among the visible tabs, and how many there are.
+    position: usize,
+    count: usize,
+}
+
+/// Context menu for a document tab. It only records the chosen command; the
+/// caller dispatches it after the strip is drawn, by stable document ID.
+fn tab_menu(
+    ui: &mut egui::Ui,
+    target: TabMenuTarget<'_>,
+    has_workspace: bool,
+    chosen: &mut Option<Command>,
+) {
+    use crate::app::tab_close::TabCloseScope;
+    let mut item = |ui: &mut egui::Ui, label: &str, enabled: bool, why: &str, command: Command| {
+        let response = ui.add_enabled(enabled, egui::Button::new(label));
+        let response = if enabled {
+            response
+        } else {
+            response.on_disabled_hover_text(why)
+        };
+        if response.clicked() {
+            *chosen = Some(command);
+            ui.close();
+        }
+    };
+    item(ui, "Close", true, "", Command::RequestClose(target.index));
+    item(
+        ui,
+        "Close Others",
+        target.count > 1,
+        "There are no other tabs",
+        Command::CloseTabs(TabCloseScope::Others(target.id)),
+    );
+    item(
+        ui,
+        "Close to the Right",
+        target.position + 1 < target.count,
+        "There are no tabs to the right",
+        Command::CloseTabs(TabCloseScope::ToTheRight(target.id)),
+    );
+    item(
+        ui,
+        "Close All",
+        true,
+        "",
+        Command::CloseTabs(TabCloseScope::All),
+    );
+    ui.separator();
+    let unsaved = "This file has not been saved yet";
+    let path = target.path.map(Path::to_path_buf).unwrap_or_default();
+    item(
+        ui,
+        "Copy Path",
+        target.path.is_some(),
+        unsaved,
+        Command::CopyPath(path.clone(), false),
+    );
+    item(
+        ui,
+        "Copy Relative Path",
+        target.path.is_some() && has_workspace,
+        if target.path.is_some() {
+            "Open a folder to copy a relative path"
+        } else {
+            unsaved
+        },
+        Command::CopyPath(path.clone(), true),
+    );
+    item(
+        ui,
+        if cfg!(target_os = "macos") {
+            "Reveal in Finder"
+        } else if cfg!(target_os = "windows") {
+            "Reveal in File Explorer"
+        } else {
+            "Reveal in File Manager"
+        },
+        target.path.is_some(),
+        unsaved,
+        Command::RevealPath(path),
+    );
+}
+
 struct TabResponse {
     rect: egui::Rect,
     select: bool,
     close: bool,
+    /// The clickable title, which owns the tab's context menu.
+    title: egui::Response,
 }
 
 #[cfg(test)]
@@ -393,6 +501,7 @@ fn tab(
     let colors = crate::ui::theme::palette(ui.visuals());
     let mut select = false;
     let mut close = false;
+    let mut title_response = None;
     let frame = Frame::new()
         .fill(if selected { colors.bg } else { colors.tab })
         .inner_margin(Margin::symmetric(10, 6))
@@ -405,7 +514,7 @@ fn tab(
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                select = ui
+                let response = ui
                     .add_sized(
                         [width - 50.0, 22.0],
                         egui::Button::new(RichText::new(title).color(if selected {
@@ -416,8 +525,9 @@ fn tab(
                         .frame(false)
                         .truncate(),
                     )
-                    .on_hover_text(tooltip)
-                    .clicked();
+                    .on_hover_text(tooltip);
+                select = response.clicked();
+                title_response = Some(response);
                 close = widgets::named(
                     ui.add_sized(
                         [ACTION_SIZE, 22.0],
@@ -437,9 +547,13 @@ fn tab(
             Stroke::new(1.0_f32, colors.accent),
         );
     }
+    // Middle-click anywhere on the tab closes it, as in other editors.
+    let middle_click = ui.input(|input| input.pointer.button_clicked(egui::PointerButton::Middle))
+        && frame.response.contains_pointer();
     TabResponse {
         rect: frame.response.rect,
         select,
-        close,
+        close: close || middle_click,
+        title: title_response.expect("tab title is always drawn"),
     }
 }

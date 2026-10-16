@@ -122,6 +122,21 @@ impl Workbench<'_> {
                                         )
                                         .frame(false),
                                     );
+                                    response.context_menu(|ui| {
+                                        if ui.button("Copy Message").clicked() {
+                                            ui.ctx().copy_text(row.message.clone());
+                                            self.view.status = "Problem message copied".into();
+                                            ui.close();
+                                        }
+                                        if ui.button("Copy Location").clicked() {
+                                            ui.ctx().copy_text(format!(
+                                                "{}:{}:{}",
+                                                row.file, row.line, row.column
+                                            ));
+                                            self.view.status = "Problem location copied".into();
+                                            ui.close();
+                                        }
+                                    });
                                     if response.clicked() {
                                         self.command(Command::OpenProblem(
                                             row.document,

@@ -24,6 +24,7 @@ mod safety;
 pub(crate) mod scroll_sync;
 pub(crate) mod settings;
 pub(crate) mod source_control;
+pub(crate) mod tab_close;
 pub(crate) mod terminal;
 #[cfg(test)]
 mod tests;
@@ -150,6 +151,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.language_navigation(ctx));
         self.render_component(ctx, |workbench| workbench.rename_prompt(ctx));
         self.render_component(ctx, |workbench| workbench.language_edit_preview(ctx));
+        self.advance_bulk_close();
         self.render_component(ctx, |workbench| workbench.unsaved_changes_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.quit_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.settings_quit_dialog(ctx));

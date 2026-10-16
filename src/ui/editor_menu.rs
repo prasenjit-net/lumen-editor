@@ -155,10 +155,17 @@ impl Workbench<'_> {
                     String::new(),
                 ),
             ] {
-                if ui
-                    .add(egui::Button::new(title).shortcut_text(shortcut))
-                    .clicked()
-                {
+                // Same availability rules as the command palette, with the reason.
+                let reason = self.palette_disabled_reason(&command);
+                let response = ui.add_enabled(
+                    reason.is_none(),
+                    egui::Button::new(title).shortcut_text(shortcut),
+                );
+                let response = match reason {
+                    Some(reason) => response.on_disabled_hover_text(reason),
+                    None => response,
+                };
+                if response.clicked() {
                     self.command(command);
                     ui.close();
                 }

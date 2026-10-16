@@ -240,3 +240,115 @@ fn diff_only_document_has_one_visible_tab_until_explorer_reveals_it() {
         2
     );
 }
+
+fn button(
+    app: &mut LumenApp,
+    ctx: &egui::Context,
+    width: f32,
+    pos: egui::Pos2,
+    button: egui::PointerButton,
+) {
+    for pressed in [true, false] {
+        frame(
+            app,
+            ctx,
+            width,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
+}
+
+#[test]
+fn right_click_opens_a_tab_menu_without_activating_the_tab_or_changing_content() {
+    let (mut app, ctx) = fixture(3);
+    for _ in 0..3 {
+        frame(&mut app, &ctx, 900.0, vec![]);
+    }
+    let (_, output) = frame(&mut app, &ctx, 900.0, vec![]);
+    let title = label_rect(&output, "file_0.rs");
+    app.editor.files[0].dirty = true;
+    button(
+        &mut app,
+        &ctx,
+        900.0,
+        title.center(),
+        egui::PointerButton::Secondary,
+    );
+    let (_, output) = frame(&mut app, &ctx, 900.0, vec![]);
+    for entry in [
+        "Close",
+        "Close Others",
+        "Close to the Right",
+        "Close All",
+        "Copy Path",
+        "Copy Relative Path",
+    ] {
+        label_rect(&output, entry);
+    }
+    assert_eq!(app.editor.active_file, Some(2), "menu must not switch tabs");
+    assert_eq!(app.editor.files[0].text, "untouched");
+    assert_eq!(app.editor.files.len(), 3);
+}
+
+#[test]
+fn close_others_from_the_menu_prompts_for_a_dirty_tab_and_keeps_its_text() {
+    let (mut app, ctx) = fixture(3);
+    app.editor.files[0].dirty = true;
+    app.editor.files[0].text = "precious".into();
+    for _ in 0..3 {
+        frame(&mut app, &ctx, 900.0, vec![]);
+    }
+    let (_, output) = frame(&mut app, &ctx, 900.0, vec![]);
+    let title = label_rect(&output, "file_2.rs");
+    button(
+        &mut app,
+        &ctx,
+        900.0,
+        title.center(),
+        egui::PointerButton::Secondary,
+    );
+    let (_, output) = frame(&mut app, &ctx, 900.0, vec![]);
+    let others = label_rect(&output, "Close Others");
+    click(&mut app, &ctx, 900.0, others.center());
+    app.advance_bulk_close();
+    assert_eq!(app.view.pending_close, Some(0), "dirty tab is not dropped");
+    assert_eq!(app.editor.files[0].text, "precious");
+    assert_eq!(app.editor.files.len(), 2, "the clean other tab closed");
+}
+
+#[test]
+fn middle_click_closes_a_clean_tab_and_prompts_for_a_dirty_one() {
+    let (mut app, ctx) = fixture(2);
+    app.editor.files[1].dirty = true;
+    for _ in 0..3 {
+        frame(&mut app, &ctx, 900.0, vec![]);
+    }
+    let (_, output) = frame(&mut app, &ctx, 900.0, vec![]);
+    let dirty = label_rect(&output, "file_1.rs");
+    button(
+        &mut app,
+        &ctx,
+        900.0,
+        dirty.center(),
+        egui::PointerButton::Middle,
+    );
+    assert_eq!(app.view.pending_close, Some(1));
+    app.view.pending_close = None;
+    let clean = label_rect(&output, "file_0.rs");
+    button(
+        &mut app,
+        &ctx,
+        900.0,
+        clean.center(),
+        egui::PointerButton::Middle,
+    );
+    assert_eq!(app.editor.files.len(), 1);
+}

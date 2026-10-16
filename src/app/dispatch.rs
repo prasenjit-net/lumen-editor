@@ -209,6 +209,7 @@ impl LumenApp {
             Command::DismissConflict => self.view.save_conflict = None,
             Command::RequestClose(index) => self.request_close(index),
             Command::CloseFile(index) => self.close_file(index),
+            Command::CloseTabs(scope) => self.begin_bulk_close(scope),
             Command::CloseEditor => {
                 if self.view.settings.open {
                     self.view.settings.tab_open = false;

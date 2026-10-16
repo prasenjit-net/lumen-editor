@@ -142,6 +142,7 @@ pub(crate) enum Command {
     SelectAll,
     OpenPath(PathBuf),
     RequestClose(usize),
+    CloseTabs(crate::app::tab_close::TabCloseScope),
     CloseFile(usize),
     SaveAndClose(usize),
     SaveAllAndQuit,
