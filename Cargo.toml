@@ -24,7 +24,7 @@ assets = [
 ]
 
 [workspace]
-members = ["xtask", "crates/editor-core", "crates/editor-surface", "crates/language-services", "crates/settings-core", "crates/terminal-core"]
+members = ["xtask", "crates/agent-protocol", "crates/editor-core", "crates/editor-surface", "crates/language-services", "crates/settings-core", "crates/terminal-core"]
 default-members = ["."]
 resolver = "3"
 
@@ -44,6 +44,7 @@ portable-pty = "0.9"
 serde_json = "1"
 unicode-segmentation = "1.13"
 toml_edit = "0.25"
+lumen-agent-protocol = { path = "crates/agent-protocol" }
 lumen-settings-core = { path = "crates/settings-core" }
 lumen-editor-core = { path = "crates/editor-core" }
 lumen-editor-surface = { path = "crates/editor-surface", optional = true }

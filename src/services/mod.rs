@@ -1,4 +1,5 @@
 //! Replaceable filesystem, dialog and clipboard boundaries.
+pub(crate) mod agent_process;
 mod clipboard;
 mod dialogs;
 pub(crate) mod file_index;
