@@ -88,6 +88,15 @@ impl Workbench<'_> {
             .map(|comparison| &comparison.new_lines)
         });
         surface.set_diff_lines(diff_lines, super::theme::DIFF_ADDED_BG);
+        let semantic = self
+            .view
+            .settings
+            .document_boolean("editor.semantic_highlighting", path)
+            .then(|| self.view.language_semantic_tokens.get(&document))
+            .flatten()
+            .filter(|snapshot| snapshot.revision == self.editor.files[index].revision)
+            .map(|snapshot| snapshot.spans.clone());
+        surface.set_semantic_tokens(semantic);
         surface.set_syntax(
             self.view
                 .settings
@@ -143,6 +152,7 @@ impl Workbench<'_> {
                 surface.reveal(range.start);
             }
         }
+        self.completion_before_input(&ctx, index);
         let output = Frame::new()
             .fill(BG)
             .corner_radius(4)
@@ -193,6 +203,7 @@ impl Workbench<'_> {
             }
         }
         self.view.shared_surface = Some(surface);
+        self.completion_popups(&ctx, &output, index);
         if let Some(find) = self.view.find.get_mut(&document) {
             find.refresh(&self.editor.files[index]);
             if find.open {

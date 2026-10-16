@@ -5,7 +5,7 @@ use super::{
     widgets::{HeaderAction, panel_header},
 };
 use crate::{
-    app::{command::Command, settings::SettingsState},
+    app::{command::Command, settings::SettingsState, view_state::LanguageServerSummary},
     icon,
 };
 use eframe::egui::{self, RichText, ScrollArea, TextEdit};
@@ -96,7 +96,11 @@ impl Workbench<'_> {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show_inside(ui, |ui| {
-                results(ui, &mut self.view.settings);
+                results(
+                    ui,
+                    &mut self.view.settings,
+                    self.view.language_server_summary.as_ref(),
+                );
             });
     }
 }
@@ -189,7 +193,11 @@ fn toolbar(ui: &mut egui::Ui, state: &mut SettingsState, wide: bool) {
     );
     ui.add_space(6.0);
 }
-fn results(ui: &mut egui::Ui, state: &mut SettingsState) {
+fn results(
+    ui: &mut egui::Ui,
+    state: &mut SettingsState,
+    language_server: Option<&LanguageServerSummary>,
+) {
     ScrollArea::vertical()
         .id_salt(("settings_results", state.scope.label()))
         .auto_shrink([false, false])
@@ -206,6 +214,9 @@ fn results(ui: &mut egui::Ui, state: &mut SettingsState) {
                     category = setting.category;
                     ui.add_space(8.0);
                     ui.label(RichText::new(category).strong().size(16.0).color(TEXT));
+                    if category == "Language" {
+                        language_server_status(ui, language_server);
+                    }
                 }
                 ui.push_id(setting.id, |ui| setting_row(ui, state, setting));
             }
@@ -213,6 +224,41 @@ fn results(ui: &mut egui::Ui, state: &mut SettingsState) {
                 ui.label("No matching settings. Clear filters or try another search.");
             }
         });
+}
+/// Read-only status for the active file's server; settings below stay the source of truth.
+fn language_server_status(ui: &mut egui::Ui, summary: Option<&LanguageServerSummary>) {
+    ui.add_space(4.0);
+    let Some(summary) = summary else {
+        ui.label(
+            RichText::new("Open a Rust or Go file to see its language server status.")
+                .small()
+                .color(MUTED),
+        );
+        return;
+    };
+    let mut line = |label: &str, value: &str| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(label).small().color(MUTED));
+            ui.label(RichText::new(value).small().color(TEXT));
+        });
+    };
+    line("Active language", summary.language);
+    line("Server state", &summary.state);
+    if let Some(command) = &summary.command {
+        line("Command", command);
+    }
+    if !summary.capabilities.is_empty() {
+        line("Capabilities", &summary.capabilities.join(", "));
+    }
+    if let Some(error) = &summary.error {
+        line("Last error", error);
+    }
+    if summary.project_path_ignored {
+        line(
+            "Note",
+            "Project settings cannot choose the server executable; set the path in User settings.",
+        );
+    }
 }
 fn setting_row(ui: &mut egui::Ui, state: &mut SettingsState, setting: &Setting) {
     let modified = state.selected().persisted.contains_key(setting.id);
@@ -294,7 +340,11 @@ fn control(ui: &mut egui::Ui, setting: &Setting, value: &mut Value) -> bool {
         (Control::Text(_), Value::Text(value)) => ui
             .add(
                 TextEdit::singleline(value)
-                    .hint_text("e.g. generated,*.min.js")
+                    .hint_text(if setting.id.starts_with("language.") {
+                        "Empty: search PATH"
+                    } else {
+                        "e.g. generated,*.min.js"
+                    })
                     .desired_width(ui.available_width().clamp(100.0, 420.0)),
             )
             .on_hover_text(setting.help)

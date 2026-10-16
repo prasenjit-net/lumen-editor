@@ -7,6 +7,7 @@ mod appearance;
 mod editor;
 mod explorer;
 mod files;
+mod language;
 mod search;
 mod terminal;
 mod workbench;
@@ -79,6 +80,7 @@ pub const SECTIONS: &[SectionSchema] = &[
     appearance::SCHEMA,
     workbench::SCHEMA,
     explorer::SCHEMA,
+    language::SCHEMA,
     search::SCHEMA,
     terminal::SCHEMA,
 ];
@@ -180,6 +182,19 @@ mod tests {
             }
         }
         assert!(validate_layers(&Layer::new(), None).is_ok());
+    }
+    #[test]
+    fn language_server_settings_default_on_and_validate_bounds() {
+        assert_eq!(
+            resolve(setting("language.rust.enabled"), &Layer::new(), None).0,
+            Value::Bool(true)
+        );
+        let timeout = setting("language.server.startup_timeout_seconds");
+        assert!(timeout.validate(&Value::Number(0.0)).is_err());
+        assert!(timeout.validate(&Value::Number(30.0)).is_ok());
+        let path = setting("language.go.server_path");
+        assert!(path.validate(&Value::Text("/usr/bin/gopls".into())).is_ok());
+        assert!(path.validate(&Value::Text("gopls\n--evil".into())).is_err());
     }
     #[test]
     fn precedence_removal_and_explicit_default_are_distinct() {

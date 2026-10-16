@@ -1,0 +1,58 @@
+use super::{Control, DefaultValue, SectionSchema, Setting};
+
+pub(crate) const SCHEMA: SectionSchema = SectionSchema {
+    title: "Language",
+    validate: None,
+    settings: &[
+        Setting {
+            id: "language.rust.enabled",
+            default: DefaultValue::Bool(true),
+            name: "Rust Language Server",
+            category: "Language",
+            help: "Start rust-analyzer for Rust files in the open workspace. Syntax highlighting is unaffected.",
+            aliases: "rust-analyzer lsp diagnostics hover definition",
+            control: Control::Bool,
+            document: false,
+        },
+        Setting {
+            id: "language.rust.server_path",
+            default: DefaultValue::Text(""),
+            name: "Rust Server Path",
+            category: "Language",
+            help: "Absolute path to a rust-analyzer executable. Only honored in User settings; project files cannot choose an executable. Leave empty to search PATH.",
+            aliases: "rust-analyzer executable command binary",
+            control: Control::Text(1024),
+            document: false,
+        },
+        Setting {
+            id: "language.go.enabled",
+            default: DefaultValue::Bool(true),
+            name: "Go Language Server",
+            category: "Language",
+            help: "Start gopls for Go files in the open workspace. Syntax highlighting is unaffected.",
+            aliases: "gopls lsp diagnostics hover definition golang",
+            control: Control::Bool,
+            document: false,
+        },
+        Setting {
+            id: "language.go.server_path",
+            default: DefaultValue::Text(""),
+            name: "Go Server Path",
+            category: "Language",
+            help: "Absolute path to a gopls executable. Only honored in User settings; project files cannot choose an executable. Leave empty to search PATH.",
+            aliases: "gopls executable command binary golang",
+            control: Control::Text(1024),
+            document: false,
+        },
+        Setting {
+            id: "language.server.startup_timeout_seconds",
+            default: DefaultValue::Number(12.0),
+            name: "Server Startup Timeout",
+            category: "Language",
+            help: "Seconds to wait for a language server to answer initialize before restarting it.",
+            aliases: "lsp initialize deadline slow indexing",
+            control: Control::Number(1.0, 120.0),
+            document: false,
+        },
+    ],
+};

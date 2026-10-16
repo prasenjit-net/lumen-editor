@@ -480,7 +480,7 @@ mod syntax_tests {
     fn glyph_color_tracks_visual_byte_spans_and_defaults() {
         let palette = crate::tests::test_syntax_palette();
         let spans =
-            crate::geometry::highlight("fn main()", lumen_editor_core::syntax::Language::Rust);
+            crate::geometry::highlight("fn main()", lumen_editor_core::syntax::Language::Rust, &[]);
         assert_eq!(
             syntax_color(&spans, Some(palette), 0, Color32::WHITE),
             palette.keyword

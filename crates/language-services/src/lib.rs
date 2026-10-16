@@ -4,7 +4,10 @@
 //! This crate deliberately owns neither native processes nor UI state. The app
 //! and service layers use these types to keep document versions, UTF-16 protocol
 //! positions, token snapshots, and language registration consistent.
-use std::{ops::Range, path::Path};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 pub mod capabilities;
 pub mod diagnostics;
@@ -22,6 +25,11 @@ impl LanguageId {
     pub const RUST: Self = Self("rust");
     pub const GO: Self = Self("go");
     pub const JSON: Self = Self("json");
+    pub const TOML: Self = Self("toml");
+    pub const YAML: Self = Self("yaml");
+    pub const CMAKE: Self = Self("cmake");
+    pub const MAKEFILE: Self = Self("makefile");
+    pub const DOCKERFILE: Self = Self("dockerfile");
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -33,6 +41,8 @@ impl LanguageId {
 pub struct ServerDescriptor {
     pub lsp_language_id: &'static str,
     pub executable_candidates: &'static [&'static str],
+    /// JSON object sent as `initializationOptions`; must parse (checked by tests).
+    pub initialization_options: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,6 +50,11 @@ pub enum ParserKind {
     TreeSitterRust,
     TreeSitterGo,
     TreeSitterJson,
+    TreeSitterToml,
+    TreeSitterYaml,
+    TreeSitterCmake,
+    TreeSitterMake,
+    TreeSitterDockerfile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,11 +78,14 @@ pub struct LanguageDescriptor {
 const RUST_SERVER: ServerDescriptor = ServerDescriptor {
     lsp_language_id: "rust",
     executable_candidates: &["rust-analyzer"],
+    initialization_options: None,
 };
 
 const GO_SERVER: ServerDescriptor = ServerDescriptor {
     lsp_language_id: "go",
     executable_candidates: &["gopls"],
+    // gopls only offers semantic tokens when explicitly enabled.
+    initialization_options: Some(r#"{"semanticTokens":true}"#),
 };
 
 const RUST: LanguageDescriptor = LanguageDescriptor {
@@ -112,11 +130,119 @@ const JSON: LanguageDescriptor = LanguageDescriptor {
     server: None,
 };
 
-const BUILTIN_LANGUAGES: &[LanguageDescriptor] = &[RUST, GO, JSON];
+/// Parser-only contribution: deliberately no language server.
+const TOML: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::TOML,
+    label: "TOML",
+    aliases: &[],
+    filenames: &["Cargo.lock"],
+    filename_prefixes: &[],
+    extensions: &["toml"],
+    workspace_markers: &[],
+    parser: Some(ParserDescriptor {
+        kind: ParserKind::TreeSitterToml,
+    }),
+    server: None,
+};
+
+/// Parser-only contribution: deliberately no language server.
+const YAML: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::YAML,
+    label: "YAML",
+    aliases: &["yml"],
+    filenames: &[".clang-format"],
+    filename_prefixes: &[],
+    extensions: &["yaml", "yml"],
+    workspace_markers: &[],
+    parser: Some(ParserDescriptor {
+        kind: ParserKind::TreeSitterYaml,
+    }),
+    server: None,
+};
+
+/// Parser-only contribution: deliberately no language server.
+const CMAKE: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::CMAKE,
+    label: "CMake",
+    aliases: &[],
+    filenames: &["CMakeLists.txt"],
+    filename_prefixes: &[],
+    extensions: &["cmake"],
+    workspace_markers: &[],
+    parser: Some(ParserDescriptor {
+        kind: ParserKind::TreeSitterCmake,
+    }),
+    server: None,
+};
+
+/// Parser-only contribution: deliberately no language server.
+const MAKEFILE: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::MAKEFILE,
+    label: "Makefile",
+    aliases: &["make"],
+    filenames: &["Makefile", "makefile", "GNUmakefile"],
+    filename_prefixes: &[],
+    extensions: &["mk", "make"],
+    workspace_markers: &[],
+    parser: Some(ParserDescriptor {
+        kind: ParserKind::TreeSitterMake,
+    }),
+    server: None,
+};
+
+/// Parser-only contribution: deliberately no language server.
+const DOCKERFILE: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::DOCKERFILE,
+    label: "Dockerfile",
+    aliases: &["containerfile"],
+    filenames: &["Dockerfile", "Containerfile"],
+    filename_prefixes: &["Dockerfile.", "Containerfile."],
+    extensions: &["dockerfile"],
+    workspace_markers: &[],
+    parser: Some(ParserDescriptor {
+        kind: ParserKind::TreeSitterDockerfile,
+    }),
+    server: None,
+};
+
+const BUILTIN_LANGUAGES: &[LanguageDescriptor] =
+    &[RUST, GO, JSON, TOML, YAML, CMAKE, MAKEFILE, DOCKERFILE];
 
 /// Static language catalog. Language contributions will extend this catalog in
 /// one location, instead of scattering file-type checks throughout the app.
 pub struct LanguageRegistry;
+
+impl LanguageDescriptor {
+    /// Nearest ancestor of `file` (never above `boundary`) holding one of this
+    /// language's workspace markers; the boundary itself when none matches.
+    /// Marker lookup is injected so this crate performs no filesystem I/O.
+    #[must_use]
+    pub fn workspace_root(
+        &self,
+        file: &Path,
+        boundary: &Path,
+        has_marker: impl Fn(&Path, &str) -> bool,
+    ) -> PathBuf {
+        let mut directory = file.parent();
+        while let Some(current) = directory {
+            if !current.starts_with(boundary) {
+                break;
+            }
+            if self
+                .workspace_markers
+                .iter()
+                .any(|marker| has_marker(current, marker))
+            {
+                return current.to_path_buf();
+            }
+            if current == boundary {
+                break;
+            }
+            directory = current.parent();
+        }
+        boundary.to_path_buf()
+    }
+}
 
 impl LanguageRegistry {
     #[must_use]
@@ -478,17 +604,20 @@ pub fn decode_semantic_tokens(
             .token_types
             .get(usize::try_from(chunk[3]).map_err(|_| SemanticTokenError::UnknownTokenType)?)
             .ok_or(SemanticTokenError::UnknownTokenType)?;
-        tokens.push(SemanticToken {
-            range,
-            class: semantic_class(token_type),
-            modifiers: chunk[4],
-        });
+        // Token types Lumen has no class for are left to the parser baseline.
+        if let Some(class) = semantic_class(token_type) {
+            tokens.push(SemanticToken {
+                range,
+                class,
+                modifiers: chunk[4],
+            });
+        }
     }
     Ok(tokens)
 }
 
-fn semantic_class(token_type: &str) -> TokenClass {
-    match token_type {
+fn semantic_class(token_type: &str) -> Option<TokenClass> {
+    Some(match token_type {
         "namespace" => TokenClass::Namespace,
         "type" | "class" | "enum" | "interface" | "struct" | "typeParameter" => TokenClass::Type,
         "parameter" => TokenClass::Parameter,
@@ -504,8 +633,84 @@ fn semantic_class(token_type: &str) -> TokenClass {
         "comment" => TokenClass::Comment,
         "operator" => TokenClass::Operator,
         "decorator" => TokenClass::Attribute,
-        _ => TokenClass::Variable,
+        _ => return None,
+    })
+}
+
+/// Semantic classes allowed to recolor parser output: identifier meaning only.
+/// Lexical classes (strings, comments, keywords, numbers, operators) always
+/// stay with the parser baseline.
+fn is_refining(class: TokenClass) -> bool {
+    matches!(
+        class,
+        TokenClass::Namespace
+            | TokenClass::Type
+            | TokenClass::Parameter
+            | TokenClass::Variable
+            | TokenClass::Property
+            | TokenClass::Constant
+            | TokenClass::Function
+            | TokenClass::Method
+            | TokenClass::Macro
+            | TokenClass::Attribute
+    )
+}
+
+/// Layer validated semantic spans over a parser baseline. Both inputs use the
+/// same text coordinates. A semantic span is dropped whole when it touches a
+/// protected baseline span (comment, string, keyword, number, ...), so semantic
+/// data can never repaint lexical structure. Overlapping semantic spans keep
+/// the earliest.
+#[must_use]
+pub fn overlay_semantic(baseline: Vec<TokenSpan>, semantic: &[TokenSpan]) -> Vec<TokenSpan> {
+    let mut candidates = semantic
+        .iter()
+        .filter(|span| span.range.start < span.range.end && is_refining(span.class))
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|span| span.range.start);
+    let mut accepted: Vec<&TokenSpan> = Vec::new();
+    for span in candidates {
+        if accepted
+            .last()
+            .is_some_and(|previous| span.range.start < previous.range.end)
+        {
+            continue;
+        }
+        let first = baseline.partition_point(|base| base.range.end <= span.range.start);
+        let touches_protected = baseline[first..]
+            .iter()
+            .take_while(|base| base.range.start < span.range.end)
+            .any(|base| !is_refining(base.class));
+        if !touches_protected {
+            accepted.push(span);
+        }
     }
+    let mut result = Vec::with_capacity(baseline.len() + accepted.len());
+    for base in baseline {
+        let mut start = base.range.start;
+        let first = accepted.partition_point(|span| span.range.end <= base.range.start);
+        for span in accepted[first..]
+            .iter()
+            .take_while(|span| span.range.start < base.range.end)
+        {
+            if start < span.range.start {
+                result.push(TokenSpan {
+                    range: start..span.range.start,
+                    class: base.class,
+                });
+            }
+            start = start.max(span.range.end);
+        }
+        if start < base.range.end {
+            result.push(TokenSpan {
+                range: start..base.range.end,
+                class: base.class,
+            });
+        }
+    }
+    result.extend(accepted.into_iter().cloned());
+    result.sort_by_key(|span| span.range.start);
+    result
 }
 
 impl TokenSnapshot {
@@ -551,7 +756,7 @@ mod tests {
             LanguageRegistry::detect(Path::new("settings.json")).map(|item| item.id),
             Some(LanguageId::JSON)
         );
-        assert!(LanguageRegistry::detect(Path::new("CMakeLists.txt")).is_none());
+        assert!(LanguageRegistry::detect(Path::new("script.py")).is_none());
         assert_eq!(
             LanguageRegistry::by_id(LanguageId::GO)
                 .and_then(|language| language.server)
@@ -749,5 +954,104 @@ mod tests {
             ),
             Err(TokenSnapshotError::InvalidOrder)
         );
+    }
+
+    #[test]
+    fn nearest_marker_defines_the_root_and_never_escapes_the_boundary() {
+        let go = LanguageRegistry::by_id(LanguageId::GO).unwrap();
+        let markers = [
+            Path::new("/ws/go.work"),
+            Path::new("/ws/svc/go.mod"),
+            Path::new("/outside/go.mod"),
+        ];
+        // Compare as paths: Windows joins with a backslash.
+        let has = |dir: &Path, marker: &str| markers.contains(&dir.join(marker).as_path());
+        let root = |file: &str, boundary: &str| {
+            go.workspace_root(Path::new(file), Path::new(boundary), has)
+        };
+        assert_eq!(root("/ws/svc/pkg/a.go", "/ws"), Path::new("/ws/svc"));
+        assert_eq!(root("/ws/other/a.go", "/ws"), Path::new("/ws"));
+        assert_eq!(root("/ws/a.go", "/ws"), Path::new("/ws"));
+        assert_eq!(root("/outside/a.go", "/ws"), Path::new("/ws"));
+        assert_eq!(
+            root("/ws/svc/a.go", "/ws/svc/pkg"),
+            Path::new("/ws/svc/pkg")
+        );
+    }
+
+    fn span(range: Range<usize>, class: TokenClass) -> TokenSpan {
+        TokenSpan { range, class }
+    }
+
+    #[test]
+    fn semantic_overlay_refines_identifiers_but_never_lexical_spans() {
+        // fn(0..2) foo(3..6, plain gap) "str"(7..12) bar(13..16, variable)
+        let baseline = vec![
+            span(0..2, TokenClass::Keyword),
+            span(7..12, TokenClass::String),
+            span(13..16, TokenClass::Variable),
+        ];
+        let semantic = vec![
+            span(3..6, TokenClass::Function),
+            span(0..2, TokenClass::Function),
+            span(8..10, TokenClass::Variable),
+            span(13..16, TokenClass::Parameter),
+            span(3..6, TokenClass::Keyword),
+        ];
+        let result = overlay_semantic(baseline, &semantic);
+        assert_eq!(
+            result,
+            vec![
+                span(0..2, TokenClass::Keyword),
+                span(3..6, TokenClass::Function),
+                span(7..12, TokenClass::String),
+                span(13..16, TokenClass::Parameter),
+            ]
+        );
+    }
+
+    #[test]
+    fn semantic_overlay_splits_wider_baseline_spans() {
+        let result = overlay_semantic(
+            vec![span(0..10, TokenClass::Variable)],
+            &[span(3..5, TokenClass::Type)],
+        );
+        assert_eq!(
+            result,
+            vec![
+                span(0..3, TokenClass::Variable),
+                span(3..5, TokenClass::Type),
+                span(5..10, TokenClass::Variable),
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_semantic_token_types_are_skipped_not_misclassified() {
+        let legend = SemanticTokenLegend {
+            token_types: vec!["selfKeyword".into(), "function".into()],
+            token_modifiers: Vec::new(),
+        };
+        let tokens =
+            decode_semantic_tokens("self main", &legend, &[0, 0, 4, 0, 0, 0, 5, 4, 1, 0]).unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].class, TokenClass::Function);
+        assert_eq!(tokens[0].range, 5..9);
+    }
+
+    #[test]
+    fn builtin_server_initialization_options_are_valid_json_objects() {
+        for language in LanguageRegistry::builtins() {
+            if let Some(options) = language
+                .server
+                .and_then(|server| server.initialization_options)
+            {
+                assert!(
+                    serde_json::from_str::<serde_json::Value>(options)
+                        .unwrap()
+                        .is_object()
+                );
+            }
+        }
     }
 }

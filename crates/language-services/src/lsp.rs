@@ -5,9 +5,37 @@
 use crate::{DocumentUri, LanguageId, Position, ServerDocumentVersion};
 use serde_json::{Value, json};
 
+/// Token types Lumen can map to a class; advertised so servers use standard names.
+const SEMANTIC_TOKEN_TYPES: [&str; 14] = [
+    "namespace",
+    "type",
+    "class",
+    "enum",
+    "interface",
+    "struct",
+    "typeParameter",
+    "parameter",
+    "variable",
+    "property",
+    "enumMember",
+    "function",
+    "method",
+    "macro",
+];
+
 #[must_use]
 pub fn initialize_request(request_id: u64, workspace_uri: &str) -> Value {
-    json!({
+    initialize_request_with_options(request_id, workspace_uri, None)
+}
+
+/// `options` is the descriptor's JSON `initializationOptions`; invalid JSON is omitted.
+#[must_use]
+pub fn initialize_request_with_options(
+    request_id: u64,
+    workspace_uri: &str,
+    options: Option<&str>,
+) -> Value {
+    let mut request = json!({
         "jsonrpc": "2.0",
         "id": request_id,
         "method": "initialize",
@@ -17,13 +45,81 @@ pub fn initialize_request(request_id: u64, workspace_uri: &str) -> Value {
             "rootUri": workspace_uri,
             "workspaceFolders": [{ "uri": workspace_uri, "name": "Lumen Workspace" }],
             "capabilities": {
-                "workspace": { "workspaceFolders": true },
+                "workspace": {
+                    "workspaceFolders": true,
+                    // Text edits only: no file create/rename/delete from servers.
+                    "workspaceEdit": { "documentChanges": true, "resourceOperations": [] }
+                },
                 "textDocument": {
-                    "publishDiagnostics": { "relatedInformation": true }
+                    "publishDiagnostics": { "relatedInformation": true },
+                    "completion": {
+                        "completionItem": {
+                            "snippetSupport": false,
+                            "documentationFormat": ["plaintext"],
+                            "insertReplaceSupport": false
+                        }
+                    },
+                    "references": {},
+                    "formatting": {},
+                    "rename": { "prepareSupport": false },
+                    "signatureHelp": {
+                        "signatureInformation": {
+                            "documentationFormat": ["plaintext"],
+                            "parameterInformation": { "labelOffsetSupport": true },
+                            "activeParameterSupport": true
+                        }
+                    },
+                    "semanticTokens": {
+                        "requests": { "full": true },
+                        "tokenTypes": SEMANTIC_TOKEN_TYPES,
+                        "tokenModifiers": [],
+                        "formats": ["relative"],
+                        "overlappingTokenSupport": false,
+                        "multilineTokenSupport": false
+                    }
                 }
             }
         }
-    })
+    });
+    if let Some(options) = options.and_then(|text| serde_json::from_str::<Value>(text).ok()) {
+        request["params"]["initializationOptions"] = options;
+    }
+    request
+}
+
+/// Reply to a server-initiated request. JSON-RPC requires every request to be
+/// answered; servers such as rust-analyzer wait on some of them. Lumen supports
+/// none of these features yet, so refreshes and capability registration are
+/// acknowledged without effect, configuration queries answer "no value" per
+/// item, and everything else is rejected as an unknown method.
+#[must_use]
+pub fn server_request_response(request: &Value) -> Option<Value> {
+    let method = request.get("method")?.as_str()?;
+    let id = request.get("id")?;
+    let result = match method {
+        "client/registerCapability"
+        | "client/unregisterCapability"
+        | "window/workDoneProgress/create"
+        | "workspace/diagnostic/refresh"
+        | "workspace/semanticTokens/refresh"
+        | "workspace/inlayHint/refresh"
+        | "workspace/codeLens/refresh" => Value::Null,
+        "workspace/configuration" => {
+            let items = request
+                .pointer("/params/items")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            Value::Array(vec![Value::Null; items])
+        }
+        _ => {
+            return Some(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32601, "message": "Method not supported by Lumen" }
+            }));
+        }
+    };
+    Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
 }
 
 #[must_use]
@@ -112,6 +208,96 @@ pub fn exit_notification() -> Value {
 }
 
 #[must_use]
+pub fn semantic_tokens_request(request_id: u64, uri: &DocumentUri) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/semanticTokens/full",
+        "params": { "textDocument": { "uri": uri.as_str() } }
+    })
+}
+
+/// Explicitly invoked completion (`triggerKind` 1).
+#[must_use]
+pub fn completion_request(request_id: u64, uri: &DocumentUri, position: Position) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": uri.as_str() },
+            "position": { "line": position.line, "character": position.character },
+            "context": { "triggerKind": 1 }
+        }
+    })
+}
+
+#[must_use]
+pub fn signature_help_request(request_id: u64, uri: &DocumentUri, position: Position) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/signatureHelp",
+        "params": {
+            "textDocument": { "uri": uri.as_str() },
+            "position": { "line": position.line, "character": position.character },
+            "context": { "triggerKind": 1, "isRetrigger": false }
+        }
+    })
+}
+
+#[must_use]
+pub fn references_request(request_id: u64, uri: &DocumentUri, position: Position) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": uri.as_str() },
+            "position": { "line": position.line, "character": position.character },
+            "context": { "includeDeclaration": true }
+        }
+    })
+}
+
+#[must_use]
+pub fn rename_request(
+    request_id: u64,
+    uri: &DocumentUri,
+    position: Position,
+    new_name: &str,
+) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/rename",
+        "params": {
+            "textDocument": { "uri": uri.as_str() },
+            "position": { "line": position.line, "character": position.character },
+            "newName": new_name
+        }
+    })
+}
+
+#[must_use]
+pub fn formatting_request(
+    request_id: u64,
+    uri: &DocumentUri,
+    tab_size: u32,
+    insert_spaces: bool,
+) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/formatting",
+        "params": {
+            "textDocument": { "uri": uri.as_str() },
+            "options": { "tabSize": tab_size, "insertSpaces": insert_spaces }
+        }
+    })
+}
+
+#[must_use]
 pub fn hover_request(request_id: u64, uri: &DocumentUri, position: Position) -> Value {
     text_position_request(request_id, "textDocument/hover", uri, position)
 }
@@ -160,7 +346,14 @@ mod tests {
         assert_eq!(message["id"], 9);
         assert_eq!(message["method"], "initialize");
         assert_eq!(message["params"]["rootUri"], "file:///workspace");
-        assert!(message["params"]["capabilities"]["textDocument"]["completion"].is_null());
+        let text_document = &message["params"]["capabilities"]["textDocument"];
+        // Snippets are not supported, so servers must send plain text edits.
+        assert_eq!(
+            text_document["completion"]["completionItem"]["snippetSupport"],
+            false
+        );
+        assert_eq!(text_document["rename"]["prepareSupport"], false);
+        assert!(text_document["codeAction"].is_null());
         assert_eq!(initialized_notification()["method"], "initialized");
     }
 
@@ -215,5 +408,23 @@ mod tests {
             document_symbols_request(4, &uri)["method"],
             "textDocument/documentSymbol"
         );
+    }
+
+    #[test]
+    fn server_requests_are_always_answered() {
+        let reply = |value: Value| server_request_response(&value).unwrap();
+        assert_eq!(
+            reply(json!({"id":3,"method":"workspace/diagnostic/refresh"})),
+            json!({"jsonrpc":"2.0","id":3,"result":null})
+        );
+        assert_eq!(
+            reply(json!({"id":"a","method":"workspace/configuration","params":{"items":[{},{}]}}))
+                ["result"],
+            json!([null, null])
+        );
+        let unknown = reply(json!({"id":4,"method":"workspace/applyEdit"}));
+        assert_eq!(unknown["error"]["code"], -32601);
+        assert_eq!(unknown["id"], 4);
+        assert!(server_request_response(&json!({"method":"window/logMessage"})).is_none());
     }
 }

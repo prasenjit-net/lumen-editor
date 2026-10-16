@@ -78,15 +78,17 @@ fn parser_tokens_color_go_without_changing_editor_geometry() {
 
 #[test]
 fn unsupported_parser_languages_keep_lexical_coloring() {
-    let (mut surface, mut buffer, ctx) = fixture("set(PROJECT ON)");
+    // Python has no parser contribution yet, so the lexical highlighter colors it.
+    let (mut surface, mut buffer, ctx) = fixture("def f(): pass");
     surface.set_syntax(Some((
-        lumen_editor_core::syntax::Language::CMake,
+        lumen_editor_core::syntax::Language::Python,
         test_syntax_palette(),
     )));
     let colored = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
     let job = &colored.geometry.galley.job;
     assert!(job.sections.iter().any(|section| {
-        &job.text[section.byte_range.clone()] == "ON" && section.format.color == egui::Color32::RED
+        &job.text[section.byte_range.clone()] == "pass"
+            && section.format.color == egui::Color32::RED
     }));
     assert_eq!(buffer.revision(), 0);
     assert!(!buffer.is_dirty());

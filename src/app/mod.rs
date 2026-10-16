@@ -1,6 +1,7 @@
 //! Application orchestration: shared commands, workflows and frame ordering.
 mod clipboard;
 pub(crate) mod command;
+pub(crate) mod completion;
 mod dispatch;
 mod documents;
 pub(crate) mod editor_action;
@@ -10,6 +11,7 @@ mod events;
 mod explorer_ops;
 pub(crate) mod find;
 mod folding;
+mod language_edits;
 mod language_services;
 mod navigation;
 mod safety;
@@ -19,6 +21,7 @@ pub(crate) mod terminal;
 #[cfg(test)]
 mod tests;
 pub(crate) mod view_state;
+pub(crate) mod workspace_edit;
 pub(crate) mod workspace_search;
 use crate::{
     model::EditorState,
@@ -62,6 +65,7 @@ pub(crate) struct LumenApp {
         language_services::SyncedLanguageDocument,
     >,
     pub(crate) language_server_restart: language_services::LanguageServerRestart,
+    pub(crate) semantic_token_request: Option<language_services::SemanticTokenAttempt>,
     pub(crate) language_server_started_at: Option<std::time::Instant>,
     pub(crate) language_server_ready_at: Option<std::time::Instant>,
     pub(crate) terminal_session: Option<crate::services::terminal::TerminalSession>,
@@ -98,6 +102,7 @@ impl Default for LumenApp {
             language_server_request_kinds: Default::default(),
             language_server_documents: Default::default(),
             language_server_restart: Default::default(),
+            semantic_token_request: None,
             language_server_started_at: None,
             language_server_ready_at: None,
             terminal_session: None,
@@ -127,6 +132,8 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.palette(ctx));
         self.render_component(ctx, |workbench| workbench.navigation_palette(ctx));
         self.render_component(ctx, |workbench| workbench.language_navigation(ctx));
+        self.render_component(ctx, |workbench| workbench.rename_prompt(ctx));
+        self.render_component(ctx, |workbench| workbench.language_edit_preview(ctx));
         self.render_component(ctx, |workbench| workbench.unsaved_changes_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.quit_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.settings_quit_dialog(ctx));

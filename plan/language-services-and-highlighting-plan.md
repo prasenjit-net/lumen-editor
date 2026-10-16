@@ -271,8 +271,12 @@ specified by a project unless the user’s server-command policy permits it.
 - [x] Route Rust/Go parser spans through `editor-surface`, including the shaped
   renderer, while preserving its single viewport/layout authority. The legacy
   lexer remains the fallback for all other languages and parser errors.
-- [ ] Measure incremental edit and shaping interactions before adding a snapshot
-  cache or selecting parser highlighting as the default for further languages.
+- [x] Measured parser highlighting (release build, Rust). The original per-frame cost was
+  335 ms at 1k lines and 7.9 s at 5k lines: a quadratic span-splitting scan plus an
+  8 ms query recompile per call. Fixed with a sweep (12 ms / 62 ms), a cached compiled
+  query, and an 8-entry content-hash snapshot cache, so unchanged text costs a hash.
+  A typing keystroke still re-parses the whole file (no incremental tree edits yet);
+  `measure_highlight_cost` is an ignored timing probe.
 - [x] Define token classes and three selectable palettes in the existing theme
   system (Lumen Dark, Light and High Contrast).
 - [ ] Add visual fixtures for code, config/resource and build files in each scheme.
@@ -284,8 +288,9 @@ specified by a project unless the user’s server-command policy permits it.
 - [ ] Move all language detection and embedded lexical resources into contributions.
 - [x] Ship Rust, Go and JSON parser/query resources; JSON deliberately has no
   language-server descriptor.
-- [ ] Ship CMake, Makefile, Dockerfile, TOML and YAML parser/query resources;
-  retain fallback definitions for the remaining current formats.
+- [x] Ship CMake, Makefile, Dockerfile, TOML and YAML parsers (Dockerfile uses
+  tree-sitter-containerfile; the older dockerfile crate targets tree-sitter 0.20).
+  Other formats keep the lexical fallback. No visual comparison done yet.
 - [x] Route parsed Rust/Go spans through `editor-surface` without changing its
   single viewport/layout authority. Compare old/new screenshots before expanding
   parser coverage to further languages.
@@ -319,8 +324,20 @@ specified by a project unless the user’s server-command policy permits it.
 - [x] Render validated diagnostics in the shared editor viewport and a compact,
   searchable/filterable Problems panel with severity counts and exact-range
   navigation; retain parser highlighting when no server is available.
-- [ ] Apply and live-validate Rust diagnostics with `rust-analyzer`, then Go
-  diagnostics with `gopls`.
+- [x] Add `language.rust|go.enabled`, `language.*.server_path` and
+  `language.server.startup_timeout_seconds` settings. Disabling a language stops its
+  session; a configured path must be an absolute existing file. Server args, trace
+  and project-command trust policy remain open.
+- [x] Resolve the session root from the nearest workspace marker (`Cargo.toml`,
+  `go.work`, `go.mod`) at or below the opened folder; only documents under that
+  root sync. One session exists at a time, so switching between roots restarts it.
+- [x] Live-validated Rust diagnostics: an ignored test
+  (`cargo test live_rust_analyzer -- --ignored`) drives a real rust-analyzer through
+  the service transport and message builders. It found that servers send requests
+  (e.g. `workspace/diagnostic/refresh`); the app now answers all of them.
+  Not yet exercised through the full app/UI path.
+- [x] Live-validated Go diagnostics with gopls 0.24.0 (`cargo test live_ -- --ignored`,
+  with `~/go/bin` on PATH); ranges decode correctly. Full app/UI path still unexercised.
 - [x] Add bounded exponential restart backoff, initialization/request deadlines,
   request cancellation, UI wakeups and injectable fake-server coverage for
   initialization, crash/restart, stale diagnostics, dirty buffers, save, rename
@@ -329,8 +346,13 @@ specified by a project unless the user’s server-command policy permits it.
 
 ### Phase 3 — semantic tokens and navigation — In progress
 
-- [ ] Add semantic-token full responses, legend decoding, token-overlay precedence
-  and revision gating for Rust and Go.
+- [x] Semantic tokens (full) for Rust and Go: capability/legend negotiation, debounced
+  silent requests, revision-gated storage, and an overlay in `editor-surface` that
+  only refines identifier classes (never strings, comments, keywords, numbers). Setting
+  `editor.semantic_highlighting`. Descriptors may carry `initialization_options`
+  (gopls needs `semanticTokens`). Live-validated against both servers. Tokens drop on
+  every edit until the debounced reply arrives, so recoloring flickers to the parser
+  baseline while typing; delta/range requests would reduce that. Not yet checked visually.
 - [x] Add capability-gated, revision/session-correlated hover, document symbols
   and definition requests. Hover uses a compact floating surface; nested symbols
   and multi-location definitions use a searchable keyboard-accessible picker.
@@ -338,7 +360,25 @@ specified by a project unless the user’s server-command policy permits it.
 
 ### Phase 4 — editing services and hardening — Planned
 
-- [ ] Add completion/signature help, then references, rename preview, code-action and
+- [x] Completion and signature help: explicit Ctrl+Space / Ctrl+Shift+Space (also the
+  palette and editor menu). Completion is a filterable popup with Up/Down/Enter/Tab/
+  Escape consumed only while open; accepting is one undoable buffer edit, honoring the
+  server's range only while the caret is unmoved, applying import-style extra edits
+  only when they precede the word. Snippet items are skipped (snippets are not
+  advertised). Signature help highlights the active parameter and clears on edit.
+  Live-validated with rust-analyzer and gopls. No automatic trigger-character popups
+  or `completionItem/resolve` yet; a reply is discarded if the caret moves first.
+- [x] References (Shift+F12, location picker), Format Document (Shift+Alt+F; applied
+  directly to the active buffer as one undoable step after revision validation) and
+  Rename Symbol (F2). Rename and any multi-file edit go through a reviewed plan
+  (`app/workspace_edit.rs`): edits are decoded against the text the server saw, shown
+  as before/after lines, re-validated at apply time (open tabs by revision, closed
+  files by exact disk content and the guarded workspace writer), and open files change
+  only in their buffers (unsaved, one undo step). File create/rename/delete,
+  out-of-workspace paths, overlapping edits and stale document versions reject the
+  whole edit. Live-validated with rust-analyzer and gopls. Not built: prepareRename,
+  rename of files/modules, code actions, range formatting.
+- [ ] Then (remaining) rename preview, code-action and
   formatting transactions. Each mutating edit goes through the app’s existing
   save/conflict/document identity protections.
 - [ ] Add native acceptance on macOS and Windows, representative large workspaces,

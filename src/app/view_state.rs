@@ -91,6 +91,47 @@ pub(crate) enum LanguageServerStatus {
     Error(String),
 }
 
+/// Inline rename prompt for the identifier under the caret.
+#[derive(Clone, Debug)]
+pub(crate) struct RenamePrompt {
+    pub(crate) document: crate::model::DocumentId,
+    pub(crate) name: String,
+    pub(crate) original: String,
+    pub(crate) focus: bool,
+}
+
+/// An open completion popup. Typing narrows `items` through
+/// `completion::visible`; `selected` indexes that filtered list.
+#[derive(Clone, Debug)]
+pub(crate) struct CompletionSession {
+    pub(crate) document: crate::model::DocumentId,
+    /// Caret byte when the server was asked; its edit ranges are valid there.
+    pub(crate) origin: usize,
+    pub(crate) word_start: usize,
+    pub(crate) items: Vec<lumen_language_services::incoming::CompletionItem>,
+    pub(crate) selected: usize,
+    /// Item index chosen with the pointer, applied before the next editor input.
+    pub(crate) pending_accept: Option<usize>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SemanticSnapshot {
+    pub(crate) revision: u64,
+    pub(crate) spans: std::sync::Arc<Vec<lumen_language_services::TokenSpan>>,
+}
+
+/// Settings-page snapshot of the active file's language server; built by the
+/// controller so rendering never probes PATH or reads session state.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LanguageServerSummary {
+    pub(crate) language: &'static str,
+    pub(crate) state: String,
+    pub(crate) command: Option<String>,
+    pub(crate) capabilities: Vec<&'static str>,
+    pub(crate) error: Option<String>,
+    pub(crate) project_path_ignored: bool,
+}
+
 #[derive(Clone)]
 pub(crate) struct LanguageLocation {
     pub(crate) label: String,
@@ -274,6 +315,20 @@ pub(crate) struct ViewState {
     pub(crate) problems: ProblemsView,
     pub(crate) language_server_document: Option<crate::model::DocumentId>,
     pub(crate) language_server_status: Option<LanguageServerStatus>,
+    /// Latest semantic tokens per document; valid only for the stored revision.
+    pub(crate) language_semantic_tokens:
+        std::collections::HashMap<crate::model::DocumentId, SemanticSnapshot>,
+    pub(crate) language_completion: Option<CompletionSession>,
+    pub(crate) rename_prompt: Option<RenamePrompt>,
+    /// A language-server edit awaiting the user's review.
+    pub(crate) language_edit_plan: Option<super::workspace_edit::EditPlan>,
+    /// Signature help is shown for the revision it was requested at.
+    pub(crate) language_signature: Option<(
+        crate::model::DocumentId,
+        u64,
+        lumen_language_services::incoming::SignatureHelp,
+    )>,
+    pub(crate) language_server_summary: Option<LanguageServerSummary>,
     pub(crate) language_server_details_open: bool,
     pub(crate) language_hover: Option<String>,
     pub(crate) language_navigation: LanguageNavigationView,
@@ -346,6 +401,12 @@ impl Default for ViewState {
             problems: ProblemsView::default(),
             language_server_document: None,
             language_server_status: None,
+            language_semantic_tokens: std::collections::HashMap::new(),
+            language_completion: None,
+            rename_prompt: None,
+            language_edit_plan: None,
+            language_signature: None,
+            language_server_summary: None,
             language_server_details_open: false,
             language_hover: None,
             language_navigation: Default::default(),

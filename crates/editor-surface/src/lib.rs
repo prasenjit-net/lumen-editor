@@ -34,6 +34,7 @@ pub struct EditorSurface {
     pairing: PairingOptions,
     syntax: Option<(Language, SyntaxPalette)>,
     language: Option<Language>,
+    semantic: Option<std::sync::Arc<Vec<lumen_language_services::TokenSpan>>>,
     widget: Option<Id>,
     drag_anchor: Option<DragSelection>,
     pending_shortcut_text: bool,
@@ -156,6 +157,14 @@ impl EditorSurface {
     pub fn set_language(&mut self, language: Language) {
         self.language = (language != Language::Plain).then_some(language);
     }
+    /// Server semantic spans in source byte coordinates. The caller must pass
+    /// them only while they match the buffer's current revision.
+    pub fn set_semantic_tokens(
+        &mut self,
+        spans: Option<std::sync::Arc<Vec<lumen_language_services::TokenSpan>>>,
+    ) {
+        self.semantic = spans;
+    }
     pub fn set_indentation(&mut self, indentation: Indentation) {
         self.indentation = indentation;
     }
@@ -220,6 +229,7 @@ impl EditorSurface {
                 typography: self.typography,
                 language: self.language,
                 syntax: self.syntax,
+                semantic: self.semantic.clone(),
             },
             &folds,
         );

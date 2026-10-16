@@ -94,6 +94,16 @@ pub(crate) const SCHEMA: SectionSchema = SectionSchema {
             document: true,
         },
         Setting {
+            id: "editor.semantic_highlighting",
+            default: DefaultValue::Bool(true),
+            name: "Semantic Highlighting",
+            category: "Editor",
+            help: "Refine identifier colors with language-server semantic tokens when a server provides them. Parser highlighting is always the baseline.",
+            aliases: "lsp tokens rust-analyzer gopls color language server",
+            control: Control::Bool,
+            document: true,
+        },
+        Setting {
             id: "editor.font_family",
             default: DefaultValue::Choice("platform"),
             name: "Font Family",
