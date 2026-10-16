@@ -190,6 +190,7 @@ impl LumenApp {
             Command::OpenFolder => self.choose_folder(),
             Command::CloseFolder => self.close_folder(),
             Command::OpenPath(path) => self.open_file(path),
+            Command::RevealInExplorer(path) => self.reveal_in_explorer(path),
             Command::Save if self.view.settings.open => {
                 if self.view.settings.selected().pending() > 0 {
                     self.apply_settings();

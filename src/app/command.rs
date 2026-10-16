@@ -141,6 +141,8 @@ pub(crate) enum Command {
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     SelectAll,
     OpenPath(PathBuf),
+    /// Show a workspace file or folder in the Explorer sidebar.
+    RevealInExplorer(PathBuf),
     RequestClose(usize),
     CloseTabs(crate::app::tab_close::TabCloseScope),
     CloseFile(usize),

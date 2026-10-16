@@ -1,4 +1,5 @@
 //! UI-independent document and workspace state.
+pub(crate) mod breadcrumbs;
 mod document;
 mod document_id;
 mod editor;

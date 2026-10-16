@@ -9,6 +9,37 @@ use crate::model::{Document, display_name, validate_file_name, validate_relative
 use std::path::{Component, Path, PathBuf};
 
 impl LumenApp {
+    /// Open the Explorer on `path`: expand every folder above it inside the
+    /// workspace and select it. A path outside the workspace is left alone.
+    pub(crate) fn reveal_in_explorer(&mut self, path: PathBuf) {
+        let Some(root) = self.editor.workspace.clone() else {
+            self.view.status = "Open a folder to reveal files in the Explorer".into();
+            return;
+        };
+        if !path.starts_with(&root) {
+            self.view.status = "That path is outside the open folder".into();
+            return;
+        }
+        let directory = self.file_system.is_directory(&path);
+        let mut ancestors: Vec<PathBuf> = path
+            .ancestors()
+            .skip(1)
+            .take_while(|ancestor| ancestor.starts_with(&root))
+            .map(PathBuf::from)
+            .collect();
+        if directory {
+            ancestors.push(path.clone());
+        }
+        self.view.expanded_dirs.extend(ancestors);
+        self.view.sidebar_visible = true;
+        self.view.activity = crate::app::view_state::Activity::Explorer;
+        self.view.explorer_selection = Some(if directory {
+            crate::app::view_state::ExplorerSelection::Directory(path)
+        } else {
+            crate::app::view_state::ExplorerSelection::File(path)
+        });
+    }
+
     pub(crate) fn explorer_target_directory(&self) -> Option<PathBuf> {
         let root = self.editor.workspace.as_ref()?;
         Some(

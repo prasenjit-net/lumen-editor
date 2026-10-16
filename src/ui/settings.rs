@@ -57,52 +57,58 @@ impl Workbench<'_> {
         if let Some(command) = panel_header(ui, "SETTINGS", &actions) {
             self.command(command);
         }
-        let wide = ui.available_width() >= 600.0;
-        toolbar(ui, &mut self.view.settings, wide);
-        // The footer reserves space before category/results panels are allocated.
-        // No result list can push Apply or errors outside the editor viewport.
-        egui::TopBottomPanel::bottom("settings_footer")
-            .resizable(false)
-            .frame(egui::Frame::NONE)
-            .show_inside(ui, |ui| {
-                if let Some(command) = footer(ui, &mut self.view.settings) {
-                    self.commands.push(command);
-                }
-            });
-        if wide {
-            egui::SidePanel::left("settings_categories")
-                .default_width(155.0)
-                .width_range(110.0..=240.0)
-                .resizable(true)
-                .frame(egui::Frame::NONE)
-                .show_inside(ui, |ui| {
-                    ScrollArea::vertical()
-                        .id_salt("settings_category_scroll")
-                        .show(ui, |ui| {
-                            for category in categories() {
-                                let count = catalog()
-                                    .filter(|setting| {
-                                        (category.is_empty() || setting.category == category)
-                                            && matches(&self.view.settings, setting)
-                                    })
-                                    .count();
-                                ui.selectable_value(
-                                    &mut self.view.settings.category,
-                                    category.into(),
-                                    format!("{} ({count})", category_label(category)),
-                                );
-                            }
+        // Inset the body like the header's content instead of touching the pane edge.
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(10, 0))
+            .show(ui, |ui| {
+                let wide = ui.available_width() >= 600.0;
+                toolbar(ui, &mut self.view.settings, wide);
+                // The footer reserves space before category/results panels are allocated.
+                // No result list can push Apply or errors outside the editor viewport.
+                egui::TopBottomPanel::bottom("settings_footer")
+                    .resizable(false)
+                    .frame(egui::Frame::NONE)
+                    .show_inside(ui, |ui| {
+                        if let Some(command) = footer(ui, &mut self.view.settings) {
+                            self.commands.push(command);
+                        }
+                    });
+                if wide {
+                    egui::SidePanel::left("settings_categories")
+                        .default_width(155.0)
+                        .width_range(110.0..=240.0)
+                        .resizable(true)
+                        .frame(egui::Frame::NONE)
+                        .show_inside(ui, |ui| {
+                            ScrollArea::vertical()
+                                .id_salt("settings_category_scroll")
+                                .show(ui, |ui| {
+                                    for category in categories() {
+                                        let count = catalog()
+                                            .filter(|setting| {
+                                                (category.is_empty()
+                                                    || setting.category == category)
+                                                    && matches(&self.view.settings, setting)
+                                            })
+                                            .count();
+                                        ui.selectable_value(
+                                            &mut self.view.settings.category,
+                                            category.into(),
+                                            format!("{} ({count})", category_label(category)),
+                                        );
+                                    }
+                                });
                         });
-                });
-        }
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE)
-            .show_inside(ui, |ui| {
-                results(
-                    ui,
-                    &mut self.view.settings,
-                    self.view.language_server_summary.as_ref(),
-                );
+                }
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE)
+                    .show_inside(ui, |ui| {
+                        results(
+                            ui,
+                            &mut self.view.settings,
+                            self.view.language_server_summary.as_ref(),
+                        );
+                    });
             });
     }
 }

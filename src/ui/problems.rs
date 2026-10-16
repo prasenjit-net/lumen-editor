@@ -55,156 +55,173 @@ impl Workbench<'_> {
                     if let Some(command) = panel_header(ui, "PROBLEMS", &actions) {
                         self.command(command);
                     }
-                    // Wrap instead of overflowing, so every filter stays reachable at
-                    // narrow widths.
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        ui.checkbox(
-                            &mut self.view.problems.show_errors,
-                            format!("{error_count} Errors"),
-                        );
-                        ui.checkbox(
-                            &mut self.view.problems.show_warnings,
-                            format!("{warning_count} Warnings"),
-                        );
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.view.problems.filter)
-                                .hint_text("Filter problems")
-                                .desired_width(190.0_f32.min(ui.available_width().max(90.0))),
-                        );
-                    });
-                    ui.separator();
-                    let query = self.view.problems.filter.trim().to_lowercase();
-                    let show_errors = self.view.problems.show_errors;
-                    let show_warnings = self.view.problems.show_warnings;
-                    let mut visible_rows = 0;
-                    ScrollArea::vertical()
-                        .id_salt("problems_list")
+                    // Same horizontal inset as the panel header's content.
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::symmetric(10, 0))
                         .show(ui, |ui| {
-                            let mut previous_file = None;
-                            for row in rows.iter().filter(|row| {
-                                let severity_visible = match row.severity {
-                                    DiagnosticSeverity::Error => show_errors,
-                                    DiagnosticSeverity::Warning => show_warnings,
-                                    DiagnosticSeverity::Information | DiagnosticSeverity::Hint => {
-                                        true
-                                    }
-                                };
-                                severity_visible
-                                    && (query.is_empty()
-                                        || row.message.to_lowercase().contains(&query)
-                                        || row.file.to_lowercase().contains(&query)
-                                        || row.detail.to_lowercase().contains(&query))
-                            }) {
-                                visible_rows += 1;
-                                if previous_file.as_deref() != Some(row.file.as_str()) {
-                                    ui.label(
-                                        RichText::new(&row.file)
-                                            .strong()
-                                            .size(11.0)
-                                            .color(colors.text),
-                                    );
-                                    previous_file = Some(row.file.clone());
-                                }
-                                let (glyph, color) = match row.severity {
-                                    DiagnosticSeverity::Error => (icon::ERROR, colors.error),
-                                    DiagnosticSeverity::Warning => (icon::WARNING, colors.warning),
-                                    DiagnosticSeverity::Information | DiagnosticSeverity::Hint => {
-                                        (icon::DEBUG, colors.muted)
-                                    }
-                                };
-                                let label = format!(
-                                    "  {glyph}  {}  [{}:{}]{}",
-                                    row.message, row.line, row.column, row.detail
+                            // Wrap instead of overflowing, so every filter stays reachable at
+                            // narrow widths.
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                ui.checkbox(
+                                    &mut self.view.problems.show_errors,
+                                    format!("{error_count} Errors"),
                                 );
-                                ui.horizontal(|ui| {
-                                    // Reserve the trailing action first; the message
-                                    // truncates (full text on hover) instead of
-                                    // pushing the action away or changing row height.
-                                    let action_width = 22.0;
-                                    let text_width = (ui.available_width()
-                                        - action_width
-                                        - ui.spacing().item_spacing.x)
-                                        .max(48.0);
-                                    let response = ui
-                                        .allocate_ui_with_layout(
-                                            egui::vec2(text_width, 18.0),
-                                            egui::Layout::left_to_right(egui::Align::Center),
-                                            |ui| {
-                                                ui.add(
-                                                    egui::Button::new(
-                                                        RichText::new(&label)
-                                                            .size(11.0)
-                                                            .color(color),
-                                                    )
-                                                    .frame(false)
-                                                    .truncate(),
+                                ui.checkbox(
+                                    &mut self.view.problems.show_warnings,
+                                    format!("{warning_count} Warnings"),
+                                );
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.view.problems.filter)
+                                        .hint_text("Filter problems")
+                                        .desired_width(
+                                            190.0_f32.min(ui.available_width().max(90.0)),
+                                        ),
+                                );
+                            });
+                            ui.separator();
+                            let query = self.view.problems.filter.trim().to_lowercase();
+                            let show_errors = self.view.problems.show_errors;
+                            let show_warnings = self.view.problems.show_warnings;
+                            let mut visible_rows = 0;
+                            ScrollArea::vertical()
+                                .id_salt("problems_list")
+                                .show(ui, |ui| {
+                                    let mut previous_file = None;
+                                    for row in rows.iter().filter(|row| {
+                                        let severity_visible = match row.severity {
+                                            DiagnosticSeverity::Error => show_errors,
+                                            DiagnosticSeverity::Warning => show_warnings,
+                                            DiagnosticSeverity::Information
+                                            | DiagnosticSeverity::Hint => true,
+                                        };
+                                        severity_visible
+                                            && (query.is_empty()
+                                                || row.message.to_lowercase().contains(&query)
+                                                || row.file.to_lowercase().contains(&query)
+                                                || row.detail.to_lowercase().contains(&query))
+                                    }) {
+                                        visible_rows += 1;
+                                        if previous_file.as_deref() != Some(row.file.as_str()) {
+                                            ui.label(
+                                                RichText::new(&row.file)
+                                                    .strong()
+                                                    .size(11.0)
+                                                    .color(colors.text),
+                                            );
+                                            previous_file = Some(row.file.clone());
+                                        }
+                                        let (glyph, color) = match row.severity {
+                                            DiagnosticSeverity::Error => {
+                                                (icon::ERROR, colors.error)
+                                            }
+                                            DiagnosticSeverity::Warning => {
+                                                (icon::WARNING, colors.warning)
+                                            }
+                                            DiagnosticSeverity::Information
+                                            | DiagnosticSeverity::Hint => {
+                                                (icon::DEBUG, colors.muted)
+                                            }
+                                        };
+                                        let label = format!(
+                                            "  {glyph}  {}  [{}:{}]{}",
+                                            row.message, row.line, row.column, row.detail
+                                        );
+                                        ui.horizontal(|ui| {
+                                            // Reserve the trailing action first; the message
+                                            // truncates (full text on hover) instead of
+                                            // pushing the action away or changing row height.
+                                            let action_width = 22.0;
+                                            let text_width = (ui.available_width()
+                                                - action_width
+                                                - ui.spacing().item_spacing.x)
+                                                .max(48.0);
+                                            let response = ui
+                                                .allocate_ui_with_layout(
+                                                    egui::vec2(text_width, 18.0),
+                                                    egui::Layout::left_to_right(
+                                                        egui::Align::Center,
+                                                    ),
+                                                    |ui| {
+                                                        ui.add(
+                                                            egui::Button::new(
+                                                                RichText::new(&label)
+                                                                    .size(11.0)
+                                                                    .color(color),
+                                                            )
+                                                            .frame(false)
+                                                            .truncate(),
+                                                        )
+                                                    },
                                                 )
-                                            },
-                                        )
-                                        .inner
-                                        .on_hover_text(format!(
-                                            "{}\n{}:{}:{}{}",
-                                            row.full_message,
-                                            row.file,
-                                            row.line,
-                                            row.column,
-                                            row.detail
-                                        ));
-                                    response.context_menu(|ui| {
-                                        if ui.button("Copy Message").clicked() {
-                                            ui.ctx().copy_text(row.full_message.clone());
-                                            self.view.status = "Problem message copied".into();
-                                            ui.close();
-                                        }
-                                        if ui.button("Copy Location").clicked() {
-                                            ui.ctx().copy_text(format!(
-                                                "{}:{}:{}",
-                                                row.file, row.line, row.column
-                                            ));
-                                            self.view.status = "Problem location copied".into();
-                                            ui.close();
-                                        }
-                                    });
-                                    if response.clicked() {
-                                        self.command(Command::OpenProblem(
-                                            row.document,
-                                            row.range.clone(),
-                                        ));
-                                    }
-                                    let fix = ui
+                                                .inner
+                                                .on_hover_text(format!(
+                                                    "{}\n{}:{}:{}{}",
+                                                    row.full_message,
+                                                    row.file,
+                                                    row.line,
+                                                    row.column,
+                                                    row.detail
+                                                ));
+                                            response.context_menu(|ui| {
+                                                if ui.button("Copy Message").clicked() {
+                                                    ui.ctx().copy_text(row.full_message.clone());
+                                                    self.view.status =
+                                                        "Problem message copied".into();
+                                                    ui.close();
+                                                }
+                                                if ui.button("Copy Location").clicked() {
+                                                    ui.ctx().copy_text(format!(
+                                                        "{}:{}:{}",
+                                                        row.file, row.line, row.column
+                                                    ));
+                                                    self.view.status =
+                                                        "Problem location copied".into();
+                                                    ui.close();
+                                                }
+                                            });
+                                            if response.clicked() {
+                                                self.command(Command::OpenProblem(
+                                                    row.document,
+                                                    row.range.clone(),
+                                                ));
+                                            }
+                                            let fix = ui
                                         .add(egui::Button::new(icon::AGENT).small().frame(false))
                                         .on_hover_text(
                                             "Fix with agent: prefill a request in the agent panel",
                                         );
-                                    if super::widgets::named(
-                                        fix,
-                                        true,
-                                        "Fix this problem with the agent",
-                                    )
-                                    .clicked()
-                                    {
-                                        self.command(Command::FixProblemWithAgent(
-                                            row.document,
-                                            row.range.clone(),
-                                        ));
+                                            if super::widgets::named(
+                                                fix,
+                                                true,
+                                                "Fix this problem with the agent",
+                                            )
+                                            .clicked()
+                                            {
+                                                self.command(Command::FixProblemWithAgent(
+                                                    row.document,
+                                                    row.range.clone(),
+                                                ));
+                                            }
+                                        });
+                                    }
+                                    if visible_rows == 0 {
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(if rows.is_empty() {
+                                                    empty_message(
+                                                        self.view.language_server_status.as_ref(),
+                                                    )
+                                                } else {
+                                                    "No problems match the current filters."
+                                                })
+                                                .size(11.0)
+                                                .color(colors.muted),
+                                            )
+                                            .wrap(),
+                                        );
                                     }
                                 });
-                            }
-                            if visible_rows == 0 {
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(if rows.is_empty() {
-                                            empty_message(self.view.language_server_status.as_ref())
-                                        } else {
-                                            "No problems match the current filters."
-                                        })
-                                        .size(11.0)
-                                        .color(colors.muted),
-                                    )
-                                    .wrap(),
-                                );
-                            }
                         });
                 });
             });

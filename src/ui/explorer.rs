@@ -237,11 +237,17 @@ impl Workbench<'_> {
                                 .id_salt("explorer_scroll")
                                 .show(ui, |ui| self.explorer(ui));
                         }
+                        // Inset like the header's content so inputs and labels do
+                        // not touch the pane edge.
                         Activity::Search => {
-                            self.workspace_search_panel(ui);
+                            egui::Frame::NONE
+                                .inner_margin(egui::Margin::symmetric(8, 0))
+                                .show(ui, |ui| self.workspace_search_panel(ui));
                         }
                         Activity::SourceControl => {
-                            self.source_control_panel(ui);
+                            egui::Frame::NONE
+                                .inner_margin(egui::Margin::symmetric(8, 0))
+                                .show(ui, |ui| self.source_control_panel(ui));
                         }
                         Activity::RunDebug => {
                             unavailable_panel(
