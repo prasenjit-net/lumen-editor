@@ -53,7 +53,19 @@ pub(crate) enum LanguageRequestKind {
     Hover,
     Definition,
     Symbols,
+    SemanticTokens,
 }
+
+/// The last semantic-token request, so a failed or empty reply is not retried
+/// for the same revision and edits are throttled.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SemanticTokenAttempt {
+    document: crate::model::DocumentId,
+    revision: u64,
+    at: Instant,
+}
+
+const SEMANTIC_TOKEN_DEBOUNCE: Duration = Duration::from_millis(250);
 
 impl LumenApp {
     pub(crate) fn close_workspace_language_server(&mut self) {
@@ -72,6 +84,8 @@ impl LumenApp {
         self.view.language_server_details_open = false;
         self.view.language_hover = None;
         self.view.language_server_diagnostics.clear();
+        self.view.language_semantic_tokens.clear();
+        self.semantic_token_request = None;
     }
 
     pub(crate) fn request_language_definition(&mut self) {
@@ -349,6 +363,8 @@ impl LumenApp {
         self.language_server_restart = Default::default();
         self.view.language_hover = None;
         self.view.language_server_diagnostics.clear();
+        self.view.language_semantic_tokens.clear();
+        self.semantic_token_request = None;
     }
 
     fn start_language_server(
@@ -397,6 +413,8 @@ impl LumenApp {
         self.language_server_ready_at = None;
         self.language_server_capabilities = None;
         self.view.language_hover = None;
+        self.view.language_semantic_tokens.clear();
+        self.semantic_token_request = None;
         self.language_server_documents.clear();
         let repaint = ctx.clone();
         match self.language_server_service.start(
@@ -406,7 +424,13 @@ impl LumenApp {
         ) {
             Ok(mut process) => {
                 let workspace_uri = file_uri(&workspace);
-                match process.send(&lsp::initialize_request(0, &workspace_uri)) {
+                match process.send(&lsp::initialize_request_with_options(
+                    0,
+                    &workspace_uri,
+                    LanguageRegistry::by_id(language)
+                        .and_then(|descriptor| descriptor.server)
+                        .and_then(|server| server.initialization_options),
+                )) {
                     Ok(()) => {
                         self.language_server_workspace = Some(workspace);
                         self.language_server_language = Some(language);
@@ -555,6 +579,7 @@ impl LumenApp {
             }
         }
         self.sync_language_documents();
+        self.request_semantic_tokens(ctx);
         if let Some(retry_at) = self.language_server_restart.retry_at {
             ctx.request_repaint_after(retry_at.saturating_duration_since(Instant::now()));
         }
@@ -572,6 +597,8 @@ impl LumenApp {
         self.language_server_started_at = None;
         self.language_server_ready_at = None;
         self.view.language_server_diagnostics.clear();
+        self.view.language_semantic_tokens.clear();
+        self.semantic_token_request = None;
         self.view.language_server_status = Some(LanguageServerStatus::Error(error.to_owned()));
         self.schedule_language_server_restart_without_context(error);
     }
@@ -623,6 +650,7 @@ impl LumenApp {
             }
             self.language_server_documents.remove(&id);
             self.view.language_server_diagnostics.remove(&id);
+            self.view.language_semantic_tokens.remove(&id);
         }
         for (id, revision, uri, text) in desired {
             let (message, version) = match self.language_server_documents.get(&id) {
@@ -643,6 +671,7 @@ impl LumenApp {
                 }
                 self.view.language_hover = None;
                 self.view.language_server_diagnostics.remove(&id);
+                self.view.language_semantic_tokens.remove(&id);
                 self.language_server_documents.insert(
                     id,
                     SyncedLanguageDocument {
@@ -833,7 +862,7 @@ impl LumenApp {
             .is_some_and(|capabilities| match kind {
                 LanguageRequestKind::Hover => capabilities.hover,
                 LanguageRequestKind::Definition => capabilities.definition,
-                LanguageRequestKind::Symbols => false,
+                LanguageRequestKind::Symbols | LanguageRequestKind::SemanticTokens => false,
             });
         if !capability {
             self.view.status = "The active language server does not provide this feature.".into();
@@ -870,9 +899,112 @@ impl LumenApp {
         let message = match kind {
             LanguageRequestKind::Hover => lsp::hover_request(request_id, &uri, position),
             LanguageRequestKind::Definition => lsp::definition_request(request_id, &uri, position),
-            LanguageRequestKind::Symbols => unreachable!("symbols do not use a caret position"),
+            LanguageRequestKind::Symbols | LanguageRequestKind::SemanticTokens => {
+                unreachable!("this request does not use a caret position")
+            }
         };
         self.send_language_request(request_id, kind, &message);
+    }
+
+    /// Ask for fresh full-document tokens for the active document when they are
+    /// missing or stale. Silent: failures simply leave the parser baseline.
+    fn request_semantic_tokens(&mut self, ctx: &eframe::egui::Context) {
+        if !self.language_server_initialized
+            || self
+                .language_server_request_kinds
+                .values()
+                .any(|pending| pending.kind == LanguageRequestKind::SemanticTokens)
+        {
+            return;
+        }
+        let Some((document_id, revision, uri, server_version)) = self.active_synced_document()
+        else {
+            return;
+        };
+        let path = self
+            .editor
+            .active()
+            .and_then(|document| document.path.clone());
+        let enabled = self
+            .view
+            .settings
+            .document_boolean("editor.semantic_highlighting", path.as_deref());
+        if !enabled
+            || !self
+                .language_server_capabilities
+                .as_ref()
+                .is_some_and(|capabilities| capabilities.semantic_tokens)
+        {
+            return;
+        }
+        if self
+            .view
+            .language_semantic_tokens
+            .get(&document_id)
+            .is_some_and(|snapshot| snapshot.revision == revision)
+        {
+            return;
+        }
+        if let Some(last) = self.semantic_token_request {
+            if last.document == document_id && last.revision == revision {
+                return;
+            }
+            let ready = last.at + SEMANTIC_TOKEN_DEBOUNCE;
+            if last.document == document_id && ready > Instant::now() {
+                ctx.request_repaint_after(ready.saturating_duration_since(Instant::now()));
+                return;
+            }
+        }
+        let stamp = self.request_stamp(document_id, revision, server_version, uri.clone());
+        let request_id = self.language_server_requests.register(stamp);
+        let message = lsp::semantic_tokens_request(request_id, &uri);
+        self.semantic_token_request = Some(SemanticTokenAttempt {
+            document: document_id,
+            revision,
+            at: Instant::now(),
+        });
+        self.send_language_request(request_id, LanguageRequestKind::SemanticTokens, &message);
+    }
+
+    fn apply_semantic_tokens_response(&mut self, message: &serde_json::Value) {
+        let Some(legend) = self
+            .language_server_capabilities
+            .as_ref()
+            .and_then(|capabilities| capabilities.semantic_legend.clone())
+        else {
+            return;
+        };
+        let Some(document) = self.editor.active() else {
+            return;
+        };
+        let decoded = lumen_language_services::incoming::parse_semantic_tokens_response(message)
+            .ok()
+            .and_then(|data| {
+                lumen_language_services::decode_semantic_tokens(&document.text, &legend, &data).ok()
+            });
+        let (id, revision) = (document.id, document.revision);
+        match decoded {
+            Some(tokens) => {
+                let spans = tokens
+                    .into_iter()
+                    .map(|token| lumen_language_services::TokenSpan {
+                        range: token.range,
+                        class: token.class,
+                    })
+                    .collect();
+                self.view.language_semantic_tokens.insert(
+                    id,
+                    super::view_state::SemanticSnapshot {
+                        revision,
+                        spans: std::sync::Arc::new(spans),
+                    },
+                );
+            }
+            // An invalid payload must not leave older tokens painted.
+            None => {
+                self.view.language_semantic_tokens.remove(&id);
+            }
+        }
     }
 
     fn request_stamp(
@@ -925,12 +1057,15 @@ impl LumenApp {
                         deadline: Instant::now() + REQUEST_TIMEOUT,
                     },
                 );
-                self.view.status = match kind {
-                    LanguageRequestKind::Hover => "Loading hover…",
-                    LanguageRequestKind::Definition => "Finding definition…",
-                    LanguageRequestKind::Symbols => "Loading document symbols…",
+                // Background refreshes stay silent; only user-invoked requests report.
+                if let Some(status) = match kind {
+                    LanguageRequestKind::Hover => Some("Loading hover…"),
+                    LanguageRequestKind::Definition => Some("Finding definition…"),
+                    LanguageRequestKind::Symbols => Some("Loading document symbols…"),
+                    LanguageRequestKind::SemanticTokens => None,
+                } {
+                    self.view.status = status.into();
                 }
-                .into();
             }
             Err(error) => self.stop_language_server(&error),
         }
@@ -973,6 +1108,7 @@ impl LumenApp {
             }
             LanguageRequestKind::Definition => self.apply_definition_response(message),
             LanguageRequestKind::Symbols => self.apply_document_symbols_response(message),
+            LanguageRequestKind::SemanticTokens => self.apply_semantic_tokens_response(message),
         }
         true
     }
@@ -1637,5 +1773,112 @@ mod tests {
             app.view.language_server_summary.unwrap().state,
             "Disabled in settings"
         );
+    }
+
+    fn semantic_initialized() -> ServerEvent {
+        ServerEvent::Message(serde_json::json!({
+            "jsonrpc":"2.0", "id":0, "result":{"capabilities":{
+                "textDocumentSync":{"openClose":true,"change":1,"save":{"includeText":true}},
+                "semanticTokensProvider":{
+                    "legend":{"tokenTypes":["function","keyword"],"tokenModifiers":[]},
+                    "full":true
+                }
+            }}
+        }))
+    }
+
+    fn semantic_request_ids(messages: &RecordedMessages) -> Vec<u64> {
+        messages
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|message| message["method"] == "textDocument/semanticTokens/full")
+            .filter_map(|message| message["id"].as_u64())
+            .collect()
+    }
+
+    #[test]
+    fn semantic_tokens_are_requested_stored_per_revision_and_dropped_when_stale() {
+        let (mut app, messages, events) = rust_app();
+        app.editor.files[0].text = "fn main() {}".into();
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        events.lock().unwrap().push(semantic_initialized());
+        app.poll_language_server(&ctx);
+        let ids = semantic_request_ids(&messages);
+        assert_eq!(ids.len(), 1);
+
+        // "main" as a function; the keyword-typed token must not survive as a keyword refinement.
+        events
+            .lock()
+            .unwrap()
+            .push(ServerEvent::Message(serde_json::json!({
+                "jsonrpc":"2.0","id":ids[0],"result":{"data":[0,3,4,0,0]}
+            })));
+        app.poll_language_server(&ctx);
+        let document = app.editor.files[0].id;
+        let snapshot = app.view.language_semantic_tokens[&document].clone();
+        assert_eq!(snapshot.revision, app.editor.files[0].revision);
+        assert_eq!(snapshot.spans[0].range, 3..7);
+        // Same revision is never re-requested.
+        app.poll_language_server(&ctx);
+        assert_eq!(semantic_request_ids(&messages).len(), 1);
+
+        // An edit invalidates the snapshot by revision and a late reply is discarded.
+        app.editor.files[0].text = "fn mainx() {}".into();
+        app.editor.files[0].revision += 1;
+        app.poll_language_server(&ctx);
+        assert!(!app.view.language_semantic_tokens.contains_key(&document));
+        let ids = semantic_request_ids(&messages);
+        assert_eq!(ids.len(), 1, "debounced until the edit settles");
+        let late = ids[0];
+        events
+            .lock()
+            .unwrap()
+            .push(ServerEvent::Message(serde_json::json!({
+                "jsonrpc":"2.0","id":late,"result":{"data":[0,3,4,0,0]}
+            })));
+        app.poll_language_server(&ctx);
+        assert!(!app.view.language_semantic_tokens.contains_key(&document));
+    }
+
+    #[test]
+    fn disabled_semantic_setting_or_missing_capability_sends_no_request() {
+        let (mut app, messages, events) = rust_app();
+        app.view.settings.user.persisted.insert(
+            "editor.semantic_highlighting".into(),
+            lumen_settings_core::Value::Bool(false),
+        );
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        events.lock().unwrap().push(semantic_initialized());
+        app.poll_language_server(&ctx);
+        assert!(semantic_request_ids(&messages).is_empty());
+
+        let (mut app, messages, events) = rust_app();
+        app.refresh_language_server_status(&ctx);
+        events.lock().unwrap().push(initialized());
+        app.poll_language_server(&ctx);
+        assert!(semantic_request_ids(&messages).is_empty());
+    }
+
+    #[test]
+    fn malformed_semantic_reply_clears_tokens_without_changing_status() {
+        let (mut app, messages, events) = rust_app();
+        let ctx = eframe::egui::Context::default();
+        app.refresh_language_server_status(&ctx);
+        events.lock().unwrap().push(semantic_initialized());
+        app.poll_language_server(&ctx);
+        let id = semantic_request_ids(&messages)[0];
+        let status = app.view.status.clone();
+        events
+            .lock()
+            .unwrap()
+            .push(ServerEvent::Message(serde_json::json!({
+                "jsonrpc":"2.0","id":id,"result":{"data":[1,2,3]}
+            })));
+        app.poll_language_server(&ctx);
+        assert!(app.view.language_semantic_tokens.is_empty());
+        assert_eq!(app.view.status, status);
     }
 }

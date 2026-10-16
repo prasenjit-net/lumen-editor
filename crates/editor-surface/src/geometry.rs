@@ -10,6 +10,8 @@ pub(crate) struct LayoutConfig {
     pub(crate) typography: crate::Typography,
     pub(crate) language: Option<syntax::Language>,
     pub(crate) syntax: Option<(syntax::Language, crate::SyntaxPalette)>,
+    /// Validated language-server spans in source byte coordinates.
+    pub(crate) semantic: Option<Arc<Vec<lumen_language_services::TokenSpan>>>,
 }
 
 /// Syntax spans consumed by the renderer. Rust and Go use parser-backed
@@ -60,14 +62,17 @@ impl SyntaxSpan {
     }
 }
 
-pub(crate) fn highlight(visual: &str, language: syntax::Language) -> Vec<SyntaxSpan> {
+pub(crate) fn highlight(
+    visual: &str,
+    language: syntax::Language,
+    semantic: &[lumen_language_services::TokenSpan],
+) -> Vec<SyntaxSpan> {
     if let Ok(Some(snapshot)) = lumen_language_services::highlight::highlight_registered(
         visual,
         language.label(),
         DocumentVersion::default(),
     ) {
-        return snapshot
-            .spans
+        return lumen_language_services::overlay_semantic(snapshot.spans, semantic)
             .into_iter()
             .map(|span| SyntaxSpan::language(span.range, span.class))
             .collect();
@@ -75,6 +80,29 @@ pub(crate) fn highlight(visual: &str, language: syntax::Language) -> Vec<SyntaxS
     syntax::highlight(visual, language)
         .into_iter()
         .map(SyntaxSpan::legacy)
+        .collect()
+}
+
+/// Project source-coordinate spans into the visual (CRLF-normalized, folded)
+/// text. Spans that start or end inside a fold, or cross a visual line, are dropped.
+fn visual_semantic_spans(
+    spans: &[lumen_language_services::TokenSpan],
+    byte_offsets: &[usize],
+    visual_offsets: &[usize],
+    visual: &str,
+) -> Vec<lumen_language_services::TokenSpan> {
+    spans
+        .iter()
+        .filter_map(|span| {
+            let start = visual_offsets[byte_offsets.binary_search(&span.range.start).ok()?];
+            let end = visual_offsets[byte_offsets.binary_search(&span.range.end).ok()?];
+            (start < end && !visual[start..end].contains('\n')).then_some({
+                lumen_language_services::TokenSpan {
+                    range: start..end,
+                    class: span.class,
+                }
+            })
+        })
         .collect()
 }
 
@@ -108,6 +136,7 @@ impl TextGeometry {
                 typography: crate::Typography::default(),
                 language: None,
                 syntax: None,
+                semantic: None,
             },
             &[],
         )
@@ -125,6 +154,7 @@ impl TextGeometry {
             typography,
             language,
             syntax,
+            semantic,
         } = config;
         // One transient layout replaces the primary range. Stored source and
         // history remain untouched; neighboring text participates in this galley.
@@ -166,14 +196,23 @@ impl TextGeometry {
                 byte_offsets.push(offset + character.len_utf8());
             }
         }
-        let visual_offsets = visual
+        let visual_offsets: Vec<usize> = visual
             .char_indices()
             .map(|(byte, _)| byte)
             .chain([visual.len()])
             .collect();
+        // Source offsets from the server only line up with unprojected text.
+        let semantic_spans = match (&semantic, preedit) {
+            (Some(spans), None) => {
+                visual_semantic_spans(spans, &byte_offsets, &visual_offsets, &visual)
+            }
+            _ => Vec::new(),
+        };
         let syntax_spans = language
             .or_else(|| syntax.map(|(language, _)| language))
-            .map_or_else(Vec::new, |language| highlight(&visual, language));
+            .map_or_else(Vec::new, |language| {
+                highlight(&visual, language, &semantic_spans)
+            });
         let galley = ui.fonts_mut(|fonts| {
             let mut job = egui::text::LayoutJob::simple(
                 visual,
@@ -544,5 +583,45 @@ impl TextGeometry {
             index += count;
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod semantic_projection_tests {
+    use super::*;
+    use lumen_language_services::TokenSpan;
+
+    fn span(range: Range<usize>) -> TokenSpan {
+        TokenSpan {
+            range,
+            class: TokenClass::Function,
+        }
+    }
+
+    /// Mirrors the visual/source tables built by `layout_typography` for "a\r\nbc".
+    #[test]
+    fn crlf_and_unmappable_spans_project_to_visual_text() {
+        let visual = "a\nbc";
+        // source boundaries after each visual char: a=1, \r\n=3, b=4, c=5
+        let byte_offsets = [0, 1, 3, 4, 5];
+        let visual_offsets: Vec<usize> = visual
+            .char_indices()
+            .map(|(byte, _)| byte)
+            .chain([visual.len()])
+            .collect();
+        let projected = visual_semantic_spans(
+            &[span(3..5), span(0..1), span(1..3), span(2..4), span(0..5)],
+            &byte_offsets,
+            &visual_offsets,
+            visual,
+        );
+        // 1..3 is the CRLF itself (a newline), 2..4 splits the CRLF, 0..5 crosses lines.
+        assert_eq!(
+            projected
+                .iter()
+                .map(|s| s.range.clone())
+                .collect::<Vec<_>>(),
+            vec![2..4, 0..1]
+        );
     }
 }

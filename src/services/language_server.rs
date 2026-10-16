@@ -490,9 +490,18 @@ mod tests {
         let file_uri = DocumentUri::new(format!("file://{}", file.display())).unwrap();
 
         let mut server = ServerProcess::start(&executable, &root, Arc::new(|| {})).unwrap();
-        server.send(&lsp::initialize_request(0, &root_uri)).unwrap();
+        server
+            .send(&lsp::initialize_request_with_options(
+                0,
+                &root_uri,
+                language
+                    .server
+                    .and_then(|server| server.initialization_options),
+            ))
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(120);
         let mut initialized = false;
+        let mut legend = None;
         let mut diagnostics = None;
         let mut server_requests = Vec::new();
         while Instant::now() < deadline && diagnostics.is_none() {
@@ -503,6 +512,9 @@ mod tests {
                 let method = message.get("method").and_then(Value::as_str);
                 if message.get("id") == Some(&serde_json::json!(0)) && !initialized {
                     initialized = true;
+                    legend = lumen_language_services::capabilities::ServerCapabilities::from_initialize_response(&message)
+                        .ok()
+                        .and_then(|capabilities| capabilities.semantic_legend);
                     server.send(&lsp::initialized_notification()).unwrap();
                     server
                         .send(&lsp::did_open(
@@ -524,6 +536,33 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(50));
         }
+        // Semantic tokens: the legend must be advertised and a full reply must decode.
+        let legend = legend.expect("server did not advertise full semantic tokens");
+        let request = lsp::semantic_tokens_request(7, &file_uri);
+        server.send(&request).unwrap();
+        let mut tokens = None;
+        while Instant::now() < deadline && tokens.is_none() {
+            for event in server.drain_events() {
+                let ServerEvent::Message(message) = event else {
+                    continue;
+                };
+                if message.get("id") == Some(&serde_json::json!(7)) {
+                    let data = incoming::parse_semantic_tokens_response(&message).unwrap();
+                    tokens = Some(
+                        lumen_language_services::decode_semantic_tokens(text, &legend, &data)
+                            .unwrap(),
+                    );
+                } else if let Some(reply) = lsp::server_request_response(&message) {
+                    server.send(&reply).unwrap();
+                }
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        println!("semantic tokens: {tokens:?}");
+        assert!(
+            tokens.is_some_and(|tokens| !tokens.is_empty()),
+            "no semantic tokens decoded"
+        );
         println!("server-initiated requests: {server_requests:?}");
         println!("diagnostics: {diagnostics:?}");
         let stderr = server.stderr_text();

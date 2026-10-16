@@ -5,9 +5,37 @@
 use crate::{DocumentUri, LanguageId, Position, ServerDocumentVersion};
 use serde_json::{Value, json};
 
+/// Token types Lumen can map to a class; advertised so servers use standard names.
+const SEMANTIC_TOKEN_TYPES: [&str; 14] = [
+    "namespace",
+    "type",
+    "class",
+    "enum",
+    "interface",
+    "struct",
+    "typeParameter",
+    "parameter",
+    "variable",
+    "property",
+    "enumMember",
+    "function",
+    "method",
+    "macro",
+];
+
 #[must_use]
 pub fn initialize_request(request_id: u64, workspace_uri: &str) -> Value {
-    json!({
+    initialize_request_with_options(request_id, workspace_uri, None)
+}
+
+/// `options` is the descriptor's JSON `initializationOptions`; invalid JSON is omitted.
+#[must_use]
+pub fn initialize_request_with_options(
+    request_id: u64,
+    workspace_uri: &str,
+    options: Option<&str>,
+) -> Value {
+    let mut request = json!({
         "jsonrpc": "2.0",
         "id": request_id,
         "method": "initialize",
@@ -19,11 +47,23 @@ pub fn initialize_request(request_id: u64, workspace_uri: &str) -> Value {
             "capabilities": {
                 "workspace": { "workspaceFolders": true },
                 "textDocument": {
-                    "publishDiagnostics": { "relatedInformation": true }
+                    "publishDiagnostics": { "relatedInformation": true },
+                    "semanticTokens": {
+                        "requests": { "full": true },
+                        "tokenTypes": SEMANTIC_TOKEN_TYPES,
+                        "tokenModifiers": [],
+                        "formats": ["relative"],
+                        "overlappingTokenSupport": false,
+                        "multilineTokenSupport": false
+                    }
                 }
             }
         }
-    })
+    });
+    if let Some(options) = options.and_then(|text| serde_json::from_str::<Value>(text).ok()) {
+        request["params"]["initializationOptions"] = options;
+    }
+    request
 }
 
 /// Reply to a server-initiated request. JSON-RPC requires every request to be
@@ -144,6 +184,16 @@ pub fn shutdown_request(request_id: u64) -> Value {
 #[must_use]
 pub fn exit_notification() -> Value {
     json!({ "jsonrpc": "2.0", "method": "exit", "params": null })
+}
+
+#[must_use]
+pub fn semantic_tokens_request(request_id: u64, uri: &DocumentUri) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/semanticTokens/full",
+        "params": { "textDocument": { "uri": uri.as_str() } }
+    })
 }
 
 #[must_use]

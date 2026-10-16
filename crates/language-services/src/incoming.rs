@@ -174,6 +174,27 @@ fn parse_definition_location(value: &Value) -> Result<DefinitionLocation, Incomi
     })
 }
 
+/// Extract the relative-encoded token data from a full semantic-tokens reply.
+/// A null result means the server has no tokens for the document.
+pub fn parse_semantic_tokens_response(message: &Value) -> Result<Vec<u32>, IncomingError> {
+    let result = message.get("result").ok_or(IncomingError::InvalidPayload)?;
+    if result.is_null() {
+        return Ok(Vec::new());
+    }
+    result
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or(IncomingError::InvalidPayload)?
+        .iter()
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|number| u32::try_from(number).ok())
+                .ok_or(IncomingError::InvalidPayload)
+        })
+        .collect()
+}
+
 /// Decode `textDocument/publishDiagnostics` against the exact synchronized
 /// text. Invalid UTF-16 or UTF-8 boundaries reject the whole notification.
 pub fn parse_publish_diagnostics(
@@ -332,5 +353,25 @@ mod tests {
         let message = json!({"id":4,"result":[{"name":"Thing","kind":5,"selectionRange":{"start":{"line":1,"character":0},"end":{"line":1,"character":5}},"children":[{"name":"run","kind":6,"range":{"start":{"line":2,"character":2},"end":{"line":2,"character":5}}}]}]});
         let symbols = parse_document_symbols_response(&message).unwrap();
         assert_eq!(symbols[0].children[0].name, "run");
+    }
+
+    #[test]
+    fn semantic_token_replies_accept_null_and_reject_bad_data() {
+        assert_eq!(
+            parse_semantic_tokens_response(&json!({"id":1,"result":null})),
+            Ok(Vec::new())
+        );
+        assert_eq!(
+            parse_semantic_tokens_response(&json!({"id":1,"result":{"data":[0,1,2,3,4]}})),
+            Ok(vec![0, 1, 2, 3, 4])
+        );
+        for bad in [
+            json!({"data":[-1]}),
+            json!({"data":[4294967296u64]}),
+            json!({}),
+        ] {
+            assert!(parse_semantic_tokens_response(&json!({"id":1,"result":bad})).is_err());
+        }
+        assert!(parse_semantic_tokens_response(&json!({"id":1,"error":{}})).is_err());
     }
 }

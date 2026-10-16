@@ -91,6 +91,12 @@ pub(crate) enum LanguageServerStatus {
     Error(String),
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct SemanticSnapshot {
+    pub(crate) revision: u64,
+    pub(crate) spans: std::sync::Arc<Vec<lumen_language_services::TokenSpan>>,
+}
+
 /// Settings-page snapshot of the active file's language server; built by the
 /// controller so rendering never probes PATH or reads session state.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -286,6 +292,9 @@ pub(crate) struct ViewState {
     pub(crate) problems: ProblemsView,
     pub(crate) language_server_document: Option<crate::model::DocumentId>,
     pub(crate) language_server_status: Option<LanguageServerStatus>,
+    /// Latest semantic tokens per document; valid only for the stored revision.
+    pub(crate) language_semantic_tokens:
+        std::collections::HashMap<crate::model::DocumentId, SemanticSnapshot>,
     pub(crate) language_server_summary: Option<LanguageServerSummary>,
     pub(crate) language_server_details_open: bool,
     pub(crate) language_hover: Option<String>,
@@ -359,6 +368,7 @@ impl Default for ViewState {
             problems: ProblemsView::default(),
             language_server_document: None,
             language_server_status: None,
+            language_semantic_tokens: std::collections::HashMap::new(),
             language_server_summary: None,
             language_server_details_open: false,
             language_hover: None,

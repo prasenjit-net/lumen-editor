@@ -21,7 +21,9 @@ pub struct ServerCapabilities {
     pub hover: bool,
     pub definition: bool,
     pub document_symbols: bool,
+    /// True only when the server offers full-document semantic tokens and a legend.
     pub semantic_tokens: bool,
+    pub semantic_legend: Option<crate::SemanticTokenLegend>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +50,9 @@ impl ServerCapabilities {
             .map(parse_text_document_sync)
             .transpose()?;
 
+        let semantic = capabilities
+            .get("semanticTokensProvider")
+            .and_then(parse_semantic_provider);
         Ok(Self {
             text_document_sync: sync.and_then(|sync| sync.kind),
             open_close: sync.is_some_and(|sync| sync.open_close),
@@ -55,7 +60,8 @@ impl ServerCapabilities {
             hover: provider_enabled(capabilities.get("hoverProvider")),
             definition: provider_enabled(capabilities.get("definitionProvider")),
             document_symbols: provider_enabled(capabilities.get("documentSymbolProvider")),
-            semantic_tokens: provider_enabled(capabilities.get("semanticTokensProvider")),
+            semantic_tokens: semantic.is_some(),
+            semantic_legend: semantic,
         })
     }
 }
@@ -100,6 +106,25 @@ fn parse_text_document_sync(value: &Value) -> Result<TextDocumentSync, Capabilit
     })
 }
 
+fn parse_semantic_provider(value: &Value) -> Option<crate::SemanticTokenLegend> {
+    let full = value.get("full")?;
+    if !matches!(full, Value::Bool(true) | Value::Object(_)) {
+        return None;
+    }
+    let names = |key: &str| -> Option<Vec<String>> {
+        value
+            .pointer(&format!("/legend/{key}"))?
+            .as_array()?
+            .iter()
+            .map(|name| name.as_str().map(str::to_owned))
+            .collect()
+    };
+    Some(crate::SemanticTokenLegend {
+        token_types: names("tokenTypes")?,
+        token_modifiers: names("tokenModifiers")?,
+    })
+}
+
 fn provider_enabled(value: Option<&Value>) -> bool {
     matches!(value, Some(Value::Bool(true)) | Some(Value::Object(_)))
 }
@@ -119,7 +144,7 @@ mod tests {
                 "hoverProvider": true,
                 "definitionProvider": {},
                 "documentSymbolProvider": false,
-                "semanticTokensProvider": { "legend": {} },
+                "semanticTokensProvider": { "legend": { "tokenTypes": ["function"], "tokenModifiers": [] }, "full": true },
                 "completionProvider": { "triggerCharacters": ["."] }
             }}
         });
@@ -133,8 +158,28 @@ mod tests {
                 definition: true,
                 document_symbols: false,
                 semantic_tokens: true,
+                semantic_legend: Some(crate::SemanticTokenLegend {
+                    token_types: vec!["function".into()],
+                    token_modifiers: Vec::new(),
+                }),
             }
         );
+    }
+
+    #[test]
+    fn semantic_tokens_need_full_support_and_a_legend() {
+        let parse = |provider: Value| {
+            ServerCapabilities::from_initialize_response(&json!({"result":{"capabilities":{
+                "semanticTokensProvider": provider
+            }}}))
+            .unwrap()
+            .semantic_tokens
+        };
+        let legend = json!({"tokenTypes":["a"],"tokenModifiers":[]});
+        assert!(parse(json!({"legend": legend, "full": {"delta": true}})));
+        assert!(!parse(json!({"legend": legend})));
+        assert!(!parse(json!({"legend": legend, "full": false})));
+        assert!(!parse(json!({"full": true, "legend": {}})));
     }
 
     #[test]

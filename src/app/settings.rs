@@ -93,7 +93,6 @@ impl SettingsState {
     pub(crate) fn boolean(&self, id: &str) -> bool {
         matches!(self.effective(setting(id), None).0, Value::Bool(true))
     }
-    #[cfg(feature = "shared-editor")]
     pub(crate) fn document_boolean(&self, id: &str, document: Option<&Path>) -> bool {
         matches!(self.effective(setting(id), document).0, Value::Bool(true))
     }

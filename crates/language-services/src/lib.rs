@@ -36,6 +36,8 @@ impl LanguageId {
 pub struct ServerDescriptor {
     pub lsp_language_id: &'static str,
     pub executable_candidates: &'static [&'static str],
+    /// JSON object sent as `initializationOptions`; must parse (checked by tests).
+    pub initialization_options: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,11 +68,14 @@ pub struct LanguageDescriptor {
 const RUST_SERVER: ServerDescriptor = ServerDescriptor {
     lsp_language_id: "rust",
     executable_candidates: &["rust-analyzer"],
+    initialization_options: None,
 };
 
 const GO_SERVER: ServerDescriptor = ServerDescriptor {
     lsp_language_id: "go",
     executable_candidates: &["gopls"],
+    // gopls only offers semantic tokens when explicitly enabled.
+    initialization_options: Some(r#"{"semanticTokens":true}"#),
 };
 
 const RUST: LanguageDescriptor = LanguageDescriptor {
@@ -513,17 +518,20 @@ pub fn decode_semantic_tokens(
             .token_types
             .get(usize::try_from(chunk[3]).map_err(|_| SemanticTokenError::UnknownTokenType)?)
             .ok_or(SemanticTokenError::UnknownTokenType)?;
-        tokens.push(SemanticToken {
-            range,
-            class: semantic_class(token_type),
-            modifiers: chunk[4],
-        });
+        // Token types Lumen has no class for are left to the parser baseline.
+        if let Some(class) = semantic_class(token_type) {
+            tokens.push(SemanticToken {
+                range,
+                class,
+                modifiers: chunk[4],
+            });
+        }
     }
     Ok(tokens)
 }
 
-fn semantic_class(token_type: &str) -> TokenClass {
-    match token_type {
+fn semantic_class(token_type: &str) -> Option<TokenClass> {
+    Some(match token_type {
         "namespace" => TokenClass::Namespace,
         "type" | "class" | "enum" | "interface" | "struct" | "typeParameter" => TokenClass::Type,
         "parameter" => TokenClass::Parameter,
@@ -539,8 +547,84 @@ fn semantic_class(token_type: &str) -> TokenClass {
         "comment" => TokenClass::Comment,
         "operator" => TokenClass::Operator,
         "decorator" => TokenClass::Attribute,
-        _ => TokenClass::Variable,
+        _ => return None,
+    })
+}
+
+/// Semantic classes allowed to recolor parser output: identifier meaning only.
+/// Lexical classes (strings, comments, keywords, numbers, operators) always
+/// stay with the parser baseline.
+fn is_refining(class: TokenClass) -> bool {
+    matches!(
+        class,
+        TokenClass::Namespace
+            | TokenClass::Type
+            | TokenClass::Parameter
+            | TokenClass::Variable
+            | TokenClass::Property
+            | TokenClass::Constant
+            | TokenClass::Function
+            | TokenClass::Method
+            | TokenClass::Macro
+            | TokenClass::Attribute
+    )
+}
+
+/// Layer validated semantic spans over a parser baseline. Both inputs use the
+/// same text coordinates. A semantic span is dropped whole when it touches a
+/// protected baseline span (comment, string, keyword, number, ...), so semantic
+/// data can never repaint lexical structure. Overlapping semantic spans keep
+/// the earliest.
+#[must_use]
+pub fn overlay_semantic(baseline: Vec<TokenSpan>, semantic: &[TokenSpan]) -> Vec<TokenSpan> {
+    let mut candidates = semantic
+        .iter()
+        .filter(|span| span.range.start < span.range.end && is_refining(span.class))
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|span| span.range.start);
+    let mut accepted: Vec<&TokenSpan> = Vec::new();
+    for span in candidates {
+        if accepted
+            .last()
+            .is_some_and(|previous| span.range.start < previous.range.end)
+        {
+            continue;
+        }
+        let first = baseline.partition_point(|base| base.range.end <= span.range.start);
+        let touches_protected = baseline[first..]
+            .iter()
+            .take_while(|base| base.range.start < span.range.end)
+            .any(|base| !is_refining(base.class));
+        if !touches_protected {
+            accepted.push(span);
+        }
     }
+    let mut result = Vec::with_capacity(baseline.len() + accepted.len());
+    for base in baseline {
+        let mut start = base.range.start;
+        let first = accepted.partition_point(|span| span.range.end <= base.range.start);
+        for span in accepted[first..]
+            .iter()
+            .take_while(|span| span.range.start < base.range.end)
+        {
+            if start < span.range.start {
+                result.push(TokenSpan {
+                    range: start..span.range.start,
+                    class: base.class,
+                });
+            }
+            start = start.max(span.range.end);
+        }
+        if start < base.range.end {
+            result.push(TokenSpan {
+                range: start..base.range.end,
+                class: base.class,
+            });
+        }
+    }
+    result.extend(accepted.into_iter().cloned());
+    result.sort_by_key(|span| span.range.start);
+    result
 }
 
 impl TokenSnapshot {
@@ -802,5 +886,81 @@ mod tests {
             root("/ws/svc/a.go", "/ws/svc/pkg"),
             Path::new("/ws/svc/pkg")
         );
+    }
+
+    fn span(range: Range<usize>, class: TokenClass) -> TokenSpan {
+        TokenSpan { range, class }
+    }
+
+    #[test]
+    fn semantic_overlay_refines_identifiers_but_never_lexical_spans() {
+        // fn(0..2) foo(3..6, plain gap) "str"(7..12) bar(13..16, variable)
+        let baseline = vec![
+            span(0..2, TokenClass::Keyword),
+            span(7..12, TokenClass::String),
+            span(13..16, TokenClass::Variable),
+        ];
+        let semantic = vec![
+            span(3..6, TokenClass::Function),
+            span(0..2, TokenClass::Function),
+            span(8..10, TokenClass::Variable),
+            span(13..16, TokenClass::Parameter),
+            span(3..6, TokenClass::Keyword),
+        ];
+        let result = overlay_semantic(baseline, &semantic);
+        assert_eq!(
+            result,
+            vec![
+                span(0..2, TokenClass::Keyword),
+                span(3..6, TokenClass::Function),
+                span(7..12, TokenClass::String),
+                span(13..16, TokenClass::Parameter),
+            ]
+        );
+    }
+
+    #[test]
+    fn semantic_overlay_splits_wider_baseline_spans() {
+        let result = overlay_semantic(
+            vec![span(0..10, TokenClass::Variable)],
+            &[span(3..5, TokenClass::Type)],
+        );
+        assert_eq!(
+            result,
+            vec![
+                span(0..3, TokenClass::Variable),
+                span(3..5, TokenClass::Type),
+                span(5..10, TokenClass::Variable),
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_semantic_token_types_are_skipped_not_misclassified() {
+        let legend = SemanticTokenLegend {
+            token_types: vec!["selfKeyword".into(), "function".into()],
+            token_modifiers: Vec::new(),
+        };
+        let tokens =
+            decode_semantic_tokens("self main", &legend, &[0, 0, 4, 0, 0, 0, 5, 4, 1, 0]).unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].class, TokenClass::Function);
+        assert_eq!(tokens[0].range, 5..9);
+    }
+
+    #[test]
+    fn builtin_server_initialization_options_are_valid_json_objects() {
+        for language in LanguageRegistry::builtins() {
+            if let Some(options) = language
+                .server
+                .and_then(|server| server.initialization_options)
+            {
+                assert!(
+                    serde_json::from_str::<serde_json::Value>(options)
+                        .unwrap()
+                        .is_object()
+                );
+            }
+        }
     }
 }

@@ -341,8 +341,13 @@ specified by a project unless the user’s server-command policy permits it.
 
 ### Phase 3 — semantic tokens and navigation — In progress
 
-- [ ] Add semantic-token full responses, legend decoding, token-overlay precedence
-  and revision gating for Rust and Go.
+- [x] Semantic tokens (full) for Rust and Go: capability/legend negotiation, debounced
+  silent requests, revision-gated storage, and an overlay in `editor-surface` that
+  only refines identifier classes (never strings, comments, keywords, numbers). Setting
+  `editor.semantic_highlighting`. Descriptors may carry `initialization_options`
+  (gopls needs `semanticTokens`). Live-validated against both servers. Tokens drop on
+  every edit until the debounced reply arrives, so recoloring flickers to the parser
+  baseline while typing; delta/range requests would reduce that. Not yet checked visually.
 - [x] Add capability-gated, revision/session-correlated hover, document symbols
   and definition requests. Hover uses a compact floating surface; nested symbols
   and multi-location definitions use a searchable keyboard-accessible picker.
