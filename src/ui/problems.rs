@@ -123,12 +123,17 @@ impl Workbench<'_> {
                                         row.range.clone(),
                                     ));
                                 }
-                                if ui
+                                let fix = ui
                                     .add(egui::Button::new(icon::AGENT).small().frame(false))
                                     .on_hover_text(
                                         "Fix with agent: prefill a request in the agent panel",
-                                    )
-                                    .clicked()
+                                    );
+                                if super::widgets::named(
+                                    fix,
+                                    true,
+                                    "Fix this problem with the agent",
+                                )
+                                .clicked()
                                 {
                                     self.command(Command::FixProblemWithAgent(
                                         row.document,

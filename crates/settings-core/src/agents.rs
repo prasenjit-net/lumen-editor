@@ -17,6 +17,16 @@ pub(crate) const SCHEMA: SectionSchema = SectionSchema {
             document: false,
         },
         Setting {
+            id: "agent.codex.initial_mode",
+            default: DefaultValue::Choice("read-only"),
+            name: "Codex Start Mode",
+            category: "Agents",
+            help: "Approval mode for new Codex sessions. read-only: asks before editing or running commands. workspace-write: edits inside the folder without asking. agent: asks only for actions it considers risky. Full access is available from the mode menu with a confirmation.",
+            aliases: "codex approval sandbox permissions",
+            control: Control::Choice(&["read-only", "workspace-write", "agent"]),
+            document: false,
+        },
+        Setting {
             id: "agent.unsaved_files",
             default: DefaultValue::Choice("ask"),
             name: "Unsaved Files When Sending",

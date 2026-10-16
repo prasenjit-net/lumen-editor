@@ -1,6 +1,6 @@
 # Coding-agent integration via the Agent Client Protocol (ACP)
 
-Status: Phase 0 (spike) complete; Phases 1-6 not started. Updated: 2026-10-16.
+Status: Phases 0-6 implemented; native acceptance on macOS/Windows outstanding. Updated: 2026-10-16.
 
 **Read [acp-spike/FINDINGS.md](acp-spike/FINDINGS.md) first.** The spike showed
 that neither adapter uses the client's `fs/*` or `terminal/*` methods, so the
@@ -517,14 +517,33 @@ Codex edits after; no unsaved buffer is overwritten; guarded reverts.
 - [ ] Not done: deleting/forking sessions (`session/delete`, `session/fork` are
   advertised), relative times in the list, searching the list.
 
-### Phase 6 - terminal capability and polish
+### Phase 6 - polish - done 2026-10-16 except native acceptance
 
-- [ ] Implement `terminal/*` with background processes, output byte limits,
-  kill/release semantics, and "show in Terminal" for long commands.
-- [ ] Optional auto-answer policies in Settings; sandbox/approval mode mapping
-  for Codex (`INITIAL_AGENT_MODE`).
-- [ ] Native acceptance on macOS and Windows with both agents, screen-reader
-  pass, large-transcript performance (virtualized rows).
+- [x] `terminal/*` capability: **deliberately not built.** Re-checked across the
+  whole project: with the capability advertised, neither adapter ever sent a
+  `terminal/*` request (Claude runs Bash inside the adapter; Codex reports output
+  through its own metadata). Lumen advertises `terminal: false` and keeps `fs/*`
+  unimplemented for the same reason. Revisit if an adapter starts using them.
+- [x] Approval-mode mapping for Codex: setting `agent.codex.initial_mode`
+  (read-only default / workspace-write / agent) drives `INITIAL_AGENT_MODE` and the
+  post-start mode change; full access only through the dropdown's confirmation.
+  Auto-answer policy: `agent.allow_read_in_workspace` (Phase 3).
+- [x] Long-conversation performance: the transcript remembers each entry's height
+  and draws only entries near the viewport (blank space stands in for the rest).
+  Release-build frame cost with 15,000 entries went from ~101 ms to ~0.16 ms
+  (3,000: 17 ms -> 0.15 ms). Scrolling to the start and following the newest entry
+  are tested. Limit: text selection cannot span off-screen messages.
+- [x] Screen-reader names for every icon-only button added or touched by the agent
+  work (panel header actions, activity bar, chips, Problems), via a shared helper;
+  the AccessKit tree is checked in tests. Focus lands on the first option of a new
+  permission card.
+- [x] A manual acceptance checklist for macOS and Windows:
+  [agent-acceptance-checklist.md](agent-acceptance-checklist.md).
+- [ ] **Not done (needs a person at a desktop):** the native acceptance run itself
+  (looks, VoiceOver/Narrator, Dock/Start-menu launch, process cleanup), and
+  Windows verification of `agent_process.rs` (`creation_flags`, `taskkill`,
+  `npx.cmd`). The app was launched headlessly once and ran without errors, but a
+  screenshot could not be captured in this environment.
 
 ## Risks and mitigations
 

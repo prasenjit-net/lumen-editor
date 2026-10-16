@@ -26,6 +26,7 @@ mod settings;
 mod source_control;
 mod terminal;
 pub(crate) mod theme;
+pub(crate) mod transcript_layout;
 mod widgets;
 mod workspace_search;
 mod workspace_search_diff;

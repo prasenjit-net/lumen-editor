@@ -881,10 +881,15 @@ fn attachment_chips(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mu
                                 .size(11.0)
                                 .color(theme::TEXT),
                         );
-                        if ui
+                        let remove = ui
                             .add(egui::Button::new(icon::X).small().frame(false))
-                            .on_hover_text("Remove from this message")
-                            .clicked()
+                            .on_hover_text("Remove from this message");
+                        if super::widgets::named(
+                            remove,
+                            true,
+                            &format!("Remove {} from this message", chip.label),
+                        )
+                        .clicked()
                         {
                             commands.push(Command::RemoveAgentAttachment(session.kind, index));
                         }
@@ -1070,16 +1075,26 @@ fn format_when(timestamp: &str) -> String {
     }
 }
 
+/// Space after each entry, counted in the remembered heights.
+const ENTRY_GAP: f32 = 6.0;
+/// Entries this far outside the viewport are still drawn, so fast scrolling and
+/// height estimate errors do not reveal blank gaps.
+const DRAW_MARGIN: f32 = 600.0;
+
 fn transcript(ui: &mut egui::Ui, session: &mut AgentSessionView) {
     let follow = std::mem::take(&mut session.follow_output);
+    let count = session.conversation.entries.len();
+    session.layout.prepare(ui.available_width(), count);
     ScrollArea::vertical()
         .id_salt(("agent_transcript", session.kind))
         .auto_shrink([false, false])
         .stick_to_bottom(true)
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 6.0;
+        .show_viewport(ui, |ui, viewport| {
+            // Gaps are explicit so each entry's remembered height is complete.
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let content_top = ui.cursor().min.y;
             if session.conversation.entries.is_empty() {
-                ui.add_space(6.0);
+                ui.add_space(ENTRY_GAP);
                 ui.label(
                     RichText::new(format!("Ask {} about your code.", session.kind.label()))
                         .size(11.5)
@@ -1087,26 +1102,39 @@ fn transcript(ui: &mut egui::Ui, session: &mut AgentSessionView) {
                 );
             }
             plan(ui, session);
-            for (index, entry) in session.conversation.entries.iter().enumerate() {
-                ui.push_id(index, |ui| match entry {
-                    Entry::Message {
-                        role: Role::User,
-                        text,
-                    } => user_message(ui, text),
-                    Entry::Message {
-                        role: Role::Agent,
-                        text,
-                    } => agent_message(ui, text),
-                    Entry::Message {
-                        role: Role::Thought,
-                        text,
-                    } => thought(ui, text),
-                    Entry::ToolCall(call) => tool_call(ui, call),
-                    Entry::Notice(text) => {
-                        ui.label(RichText::new(text).italics().size(11.0).color(theme::MUTED));
+            let entries_top = ui.cursor().min.y - content_top;
+            let window = session.layout.window(
+                viewport.min.y - entries_top,
+                viewport.max.y - entries_top,
+                DRAW_MARGIN,
+            );
+            ui.add_space(window.space_before);
+            for index in window.start..window.end {
+                let entry = &session.conversation.entries[index];
+                let drawn = ui.push_id(index, |ui| {
+                    match entry {
+                        Entry::Message {
+                            role: Role::User,
+                            text,
+                        } => user_message(ui, text),
+                        Entry::Message {
+                            role: Role::Agent,
+                            text,
+                        } => agent_message(ui, text),
+                        Entry::Message {
+                            role: Role::Thought,
+                            text,
+                        } => thought(ui, text),
+                        Entry::ToolCall(call) => tool_call(ui, call),
+                        Entry::Notice(text) => {
+                            ui.label(RichText::new(text).italics().size(11.0).color(theme::MUTED));
+                        }
                     }
+                    ui.add_space(ENTRY_GAP);
                 });
+                session.layout.record(index, drawn.response.rect.height());
             }
+            ui.add_space(window.space_after);
             if session.running {
                 ui.label(RichText::new("Working…").size(11.0).color(theme::MUTED));
             }
@@ -2196,5 +2224,232 @@ mod tests {
                 .history
                 .open
         );
+    }
+
+    /// Timing probe: `cargo test --release measure_transcript -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "timing probe"]
+    fn measure_transcript_frame_cost() {
+        let reply = "Here is a **summary** of the change.\n\n- first point with `code`\n- second point\n\n```rust\nfn main() {\n    println!(\"hello\");\n}\n```\nThat should do it. ".repeat(3);
+        for entries in [100, 1000, 5000] {
+            let mut panel = Panel::new();
+            let conversation = &mut panel
+                .app
+                .view
+                .agents
+                .session_mut(AgentKind::Claude)
+                .conversation;
+            for n in 0..entries {
+                conversation.push_user_message(&format!("question {n}: how does this work?"));
+                conversation.apply(Update::AgentMessage(
+                    lumen_agent_protocol::types::ContentBlock::Text(reply.clone()),
+                ));
+                conversation.push_notice("note");
+            }
+            for _ in 0..3 {
+                panel.frame(vec![]);
+            }
+            let started = std::time::Instant::now();
+            let frames = 10;
+            for _ in 0..frames {
+                panel.frame(vec![]);
+            }
+            println!(
+                "{} entries: {:?} per frame",
+                entries * 3,
+                started.elapsed() / frames
+            );
+        }
+    }
+
+    fn long_conversation(panel: &mut Panel, pairs: usize) {
+        let conversation = &mut panel
+            .app
+            .view
+            .agents
+            .session_mut(AgentKind::Claude)
+            .conversation;
+        for n in 0..pairs {
+            conversation.push_user_message(&format!("question {n}"));
+            conversation.apply(Update::AgentMessage(
+                lumen_agent_protocol::types::ContentBlock::Text(format!(
+                    "answer {n}: some explanation\n\n- point a\n- point b"
+                )),
+            ));
+            conversation.push_notice(&format!("note {n}"));
+        }
+        panel
+            .app
+            .view
+            .agents
+            .session_mut(AgentKind::Claude)
+            .follow_output = true;
+    }
+
+    #[test]
+    fn a_long_transcript_draws_only_what_is_near_the_viewport_and_follows_the_newest_entry() {
+        let mut panel = Panel::new();
+        long_conversation(&mut panel, 2000);
+        for _ in 0..6 {
+            panel.frame(vec![]);
+        }
+        let shown = panel.texts();
+        assert!(
+            shown.contains("answer 1999") && shown.contains("note 1999"),
+            "the end is visible"
+        );
+        assert!(
+            !shown.contains("question 5\n") && !shown.contains("answer 100:"),
+            "far-away entries are not drawn"
+        );
+        let drawn = shown
+            .lines()
+            .filter(|line| line.starts_with("question "))
+            .count();
+        assert!(drawn < 60, "only a window of {drawn} entries is laid out");
+    }
+
+    #[test]
+    fn scrolling_up_through_a_long_transcript_reaches_the_beginning() {
+        let mut panel = Panel::new();
+        long_conversation(&mut panel, 400);
+        for _ in 0..6 {
+            panel.frame(vec![]);
+        }
+        let pointer = egui::pos2(panel.width - 150.0, 300.0);
+        for _ in 0..400 {
+            panel.frame(vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Page,
+                    delta: egui::vec2(0.0, 6.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        let shown = panel.texts();
+        assert!(
+            shown.contains("question 0") && shown.contains("answer 0"),
+            "{}",
+            &shown[..shown.len().min(400)]
+        );
+        assert!(!shown.contains("answer 399"), "the end is far away now");
+    }
+
+    #[test]
+    fn expanding_a_tool_call_in_a_virtualized_list_does_not_lose_entries() {
+        let mut panel = Panel::new();
+        long_conversation(&mut panel, 300);
+        panel
+            .app
+            .view
+            .agents
+            .session_mut(AgentKind::Claude)
+            .conversation
+            .apply(Update::ToolCall(ToolCall {
+                id: "t".into(),
+                title: "Read big file".into(),
+                status: ToolStatus::Completed,
+                ..ToolCall::default()
+            }));
+        for _ in 0..6 {
+            panel.frame(vec![]);
+        }
+        panel.click_text("Read big file");
+        let shown = panel.texts();
+        assert!(shown.contains("Read big file") && shown.contains("note 299"));
+    }
+
+    /// Names AccessKit would expose for this frame, as (role, name).
+    fn accessible_names(panel: &mut Panel) -> Vec<(String, String)> {
+        panel.ctx.enable_accesskit();
+        panel.frame(vec![]);
+        panel.frame(vec![]);
+        let output = panel.frame(vec![]);
+        output
+            .platform_output
+            .accesskit_update
+            .expect("accessibility tree is produced")
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| {
+                let name = node.label().or_else(|| node.value())?.to_owned();
+                Some((format!("{:?}", node.role()), name))
+            })
+            .collect()
+    }
+
+    fn is_icon_only(name: &str) -> bool {
+        !name.is_empty() && name.chars().all(|c| ('\u{e000}'..='\u{f8ff}').contains(&c))
+    }
+
+    #[test]
+    fn icon_buttons_have_spoken_names_not_private_use_glyphs() {
+        let mut panel = Panel::new();
+        panel.with_changes();
+        panel
+            .app
+            .add_attachment(crate::app::agent_context::file_attachment(
+                std::path::Path::new("/w/src/a.rs"),
+                Some(std::path::Path::new("/w")),
+            ));
+        let names = accessible_names(&mut panel);
+        let buttons: Vec<&str> = names
+            .iter()
+            .filter(|(role, _)| role == "Button")
+            .map(|(_, name)| name.as_str())
+            .collect();
+        for expected in [
+            "Close agent panel",
+            "Earlier sessions in this folder",
+            "New session (discards this conversation)",
+            "Remove src/a.rs from this message",
+        ] {
+            assert!(
+                buttons.contains(&expected),
+                "missing {expected:?} in {buttons:?}"
+            );
+        }
+        let unnamed: Vec<_> = buttons.iter().filter(|name| is_icon_only(name)).collect();
+        assert!(unnamed.is_empty(), "icon-only buttons: {unnamed:?}");
+    }
+
+    #[test]
+    fn the_activity_bar_buttons_are_named_too() {
+        let mut app = LumenApp::default();
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        ctx.enable_accesskit();
+        let mut last = None;
+        for _ in 0..3 {
+            last = Some(ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 700.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| app.render_component(ctx, |workbench| workbench.activity_bar(ctx)),
+            ));
+        }
+        let update = last
+            .unwrap()
+            .platform_output
+            .accesskit_update
+            .expect("tree");
+        let names: Vec<String> = update
+            .nodes
+            .iter()
+            .filter(|(_, node)| format!("{:?}", node.role()) == "Button")
+            .filter_map(|(_, node)| node.label().map(str::to_owned))
+            .collect();
+        for expected in ["Coding Agents (Cmd/Ctrl+Shift+A)", "Output", "Settings"] {
+            assert!(
+                names.iter().any(|n| n == expected),
+                "missing {expected:?} in {names:?}"
+            );
+        }
+        assert!(names.iter().all(|name| !is_icon_only(name)), "{names:?}");
     }
 }

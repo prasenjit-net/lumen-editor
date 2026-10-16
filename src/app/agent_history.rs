@@ -163,6 +163,7 @@ impl LumenApp {
             return;
         }
         session.conversation = Conversation::default();
+        session.layout.clear();
         session.changes = None;
         session.pending_permissions.clear();
         session.replaying = true;

@@ -127,6 +127,8 @@ pub(crate) enum ConnectionState {
 /// Everything the panel shows for one agent.
 pub(crate) struct AgentSessionView {
     pub(crate) kind: AgentKind,
+    /// Remembered entry heights so long transcripts draw only what is visible.
+    pub(crate) layout: crate::ui::transcript_layout::TranscriptLayout,
     pub(crate) history: super::agent_history::HistoryView,
     /// An earlier session's messages are being replayed into the transcript.
     pub(crate) replaying: bool,
@@ -166,6 +168,7 @@ impl AgentSessionView {
     fn new(kind: AgentKind) -> Self {
         Self {
             kind,
+            layout: Default::default(),
             history: Default::default(),
             replaying: false,
             followed_calls: Default::default(),
@@ -764,8 +767,9 @@ impl LumenApp {
         let cwd = self.session_cwd();
         let mut env = vec![("PATH".into(), path)];
         if kind == AgentKind::Codex {
-            // Codex asks before editing in its read-only mode; Lumen shows the request.
-            env.push(("INITIAL_AGENT_MODE".into(), "read-only".into()));
+            // Read-only by default: Codex asks before editing and Lumen shows the request.
+            let mode = self.view.settings.choice("agent.codex.initial_mode");
+            env.push(("INITIAL_AGENT_MODE".into(), mode.into()));
         }
         let agent_command = AgentCommand {
             program,
@@ -1159,20 +1163,21 @@ impl LumenApp {
             LogLevel::Info,
             &format!("Session {} ready", new.session_id),
         );
-        // New Codex sessions start read-only (the env var above also sets it). A
-        // resumed one keeps whatever mode it had; the dropdown shows it.
+        // New Codex sessions start in the configured mode (the env var above also
+        // sets it). A resumed one keeps whatever mode it had; the dropdown shows it.
+        let wanted = self.view.settings.choice("agent.codex.initial_mode");
         if !resumed
             && kind == AgentKind::Codex
             && new.config_options.iter().any(|option| {
                 option.id == "mode"
-                    && option.values.iter().any(|v| v.value == "read-only")
-                    && option.current != "read-only"
+                    && option.values.iter().any(|v| v.value == wanted)
+                    && option.current != wanted
             })
         {
             let id = self.register(kind, "session/set_config_option", None);
             self.agent_send(
                 kind,
-                &requests::set_config_option(id, &new.session_id, "mode", "read-only"),
+                &requests::set_config_option(id, &new.session_id, "mode", &wanted),
             );
         }
         if let Some(prompt) = self.runtime_slot(kind).queued_prompt.take() {
@@ -2298,6 +2303,41 @@ mod tests {
         // Files outside the folder are never opened.
         h.notify(call("t4", &outside.path().join("o.rs"), 1));
         assert_eq!(h.app.editor.files.len(), 1);
+    }
+
+    #[test]
+    fn the_codex_start_mode_follows_the_setting_and_defaults_to_read_only() {
+        for (setting, expected) in [
+            (None, "read-only"),
+            (Some("workspace-write"), "workspace-write"),
+        ] {
+            let mut h = Harness::new();
+            if let Some(value) = setting {
+                h.app.view.settings.user.persisted.insert(
+                    "agent.codex.initial_mode".into(),
+                    lumen_settings_core::Value::Choice(value.into()),
+                );
+            }
+            h.say(AgentKind::Codex, "hi");
+            let command = h.fake.launched.lock().unwrap()[0].clone();
+            assert!(
+                command
+                    .env
+                    .iter()
+                    .any(|(k, v)| k == "INITIAL_AGENT_MODE" && v == expected)
+            );
+            let init = h.last_request("initialize");
+            h.reply(&init, json!({"protocolVersion":1}));
+            let new = h.last_request("session/new");
+            h.reply(&new, json!({"sessionId":"s1","configOptions":[
+                {"id":"mode","name":"Mode","currentValue":"agent","options":[
+                    {"value":"read-only","name":"Read-only"},{"value":"workspace-write","name":"Workspace"},
+                    {"value":"agent","name":"Auto"}]}]}));
+            assert_eq!(
+                h.last_request("session/set_config_option")["params"]["value"],
+                expected
+            );
+        }
     }
 
     /// End-to-end through the controller with a real adapter. Set

@@ -25,8 +25,12 @@ impl Workbench<'_> {
                         ] {
                             let selected =
                                 self.view.sidebar_visible && self.view.activity == activity;
-                            let response = widgets::icon_button(ui, glyph, selected)
-                                .on_hover_text(activity.title());
+                            let response = widgets::named(
+                                widgets::icon_button(ui, glyph, selected)
+                                    .on_hover_text(activity.title()),
+                                true,
+                                activity.title(),
+                            );
                             if glyph == icon::AGENT && self.view.agents.needs_attention() {
                                 // An agent is blocked on a permission request.
                                 ui.painter().circle_filled(
@@ -73,8 +77,11 @@ impl Workbench<'_> {
                         .into_iter()
                         .filter(|(glyph, ..)| agents_enabled || *glyph != icon::AGENT)
                         {
-                            let response =
-                                widgets::icon_button(ui, glyph, selected).on_hover_text(tooltip);
+                            let response = widgets::named(
+                                widgets::icon_button(ui, glyph, selected).on_hover_text(tooltip),
+                                true,
+                                tooltip,
+                            );
                             if selected {
                                 ui.painter().vline(
                                     response.rect.left(),
@@ -86,9 +93,13 @@ impl Workbench<'_> {
                                 self.command(command);
                             }
                         }
-                        if widgets::icon_button(ui, icon::GEAR, self.view.settings.open)
-                            .on_hover_text("Settings (Cmd/Ctrl+,)")
-                            .clicked()
+                        if widgets::named(
+                            widgets::icon_button(ui, icon::GEAR, self.view.settings.open)
+                                .on_hover_text("Settings (Cmd/Ctrl+,)"),
+                            true,
+                            "Settings",
+                        )
+                        .clicked()
                         {
                             self.command(Command::Settings);
                         }
