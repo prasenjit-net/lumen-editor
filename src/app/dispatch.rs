@@ -61,6 +61,14 @@ impl LumenApp {
                     self.view.output.open = false;
                 }
             }
+            Command::ToggleAgentPanel => self.toggle_agent_panel(),
+            Command::SelectAgent(kind) => self.select_agent(kind),
+            Command::SendAgentPrompt => self.send_agent_prompt(ctx),
+            Command::CancelAgentTurn => self.cancel_agent_turn(),
+            Command::NewAgentSession => self.new_agent_session(),
+            Command::RetryAgent => self.retry_agent(ctx),
+            Command::AuthenticateAgent(method) => self.authenticate_agent(&method),
+            Command::AllowAgentNpx => self.allow_agent_npx(ctx),
             Command::ToggleOutput => {
                 super::output::clear_text_selection(ctx);
                 self.toggle_output();

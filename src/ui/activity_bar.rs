@@ -38,9 +38,17 @@ impl Workbench<'_> {
                                 self.command(Command::ActivateActivity(activity));
                             }
                         }
-                        // Bottom-aligned group: Terminal, Output, Settings.
-                        ui.add_space((ui.available_height() - 50.0 * 3.0).max(0.0));
+                        // Bottom-aligned group: Agent, Terminal, Output, Settings.
+                        let agents_enabled = self.view.settings.boolean("agent.enabled");
+                        let buttons = if agents_enabled { 4.0 } else { 3.0 };
+                        ui.add_space((ui.available_height() - 50.0 * buttons).max(0.0));
                         for (glyph, selected, tooltip, command) in [
+                            (
+                                icon::AGENT,
+                                self.view.agents.open,
+                                "Coding Agents (Cmd/Ctrl+Shift+A)",
+                                Command::ToggleAgentPanel,
+                            ),
                             (
                                 icon::TERMINAL,
                                 self.view.terminal.open,
@@ -53,7 +61,10 @@ impl Workbench<'_> {
                                 "Output",
                                 Command::ToggleOutput,
                             ),
-                        ] {
+                        ]
+                        .into_iter()
+                        .filter(|(glyph, ..)| agents_enabled || *glyph != icon::AGENT)
+                        {
                             let response =
                                 widgets::icon_button(ui, glyph, selected).on_hover_text(tooltip);
                             if selected {
@@ -277,5 +288,30 @@ mod tests {
             app.view.status
         );
         app.close_terminal();
+    }
+
+    #[test]
+    fn agent_button_toggles_the_panel_and_disappears_when_agents_are_disabled() {
+        let mut app = LumenApp::default();
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        click(&mut app, &ctx, 900.0, icon::AGENT);
+        assert!(app.view.agents.open);
+        click(&mut app, &ctx, 900.0, icon::AGENT);
+        assert!(!app.view.agents.open);
+
+        app.view.settings.user.persisted.insert(
+            "agent.enabled".into(),
+            lumen_settings_core::Value::Bool(false),
+        );
+        let output = frame(&mut app, &ctx, 900.0, vec![]);
+        assert!(
+            !output.shapes.iter().any(|shape| matches!(&shape.shape,
+                egui::Shape::Text(text) if text.galley.job.text == icon::AGENT)),
+            "no agent button when disabled"
+        );
+        app.execute(Command::ToggleAgentPanel, &ctx);
+        assert!(!app.view.agents.open);
+        assert!(app.view.status.contains("turned off"));
     }
 }

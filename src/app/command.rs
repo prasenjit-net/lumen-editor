@@ -1,3 +1,4 @@
+use super::agent::AgentKind;
 use super::editor_action::EditorAction;
 use super::view_state::{Activity, ExplorerEdit, ViewState};
 use super::workspace_search::ReplaceScope;
@@ -23,6 +24,14 @@ pub(crate) enum Command {
     ToggleTerminal,
     ToggleProblems,
     ToggleOutput,
+    ToggleAgentPanel,
+    SelectAgent(AgentKind),
+    SendAgentPrompt,
+    CancelAgentTurn,
+    NewAgentSession,
+    RetryAgent,
+    AuthenticateAgent(String),
+    AllowAgentNpx,
     ShowOutput,
     ShowTerminal,
     CloseOutput,

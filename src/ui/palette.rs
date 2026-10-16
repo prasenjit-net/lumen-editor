@@ -168,6 +168,10 @@ impl Workbench<'_> {
                         Command::ToggleTerminal,
                     ),
                     (
+                        format!("{}  View: Coding Agents", icon::AGENT),
+                        Command::ToggleAgentPanel,
+                    ),
+                    (
                         format!("{}  View: Output", icon::OUTPUT),
                         Command::ToggleOutput,
                     ),

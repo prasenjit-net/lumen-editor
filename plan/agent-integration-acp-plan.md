@@ -403,17 +403,36 @@ Result: the file-edit design was revised (see above).
 Exit met: headless tests drive the fake agent, and live tests complete a turn with
 each real adapter.
 
-### Phase 2 - sessions, conversation and a minimal panel
+### Phase 2 - sessions, conversation and a minimal panel - done 2026-10-16
 
-- [ ] `app/agent.rs` state machine, commands, event polling, restart/backoff,
-  Output logging.
-- [ ] Right-hand panel shell: header tabs, transcript (text/markdown-lite),
-  composer, Stop, connection states, "not found / sign in" states.
-- [ ] Settings schema and Settings status block (resolved command, state, last
-  error), user-scope-only command rule.
+- [x] `app/agent.rs`: per-agent connection state machine (idle, starting, needs
+  sign-in, ready, not found, failed), initialize -> session/new -> prompt flow,
+  queued first message, cancel, new session, retry after sign-in, Codex
+  `authenticate`, folder-change restarts, handshake timeouts, exit/crash handling,
+  every lifecycle event and agent stderr line in the Output log. Dropping the app
+  stops the agents.
+- [x] Preview posture enforced: permission requests are declined (reject option, or
+  `cancelled`), unsupported client methods get `-32601`, Codex starts in
+  `read-only` (env var plus `session/set_config_option`).
+- [x] Launch resolution: user-scope adapter path (project files ignored), installed
+  binary, then `npx` only after consent (pinned to the tested adapter versions);
+  login-shell `PATH`.
+- [x] Right-hand panel (`ui/agent_panel.rs`): resizable (280-760 px), agent tabs,
+  status strip with Retry / sign-in methods / "Download with npx..." / copy
+  install command, markdown-lite transcript (code blocks with copy, lists, inline
+  code), tool-call rows, plan, thinking, notices, composer (Enter sends,
+  Shift+Enter newline), Send/Stop. Activity-bar button, Cmd/Ctrl+Shift+A, palette
+  command.
+- [x] Settings schema `agent.*` (enabled, per-agent command path and launch
+  method).
+- [x] Live (ignored) controller turns with both real adapters pass on macOS
+  (`LUMEN_ACP_CLAUDE` / `LUMEN_ACP_CODEX`).
+- [ ] Not done: a Settings status block for agents (resolved command, state, last
+  error) and the `agent.edit_mode` family (Phase 3); visual inspection of the
+  panel and the new Codicon glyphs (hubot, send, stop-circle); Windows
+  verification; virtualized transcript rows for very long conversations.
 
-Exit: chat with Claude Code and Codex end to end, read-only (agents may answer
-and plan but file writes and tool permissions are rejected with a clear message).
+Exit met: chat works end to end with Claude Code and Codex, read-only.
 
 ### Phase 3 - permissions and edit review *(revised)*
 

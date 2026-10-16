@@ -324,6 +324,7 @@ pub(crate) struct ViewState {
     pub(crate) terminal: TerminalView,
     pub(crate) problems: ProblemsView,
     pub(crate) output: OutputView,
+    pub(crate) agents: super::agent::AgentsView,
     pub(crate) language_server_document: Option<crate::model::DocumentId>,
     pub(crate) language_server_status: Option<LanguageServerStatus>,
     /// Latest semantic tokens per document; valid only for the stored revision.
@@ -411,6 +412,7 @@ impl Default for ViewState {
             terminal: TerminalView::default(),
             problems: ProblemsView::default(),
             output: OutputView::default(),
+            agents: Default::default(),
             language_server_document: None,
             language_server_status: None,
             language_semantic_tokens: std::collections::HashMap::new(),
