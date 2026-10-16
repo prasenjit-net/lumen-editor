@@ -3,6 +3,7 @@
 mod codec;
 pub use codec::{parse, serialize};
 use std::collections::BTreeMap;
+mod agents;
 mod appearance;
 mod editor;
 mod explorer;
@@ -81,6 +82,7 @@ pub const SECTIONS: &[SectionSchema] = &[
     workbench::SCHEMA,
     explorer::SCHEMA,
     language::SCHEMA,
+    agents::SCHEMA,
     search::SCHEMA,
     terminal::SCHEMA,
 ];
@@ -195,6 +197,22 @@ mod tests {
         let path = setting("language.go.server_path");
         assert!(path.validate(&Value::Text("/usr/bin/gopls".into())).is_ok());
         assert!(path.validate(&Value::Text("gopls\n--evil".into())).is_err());
+    }
+    #[test]
+    fn agent_settings_default_to_auto_launch_with_no_custom_command() {
+        assert_eq!(
+            resolve(setting("agent.claude.launch"), &Layer::new(), None).0,
+            Value::Choice("auto".into())
+        );
+        assert_eq!(
+            resolve(setting("agent.codex.command"), &Layer::new(), None).0,
+            Value::Text(String::new())
+        );
+        assert!(
+            setting("agent.codex.launch")
+                .validate(&Value::Choice("curl-pipe-sh".into()))
+                .is_err()
+        );
     }
     #[test]
     fn precedence_removal_and_explicit_default_are_distinct() {

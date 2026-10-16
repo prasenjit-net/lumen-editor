@@ -63,6 +63,13 @@ impl LumenApp {
         if !terminal_focused && ctx.input_mut(|input| input.consume_shortcut(&output)) {
             self.execute(Command::ToggleOutput, ctx);
         }
+        let agents = egui::KeyboardShortcut::new(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::A,
+        );
+        if !terminal_focused && ctx.input_mut(|input| input.consume_shortcut(&agents)) {
+            self.execute(Command::ToggleAgentPanel, ctx);
+        }
         let settings = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Comma);
         if !terminal_focused && ctx.input_mut(|input| input.consume_shortcut(&settings)) {
             self.execute(Command::Settings, ctx);

@@ -112,13 +112,35 @@ impl Workbench<'_> {
                                 "  {glyph}  {}  [{}:{}]{}",
                                 row.message, row.line, row.column, row.detail
                             );
-                            let response = ui.add(
-                                egui::Button::new(RichText::new(label).size(11.0).color(color))
-                                    .frame(false),
-                            );
-                            if response.clicked() {
-                                self.command(Command::OpenProblem(row.document, row.range.clone()));
-                            }
+                            ui.horizontal(|ui| {
+                                let response = ui.add(
+                                    egui::Button::new(RichText::new(label).size(11.0).color(color))
+                                        .frame(false),
+                                );
+                                if response.clicked() {
+                                    self.command(Command::OpenProblem(
+                                        row.document,
+                                        row.range.clone(),
+                                    ));
+                                }
+                                let fix = ui
+                                    .add(egui::Button::new(icon::AGENT).small().frame(false))
+                                    .on_hover_text(
+                                        "Fix with agent: prefill a request in the agent panel",
+                                    );
+                                if super::widgets::named(
+                                    fix,
+                                    true,
+                                    "Fix this problem with the agent",
+                                )
+                                .clicked()
+                                {
+                                    self.command(Command::FixProblemWithAgent(
+                                        row.document,
+                                        row.range.clone(),
+                                    ));
+                                }
+                            });
                         }
                         if visible_rows == 0 {
                             ui.label(

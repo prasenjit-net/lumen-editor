@@ -1,4 +1,9 @@
 //! Application orchestration: shared commands, workflows and frame ordering.
+pub(crate) mod agent;
+pub(crate) mod agent_changes;
+pub(crate) mod agent_context;
+pub(crate) mod agent_history;
+pub(crate) mod agent_permission;
 mod clipboard;
 pub(crate) mod command;
 pub(crate) mod completion;
@@ -73,6 +78,7 @@ pub(crate) struct LumenApp {
     /// Last status/terminal text mirrored into the log, to log changes once.
     pub(crate) logged_status: String,
     pub(crate) logged_terminal_error: Option<String>,
+    pub(crate) agent_runtime: agent::AgentRuntime,
     pub(crate) terminal_session: Option<crate::services::terminal::TerminalSession>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
@@ -112,6 +118,7 @@ impl Default for LumenApp {
             language_server_ready_at: None,
             logged_status: String::new(),
             logged_terminal_error: None,
+            agent_runtime: Default::default(),
             terminal_session: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
@@ -132,6 +139,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.activity_bar(ctx));
         self.ensure_source_control(ctx);
         self.render_component(ctx, |workbench| workbench.sidebar(ctx));
+        self.render_component(ctx, |workbench| workbench.agent_panel(ctx));
         self.render_component(ctx, |workbench| workbench.problems_panel(ctx));
         self.render_component(ctx, |workbench| workbench.output_panel(ctx));
         self.render_component(ctx, |workbench| workbench.terminal_panel(ctx));
@@ -158,6 +166,7 @@ impl eframe::App for LumenApp {
         self.poll_file_index(ctx);
         self.poll_source_control(ctx);
         self.poll_terminal(ctx);
+        self.poll_agents(ctx);
         self.log_status_changes();
         self.sync_output();
     }

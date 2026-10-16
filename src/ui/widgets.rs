@@ -2,6 +2,13 @@ use crate::{app::command::Command, icon, ui::theme::*};
 use eframe::egui::{self, Color32, CornerRadius, FontId, Frame, Margin, RichText, Stroke, Vec2};
 use std::path::Path;
 
+/// Give an icon-only control a spoken name. Tooltips are not read by screen
+/// readers, and a bare glyph would be announced as a private-use character.
+pub(crate) fn named(response: egui::Response, enabled: bool, name: &str) -> egui::Response {
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name));
+    response
+}
+
 pub(crate) struct HeaderAction {
     pub(crate) glyph: &'static str,
     pub(crate) tooltip: &'static str,
@@ -129,14 +136,13 @@ fn header_row(
             ),
             Vec2::splat(BUTTON_SIZE),
         );
-        if header_ui
+        let button = header_ui
             .add_enabled_ui(action.enabled, |ui| {
                 ui.put(button_rect, egui::Button::new(action.glyph).frame(false))
             })
             .inner
-            .on_hover_text(action.tooltip)
-            .clicked()
-        {
+            .on_hover_text(action.tooltip);
+        if named(button, action.enabled, action.tooltip).clicked() {
             clicked = Some(action.command.clone());
         }
     }

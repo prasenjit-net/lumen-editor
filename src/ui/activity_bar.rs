@@ -25,8 +25,20 @@ impl Workbench<'_> {
                         ] {
                             let selected =
                                 self.view.sidebar_visible && self.view.activity == activity;
-                            let response = widgets::icon_button(ui, glyph, selected)
-                                .on_hover_text(activity.title());
+                            let response = widgets::named(
+                                widgets::icon_button(ui, glyph, selected)
+                                    .on_hover_text(activity.title()),
+                                true,
+                                activity.title(),
+                            );
+                            if glyph == icon::AGENT && self.view.agents.needs_attention() {
+                                // An agent is blocked on a permission request.
+                                ui.painter().circle_filled(
+                                    response.rect.right_top() + egui::vec2(-12.0, 12.0),
+                                    4.5,
+                                    egui::Color32::from_rgb(204, 167, 0),
+                                );
+                            }
                             if selected {
                                 ui.painter().vline(
                                     response.rect.left(),
@@ -38,9 +50,17 @@ impl Workbench<'_> {
                                 self.command(Command::ActivateActivity(activity));
                             }
                         }
-                        // Bottom-aligned group: Terminal, Output, Settings.
-                        ui.add_space((ui.available_height() - 50.0 * 3.0).max(0.0));
+                        // Bottom-aligned group: Agent, Terminal, Output, Settings.
+                        let agents_enabled = self.view.settings.boolean("agent.enabled");
+                        let buttons = if agents_enabled { 4.0 } else { 3.0 };
+                        ui.add_space((ui.available_height() - 50.0 * buttons).max(0.0));
                         for (glyph, selected, tooltip, command) in [
+                            (
+                                icon::AGENT,
+                                self.view.agents.open,
+                                "Coding Agents (Cmd/Ctrl+Shift+A)",
+                                Command::ToggleAgentPanel,
+                            ),
                             (
                                 icon::TERMINAL,
                                 self.view.terminal.open,
@@ -53,9 +73,15 @@ impl Workbench<'_> {
                                 "Output",
                                 Command::ToggleOutput,
                             ),
-                        ] {
-                            let response =
-                                widgets::icon_button(ui, glyph, selected).on_hover_text(tooltip);
+                        ]
+                        .into_iter()
+                        .filter(|(glyph, ..)| agents_enabled || *glyph != icon::AGENT)
+                        {
+                            let response = widgets::named(
+                                widgets::icon_button(ui, glyph, selected).on_hover_text(tooltip),
+                                true,
+                                tooltip,
+                            );
                             if selected {
                                 ui.painter().vline(
                                     response.rect.left(),
@@ -67,9 +93,13 @@ impl Workbench<'_> {
                                 self.command(command);
                             }
                         }
-                        if widgets::icon_button(ui, icon::GEAR, self.view.settings.open)
-                            .on_hover_text("Settings (Cmd/Ctrl+,)")
-                            .clicked()
+                        if widgets::named(
+                            widgets::icon_button(ui, icon::GEAR, self.view.settings.open)
+                                .on_hover_text("Settings (Cmd/Ctrl+,)"),
+                            true,
+                            "Settings",
+                        )
+                        .clicked()
                         {
                             self.command(Command::Settings);
                         }
@@ -277,5 +307,30 @@ mod tests {
             app.view.status
         );
         app.close_terminal();
+    }
+
+    #[test]
+    fn agent_button_toggles_the_panel_and_disappears_when_agents_are_disabled() {
+        let mut app = LumenApp::default();
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        click(&mut app, &ctx, 900.0, icon::AGENT);
+        assert!(app.view.agents.open);
+        click(&mut app, &ctx, 900.0, icon::AGENT);
+        assert!(!app.view.agents.open);
+
+        app.view.settings.user.persisted.insert(
+            "agent.enabled".into(),
+            lumen_settings_core::Value::Bool(false),
+        );
+        let output = frame(&mut app, &ctx, 900.0, vec![]);
+        assert!(
+            !output.shapes.iter().any(|shape| matches!(&shape.shape,
+                egui::Shape::Text(text) if text.galley.job.text == icon::AGENT)),
+            "no agent button when disabled"
+        );
+        app.execute(Command::ToggleAgentPanel, &ctx);
+        assert!(!app.view.agents.open);
+        assert!(app.view.status.contains("turned off"));
     }
 }

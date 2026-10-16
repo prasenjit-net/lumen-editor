@@ -1,3 +1,4 @@
+use super::agent::AgentKind;
 use super::editor_action::EditorAction;
 use super::view_state::{Activity, ExplorerEdit, ViewState};
 use super::workspace_search::ReplaceScope;
@@ -23,6 +24,37 @@ pub(crate) enum Command {
     ToggleTerminal,
     ToggleProblems,
     ToggleOutput,
+    ToggleAgentPanel,
+    SelectAgent(AgentKind),
+    SendAgentPrompt,
+    CancelAgentTurn,
+    NewAgentSession,
+    RetryAgent,
+    AuthenticateAgent(String),
+    /// Answer a queued permission request; `None` declines it.
+    AnswerAgentPermission(
+        AgentKind,
+        lumen_agent_protocol::rpc::RequestId,
+        Option<String>,
+    ),
+    AllowAgentNpx,
+    ToggleAgentHistory,
+    MoreAgentHistory,
+    ResumeAgentSession(AgentKind, String),
+    ResolveUnsavedFiles(super::agent::UnsavedChoice),
+    /// Attach the editor selection (or current file) to the next agent message.
+    AskAgentAboutSelection,
+    AddFileToAgent(PathBuf),
+    FixProblemWithAgent(DocumentId, Range<usize>),
+    RemoveAgentAttachment(AgentKind, usize),
+    /// Set a session option (mode, model, ...). Risky values ask first.
+    SetAgentConfig(AgentKind, String, String),
+    ConfirmAgentConfig(bool),
+    /// Complete the `@` mention or `/` command being typed.
+    PickAgentMention(AgentKind, String),
+    PickSlash(AgentKind, String),
+    /// Review, revert or dismiss what the agent changed.
+    AgentChanges(AgentKind, super::agent_changes::ChangeAction),
     ShowOutput,
     ShowTerminal,
     CloseOutput,

@@ -33,6 +33,10 @@ impl Workbench<'_> {
                 self.command(Command::NewFolder);
                 ui.close();
             }
+            if !directory && ui.button("Add to Agent Chat").clicked() {
+                self.command(Command::AddFileToAgent(path.into()));
+                ui.close();
+            }
             ui.separator();
             if ui.add_enabled(!root, egui::Button::new("Cut")).clicked() {
                 self.command(Command::ExplorerCut(path.into()));
