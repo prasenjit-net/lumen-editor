@@ -1,4 +1,6 @@
 use super::{Document, DocumentId};
+mod groups;
+pub(crate) use groups::GroupState;
 use std::path::PathBuf;
 pub(crate) struct EditorState {
     pub(crate) files: Vec<Document>,
@@ -6,6 +8,7 @@ pub(crate) struct EditorState {
     /// document through the accessors below, so what "active" means can change
     /// (for example with several editor groups) without touching every caller.
     active_file: Option<usize>,
+    groups: GroupState,
     pub(crate) workspace: Option<PathBuf>,
     pub(crate) next_untitled: usize,
 }
@@ -14,6 +17,7 @@ impl Default for EditorState {
         Self {
             files: Vec::new(),
             active_file: None,
+            groups: GroupState::default(),
             workspace: None,
             next_untitled: 1,
         }
@@ -43,7 +47,7 @@ impl EditorState {
     pub(crate) fn activate(&mut self, id: DocumentId) -> bool {
         match self.index_of(id) {
             Some(index) => {
-                self.active_file = Some(index);
+                self.set_active_index(Some(index));
                 true
             }
             None => false,
@@ -52,29 +56,50 @@ impl EditorState {
     /// Set the active tab by position. An index past the end clears the active
     /// document instead of pointing at nothing.
     pub(crate) fn set_active_index(&mut self, index: Option<usize>) {
-        self.active_file = index.filter(|index| *index < self.files.len());
+        let index = index.filter(|index| *index < self.files.len());
+        if let Some(index) = index {
+            // Activating a tab in the other group moves focus there first, so
+            // the remembered active tab of the group being left is kept.
+            self.sync_groups();
+            let group = self.group_of(self.files[index].id);
+            self.focus_group(group);
+        }
+        self.active_file = index;
     }
     pub(crate) fn new_file(&mut self) {
         self.files.push(Document::untitled(self.next_untitled));
         self.next_untitled += 1;
-        self.active_file = Some(self.files.len() - 1);
+        self.set_active_index(Some(self.files.len() - 1));
     }
-    /// Close the document at `index`. Closing the active one activates its
-    /// neighbour; closing any other tab keeps the *same document* active.
+    /// Close the document at `index`. Closing the active tab activates its
+    /// neighbour in the same group; closing any other tab keeps the *same
+    /// document* active. A group left empty disappears.
     pub(crate) fn close_file(&mut self, index: usize) {
         if index >= self.files.len() {
             return;
         }
-        let keep_active = self
-            .active_file
-            .filter(|active| *active != index)
-            .and_then(|_| self.active_id());
-        self.files.remove(index);
-        self.active_file = match (keep_active, self.files.len()) {
-            (_, 0) => None,
-            (Some(id), _) => self.index_of(id),
-            (None, count) => Some(index.min(count - 1)),
+        self.sync_groups();
+        let id = self.files[index].id;
+        let group = self.group_of(id);
+        let neighbour = self.neighbour_in_group(index, group);
+        let chosen = if group == self.groups.focused
+            && (self.active_file.is_none() || self.active_id() == Some(id))
+        {
+            neighbour
+        } else {
+            self.active_id()
         };
+        if self.groups.active[group] == Some(id) {
+            self.groups.active[group] = neighbour;
+        }
+        self.files.remove(index);
+        self.groups.assignment.remove(&id);
+        self.collapse_empty_groups();
+        let focused = self.groups.focused;
+        self.active_file = chosen
+            .filter(|chosen| self.index_of(*chosen).is_some())
+            .or_else(|| self.fallback_active(focused))
+            .and_then(|chosen| self.index_of(chosen));
     }
     /// Move a document so it lands at `to`, an index into `files` as it is
     /// *before* the move. Content, dirty flags and the active document are
@@ -88,12 +113,19 @@ impl EditorState {
             return false;
         }
         let active = self.active_id();
+        self.reposition(id, to);
+        self.active_file = active.and_then(|active| self.index_of(active));
+        true
+    }
+
+    /// Reorder only: move `id` to `to` (an index before the move).
+    fn reposition(&mut self, id: DocumentId, to: usize) {
+        let Some(from) = self.index_of(id) else {
+            return;
+        };
+        let to = to.min(self.files.len() - 1);
         let document = self.files.remove(from);
         self.files.insert(to, document);
-        if let Some(active) = active {
-            self.activate(active);
-        }
-        true
     }
 
     pub(crate) fn close_document(&mut self, id: DocumentId) {
@@ -117,16 +149,7 @@ impl EditorState {
             if self.files[index].dirty {
                 self.files[index].path = None;
             } else {
-                self.files.remove(index);
-                self.active_file = self.active_file.and_then(|active| {
-                    if self.files.is_empty() {
-                        None
-                    } else if active > index {
-                        Some(active - 1)
-                    } else {
-                        Some(active.min(self.files.len() - 1))
-                    }
-                });
+                self.close_file(index);
             }
         }
     }

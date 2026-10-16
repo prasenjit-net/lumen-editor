@@ -91,18 +91,27 @@ impl TabSizing {
 impl Workbench<'_> {
     pub(crate) fn editor_tabs(&mut self, ui: &mut egui::Ui) -> egui::Rect {
         let colors = crate::ui::theme::palette(ui.visuals());
+        // Only the first editor group hosts the Settings and Diff tabs.
+        let hide_virtual = self.view.hide_virtual_tabs;
+        let diff_tab = !hide_virtual && self.view.source_control.diff.is_some();
+        let settings_open = !hide_virtual && self.view.settings.open;
+        let settings_tab = !hide_virtual && self.view.settings.tab_open;
         let hidden_document = self
             .view
             .source_control
             .diff
             .as_ref()
             .and_then(|diff| diff.diff_only_document);
+        // Each editor group's strip lists only its own documents.
+        let group_documents = self.editor.documents_in(self.editor.focused_group());
         let visible_files: Vec<_> = self
             .editor
             .files
             .iter()
             .enumerate()
-            .filter(|(_, file)| Some(file.id) != hidden_document)
+            .filter(|(_, file)| {
+                Some(file.id) != hidden_document && group_documents.contains(&file.id)
+            })
             .map(|(index, _)| index)
             .collect();
         let titles: Vec<_> = visible_files
@@ -117,20 +126,22 @@ impl Workbench<'_> {
                     if file.disk_changed { " !" } else { "" }
                 )
             })
-            .chain(self.view.source_control.diff.as_ref().map(|diff| {
-                let name = diff
-                    .path
-                    .file_name()
-                    .unwrap_or(diff.path.as_os_str())
-                    .to_string_lossy();
-                format!("{} {} (Diff)", icon::GIT_BRANCH, name)
-            }))
             .chain(
                 self.view
-                    .settings
-                    .tab_open
-                    .then(|| format!("{} Settings", icon::GEAR)),
+                    .source_control
+                    .diff
+                    .as_ref()
+                    .filter(|_| !hide_virtual)
+                    .map(|diff| {
+                        let name = diff
+                            .path
+                            .file_name()
+                            .unwrap_or(diff.path.as_os_str())
+                            .to_string_lossy();
+                        format!("{} {} (Diff)", icon::GIT_BRANCH, name)
+                    }),
             )
+            .chain(settings_tab.then(|| format!("{} Settings", icon::GEAR)))
             .collect();
         let font = egui::TextStyle::Button.resolve(ui.style());
         let natural: Vec<_> = titles
@@ -146,16 +157,15 @@ impl Workbench<'_> {
                 .clamp(MIN_WIDTH, MAX_WIDTH)
             })
             .collect();
-        let diff_active = self
-            .view
-            .source_control
-            .diff
-            .as_ref()
-            .is_some_and(|diff| diff.active);
-        let active_index = if self.view.settings.open {
-            self.view.settings.tab_open.then_some(
-                visible_files.len() + usize::from(self.view.source_control.diff.is_some()),
-            )
+        let diff_active = diff_tab
+            && self
+                .view
+                .source_control
+                .diff
+                .as_ref()
+                .is_some_and(|diff| diff.active);
+        let active_index = if settings_open {
+            settings_tab.then_some(visible_files.len() + usize::from(diff_tab))
         } else if diff_active {
             Some(visible_files.len())
         } else {
@@ -164,7 +174,7 @@ impl Workbench<'_> {
                 .and_then(|index| visible_files.iter().position(|visible| *visible == index))
         };
         let sizing = TabSizing::new(ui.available_width(), &natural, active_index);
-        let active = if self.view.settings.open {
+        let active = if settings_open {
             Some(TabTarget::Settings)
         } else if diff_active {
             Some(TabTarget::Diff)
@@ -181,9 +191,11 @@ impl Workbench<'_> {
             widths: sizing.widths.clone(),
         };
         let reveal = previous.as_ref() != Some(&signature)
-            || (self.view.settings.open && self.view.settings.focus_search);
+            || (settings_open && self.view.settings.focus_search);
         ui.ctx()
             .data_mut(|data| data.insert_temp(reveal_id, signature));
+        let split_enabled = self.view.settings.boolean("workbench.split_editor");
+        let groups = self.editor.group_count();
         let saved = visible_files
             .iter()
             .filter(|index| !self.editor.files[**index].dirty)
@@ -238,6 +250,8 @@ impl Workbench<'_> {
                                                 position: tab_index,
                                                 count: visible_files.len(),
                                                 saved,
+                                                split_enabled,
+                                                groups,
                                             },
                                             self.editor.workspace.is_some(),
                                             &mut menu_command,
@@ -268,7 +282,13 @@ impl Workbench<'_> {
                                         tab_drop = Some((visible_files[from], position));
                                     }
                                 }
-                                if let Some(diff) = &self.view.source_control.diff {
+                                if let Some(diff) = self
+                                    .view
+                                    .source_control
+                                    .diff
+                                    .as_ref()
+                                    .filter(|_| !hide_virtual)
+                                {
                                     let index = visible_files.len();
                                     let selected = active == Some(TabTarget::Diff);
                                     let dirty = diff.document.is_some_and(|document| {
@@ -292,9 +312,8 @@ impl Workbench<'_> {
                                         ui.scroll_to_rect(response.rect, None);
                                     }
                                 }
-                                if self.view.settings.tab_open {
-                                    let index = visible_files.len()
-                                        + usize::from(self.view.source_control.diff.is_some());
+                                if settings_tab {
+                                    let index = visible_files.len() + usize::from(diff_tab);
                                     let selected = active == Some(TabTarget::Settings);
                                     let response = tab(
                                         ui,
@@ -343,7 +362,12 @@ impl Workbench<'_> {
                                 ui.close();
                             }
                         }
-                        if let Some(diff) = &self.view.source_control.diff
+                        if let Some(diff) = self
+                            .view
+                            .source_control
+                            .diff
+                            .as_ref()
+                            .filter(|_| !hide_virtual)
                             && ui
                                 .selectable_label(
                                     active == Some(TabTarget::Diff),
@@ -354,10 +378,7 @@ impl Workbench<'_> {
                             open_diff = true;
                             ui.close();
                         }
-                        if self.view.settings.tab_open
-                            && ui
-                                .selectable_label(self.view.settings.open, "Settings")
-                                .clicked()
+                        if settings_tab && ui.selectable_label(settings_open, "Settings").clicked()
                         {
                             open_settings = true;
                             ui.close();
@@ -506,6 +527,8 @@ struct TabMenuTarget<'a> {
     count: usize,
     /// Tabs without unsaved changes.
     saved: usize,
+    split_enabled: bool,
+    groups: usize,
 }
 
 /// Context menu for a document tab. It only records the chosen command; the
@@ -580,6 +603,19 @@ fn tab_menu(
         "This is already the last tab",
         Command::MoveTab(target.id, TabMove::Right),
     );
+    if target.split_enabled {
+        item(
+            ui,
+            if target.groups > 1 {
+                "Move to Other Group"
+            } else {
+                "Split Right"
+            },
+            target.groups > 1 || target.count > 1,
+            "Open another tab before splitting the editor",
+            Command::MoveTabToGroup(target.id),
+        );
+    }
     ui.separator();
     let unsaved = "This file has not been saved yet";
     let path = target.path.map(Path::to_path_buf).unwrap_or_default();

@@ -231,6 +231,9 @@ impl LumenApp {
         let shortcut = egui::KeyboardShortcut::new;
         let ctrl = egui::Modifiers::CTRL;
         let mut command = None;
+        // The split shortcuts only exist while split editing is switched on, so
+        // they never swallow a key press for nothing.
+        let split = self.split_enabled();
         // Moving a tab uses the primary modifier with Shift+Alt; it is checked first
         // because Cmd+Alt+Arrow (macOS next/previous tab) would also match it.
         let moving = egui::Modifiers::COMMAND | egui::Modifiers::ALT | egui::Modifiers::SHIFT;
@@ -264,6 +267,18 @@ impl LumenApp {
                 ))
             {
                 Some(Command::PreviousTab)
+            } else if split
+                && input.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::Backslash))
+            {
+                Some(Command::SplitEditor)
+            } else if split
+                && input.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::Num1))
+            {
+                Some(Command::FocusGroup(0))
+            } else if split
+                && input.consume_shortcut(&shortcut(egui::Modifiers::COMMAND, egui::Key::Num2))
+            {
+                Some(Command::FocusGroup(1))
             } else {
                 None
             };

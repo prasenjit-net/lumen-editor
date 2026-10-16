@@ -28,7 +28,7 @@ impl BulkClose {
     }
 }
 
-/// Tabs shown in the strip: the document backing an open diff is hidden.
+/// Tabs shown in the focused group's strip: the document backing an open diff is hidden.
 pub(crate) fn visible_documents(
     editor: &crate::model::EditorState,
     view: &super::view_state::ViewState,
@@ -38,10 +38,10 @@ pub(crate) fn visible_documents(
         .diff
         .as_ref()
         .and_then(|diff| diff.diff_only_document);
+    // Tab commands act on the focused editor group's strip.
     editor
-        .files
-        .iter()
-        .map(|file| file.id)
+        .documents_in(editor.focused_group())
+        .into_iter()
         .filter(|id| Some(*id) != hidden)
         .collect()
 }

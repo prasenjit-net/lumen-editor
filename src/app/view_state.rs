@@ -309,6 +309,14 @@ pub(crate) struct ViewState {
     pub(crate) shared_editor: bool,
     #[cfg(feature = "shared-editor")]
     pub(crate) shared_surface: Option<lumen_editor_surface::EditorSurface>,
+    /// Live editor surface of each editor group while the editor is split; the
+    /// focused group's lives in `shared_surface` between frames.
+    #[cfg(feature = "shared-editor")]
+    pub(crate) group_surfaces: Vec<Option<lumen_editor_surface::EditorSurface>>,
+    /// Set while a non-first editor group draws, so it shows no Settings/Diff tab.
+    pub(crate) hide_virtual_tabs: bool,
+    /// Share of the editor area given to the first group when split (0..1).
+    pub(crate) split_ratio: f32,
     #[cfg(feature = "shared-editor")]
     pub(crate) shared_output: Option<lumen_editor_surface::SurfaceOutput>,
     #[cfg(feature = "shared-editor")]
@@ -409,6 +417,10 @@ impl Default for ViewState {
             shared_editor: true,
             #[cfg(feature = "shared-editor")]
             shared_surface: None,
+            #[cfg(feature = "shared-editor")]
+            group_surfaces: Vec::new(),
+            hide_virtual_tabs: false,
+            split_ratio: 0.5,
             #[cfg(feature = "shared-editor")]
             shared_output: None,
             #[cfg(feature = "shared-editor")]

@@ -224,6 +224,48 @@ scroll state.
   go through the one buffer; Find highlights render in both. Only start after S1-S3 are
   stable.
 
+### S1 status: done (branch `f-split-editor`), plus the command half of S2
+
+**Design as built** (simpler than the `EditorLayout` sketch above, and it kept every existing
+caller working): `files` stays the single ordered store and `active_file` stays "the active tab
+of the *focused* group", so the ~80 `active_*` call sites needed no change. Group membership is
+a per-document assignment in `EditorState` (`model/editor/groups.rs`); a group's tab order is the
+relative order of its documents in `files`; each non-focused group remembers its active tab.
+- **Model:** `group_count`, `focused_group`, `group_of`, `documents_in`, `focus_group`,
+  `move_to_group`, plus group-aware `activate`/`set_active_index` (activating a tab in the other
+  group moves focus there), `new_file` (new documents join the focused group), `close_file`
+  (neighbour *within the group*; an emptied group disappears and the survivor takes over, its
+  remembered tab preserved), `detach_deleted`. One view per document; a lone tab cannot open a
+  split. Moves land after the destination's last tab and never touch content or dirty flags.
+- **Everything tab-related is per group for free:** `visible_documents` (used by next/previous,
+  Move Left/Right, every close scope, Close All/Saved) and the tab strip itself list only the
+  focused group's documents. Menu commands target the group because pressing inside a group
+  focuses it first.
+- **Rendering (`ui/editor_split.rs`):** each group draws exactly what a single editor draws
+  (`editor_group_body`) by being focused for its own pass, with its own `EditorSurface`
+  (`view.group_surfaces`), then focus is restored. The single-group path is unchanged. Pressing
+  in a group focuses it; the focused group gets an accent outline; the one-shot "focus the
+  editor" request goes only to the focused group. The Settings and Diff tabs (and their
+  content) live in the first group only. A drag divider (double-click resets) keeps a 220 px
+  minimum per group and splits evenly when the pane is too narrow for two minimums.
+- **Commands (setting `workbench.split_editor`, off by default):** Split Editor / Move Tab to
+  Other Group (Cmd/Ctrl+\), Focus Next Editor Group, Focus Group 1/2 (Cmd/Ctrl+1/2, only
+  consumed while the setting is on), tab-menu "Split Right" / "Move to Other Group", palette
+  entries with reasons ("Turn on Split Editor in Settings first", "Open another tab to split
+  the editor", "The editor is not split").
+- **Tests:** 11 model tests (split rules, focus and remembered tabs, neighbour selection,
+  collapse of either group, content untouched, ordering within a group), 5 app tests (setting
+  gate, lone tab, per-group tab commands and Close All, cross-group moves, reorder in the
+  unfocused group), and 7 render tests: both groups side by side at 520/900/1500 px with one
+  breadcrumb per group and two tabs per strip, pressing focuses a group without changing any
+  text, typing reaches only the focused group's document, the Settings tab appears once in the
+  left group, divider drag respects the minimums, plus the pure width maths. Verified visually
+  with screenshots at 1100 and 700 px.
+- **Still open:** dragging a tab onto the other group's strip (S2), vertical split (S3), the
+  same document in both panes (S4), and styling that distinguishes the *selected tab* of the
+  unfocused group (today both groups' selected tab keep the accent line; the outline marks the
+  focused group). Layout is session-only. Windows/Linux not exercised.
+
 ### Things that must be reworked (and tested) for S1
 
 - **Single-instance view state:** `shared_surface` becomes per focused group;

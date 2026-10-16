@@ -162,6 +162,21 @@ impl Workbench<'_> {
                 _ => {}
             }
         }
+        if matches!(command, SplitEditor) {
+            if !self.view.settings.boolean("workbench.split_editor") {
+                return Some("Turn on Split Editor in Settings first");
+            }
+            if self.editor.active().is_none() {
+                return Some("No tab is active");
+            }
+            let tabs = crate::app::tab_close::visible_documents(self.editor, self.view);
+            if self.editor.group_count() < 2 && tabs.len() < 2 {
+                return Some("Open another tab to split the editor");
+            }
+        }
+        if matches!(command, FocusNextGroup) && self.editor.group_count() < 2 {
+            return Some("The editor is not split");
+        }
         if matches!(command, CloseOtherTabs) && self.editor.files.len() < 2 {
             return Some("There are no other tabs");
         }
@@ -349,6 +364,7 @@ fn command_shortcut(command: &Command) -> String {
         ShowWorkspaceSearch => "Shift+F",
         ShowDocumentSymbols => "Shift+O",
         ReopenClosedTab => "Shift+T",
+        SplitEditor => "\\",
         ToggleAgentPanel => "Shift+A",
         ToggleOutput => "Shift+U",
         Replace => {
@@ -433,6 +449,14 @@ fn palette_commands() -> Vec<(String, Command)> {
         ("Tab: Next Tab".into(), Command::NextTab),
         ("Tab: Previous Tab".into(), Command::PreviousTab),
         ("Tab: Reopen Closed Tab".into(), Command::ReopenClosedTab),
+        (
+            "View: Split Editor / Move Tab to Other Group".into(),
+            Command::SplitEditor,
+        ),
+        (
+            "View: Focus Next Editor Group".into(),
+            Command::FocusNextGroup,
+        ),
         ("Tab: Move Tab Left".into(), Command::MoveActiveTabLeft),
         ("Tab: Move Tab Right".into(), Command::MoveActiveTabRight),
         ("Tab: Close Other Tabs".into(), Command::CloseOtherTabs),

@@ -163,6 +163,12 @@ pub(crate) enum Command {
     MoveTab(DocumentId, TabMove),
     MoveActiveTabLeft,
     MoveActiveTabRight,
+    /// Open the second editor group with the active tab, or move it across.
+    SplitEditor,
+    /// Send a tab to the other editor group (opening it if needed).
+    MoveTabToGroup(DocumentId),
+    FocusNextGroup,
+    FocusGroup(usize),
     CloseFile(DocumentId),
     SaveAndClose(DocumentId),
     SaveAllAndQuit,

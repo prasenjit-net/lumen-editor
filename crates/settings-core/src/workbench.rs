@@ -14,6 +14,16 @@ pub(crate) const SCHEMA: SectionSchema = SectionSchema {
             document: false,
         },
         Setting {
+            id: "workbench.split_editor",
+            default: DefaultValue::Bool(false),
+            name: "Split Editor",
+            category: "Workbench",
+            help: "Allow splitting the editor into two side-by-side groups of tabs. Each file is shown in one group at a time.",
+            aliases: "panes columns side by side groups",
+            control: Control::Bool,
+            document: false,
+        },
+        Setting {
             id: "workbench.reopen_last_folder",
             default: DefaultValue::Bool(false),
             name: "Reopen Last Folder",

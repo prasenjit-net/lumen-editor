@@ -16,6 +16,11 @@ pub(crate) enum TabMove {
 impl LumenApp {
     /// Reorder one tab. Does not activate it, change content, or touch dirty flags.
     pub(crate) fn move_tab(&mut self, id: DocumentId, movement: TabMove) {
+        // A tab in the other group is reordered within its own group.
+        if self.editor.index_of(id).is_some() {
+            let group = self.editor.group_of(id);
+            self.editor.focus_group(group);
+        }
         let tabs = self.visible_documents();
         let Some(from) = tabs.iter().position(|tab| *tab == id) else {
             return;
@@ -36,6 +41,58 @@ impl LumenApp {
         if self.editor.move_document(id, anchor) {
             self.view.status = "Moved tab".into();
         }
+    }
+
+    /// Whether the user has turned on split editing.
+    pub(crate) fn split_enabled(&self) -> bool {
+        self.view.settings.boolean("workbench.split_editor")
+    }
+
+    pub(crate) fn split_editor(&mut self) {
+        match self.editor.active_id() {
+            Some(id) => self.move_tab_to_group(id),
+            None => self.view.status = "Open a tab to split the editor".into(),
+        }
+    }
+
+    /// Send `id` to the other group, opening the second group if there is only
+    /// one. A group is never left empty by opening a split, and nothing is
+    /// duplicated: each file lives in one group.
+    pub(crate) fn move_tab_to_group(&mut self, id: DocumentId) {
+        if !self.split_enabled() {
+            self.view.status = "Turn on Split Editor in Settings first".into();
+            return;
+        }
+        let target = if self.editor.group_count() > 1 {
+            1 - self.editor.group_of(id)
+        } else {
+            1
+        };
+        if self.editor.move_to_group(id, target) {
+            self.view.focus_editor = true;
+            self.view.status = "Moved tab to the other editor group".into();
+        } else {
+            self.view.status = "Open another tab before splitting the editor".into();
+        }
+    }
+
+    pub(crate) fn focus_next_group(&mut self) {
+        let count = self.editor.group_count();
+        if count < 2 {
+            self.view.status = "The editor is not split".into();
+            return;
+        }
+        let next = (self.editor.focused_group() + 1) % count;
+        self.focus_group_command(next);
+    }
+
+    pub(crate) fn focus_group_command(&mut self, group: usize) {
+        if group >= self.editor.group_count() {
+            self.view.status = "The editor is not split".into();
+            return;
+        }
+        self.editor.focus_group(group);
+        self.view.focus_editor = true;
     }
 
     pub(crate) fn move_active_tab(&mut self, movement: TabMove) {
@@ -346,5 +403,102 @@ mod tests {
         app.move_active_tab(TabMove::Right);
         assert_eq!(self::ids(&app), [ids[1], ids[0]]);
         assert_eq!(app.editor.active_id(), Some(ids[0]));
+    }
+
+    fn enable_split(app: &mut LumenApp) {
+        app.view.settings.user.persisted.insert(
+            "workbench.split_editor".into(),
+            lumen_settings_core::Value::Bool(true),
+        );
+    }
+
+    #[test]
+    fn splitting_is_off_by_default_and_changes_nothing_until_enabled() {
+        let mut app = app_with_saved(&["/p/a.rs", "/p/b.rs"]);
+        app.split_editor();
+        assert_eq!(app.editor.group_count(), 1);
+        assert!(app.view.status.contains("Split Editor"));
+        enable_split(&mut app);
+        app.split_editor();
+        assert_eq!(app.editor.group_count(), 2);
+    }
+
+    #[test]
+    fn a_lone_tab_cannot_open_a_split_and_the_message_says_why() {
+        let mut app = app_with_saved(&["/p/a.rs"]);
+        enable_split(&mut app);
+        app.split_editor();
+        assert_eq!(app.editor.group_count(), 1);
+        assert!(app.view.status.contains("another tab"));
+        let mut empty = LumenApp::default();
+        enable_split(&mut empty);
+        empty.split_editor();
+        assert_eq!(empty.editor.group_count(), 1);
+    }
+
+    #[test]
+    fn tab_commands_act_on_the_focused_groups_tabs_only() {
+        let mut app = app_with_saved(&["/p/a.rs", "/p/b.rs", "/p/c.rs", "/p/d.rs"]);
+        enable_split(&mut app);
+        let ids = ids(&app);
+        app.editor.activate(ids[2]);
+        app.split_editor();
+        app.move_tab_to_group(ids[3]);
+        // Left group: a b. Right group: c d, focused with d active.
+        assert_eq!(app.visible_documents(), [ids[2], ids[3]]);
+        app.cycle_tab(1);
+        assert_eq!(
+            app.editor.active_id(),
+            Some(ids[2]),
+            "wraps inside the group"
+        );
+        app.cycle_tab(1);
+        assert_eq!(app.editor.active_id(), Some(ids[3]));
+        // Close All only closes the focused group; the other keeps its tabs.
+        app.begin_bulk_close(TabCloseScope::All);
+        assert_eq!(app.editor.files.len(), 2);
+        assert_eq!(app.editor.group_count(), 1, "the emptied group disappears");
+        assert!(
+            app.editor
+                .files
+                .iter()
+                .all(|f| f.id == ids[0] || f.id == ids[1])
+        );
+    }
+
+    #[test]
+    fn moving_between_groups_keeps_content_and_focus_commands_switch_groups() {
+        let mut app = app_with_saved(&["/p/a.rs", "/p/b.rs", "/p/c.rs"]);
+        enable_split(&mut app);
+        let ids = ids(&app);
+        app.editor.files[1].dirty = true;
+        app.editor.files[1].text = "unsaved".into();
+        app.move_tab_to_group(ids[1]);
+        assert_eq!(app.editor.focused_group(), 1);
+        let moved = &app.editor.files[app.editor.index_of(ids[1]).unwrap()];
+        assert!(moved.dirty);
+        assert_eq!(moved.text, "unsaved");
+        app.focus_next_group();
+        assert_eq!(app.editor.focused_group(), 0);
+        app.focus_group_command(1);
+        assert_eq!(app.editor.active_id(), Some(ids[1]));
+        app.focus_group_command(5);
+        assert_eq!(app.view.status, "The editor is not split");
+        // Move it back: the groups merge again.
+        app.move_tab_to_group(ids[1]);
+        assert_eq!(app.editor.group_count(), 1);
+    }
+
+    #[test]
+    fn reordering_a_tab_in_the_unfocused_group_focuses_that_group_first() {
+        let mut app = app_with_saved(&["/p/a.rs", "/p/b.rs", "/p/c.rs", "/p/d.rs"]);
+        enable_split(&mut app);
+        let ids = ids(&app);
+        app.move_tab_to_group(ids[2]);
+        app.move_tab_to_group(ids[3]);
+        app.editor.focus_group(0);
+        app.move_tab(ids[3], TabMove::Left);
+        assert_eq!(app.editor.documents_in(1), [ids[3], ids[2]]);
+        assert_eq!(app.editor.documents_in(0), [ids[0], ids[1]]);
     }
 }

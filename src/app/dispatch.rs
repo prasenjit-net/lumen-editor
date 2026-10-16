@@ -228,6 +228,10 @@ impl LumenApp {
             Command::MoveTab(id, movement) => self.move_tab(id, movement),
             Command::MoveActiveTabLeft => self.move_active_tab(TabMove::Left),
             Command::MoveActiveTabRight => self.move_active_tab(TabMove::Right),
+            Command::SplitEditor => self.split_editor(),
+            Command::MoveTabToGroup(id) => self.move_tab_to_group(id),
+            Command::FocusNextGroup => self.focus_next_group(),
+            Command::FocusGroup(group) => self.focus_group_command(group),
             Command::CloseEditor => {
                 if self.view.settings.open {
                     self.view.settings.tab_open = false;
