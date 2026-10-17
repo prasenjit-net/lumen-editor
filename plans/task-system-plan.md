@@ -624,6 +624,27 @@ no hidden-output stalls, cancellation/spawn errors, and no document regressions.
 
 ### 4. Compound tasks and concurrency
 
+**Status (2026-10-17): implemented for process/shell tasks; background services and
+inputs remain Phase 5.**
+`app/task_graph.rs`: a task with `depends_on` (or a compound task) runs as a group.
+Before anything starts the whole graph is read from disk, planned (shared nodes run
+once, sequence order becomes prerequisites, nested compounds only order) and every
+task resolved; one problem aborts the run. The first-run review lists every
+unreviewed workspace command and trusts them together; the save policy is the
+strictest among the tasks. A scheduler starts tasks as prerequisites succeed within
+the 4-process limit (queued otherwise), the group has its own summary tab (progress
+log, Stop, Restart) and children keep their own tabs ("Part of ..." tooltip). Failure
+policy `on_failure = "fail_fast"` (default) stops running siblings and skips the rest;
+`"continue"` lets independent tasks finish and skips only dependents. Stopping or
+quitting winds the group down; restarting a child restarts its group. A
+single-instance task already running blocks a group that needs it (no silent
+sharing). Background tasks as dependencies are refused until Phase 5. Verified with
+fake-process tests for ordering, dedup, both failure policies, limits, stop, restart,
+review, bad graphs, cross-scope `user:` references and quit, plus a live screenshot.
+Not done: the task form has no dependency/compound editing (TOML only); no
+per-task `instance_policy = "parallel"` conflict handling beyond what is above; no
+settings for the limits.
+
 Enable validated sequential/parallel graphs, shared-node deduplication, run limits,
 parent summaries, failure policies, instance handling, and group defaults.
 Gate: deterministic fake-clock/process tests for graph ordering and all failure

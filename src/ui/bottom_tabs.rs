@@ -57,7 +57,7 @@ impl Workbench<'_> {
         for run in runs.runs() {
             let glyph = match &run.state {
                 RunState::Running | RunState::Stopping => icon::PLAY,
-                RunState::Finished(RunOutcome::Succeeded(_)) => icon::CHECK,
+                RunState::Finished(RunOutcome::Succeeded(_) | RunOutcome::Completed) => icon::CHECK,
                 RunState::Finished(RunOutcome::Cancelled) => icon::STOP,
                 RunState::Finished(RunOutcome::TimedOut) => icon::WARNING,
                 RunState::Finished(_) => icon::ERROR,
@@ -65,7 +65,14 @@ impl Workbench<'_> {
             entries.push(BottomTabEntry {
                 label: format!("{glyph} {}", runs.title(run.id)),
                 tooltip: format!(
-                    "{} task {} · {}\n{}\nStarted {} in {}",
+                    "{}{} task {} · {}\n{}\nStarted {} in {}",
+                    if run.summary {
+                        "Task group: ".to_string()
+                    } else {
+                        runs.parent_label(run.id)
+                            .map(|parent| format!("Part of '{parent}': "))
+                            .unwrap_or_default()
+                    },
                     run.key.scope.label(),
                     run.key.id,
                     match &run.state {

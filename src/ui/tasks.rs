@@ -456,10 +456,10 @@ mod tests {
             .as_ref()
             .expect("double click asks to run it");
         assert_eq!(
-            (pending.key.id.as_str(), pending.label.as_str()),
+            (pending.plan.root.id.as_str(), pending.plan.label.as_str()),
             ("test", "Run tests")
         );
-        assert!(pending.needs_review);
+        assert!(pending.needs_review());
         assert!(app.view.task_runs.runs().is_empty());
     }
 }

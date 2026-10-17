@@ -42,11 +42,15 @@ pub(crate) enum RunOutcome {
     SpawnFailed(String),
     Cancelled,
     TimedOut,
+    /// A task group in which every task succeeded.
+    Completed,
+    /// A task group that ended because the named task failed (or could not start).
+    GroupFailed(String),
 }
 
 impl RunOutcome {
     pub(crate) fn is_success(&self) -> bool {
-        matches!(self, Self::Succeeded(_))
+        matches!(self, Self::Succeeded(_) | Self::Completed)
     }
 
     pub(crate) fn summary(&self) -> String {
@@ -56,6 +60,8 @@ impl RunOutcome {
             Self::SpawnFailed(message) => format!("Could not start: {message}"),
             Self::Cancelled => "Stopped".into(),
             Self::TimedOut => "Timed out and was stopped".into(),
+            Self::Completed => "Completed".into(),
+            Self::GroupFailed(label) => format!("Stopped: '{label}' failed"),
         }
     }
 }
@@ -68,6 +74,8 @@ pub(crate) enum StopReason {
     Close,
     Quit,
     Workspace,
+    /// A sibling failed under the group's fail-fast policy.
+    Group,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,6 +94,10 @@ pub(crate) struct TaskRun {
     /// The command line shown in the tab tooltip (a snapshot, never re-resolved).
     pub(crate) command_line: String,
     pub(crate) workspace: Option<PathBuf>,
+    /// A task group's own tab: no process, only the group's progress log.
+    pub(crate) summary: bool,
+    /// The task group this run belongs to (its parent summary or a child).
+    pub(crate) invocation: Option<super::task_graph::InvocationId>,
     pub(crate) started: Instant,
     pub(crate) started_at: String,
     pub(crate) ended: Option<Instant>,
@@ -106,12 +118,65 @@ pub(crate) struct TaskRun {
     stop: Option<StopReason>,
     stop_requested_at: Option<Instant>,
     forced: bool,
-    restart_after: bool,
+    pub(super) restart_after: bool,
 }
 
 impl TaskRun {
     pub(crate) fn is_active(&self) -> bool {
         !matches!(self.state, RunState::Finished(_))
+    }
+
+    pub(super) fn new_summary(
+        key: TaskKey,
+        label: String,
+        order: String,
+        workspace: Option<PathBuf>,
+        invocation: super::task_graph::InvocationId,
+        now: Instant,
+        log: RunLog,
+    ) -> Self {
+        Self {
+            id: RunId(0),
+            key,
+            label,
+            cwd: workspace.clone().unwrap_or_default(),
+            command_line: order,
+            workspace,
+            summary: true,
+            invocation: Some(invocation),
+            started: now,
+            started_at: chrono::Local::now().format("%H:%M:%S").to_string(),
+            ended: None,
+            state: RunState::Running,
+            log,
+            terminal: None,
+            screen: None,
+            screen_dirty: false,
+            pty_size: (0, 0),
+            resolved: ResolvedTask {
+                label: String::new(),
+                program: lumen_task_core::Program::Shell {
+                    command: String::new(),
+                },
+                cwd: PathBuf::new(),
+                env: Default::default(),
+                unset_env: Vec::new(),
+                transport: lumen_task_core::Transport::Pipe,
+                exit_codes: vec![0],
+                timeout_seconds: None,
+                is_background: false,
+                ready_pattern: None,
+                ready_timeout_seconds: None,
+            },
+            process: None,
+            exit: None,
+            exited_at: None,
+            closed_streams: 0,
+            stop: None,
+            stop_requested_at: None,
+            forced: false,
+            restart_after: false,
+        }
     }
 
     pub(crate) fn outcome(&self) -> Option<&RunOutcome> {
@@ -157,8 +222,10 @@ impl TaskRun {
 
 #[derive(Default)]
 pub(crate) struct TaskRuns {
-    runs: Vec<TaskRun>,
+    pub(super) runs: Vec<TaskRun>,
     next_id: u64,
+    pub(super) invocations: Vec<super::task_graph::Invocation>,
+    pub(super) next_invocation: u64,
     /// The run whose tab is shown in the bottom panel.
     pub(crate) selected: Option<RunId>,
     /// Whether the task output panel is showing.
@@ -180,7 +247,7 @@ impl TaskRuns {
         self.runs.iter().find(|run| run.id == id)
     }
 
-    fn get_mut(&mut self, id: RunId) -> Option<&mut TaskRun> {
+    pub(super) fn get_mut(&mut self, id: RunId) -> Option<&mut TaskRun> {
         self.runs.iter_mut().find(|run| run.id == id)
     }
 
@@ -190,6 +257,35 @@ impl TaskRuns {
 
     pub(crate) fn active_count(&self) -> usize {
         self.runs.iter().filter(|run| run.is_active()).count()
+    }
+
+    /// Running processes: what the concurrency limit counts (a group's summary
+    /// tab has no process).
+    pub(crate) fn active_process_count(&self) -> usize {
+        self.runs
+            .iter()
+            .filter(|run| run.is_active() && !run.summary)
+            .count()
+    }
+
+    /// The label of the group a child run belongs to, if its summary tab exists.
+    pub(crate) fn parent_label(&self, id: RunId) -> Option<String> {
+        let run = self.get(id)?;
+        if run.summary {
+            return None;
+        }
+        let group = run.invocation?;
+        self.runs
+            .iter()
+            .find(|candidate| candidate.summary && candidate.invocation == Some(group))
+            .map(|parent| parent.label.clone())
+    }
+
+    /// Whether a run belongs to a group that is still going (its tab must stay).
+    pub(super) fn in_live_group(&self, id: RunId) -> bool {
+        self.get(id)
+            .and_then(|run| run.invocation)
+            .is_some_and(|group| self.invocations.iter().any(|inv| inv.id == group))
     }
 
     pub(crate) fn active_for(&self, key: &TaskKey) -> Option<&TaskRun> {
@@ -211,7 +307,7 @@ impl TaskRuns {
         format!("{} · #{position}", run.label)
     }
 
-    fn insert(&mut self, mut run: TaskRun) -> RunId {
+    pub(super) fn insert(&mut self, mut run: TaskRun) -> RunId {
         self.next_id += 1;
         run.id = RunId(self.next_id);
         let id = run.id;
@@ -251,7 +347,7 @@ impl TaskRuns {
 }
 
 /// A command line for display: program and arguments, or the shell command.
-fn command_line(task: &ResolvedTask) -> String {
+pub(super) fn command_line(task: &ResolvedTask) -> String {
     match &task.program {
         lumen_task_core::Program::Process { program, args } => std::iter::once(program.as_str())
             .chain(args.iter().map(String::as_str))
@@ -262,63 +358,76 @@ fn command_line(task: &ResolvedTask) -> String {
 }
 
 impl LumenApp {
-    /// Resolve and start a task by key, or stage the review/save prompt first.
+    /// Resolve and start a task (and everything it depends on) by key, or stage the
+    /// review/save prompt first. Nothing launches until the whole graph validated
+    /// and resolved.
     pub(crate) fn run_task(&mut self, key: TaskKey, ctx: &egui::Context) {
-        let (def, _) = match self.read_task_for_run(&key) {
-            Ok(found) => found,
+        let plan = match self.plan_for_run(&key) {
+            Ok(plan) => plan,
             Err(message) => {
                 self.view.status = message;
                 return;
             }
         };
-        if def.kind == lumen_task_core::TaskKind::Compound {
-            self.view.status =
-                "Compound tasks need the dependency scheduler, which is not available yet".into();
-            return;
-        }
-        if def.effective_instance_policy() == lumen_task_core::InstancePolicy::Single
+        if plan.root_single
             && let Some(active) = self.view.task_runs.active_for(&key)
         {
             let id = active.id;
             self.show_task_run(id);
             self.view.status = format!(
                 "'{}' is already running; use Restart to run it again",
-                def.label
+                plan.label
             );
             return;
         }
-        if self.view.task_runs.active_count() >= MAX_ACTIVE_RUNS {
+        // Different invocations never silently share a process: a single-instance
+        // task that is already running blocks a group that needs it.
+        if let Some(node) = plan.nodes.iter().find(|node| {
+            node.key != key
+                && node.single
+                && node.resolved.is_some()
+                && self.view.task_runs.active_for(&node.key).is_some()
+        }) {
+            self.view.status = format!(
+                "Cannot run '{}': '{}' is already running",
+                plan.label, node.label
+            );
+            return;
+        }
+        if self.view.task_runs.active_process_count() >= MAX_ACTIVE_RUNS {
             self.view.status =
                 format!("Too many tasks are running ({MAX_ACTIVE_RUNS}); stop one first");
             return;
         }
-        let resolved = match self.resolve_for_run(&key, &def) {
-            Ok(resolved) => resolved,
-            Err(message) => {
-                self.view.status = format!("Cannot run '{}': {message}", def.label);
-                return;
-            }
-        };
-        let digest = lumen_task_core::execution_digest(&def);
-        let needs_review = key.scope == lumen_task_core::Scope::Workspace
-            && self
-                .editor
-                .workspace
-                .as_deref()
-                .is_some_and(|root| !self.task_trust.is_trusted(root, &digest));
-        let save = def.effective_save();
+        let review: Vec<ReviewItem> =
+            plan.nodes
+                .iter()
+                .filter_map(|node| {
+                    let resolved = node.resolved.as_ref()?;
+                    let untrusted =
+                        node.key.scope == lumen_task_core::Scope::Workspace
+                            && self.editor.workspace.as_deref().is_some_and(|root| {
+                                !self.task_trust.is_trusted(root, &node.digest)
+                            });
+                    untrusted.then(|| ReviewItem {
+                        label: node.label.clone(),
+                        command_line: command_line(resolved),
+                        cwd: resolved.cwd.display().to_string(),
+                        env_names: resolved.env.keys().cloned().collect(),
+                        digest: node.digest.clone(),
+                    })
+                })
+                .collect();
+        let save = plan.save_policy();
         let dirty = if save == SavePolicy::None {
             Vec::new()
         } else {
             self.dirty_saved_documents()
         };
-        if needs_review || (save == SavePolicy::Prompt && !dirty.is_empty()) {
+        if !review.is_empty() || (save == SavePolicy::Prompt && !dirty.is_empty()) {
             self.view.task_pending = Some(PendingTaskRun {
-                key,
-                label: def.label.clone(),
-                resolved,
-                digest,
-                needs_review,
+                plan,
+                review,
                 dirty_files: dirty,
             });
             return;
@@ -327,15 +436,14 @@ impl LumenApp {
             self.view.status = "Not run: some files could not be saved".into();
             return;
         }
-        self.start_run(key, resolved, ctx);
+        self.start_plan(plan, ctx);
     }
 
-    fn read_task_for_run(&self, key: &TaskKey) -> Result<(TaskDef, String), String> {
-        // Always from disk, so a stale sidebar can never run an outdated command.
-        self.read_task(key)
-    }
-
-    fn resolve_for_run(&self, key: &TaskKey, def: &TaskDef) -> Result<ResolvedTask, String> {
+    pub(super) fn resolve_for_run(
+        &self,
+        key: &TaskKey,
+        def: &TaskDef,
+    ) -> Result<ResolvedTask, String> {
         let active_file = self
             .editor
             .active()
@@ -389,14 +497,15 @@ impl LumenApp {
             self.view.status = "Not run: some files could not be saved".into();
             return;
         }
-        if pending.needs_review
-            && let Some(root) = self.editor.workspace.clone()
-            && let Err(message) = self.task_trust.trust(&root, &pending.digest)
-        {
-            // Not being able to remember the review must not block this run.
-            self.view.status = format!("Could not remember the review: {message}");
+        if let Some(root) = self.editor.workspace.clone() {
+            for item in &pending.review {
+                if let Err(message) = self.task_trust.trust(&root, &item.digest) {
+                    // Not being able to remember the review must not block this run.
+                    self.view.status = format!("Could not remember the review: {message}");
+                }
+            }
         }
-        self.start_run(pending.key, pending.resolved, ctx);
+        self.start_plan(pending.plan, ctx);
     }
 
     pub(crate) fn cancel_pending_task(&mut self) {
@@ -405,7 +514,14 @@ impl LumenApp {
 
     /// Launch a resolved task. A spawn failure is a visible, finished run, not a
     /// silent status line.
-    pub(crate) fn start_run(&mut self, key: TaskKey, resolved: ResolvedTask, ctx: &egui::Context) {
+    pub(crate) fn start_run(
+        &mut self,
+        key: TaskKey,
+        resolved: ResolvedTask,
+        ctx: &egui::Context,
+        reveal: bool,
+        invocation: Option<super::task_graph::InvocationId>,
+    ) -> RunId {
         // Dedicated output reuse: a rerun replaces that task's completed tab.
         let finished: Vec<RunId> = self
             .view
@@ -414,6 +530,10 @@ impl LumenApp {
             .iter()
             .filter(|run| !run.is_active() && run.key == key)
             .map(|run| run.id)
+            .collect();
+        let finished: Vec<RunId> = finished
+            .into_iter()
+            .filter(|id| !self.view.task_runs.in_live_group(*id))
             .collect();
         let reuse = self.last_reuse(&key);
         if reuse == lumen_task_core::OutputReuse::Dedicated {
@@ -436,6 +556,8 @@ impl LumenApp {
             cwd: resolved.cwd.clone(),
             command_line: command_line(&resolved),
             workspace: self.editor.workspace.clone(),
+            summary: false,
+            invocation,
             started: now,
             started_at: chrono::Local::now().format("%H:%M:%S").to_string(),
             ended: None,
@@ -482,9 +604,14 @@ impl LumenApp {
             }
         }
         let id = self.view.task_runs.insert(run);
-        self.view.task_runs.last = Some(key.clone());
-        self.reveal_task_run(id, &key);
+        if invocation.is_none() {
+            self.view.task_runs.last = Some(key.clone());
+        }
+        if reveal {
+            self.reveal_task_run(id, &key);
+        }
         self.view.task_runs.enforce_retention();
+        id
     }
 
     /// Output reuse policy of the task's current definition (default: dedicated).
@@ -583,7 +710,17 @@ impl LumenApp {
         let Some(run) = self.view.task_runs.get_mut(id) else {
             return;
         };
-        if !run.is_active() || run.stop.is_some() && reason != StopReason::Quit {
+        if reason == StopReason::Quit {
+            // Quitting wins over a pending restart.
+            run.restart_after = false;
+        }
+        if !run.is_active() || run.stop.is_some() {
+            return;
+        }
+        if run.summary {
+            // A group has no process: winding it down stops its children.
+            run.stop.get_or_insert(reason);
+            self.stop_invocation(id, reason);
             return;
         }
         run.stop.get_or_insert(reason);
@@ -609,6 +746,22 @@ impl LumenApp {
 
     /// Stop, wait for confirmed termination, then run the task again.
     pub(crate) fn restart_task_run(&mut self, id: RunId, ctx: &egui::Context) {
+        // Restarting a task that belongs to a running group restarts the group.
+        let id = self
+            .view
+            .task_runs
+            .get(id)
+            .filter(|run| !run.summary)
+            .and_then(|run| run.invocation)
+            .and_then(|group| {
+                self.view
+                    .task_runs
+                    .invocations
+                    .iter()
+                    .find(|inv| inv.id == group)
+                    .map(|inv| inv.parent)
+            })
+            .unwrap_or(id);
         let Some(run) = self.view.task_runs.get_mut(id) else {
             return;
         };
@@ -769,7 +922,7 @@ impl LumenApp {
             return;
         }
         ctx.request_repaint_after(Duration::from_millis(100));
-        let budget = FRAME_BYTES / active;
+        let budget = FRAME_BYTES / self.view.task_runs.active_process_count().max(1);
         let mut messages = Vec::new();
         let mut restarts = Vec::new();
         for run in self
@@ -792,6 +945,7 @@ impl LumenApp {
         if let Some(message) = messages.pop() {
             self.view.status = message;
         }
+        self.advance_invocations(now, ctx);
         for key in restarts {
             self.run_task(key, ctx);
         }
@@ -963,19 +1117,26 @@ pub(crate) struct PendingTaskQuit {
     pub(crate) deadline: Option<Instant>,
 }
 
+/// One command the first-run review shows.
+pub(crate) struct ReviewItem {
+    pub(crate) label: String,
+    pub(crate) command_line: String,
+    pub(crate) cwd: String,
+    pub(crate) env_names: Vec<String>,
+    pub(crate) digest: String,
+}
+
 /// A run waiting on the review / unsaved-files prompt.
 pub(crate) struct PendingTaskRun {
-    pub(crate) key: TaskKey,
-    pub(crate) label: String,
-    pub(crate) resolved: ResolvedTask,
-    pub(crate) digest: String,
-    pub(crate) needs_review: bool,
+    pub(crate) plan: super::task_graph::StartPlan,
+    /// Workspace commands not reviewed yet (empty when nothing needs review).
+    pub(crate) review: Vec<ReviewItem>,
     pub(crate) dirty_files: Vec<String>,
 }
 
 impl PendingTaskRun {
-    pub(crate) fn command_line(&self) -> String {
-        command_line(&self.resolved)
+    pub(crate) fn needs_review(&self) -> bool {
+        !self.review.is_empty()
     }
 }
 
@@ -1078,19 +1239,48 @@ exit_codes = [0, 3]
 
         fn trust_everything(&mut self) {
             // Workspace tasks are reviewed on first run; most tests are about running.
-            let digests: Vec<_> = ["build", "slow", "multi", "term"]
-                .iter()
-                .map(|id| {
-                    let (def, _) = self.app.read_task(&Self::key(id)).unwrap();
-                    lumen_task_core::execution_digest(&def)
-                })
-                .collect();
-            for digest in digests {
+            let path = crate::services::tasks::workspace_path(self.root.path());
+            let file = lumen_task_core::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
+            for def in &file.tasks {
+                let digest = lumen_task_core::execution_digest(def);
                 self.app
                     .task_trust
                     .trust(self.root.path(), &digest)
                     .unwrap();
             }
+        }
+
+        /// Replace the workspace tasks file and trust everything in it.
+        fn write_tasks(&mut self, body: &str) {
+            let path = crate::services::tasks::workspace_path(self.root.path());
+            std::fs::write(&path, format!("schema_version = 1\n{body}")).unwrap();
+            self.trust_everything();
+        }
+
+        /// Report a child process as finished (exit code, pipes closed).
+        fn complete(&mut self, process: usize, code: i32) {
+            self.finish(process, code);
+            self.poll_at(Instant::now());
+        }
+
+        fn launched_labels(&self) -> Vec<String> {
+            self.fake
+                .launched
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|t| t.label.clone())
+                .collect()
+        }
+
+        fn summary(&self) -> &TaskRun {
+            self.app
+                .view
+                .task_runs
+                .runs()
+                .iter()
+                .find(|run| run.summary)
+                .expect("a group tab")
         }
     }
 
@@ -1443,7 +1633,7 @@ exit_codes = [0, 3]
             "nothing runs before the review"
         );
         let pending = h.app.view.task_pending.as_ref().expect("review prompt");
-        assert!(pending.needs_review && pending.command_line() == "cargo build");
+        assert!(pending.needs_review() && pending.review[0].command_line == "cargo build");
         h.app.execute(Command::CancelTaskRun, &h.ctx);
         assert!(h.app.view.task_pending.is_none() && h.fake.launched.lock().unwrap().is_empty());
         h.run("build");
@@ -1506,7 +1696,7 @@ exit_codes = [0, 3]
             .as_ref()
             .expect("prompt for unsaved files");
         assert_eq!(pending.dirty_files, ["a.rs"]);
-        assert!(!pending.needs_review);
+        assert!(!pending.needs_review());
         assert!(h.fake.launched.lock().unwrap().is_empty());
         h.app.execute(Command::ConfirmTaskRun(false), &h.ctx);
         assert_eq!(
@@ -1579,8 +1769,6 @@ exit_codes = [0, 3]
             "{}",
             h.app.view.status
         );
-        h.run("all");
-        assert!(h.app.view.status.contains("dependency scheduler"));
         h.run("ghost");
         assert!(h.app.view.status.contains("no longer exists"));
         assert!(h.app.view.task_runs.runs().is_empty());
@@ -2018,6 +2206,479 @@ exit_codes = [0, 3]
         assert!(
             !h.app.view.task_runs.focus_canvas,
             "pipe runs do not steal focus"
+        );
+    }
+
+    /// `n` simple process tasks A.. with the given extra TOML lines per task, then
+    /// a compound task `all`.
+    fn group_file(extra: &[(&str, &str)], all: &str) -> String {
+        let mut body = String::new();
+        for (id, more) in extra {
+            let label = id.to_uppercase();
+            body.push_str(&format!(
+                "\n[[tasks]]\nid = \"{id}\"\nlabel = \"{label}\"\ntype = \"process\"\ncommand = \"echo\"\nargs = [\"{id}\"]\nsave = \"none\"\n{more}\n"
+            ));
+        }
+        body.push_str(&format!(
+            "\n[[tasks]]\nid = \"all\"\nlabel = \"All\"\ntype = \"compound\"\n{all}\n"
+        ));
+        body
+    }
+
+    #[test]
+    fn a_sequence_runs_one_task_at_a_time_in_order_and_the_group_reports_completion() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("a", ""), ("b", ""), ("c", "")],
+            "depends_on = [\"a\", \"b\", \"c\"]\ndepends_order = \"sequence\"",
+        ));
+        h.run("all");
+        assert_eq!(h.launched_labels(), ["A"], "only the first starts");
+        assert!(h.summary().is_active() && h.app.view.task_runs.selected == Some(h.summary().id));
+        h.complete(0, 0);
+        assert_eq!(h.launched_labels(), ["A", "B"]);
+        h.complete(1, 0);
+        assert_eq!(h.launched_labels(), ["A", "B", "C"]);
+        assert!(h.summary().is_active(), "not done until the last one is");
+        h.complete(2, 0);
+        let summary = h.summary();
+        assert_eq!(summary.outcome(), Some(&RunOutcome::Completed));
+        let text = summary.log.text();
+        for needle in ["[start] A", "[ok] A", "[start] C", "[ok] C", "Completed"] {
+            assert!(text.contains(needle), "{needle} in {text}");
+        }
+        // The parent and each child have their own tabs; children know their parent.
+        let runs = h.app.view.task_runs.runs();
+        assert_eq!(runs.len(), 4);
+        let child = runs.iter().find(|r| r.label == "B").unwrap();
+        assert_eq!(
+            h.app.view.task_runs.parent_label(child.id).as_deref(),
+            Some("All")
+        );
+        assert!(h.app.view.status.contains("Completed"));
+    }
+
+    #[test]
+    fn parallel_dependencies_start_together_and_a_shared_dependency_runs_once() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[
+                ("build", ""),
+                ("t1", "depends_on = [\"build\"]"),
+                ("t2", "depends_on = [\"build\"]"),
+            ],
+            "depends_on = [\"t1\", \"t2\", \"build\"]\ndepends_order = \"parallel\"",
+        ));
+        h.run("all");
+        assert_eq!(
+            h.launched_labels(),
+            ["BUILD"],
+            "the shared prerequisite first, once"
+        );
+        h.complete(0, 0);
+        assert_eq!(
+            h.launched_labels(),
+            ["BUILD", "T1", "T2"],
+            "siblings run side by side"
+        );
+        h.complete(1, 0);
+        h.complete(2, 0);
+        assert_eq!(
+            h.launched_labels().iter().filter(|l| *l == "BUILD").count(),
+            1
+        );
+        assert_eq!(h.summary().outcome(), Some(&RunOutcome::Completed));
+    }
+
+    #[test]
+    fn fail_fast_stops_running_siblings_and_skips_what_has_not_started() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("a", ""), ("b", ""), ("c", ""), ("d", ""), ("e", "")],
+            "depends_on = [\"a\", \"b\", \"c\", \"d\", \"e\"]\ndepends_order = \"parallel\"",
+        ));
+        h.run("all");
+        assert_eq!(
+            h.launched_labels().len(),
+            MAX_ACTIVE_RUNS,
+            "limited by the concurrency cap"
+        );
+        h.complete(0, 1);
+        assert_eq!(
+            h.fake.process(1).lock().unwrap().stop_requests,
+            1,
+            "siblings are stopped"
+        );
+        assert_eq!(h.fake.process(2).lock().unwrap().stop_requests, 1);
+        assert_eq!(h.fake.process(3).lock().unwrap().stop_requests, 1);
+        assert_eq!(h.launched_labels().len(), MAX_ACTIVE_RUNS, "E never starts");
+        for process in 1..4 {
+            h.complete(process, 0);
+        }
+        let summary = h.summary();
+        assert_eq!(
+            summary.outcome(),
+            Some(&RunOutcome::GroupFailed("A".into()))
+        );
+        assert!(
+            summary.log.text().contains("[skipped] E"),
+            "{}",
+            summary.log.text()
+        );
+    }
+
+    #[test]
+    fn the_continue_policy_lets_independent_tasks_finish_and_skips_only_dependents() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("a", ""), ("b", ""), ("after_a", "depends_on = [\"a\"]")],
+            "depends_on = [\"a\", \"b\", \"after_a\"]\ndepends_order = \"parallel\"\non_failure = \"continue\"",
+        ));
+        h.run("all");
+        assert_eq!(h.launched_labels(), ["A", "B"]);
+        h.complete(0, 2);
+        assert_eq!(
+            h.fake.process(1).lock().unwrap().stop_requests,
+            0,
+            "B is left alone"
+        );
+        assert!(h.summary().is_active());
+        h.complete(1, 0);
+        let summary = h.summary();
+        assert_eq!(
+            summary.outcome(),
+            Some(&RunOutcome::GroupFailed("A".into()))
+        );
+        assert!(summary.log.text().contains("[skipped] AFTER_A"));
+        assert_eq!(h.launched_labels(), ["A", "B"], "the dependent never ran");
+    }
+
+    #[test]
+    fn a_task_that_cannot_start_fails_the_group() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("a", ""), ("b", "")],
+            "depends_on = [\"a\", \"b\"]\ndepends_order = \"sequence\"",
+        ));
+        h.run("all");
+        *h.fake.fail_with.lock().unwrap() = Some("cannot spawn b".into());
+        h.complete(0, 0);
+        let summary = h.summary();
+        assert_eq!(
+            summary.outcome(),
+            Some(&RunOutcome::GroupFailed("B".into()))
+        );
+        let b = h
+            .app
+            .view
+            .task_runs
+            .runs()
+            .iter()
+            .find(|r| r.label == "B")
+            .unwrap();
+        assert!(matches!(b.outcome(), Some(RunOutcome::SpawnFailed(_))));
+    }
+
+    #[test]
+    fn the_concurrency_limit_queues_tasks_and_starts_them_as_slots_free() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[
+                ("a", ""),
+                ("b", ""),
+                ("c", ""),
+                ("d", ""),
+                ("e", ""),
+                ("f", ""),
+            ],
+            "depends_on = [\"a\", \"b\", \"c\", \"d\", \"e\", \"f\"]\ndepends_order = \"parallel\"",
+        ));
+        h.run("all");
+        assert_eq!(h.launched_labels().len(), MAX_ACTIVE_RUNS);
+        h.complete(0, 0);
+        assert_eq!(
+            h.launched_labels().len(),
+            MAX_ACTIVE_RUNS + 1,
+            "one finished, one more starts"
+        );
+        h.complete(1, 0);
+        assert_eq!(h.launched_labels().len(), 6);
+        for process in 2..6 {
+            h.complete(process, 0);
+        }
+        assert_eq!(h.summary().outcome(), Some(&RunOutcome::Completed));
+        assert_eq!(h.app.view.task_runs.active_count(), 0);
+    }
+
+    #[test]
+    fn stopping_a_group_stops_its_children_skips_the_rest_and_ends_stopped() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("a", ""), ("b", "")],
+            "depends_on = [\"a\", \"b\"]\ndepends_order = \"sequence\"",
+        ));
+        h.run("all");
+        let parent = h.summary().id;
+        h.app.execute(Command::StopTaskRun(parent), &h.ctx);
+        assert_eq!(h.fake.process(0).lock().unwrap().stop_requests, 1);
+        assert!(matches!(h.summary().state, RunState::Stopping));
+        h.poll_at(Instant::now());
+        h.complete(0, 0);
+        assert_eq!(h.summary().outcome(), Some(&RunOutcome::Cancelled));
+        assert_eq!(h.launched_labels(), ["A"], "B never started");
+        assert!(h.summary().log.text().contains("[skipped] B"));
+    }
+
+    #[test]
+    fn restarting_a_group_or_one_of_its_children_runs_the_whole_group_again() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("a", ""), ("b", "")],
+            "depends_on = [\"a\", \"b\"]\ndepends_order = \"parallel\"",
+        ));
+        h.run("all");
+        let child = h
+            .app
+            .view
+            .task_runs
+            .runs()
+            .iter()
+            .find(|r| r.label == "A")
+            .unwrap()
+            .id;
+        h.app.execute(Command::RestartTaskRun(child), &h.ctx);
+        assert_eq!(
+            h.fake.process(0).lock().unwrap().stop_requests,
+            1,
+            "the group is wound down"
+        );
+        assert_eq!(
+            h.launched_labels().len(),
+            2,
+            "no new process until the group has stopped"
+        );
+        h.complete(0, 0);
+        h.complete(1, 0);
+        assert_eq!(
+            h.launched_labels().len(),
+            4,
+            "the whole group started again"
+        );
+        assert_eq!(
+            h.app
+                .view
+                .task_runs
+                .runs()
+                .iter()
+                .filter(|r| r.summary)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_review_covers_every_workspace_command_in_the_group_before_anything_starts() {
+        let mut h = Harness::new();
+        let path = crate::services::tasks::workspace_path(h.root.path());
+        std::fs::write(
+            &path,
+            format!(
+                "schema_version = 1\n{}",
+                group_file(&[("a", ""), ("b", "")], "depends_on = [\"a\", \"b\"]")
+            ),
+        )
+        .unwrap();
+        h.run("all");
+        let pending = h.app.view.task_pending.as_ref().expect("review prompt");
+        assert_eq!(pending.review.len(), 2, "both commands are listed");
+        assert_eq!(pending.plan.label, "All");
+        assert!(h.fake.launched.lock().unwrap().is_empty());
+        h.app.execute(Command::ConfirmTaskRun(false), &h.ctx);
+        assert_eq!(h.launched_labels(), ["A"]);
+        h.complete(0, 0);
+        h.complete(1, 0);
+        // Both are trusted now, so the group runs again without a prompt.
+        h.run("all");
+        assert!(h.app.view.task_pending.is_none());
+    }
+
+    #[test]
+    fn a_bad_graph_aborts_before_any_process_starts() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("a", ""), ("bad", "cwd = \"${fileDirname}\"")],
+            "depends_on = [\"a\", \"bad\"]",
+        ));
+        h.run("all");
+        assert!(
+            h.fake.launched.lock().unwrap().is_empty(),
+            "nothing started"
+        );
+        assert!(
+            h.app.view.status.contains("'BAD'") && h.app.view.status.contains("saved file"),
+            "{}",
+            h.app.view.status
+        );
+
+        h.write_tasks(&group_file(
+            &[(
+                "a",
+                "is_background = true\n[tasks.background]\nready_pattern = \"up\"",
+            )],
+            "depends_on = [\"a\"]",
+        ));
+        h.run("all");
+        assert!(
+            h.app.view.status.contains("background task"),
+            "{}",
+            h.app.view.status
+        );
+        assert!(h.fake.launched.lock().unwrap().is_empty());
+
+        // A cycle is caught when the file is read: the whole file is refused.
+        let path = crate::services::tasks::workspace_path(h.root.path());
+        std::fs::write(
+            &path,
+            format!(
+                "schema_version = 1\n{}",
+                group_file(
+                    &[("a", "depends_on = [\"b\"]"), ("b", "depends_on = [\"a\"]")],
+                    "depends_on = [\"a\"]"
+                )
+            ),
+        )
+        .unwrap();
+        h.run("all");
+        assert!(
+            h.app.view.status.contains("has problems") && h.app.view.status.contains("cycle"),
+            "{}",
+            h.app.view.status
+        );
+        assert!(h.fake.launched.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_task_with_dependencies_runs_them_first_then_itself_and_compounds_nest() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("a", ""), ("b", "depends_on = [\"a\"]"), ("c", "")],
+            "depends_on = [\"b\", \"c\"]\ndepends_order = \"sequence\"",
+        ));
+        h.run("b");
+        assert_eq!(
+            h.launched_labels(),
+            ["A"],
+            "a process task waits for its dependency"
+        );
+        h.complete(0, 0);
+        h.complete(1, 0);
+        assert_eq!(h.summary().outcome(), Some(&RunOutcome::Completed));
+        // A compound that depends on a compound: the middle node only orders.
+        let mut h = Harness::new();
+        h.write_tasks(&format!(
+            "{}\n[[tasks]]\nid = \"top\"\nlabel = \"Top\"\ntype = \"compound\"\ndepends_on = [\"all\", \"c\"]\ndepends_order = \"sequence\"\n",
+            group_file(&[("a", ""), ("c", "")], "depends_on = [\"a\"]")
+        ));
+        h.run("top");
+        assert_eq!(h.launched_labels(), ["A"]);
+        h.complete(0, 0);
+        assert_eq!(
+            h.launched_labels(),
+            ["A", "C"],
+            "the nested compound completed instantly"
+        );
+        h.complete(1, 0);
+        assert_eq!(h.summary().outcome(), Some(&RunOutcome::Completed));
+    }
+
+    #[test]
+    fn an_already_running_group_or_member_is_not_started_twice() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("a", ""), ("b", "")],
+            "depends_on = [\"a\", \"b\"]\ndepends_order = \"parallel\"",
+        ));
+        h.run("all");
+        let launched = h.fake.launched.lock().unwrap().len();
+        h.app.view.task_runs.panel_open = false;
+        h.run("all");
+        assert_eq!(h.fake.launched.lock().unwrap().len(), launched);
+        assert!(h.app.view.task_runs.panel_open && h.app.view.status.contains("already running"));
+        // A member that is running on its own blocks a group that needs it.
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("a", ""), ("b", "")],
+            "depends_on = [\"a\", \"b\"]",
+        ));
+        h.run("a");
+        h.run("all");
+        assert_eq!(h.launched_labels(), ["A"]);
+        assert!(
+            h.app.view.status.contains("'A' is already running"),
+            "{}",
+            h.app.view.status
+        );
+    }
+
+    #[test]
+    fn quitting_stops_a_whole_group_and_its_children() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("a", ""), ("b", "")],
+            "depends_on = [\"a\", \"b\"]\ndepends_order = \"parallel\"",
+        ));
+        h.run("all");
+        h.app.request_quit(&h.ctx);
+        assert!(h.app.view.task_quit.is_some());
+        h.app.execute(Command::ConfirmTaskQuit, &h.ctx);
+        for process in 0..2 {
+            assert_eq!(h.fake.process(process).lock().unwrap().stop_requests, 1);
+            h.finish(process, 0);
+        }
+        h.poll_at(Instant::now());
+        h.poll_at(Instant::now());
+        assert!(h.app.view.allow_quit);
+    }
+
+    #[test]
+    fn a_workspace_group_can_include_a_personal_task_by_explicit_reference_only() {
+        let mut h = Harness::new();
+        let user_path = h.app.task_user_path.clone().unwrap();
+        std::fs::create_dir_all(user_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_path,
+            "schema_version = 1\n[[tasks]]\nid = \"lint\"\nlabel = \"Personal lint\"\ntype = \"process\"\ncommand = \"echo\"\nargs = [\"lint\"]\ncwd = \"/\"\nsave = \"none\"\n",
+        )
+        .unwrap();
+        h.write_tasks(&group_file(
+            &[("a", "")],
+            "depends_on = [\"a\", \"user:lint\"]\ndepends_order = \"sequence\"",
+        ));
+        h.run("all");
+        assert_eq!(h.launched_labels(), ["A"]);
+        h.complete(0, 0);
+        assert_eq!(h.launched_labels(), ["A", "Personal lint"]);
+        assert!(
+            h.app.view.task_pending.is_none(),
+            "personal tasks are not reviewed"
+        );
+        h.complete(1, 0);
+        assert_eq!(h.summary().outcome(), Some(&RunOutcome::Completed));
+        // Without the explicit prefix the same id would mean a workspace task.
+        let path = crate::services::tasks::workspace_path(h.root.path());
+        std::fs::write(
+            &path,
+            format!(
+                "schema_version = 1\n{}",
+                group_file(&[("a", "")], "depends_on = [\"lint\"]")
+            ),
+        )
+        .unwrap();
+        h.run("all");
+        assert!(
+            h.app.view.status.contains("problems") || h.app.view.status.contains("unknown"),
+            "{}",
+            h.app.view.status
         );
     }
 }

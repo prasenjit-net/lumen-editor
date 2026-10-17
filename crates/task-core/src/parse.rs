@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, HashSet};
 use toml_edit::{DocumentMut, Item, Table, Value};
 
 use crate::{
-    Background, DependsOrder, InstancePolicy, Issue, OutputReuse, Platform, PlatformOverride,
-    Presentation, Reveal, SCHEMA_VERSION, SavePolicy, TaskDef, TaskFile, TaskKind, Transport,
-    validate::validate_file,
+    Background, DependsOrder, FailurePolicy, InstancePolicy, Issue, OutputReuse, Platform,
+    PlatformOverride, Presentation, Reveal, SCHEMA_VERSION, SavePolicy, TaskDef, TaskFile,
+    TaskKind, Transport, validate::validate_file,
 };
 
 const TOP_KEYS: &[&str] = &["schema_version", "tasks"];
@@ -23,6 +23,7 @@ const TASK_KEYS: &[&str] = &[
     "is_default",
     "depends_on",
     "depends_order",
+    "on_failure",
     "transport",
     "save",
     "instance_policy",
@@ -129,6 +130,13 @@ pub(crate) fn read_task(table: &Table, issues: &mut Vec<Issue>) -> TaskDef {
         &[
             ("sequence", DependsOrder::Sequence),
             ("parallel", DependsOrder::Parallel),
+        ],
+    );
+    def.on_failure = reader.choice(
+        "on_failure",
+        &[
+            ("fail_fast", FailurePolicy::FailFast),
+            ("continue", FailurePolicy::Continue),
         ],
     );
     def.transport = reader.choice(

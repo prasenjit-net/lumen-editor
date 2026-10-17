@@ -80,6 +80,12 @@ pub fn validate_task(def: &TaskDef) -> Vec<Issue> {
         TaskKind::Compound => compound_rules(def, &mut problem),
         _ => execution_rules(def, &mut problem),
     }
+    if def.on_failure.is_some() && def.depends_on.is_empty() {
+        problem(
+            "on_failure",
+            "only applies to a task with depends_on".into(),
+        );
+    }
     background_rules(def, &mut problem);
     dependency_syntax(def, &mut problem);
     issues

@@ -612,3 +612,37 @@ fn invalid_or_unreadable_input_is_never_rewritten() {
         Err(EditError::Unreadable(_))
     ));
 }
+
+#[test]
+fn the_failure_policy_parses_validates_round_trips_and_defaults_to_fail_fast() {
+    let text = format!(
+        "{EXAMPLE}\n[[tasks]]\nid = \"all\"\nlabel = \"All\"\ntype = \"compound\"\ndepends_on = [\"build\", \"test\"]\ndepends_order = \"parallel\"\non_failure = \"continue\"\n"
+    );
+    let parsed = parse(&text).unwrap();
+    let all = parsed.get("all").unwrap();
+    assert_eq!(all.on_failure, Some(FailurePolicy::Continue));
+    assert_eq!(all.effective_failure_policy(), FailurePolicy::Continue);
+    assert_eq!(
+        parsed.get("verify").unwrap().effective_failure_policy(),
+        FailurePolicy::FailFast
+    );
+    let mut text2 = text.clone();
+    for def in &parsed.tasks {
+        text2 = upsert_task(&text2, def).unwrap();
+    }
+    assert_eq!(
+        text2, text,
+        "unchanged definitions leave the text identical"
+    );
+    let bad = text.replace("on_failure = \"continue\"", "on_failure = \"explode\"");
+    assert!(has(&bad, "'explode' is not one of: fail_fast, continue"));
+    let alone = EXAMPLE.replace(
+        "id = \"build\"\nlabel = \"Build\"",
+        "id = \"build\"\non_failure = \"continue\"\nlabel = \"Build\"",
+    );
+    assert!(has(&alone, "only applies to a task with depends_on"));
+    let mut a = parsed.get("all").unwrap().clone();
+    let base = execution_digest(&a);
+    a.on_failure = None;
+    assert_ne!(execution_digest(&a), base, "the policy changes what runs");
+}

@@ -141,6 +141,24 @@ impl DependsOrder {
     }
 }
 
+/// What a task group does when one of its tasks fails.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailurePolicy {
+    /// Stop running siblings and skip everything not yet started (default).
+    FailFast,
+    /// Let independent tasks finish; dependents of the failure are still skipped.
+    Continue,
+}
+
+impl FailurePolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FailFast => "fail_fast",
+            Self::Continue => "continue",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reveal {
     Always,
@@ -249,6 +267,7 @@ pub struct TaskDef {
     pub is_default: bool,
     pub depends_on: Vec<String>,
     pub depends_order: Option<DependsOrder>,
+    pub on_failure: Option<FailurePolicy>,
     pub transport: Option<Transport>,
     pub save: Option<SavePolicy>,
     pub instance_policy: Option<InstancePolicy>,
@@ -278,6 +297,7 @@ impl TaskDef {
             is_default: false,
             depends_on: Vec::new(),
             depends_order: None,
+            on_failure: None,
             transport: None,
             save: None,
             instance_policy: None,
@@ -320,6 +340,9 @@ impl TaskDef {
     }
     pub fn effective_instance_policy(&self) -> InstancePolicy {
         self.instance_policy.unwrap_or(InstancePolicy::Single)
+    }
+    pub fn effective_failure_policy(&self) -> FailurePolicy {
+        self.on_failure.unwrap_or(FailurePolicy::FailFast)
     }
     pub fn effective_depends_order(&self) -> DependsOrder {
         self.depends_order.unwrap_or(DependsOrder::Sequence)

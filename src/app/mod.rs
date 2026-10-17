@@ -29,6 +29,7 @@ pub(crate) mod tab_close;
 pub(crate) mod tab_commands;
 pub(crate) mod task_catalog;
 pub(crate) mod task_editor;
+pub(crate) mod task_graph;
 pub(crate) mod task_runs;
 mod tasks;
 pub(crate) mod terminal;

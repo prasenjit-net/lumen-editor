@@ -131,6 +131,7 @@ fn write_task(table: &mut Table, task: &TaskDef) {
         "depends_order",
         task.depends_order.map(|v| v.as_str()),
     );
+    set_str(table, "on_failure", task.on_failure.map(|v| v.as_str()));
     set_str(table, "transport", task.transport.map(|v| v.as_str()));
     set_str(table, "save", task.save.map(|v| v.as_str()));
     set_str(

@@ -37,6 +37,12 @@ pub fn execution_digest(task: &TaskDef) -> String {
             .unwrap_or_default(),
     );
     field(
+        "on_failure",
+        task.on_failure
+            .map(|v| v.as_str().to_string())
+            .unwrap_or_default(),
+    );
+    field(
         "background",
         match &task.background {
             Some(b) => b.ready_pattern.clone(),

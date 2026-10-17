@@ -22,33 +22,55 @@ impl Workbench<'_> {
         let Some(pending) = self.view.task_pending.as_ref() else {
             return;
         };
-        let title = if pending.needs_review {
+        let title = if pending.needs_review() {
             "Review task before running"
         } else {
             "Unsaved files"
         };
-        let (label, command_line, cwd, needs_review, dirty, env_names) = (
-            pending.label.clone(),
-            pending.command_line(),
-            pending.resolved.cwd.display().to_string(),
-            pending.needs_review,
-            pending.dirty_files.clone(),
-            pending.resolved.env.keys().cloned().collect::<Vec<_>>(),
-        );
+        let label = pending.plan.label.clone();
+        let task_count = pending
+            .plan
+            .nodes
+            .iter()
+            .filter(|n| n.resolved.is_some())
+            .count();
+        let items: Vec<_> = pending
+            .review
+            .iter()
+            .map(|item| {
+                (
+                    item.label.clone(),
+                    item.command_line.clone(),
+                    item.cwd.clone(),
+                    item.env_names.clone(),
+                )
+            })
+            .collect();
+        let dirty = pending.dirty_files.clone();
         let mut answer = None;
         centered(title).show(ctx, |ui| {
             ui.set_max_width(480.0);
             ui.add(egui::Label::new(RichText::new(format!("Run '{label}'?")).strong()).wrap());
-            if needs_review {
+            if task_count > 1 {
+                ui.label(
+                    RichText::new(format!("This starts {task_count} tasks."))
+                        .size(11.0)
+                        .color(colors.muted),
+                );
+            }
+            for (name, command_line, cwd, env_names) in &items {
                 ui.add_space(4.0);
+                if items.len() > 1 {
+                    ui.label(RichText::new(name).strong().size(11.0));
+                }
                 ui.label(RichText::new("Command").size(11.0).color(colors.muted));
-                ui.add(egui::Label::new(RichText::new(&command_line).monospace()).wrap());
+                ui.add(egui::Label::new(RichText::new(command_line).monospace()).wrap());
                 ui.label(
                     RichText::new("Working directory")
                         .size(11.0)
                         .color(colors.muted),
                 );
-                ui.add(egui::Label::new(RichText::new(&cwd).monospace()).wrap());
+                ui.add(egui::Label::new(RichText::new(cwd).monospace()).wrap());
                 if !env_names.is_empty() {
                     ui.label(
                         RichText::new(format!("Sets: {}", env_names.join(", ")))
@@ -56,12 +78,14 @@ impl Workbench<'_> {
                             .color(colors.muted),
                     );
                 }
+            }
+            if !items.is_empty() {
                 ui.add_space(4.0);
                 ui.add(
                     egui::Label::new(
                         RichText::new(
-                            "It runs on your computer with your permissions. You will not be \
-                             asked again unless the command changes.",
+                            "These run on your computer with your permissions. You will not be \
+                             asked again unless a command changes.",
                         )
                         .color(colors.muted),
                     )
