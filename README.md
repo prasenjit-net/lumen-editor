@@ -34,6 +34,34 @@ leave a partial destination, reported in the status bar for inspection.
 Current limits: single-selection operations, in-app file clipboard, no drag
 and drop or explorer operation undo. Symlink copying is rejected explicitly.
 
+## Opening from the command line
+
+Start Lumen with files and folders to open them directly:
+
+```
+lumen [OPTIONS] [PATH[:LINE[:COLUMN]]]...
+lumen .                       # open the current folder
+lumen src/main.rs:42:7 README.md
+```
+
+A folder becomes the workspace (a workspace holds one folder, so extra folders
+are reported and skipped). Files open as tabs in the order given and the last
+one is shown; a file that is already open is simply activated. `LINE` and
+`COLUMN` are 1-based and place the caret; a path that really exists with a
+`:number` in its name is opened as written. Relative paths resolve against the
+directory Lumen was started from. A path that cannot be opened is logged to the
+Output panel and summarised in the status bar without stopping the others, and
+a named file that does not exist is not created. `-h`/`--help` and
+`-V`/`--version` print and exit; an unknown option exits with status 2; `--`
+ends option parsing. When any path is given, the "Reopen Last Folder" setting is
+not applied.
+
+Limits: the `--help`/`--version` text is not visible from the Windows release
+build, which is a GUI-subsystem program without a console. Double-clicking a
+file in the Finder or Explorer, `open -a`, and a second `lumen` call forwarding
+its paths to a running window are not wired up yet; each launch starts its own
+window.
+
 ## Text editing
 
 The Search activity panel searches an open folder in a cancellable background

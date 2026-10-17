@@ -15,6 +15,7 @@ use std::{
     rc::Rc,
 };
 
+mod cli_open;
 mod clipboard;
 mod editor;
 mod explorer;

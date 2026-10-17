@@ -2,6 +2,7 @@
 
 mod app;
 mod bootstrap;
+mod cli;
 mod icon;
 mod model;
 mod platform;

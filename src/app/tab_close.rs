@@ -106,6 +106,10 @@ impl LumenApp {
             self.view.bulk_close.clear();
             return;
         }
+        // Called every frame: with nothing queued it must leave the status alone.
+        if self.view.bulk_close.queue.is_empty() {
+            return;
+        }
         while !self.view.bulk_close.queue.is_empty() {
             let id = self.view.bulk_close.queue.remove(0);
             let Some(index) = self.editor.index_of(id) else {
@@ -240,5 +244,19 @@ mod tests {
         assert!(app.editor.files[0].dirty);
         app.begin_bulk_close(TabCloseScope::Saved);
         assert_eq!(app.view.status, "No tabs to close");
+    }
+
+    #[test]
+    fn idle_frames_never_overwrite_the_status_bar() {
+        let (mut app, _) = app_with_tabs(2);
+        app.view.status = "Opened 3 items from the command line".into();
+        for _ in 0..3 {
+            app.advance_bulk_close();
+        }
+        assert_eq!(app.view.status, "Opened 3 items from the command line");
+        // A real bulk close still reports itself once it finishes.
+        let ids: Vec<_> = app.editor.files.iter().map(|f| f.id).collect();
+        app.begin_bulk_close(TabCloseScope::Others(ids[0]));
+        assert_eq!(app.view.status, "Closed tabs");
     }
 }
