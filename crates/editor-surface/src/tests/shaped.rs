@@ -259,7 +259,7 @@ fn shared_visual_shape_never_reuses_lf_source_offsets_for_crlf() {
     );
     buffer.replace_document("a\r\nb").unwrap();
     let after = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
-    assert_eq!(before.geometry.galley.text(), after.geometry.galley.text());
+    assert_eq!(before.geometry.visual_text(), after.geometry.visual_text());
     // Persistent geometry reuse lets egui evict its own galley cache between
     // revisions. Shape allocation identity is therefore not guaranteed here.
     assert_eq!(before.geometry.size(), after.geometry.size());
@@ -328,7 +328,7 @@ fn bulk_accessible_positions_match_painted_geometry_including_preedit_and_crlf()
         );
         let geometry = geometry.unwrap();
         let shaped = geometry.shaped.as_ref().unwrap();
-        let text = geometry.galley.text();
+        let text = geometry.visual_text();
         let tree = output.platform_output.accesskit_update.unwrap();
         let mut character = 0;
         for (line, start) in shaped.starts.iter().copied().enumerate() {
@@ -467,7 +467,7 @@ fn shaped_inline_preedit_uses_rendered_caret_and_no_document_history() {
         ],
         300.0,
     );
-    assert_eq!(output.geometry.galley.text(), "acomposecd\nnext");
+    assert_eq!(output.geometry.visual_text(), "acomposecd\nnext");
     assert_eq!(output.geometry.caret_rect(2), output.ime_cursor.unwrap());
     assert_eq!(
         output

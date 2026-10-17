@@ -55,7 +55,7 @@ fn inline_preedit_replaces_primary_only_and_moves_neighbors_in_shared_geometry()
         ],
         300.0,
     );
-    assert_eq!(output.geometry.galley.text(), "acomposec\ndef");
+    assert_eq!(output.geometry.visual_text(), "acomposec\ndef");
     assert_eq!(buffer.text(), "abc\r\ndef");
     assert_eq!(buffer.selections(), &before);
     let (_, end) = output.geometry.preedit_rects().unwrap();
@@ -75,7 +75,7 @@ fn inline_preedit_replaces_primary_only_and_moves_neighbors_in_shared_geometry()
         vec![key(Key::Escape, Modifiers::NONE)],
         300.0,
     );
-    assert_eq!(restored.geometry.galley.text(), "abc\ndef");
+    assert_eq!(restored.geometry.visual_text(), "abc\ndef");
 }
 
 #[test]

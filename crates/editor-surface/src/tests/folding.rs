@@ -15,7 +15,7 @@ fn folded_projection_keeps_source_bytes_rows_and_accessibility_aligned() {
     for width in [320.0, 900.0] {
         let (mut surface, mut buffer, ctx) = folding_fixture();
         let output = frame(&mut surface, &mut buffer, &ctx, vec![], width);
-        assert_eq!(output.geometry.galley.text(), "fn main() {\nnext();");
+        assert_eq!(output.geometry.visual_text(), "fn main() {\nnext();");
         assert_eq!(output.geometry.row_count(), 2);
         assert_eq!(output.geometry.source_line_for_row(0), 1);
         assert_eq!(output.geometry.source_line_for_row(1), 5);

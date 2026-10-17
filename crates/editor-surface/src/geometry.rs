@@ -12,6 +12,10 @@ pub(crate) struct LayoutConfig {
     pub(crate) syntax: Option<(syntax::Language, crate::SyntaxPalette)>,
     /// Validated language-server spans in source byte coordinates.
     pub(crate) semantic: Option<Arc<Vec<lumen_language_services::TokenSpan>>>,
+    /// Build egui's whole-document galley. The shaped renderer paints from its own
+    /// layout and never reads it, so skipping it is most of the cost of opening a
+    /// large document.
+    pub(crate) galley: bool,
 }
 
 /// Syntax spans consumed by the renderer. Rust and Go use parser-backed
@@ -113,7 +117,10 @@ fn visual_semantic_spans(
 /// reuses one layout across frames instead of rebuilding them every frame.
 #[derive(Clone)]
 pub struct TextGeometry {
-    pub galley: Arc<Galley>,
+    /// egui's layout of the document; only present when egui renders the text.
+    galley: Option<Arc<Galley>>,
+    /// The laid-out text: source text with CRLF and folds projected.
+    pub(crate) visual: Arc<str>,
     pub origin: Pos2,
     byte_offsets: Arc<Vec<usize>>,
     graphemes: Arc<Vec<usize>>,
@@ -130,6 +137,17 @@ pub struct TextGeometry {
 }
 
 impl TextGeometry {
+    /// egui's galley. Only valid when egui renders the text (no shaper).
+    pub fn galley(&self) -> &Arc<Galley> {
+        self.galley
+            .as_ref()
+            .expect("the egui galley is built only when no shaper renders the text")
+    }
+
+    pub fn visual_text(&self) -> &str {
+        &self.visual
+    }
+
     pub fn layout(ui: &Ui, text: &str, origin: Pos2) -> Self {
         Self::layout_typography(
             ui,
@@ -141,6 +159,7 @@ impl TextGeometry {
                 language: None,
                 syntax: None,
                 semantic: None,
+                galley: true,
             },
             &[],
         )
@@ -159,6 +178,7 @@ impl TextGeometry {
             language,
             syntax,
             semantic,
+            galley: build_galley,
         } = config;
         // One transient layout replaces the primary range. Stored source and
         // history remain untouched; neighboring text participates in this galley.
@@ -217,61 +237,64 @@ impl TextGeometry {
             .map_or_else(Vec::new, |language| {
                 highlight(&visual, language, &semantic_spans)
             });
-        let galley = ui.fonts_mut(|fonts| {
-            let mut job = egui::text::LayoutJob::simple(
-                visual,
-                typography.font_id(),
-                ui.visuals().text_color(),
-                f32::INFINITY,
-            );
-            job.sections[0].format.line_height = Some(typography.line_height);
-            if let Some((_, palette)) = syntax {
-                let base = job.sections[0].format.clone();
-                job.sections.clear();
-                let mut position = 0;
-                for span in &syntax_spans {
-                    if position < span.range.start {
+        let galley = build_galley.then(|| {
+            ui.fonts_mut(|fonts| {
+                let mut job = egui::text::LayoutJob::simple(
+                    visual.clone(),
+                    typography.font_id(),
+                    ui.visuals().text_color(),
+                    f32::INFINITY,
+                );
+                job.sections[0].format.line_height = Some(typography.line_height);
+                if let Some((_, palette)) = syntax {
+                    let base = job.sections[0].format.clone();
+                    job.sections.clear();
+                    let mut position = 0;
+                    for span in &syntax_spans {
+                        if position < span.range.start {
+                            job.sections.push(egui::text::LayoutSection {
+                                leading_space: 0.0,
+                                byte_range: position..span.range.start,
+                                format: base.clone(),
+                            });
+                        }
+                        let mut format = base.clone();
+                        format.color = span.color(palette);
                         job.sections.push(egui::text::LayoutSection {
                             leading_space: 0.0,
-                            byte_range: position..span.range.start,
-                            format: base.clone(),
+                            byte_range: span.range.clone(),
+                            format,
+                        });
+                        position = span.range.end;
+                    }
+                    if position < job.text.len() || job.sections.is_empty() {
+                        job.sections.push(egui::text::LayoutSection {
+                            leading_space: 0.0,
+                            byte_range: position..job.text.len(),
+                            format: base,
                         });
                     }
-                    let mut format = base.clone();
-                    format.color = span.color(palette);
-                    job.sections.push(egui::text::LayoutSection {
-                        leading_space: 0.0,
-                        byte_range: span.range.clone(),
-                        format,
-                    });
-                    position = span.range.end;
                 }
-                if position < job.text.len() || job.sections.is_empty() {
-                    job.sections.push(egui::text::LayoutSection {
-                        leading_space: 0.0,
-                        byte_range: position..job.text.len(),
-                        format: base,
-                    });
-                }
-            }
-            fonts.layout_job(job)
+                fonts.layout_job(job)
+            })
         });
         let line_starts: Vec<_> = std::iter::once(0)
             .chain(text.match_indices('\n').map(|(byte, _)| byte + 1))
             .collect();
+        // One row per visual line (no wrapping), whichever renderer draws it.
         let mut character = 0;
-        let row_lines = galley
-            .rows
-            .iter()
+        let row_lines = visual
+            .split('\n')
             .map(|row| {
                 let byte = byte_offsets[character.min(byte_offsets.len() - 1)];
                 let line = line_starts.partition_point(|start| *start <= byte);
-                character += row.char_count_including_newline();
+                character += row.chars().count() + 1;
                 line
             })
             .collect();
         Self {
             galley,
+            visual: Arc::from(visual),
             origin,
             byte_offsets: Arc::new(byte_offsets),
             graphemes: Arc::new(
@@ -362,7 +385,7 @@ impl TextGeometry {
         #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
             let (target, affinity) = shaped.visual_step(
-                self.galley.text(),
+                self.visual_text(),
                 self.visual_byte(self.cursor(byte).index),
                 affinity,
                 right,
@@ -395,7 +418,7 @@ impl TextGeometry {
         if let Some(shaped) = &self.shaped {
             return shaped.caret(self.visual_byte(index), self.origin);
         }
-        self.galley
+        self.galley()
             .pos_from_cursor(CCursor::new(index))
             .translate(self.origin.to_vec2())
     }
@@ -444,7 +467,7 @@ impl TextGeometry {
                 )
             });
         }
-        self.galley.size()
+        self.galley().size()
     }
 
     pub fn row_count(&self) -> usize {
@@ -464,7 +487,7 @@ impl TextGeometry {
         if let Some(shaped) = &self.shaped {
             return shaped.rows(self.origin);
         }
-        self.galley
+        self.galley()
             .rows
             .iter()
             .map(|row| {
@@ -489,7 +512,7 @@ impl TextGeometry {
             return shaped.selection(self.visual_byte(start)..self.visual_byte(end), self.origin);
         }
         let mut offset = 0;
-        self.galley
+        self.galley()
             .rows
             .iter()
             .filter_map(|row| {
@@ -520,6 +543,17 @@ impl TextGeometry {
         !span.is_some_and(|span| span.range.contains(&visual) && span.excludes_bracket_matching())
     }
 
+    /// Shape the rows inside `clip` before anything is measured or drawn, so
+    /// selection and row geometry for what is visible are exact.
+    pub(crate) fn prepare_visible(&self, clip: Rect) {
+        #[cfg(feature = "shaped")]
+        if let Some(shaped) = &self.shaped {
+            shaped.prepare(self.origin.y, clip.top(), clip.bottom());
+        }
+        #[cfg(not(feature = "shaped"))]
+        let _ = clip;
+    }
+
     pub(crate) fn paint(&self, ui: &Ui, painter: &egui::Painter) {
         #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
@@ -532,19 +566,23 @@ impl TextGeometry {
             );
             return;
         }
-        painter.galley(self.origin, self.galley.clone(), ui.visuals().text_color());
+        painter.galley(
+            self.origin,
+            self.galley().clone(),
+            ui.visuals().text_color(),
+        );
     }
 
     fn hit_character(&self, pointer: Pos2) -> usize {
         #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
-            let byte = shaped.hit(self.galley.text(), pointer - self.origin);
+            let byte = shaped.hit(self.visual_text(), pointer - self.origin);
             return self
                 .visual_offsets
                 .binary_search(&byte)
                 .expect("shaped source character");
         }
-        self.galley.cursor_from_pos(pointer - self.origin).index
+        self.galley().cursor_from_pos(pointer - self.origin).index
     }
 
     #[cfg(feature = "shaped")]
@@ -575,8 +613,9 @@ impl TextGeometry {
         position: &egui::accesskit::TextPosition,
     ) -> Option<usize> {
         let mut index = 0;
-        for (row_index, row) in self.galley.rows.iter().enumerate() {
-            let count = row.char_count_including_newline();
+        let rows = self.visual.split('\n').count();
+        for (row_index, row) in self.visual.split('\n').enumerate() {
+            let count = row.chars().count() + usize::from(row_index + 1 < rows);
             if egui::accesskit::NodeId(widget.with(row_index).value()) == position.node {
                 if position.character_index > count {
                     return None;

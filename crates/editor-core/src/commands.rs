@@ -1,4 +1,4 @@
-use crate::{EditError, EditorBuffer, Selection, SelectionSet, selection::grapheme_boundaries};
+use crate::{EditError, EditorBuffer, Selection, SelectionSet, grapheme::is_boundary};
 use std::{collections::BTreeSet, ops::Range};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -222,21 +222,13 @@ fn word_at(text: &str, caret: usize) -> Option<Range<usize>> {
             .take_while(|grapheme| word(grapheme))
             .map(str::len)
             .sum::<usize>();
-    let boundaries = grapheme_boundaries(text);
-    (start < end
-        && boundaries.binary_search(&start).is_ok()
-        && boundaries.binary_search(&end).is_ok())
-    .then_some(start..end)
+    (start < end && is_boundary(text, start) && is_boundary(text, end)).then_some(start..end)
 }
 
 fn literal_ranges(text: &str, query: &str) -> Vec<Range<usize>> {
-    let boundaries = grapheme_boundaries(text);
     text.match_indices(query)
         .map(|(start, _)| start..start + query.len())
-        .filter(|range| {
-            boundaries.binary_search(&range.start).is_ok()
-                && boundaries.binary_search(&range.end).is_ok()
-        })
+        .filter(|range| is_boundary(text, range.start) && is_boundary(text, range.end))
         .collect()
 }
 
