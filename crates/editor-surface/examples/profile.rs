@@ -5,6 +5,7 @@ use lumen_editor_surface::EditorSurface;
 use std::{hint::black_box, time::Instant};
 
 fn main() {
+    tab_switch_probe();
     println!("fixture,bytes,cursors,accessibility,cold_ms,idle_mean_ms");
     for (fixture, text, cursors) in [
         (
@@ -74,5 +75,45 @@ fn main() {
                 timings[1..].iter().sum::<f64>() / 3.0
             );
         }
+    }
+}
+
+fn tab_switch_probe() {
+    for rows in [10_000, 50_000] {
+        let ctx = Context::default();
+        #[cfg(feature = "shaped")]
+        let mut surface = EditorSurface::with_shaper(lumen_editor_surface::Shaper::default());
+        #[cfg(not(feature = "shaped"))]
+        let mut surface = EditorSurface::default();
+        let mut large = EditorBuffer::new("let value = office_ffi + 123; // é\n".repeat(rows));
+        let mut small = EditorBuffer::new("small tab\n".into());
+        let mut render = |buffer: &mut EditorBuffer, tab| {
+            let start = Instant::now();
+            black_box(ctx.run(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        Vec2::new(900.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        black_box(surface.show(ui, Id::new(tab), buffer));
+                    });
+                },
+            ));
+            start.elapsed().as_secs_f64() * 1000.0
+        };
+        let cold = render(&mut large, "large");
+        let mut returns = Vec::new();
+        for _ in 0..5 {
+            render(&mut small, "small");
+            returns.push(render(&mut large, "large"));
+        }
+        eprintln!(
+            "tabs rows={rows} cold_ms={cold:.3} return_mean_ms={:.3}",
+            returns.iter().sum::<f64>() / returns.len() as f64
+        );
     }
 }

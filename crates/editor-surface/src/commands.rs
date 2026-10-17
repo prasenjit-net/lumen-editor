@@ -163,7 +163,7 @@ impl EditorSurface {
                 }
             }
             Key::ArrowUp | Key::ArrowDown if cursor_shortcut(modifiers) => {
-                let geometry = self.geometry(ui, buffer.text(), origin, None);
+                let geometry = self.geometry(ui, buffer, origin, None);
                 let set = buffer.selections();
                 let head = set.selections()[set.primary_index()].head;
                 let mut columns = self.preferred_columns(buffer, &geometry);
@@ -194,7 +194,7 @@ impl EditorSurface {
                 }
             }
             Key::ArrowUp | Key::ArrowDown if !modifiers.alt && !modifiers.ctrl => {
-                let geometry = self.geometry(ui, buffer.text(), origin, None);
+                let geometry = self.geometry(ui, buffer, origin, None);
                 let set = buffer.selections();
                 let columns = self.preferred_columns(buffer, &geometry);
                 let positions: Vec<_> = set
@@ -251,7 +251,7 @@ impl EditorSurface {
                 self.remember_columns(buffer, &selections, columns);
             }
             Key::PageUp | Key::PageDown => {
-                let geometry = self.geometry(ui, buffer.text(), origin, None);
+                let geometry = self.geometry(ui, buffer, origin, None);
                 let columns = self.preferred_columns(buffer, &geometry);
                 let distance = ui.clip_rect().height().max(self.typography.line_height)
                     - self.typography.line_height;

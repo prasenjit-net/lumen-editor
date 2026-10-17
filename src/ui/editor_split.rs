@@ -878,3 +878,121 @@ mod tests {
         assert!(a >= MIN_GROUP_HEIGHT && b >= MIN_GROUP_HEIGHT);
     }
 }
+
+#[cfg(test)]
+mod perf_probe {
+    use crate::{app::LumenApp, model::Document};
+    use eframe::egui;
+    use std::time::Instant;
+
+    fn source(lines: usize) -> String {
+        let mut text = String::new();
+        for n in 0..lines {
+            match n % 5 {
+                0 => text.push_str(&format!("pub fn function_{n}(value: u32) -> u32 {{\n")),
+                1 => text.push_str("    let doubled = value * 2; // comment é\n"),
+                2 => text.push_str("    println!(\"value {} of {}\", doubled, value);\n"),
+                3 => text.push_str("    doubled + 1\n"),
+                _ => text.push_str("}\n"),
+            }
+        }
+        text
+    }
+
+    #[test]
+    #[ignore = "profiling loop"]
+    fn big_file_loop() {
+        let mut app = LumenApp::default();
+        #[cfg(feature = "shared-editor")]
+        {
+            app.view.shared_editor = true;
+        }
+        app.editor
+            .files
+            .push(Document::from_path("big.rs".into(), source(30_000)));
+        app.editor.set_active_index(Some(0));
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        app.view.focus_editor = true;
+        let end = Instant::now() + std::time::Duration::from_secs(25);
+        while Instant::now() < end {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 800.0),
+                    )),
+                    events: vec![egui::Event::Text("x".into())],
+                    ..Default::default()
+                },
+                |ctx| app.render_component(ctx, |w| w.editor(ctx)),
+            );
+        }
+    }
+
+    fn key_event(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    #[ignore = "timing probe"]
+    fn big_file_typing() {
+        for name in ["big.rs", "big.txt"] {
+            for lines in [10_000usize, 50_000, 200_000] {
+                let mut app = LumenApp::default();
+                #[cfg(feature = "shared-editor")]
+                {
+                    app.view.shared_editor = true;
+                }
+                let text = source(lines);
+                app.editor
+                    .files
+                    .push(Document::from_path(name.into(), text));
+                app.editor.set_active_index(Some(0));
+                app.view.focus_editor = true;
+                let ctx = egui::Context::default();
+                crate::ui::theme::configure_ui(&ctx);
+                let frame = |app: &mut LumenApp, events: Vec<egui::Event>| {
+                    let start = Instant::now();
+                    let _ = ctx.run(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(1200.0, 800.0),
+                            )),
+                            events,
+                            ..Default::default()
+                        },
+                        |ctx| app.render_component(ctx, |w| w.editor(ctx)),
+                    );
+                    start.elapsed().as_secs_f64() * 1000.0
+                };
+                let cold = frame(&mut app, vec![]);
+                let idle = (0..3).map(|_| frame(&mut app, vec![])).sum::<f64>() / 3.0;
+                let first_type = frame(&mut app, vec![egui::Event::Text("x".into())]);
+                let len_after = app.editor.files[0].text.len();
+                let second_type = frame(&mut app, vec![egui::Event::Text("y".into())]);
+                let continuous = (0..4)
+                    .map(|_| frame(&mut app, vec![egui::Event::Text("z".into())]))
+                    .sum::<f64>()
+                    / 4.0;
+                // A pause (several idle frames) followed by one more keystroke.
+                for _ in 0..3 {
+                    frame(&mut app, vec![]);
+                }
+                let after_pause = frame(&mut app, vec![egui::Event::Text("w".into())]);
+                let _ = key_event;
+                eprintln!(
+                    "TYPE {name} lines={lines} cold={cold:.0} idle={idle:.1} first={first_type:.0} second={second_type:.0} continuous={continuous:.0} after_pause={after_pause:.0} edited={}",
+                    app.editor.files[0].text.len() > len_after
+                );
+            }
+        }
+    }
+}

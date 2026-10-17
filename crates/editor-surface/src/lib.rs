@@ -22,10 +22,13 @@ use lumen_editor_core::{
 use lumen_language_services::TokenClass;
 #[cfg(feature = "shaped")]
 pub use shaping::Shaper;
+use std::cell::RefCell;
 #[cfg(feature = "shaped")]
-use std::{cell::RefCell, sync::Arc};
+use std::sync::Arc;
 use std::{collections::BTreeSet, ops::Range};
 use unicode_segmentation::UnicodeSegmentation;
+
+const GEOMETRY_CACHE_LIMIT: usize = 20;
 
 #[derive(Default)]
 pub struct EditorSurface {
@@ -58,6 +61,8 @@ pub struct EditorSurface {
     shaper: Option<Shaper>,
     #[cfg(feature = "shaped")]
     shape_cache: RefCell<Option<CachedShape>>,
+    /// Recently displayed layouts, reused while their inputs are unchanged.
+    geometry_cache: RefCell<Vec<CachedGeometry>>,
 }
 
 /// Display-only configuration; never changes text, selections or history.
@@ -101,6 +106,51 @@ impl Typography {
             FontId::monospace(self.font_size)
         }
     }
+}
+
+/// Everything a document layout depends on besides the text itself. An unchanged
+/// key means the previous frame's layout is still exact.
+struct GeometryKey {
+    widget: Option<Id>,
+    buffer: u64,
+    revision: u64,
+    len: usize,
+    typography: Typography,
+    language: Option<Language>,
+    syntax: Option<(Language, SyntaxPalette)>,
+    /// Held (not just compared by address) so a freed-and-reused allocation can
+    /// never be mistaken for the same token list.
+    semantic: Option<std::sync::Arc<Vec<lumen_language_services::TokenSpan>>>,
+    folds: Vec<Range<usize>>,
+    text_color: Color32,
+    pixels_per_point: f32,
+}
+
+impl GeometryKey {
+    fn matches(&self, other: &Self) -> bool {
+        let same_semantic = match (&self.semantic, &other.semantic) {
+            (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        self.widget == other.widget
+            && self.buffer == other.buffer
+            && self.revision == other.revision
+            && self.len == other.len
+            && self.typography == other.typography
+            && self.language == other.language
+            && self.syntax == other.syntax
+            && same_semantic
+            && self.folds == other.folds
+            && self.text_color == other.text_color
+            && self.pixels_per_point == other.pixels_per_point
+    }
+}
+
+struct CachedGeometry {
+    key: GeometryKey,
+    geometry: TextGeometry,
+    fonts: egui::FontDefinitions,
 }
 
 #[cfg(feature = "shaped")]
@@ -218,15 +268,44 @@ impl EditorSurface {
     pub(crate) fn geometry(
         &self,
         ui: &Ui,
-        text: &str,
+        buffer: &EditorBuffer,
         origin: Pos2,
         composition: Option<&Composition>,
     ) -> TextGeometry {
+        let text = buffer.text();
         let folds = if composition.is_some() {
             Vec::new()
         } else {
             self.active_fold_intervals()
         };
+        // Laying out the whole document is linear in its size, so an unchanged
+        // document (scrolling, caret blink, hover) reuses the last layout. An
+        // in-progress composition changes the text projection, so it never caches.
+        let key = composition.is_none().then(|| GeometryKey {
+            widget: self.widget,
+            buffer: buffer.identity(),
+            revision: buffer.revision(),
+            len: text.len(),
+            typography: self.typography,
+            language: self.language,
+            syntax: self.syntax,
+            semantic: self.semantic.clone(),
+            folds: folds.clone(),
+            text_color: ui.visuals().text_color(),
+            pixels_per_point: ui.ctx().pixels_per_point(),
+        });
+        if let Some(key) = &key {
+            let mut cache = self.geometry_cache.borrow_mut();
+            if let Some(index) = cache.iter().position(|cached| {
+                cached.key.matches(key) && ui.fonts(|fonts| fonts.definitions() == &cached.fonts)
+            }) {
+                let cached = cache.remove(index);
+                let mut geometry = cached.geometry.clone();
+                geometry.origin = origin;
+                cache.push(cached);
+                return geometry;
+            }
+        }
         let geometry = TextGeometry::layout_typography(
             ui,
             text,
@@ -264,6 +343,19 @@ impl EditorSurface {
             }
             geometry
         };
+        if let Some(key) = key {
+            let mut cache = self.geometry_cache.borrow_mut();
+            cache.retain(|cached| cached.key.widget != key.widget);
+            // Bound retention to recently displayed document layouts per surface.
+            if cache.len() >= GEOMETRY_CACHE_LIMIT {
+                cache.remove(0);
+            }
+            cache.push(CachedGeometry {
+                key,
+                geometry: geometry.clone(),
+                fonts: ui.fonts(|fonts| fonts.definitions().clone()),
+            });
+        }
         geometry
     }
     pub fn show(&mut self, ui: &mut Ui, id: Id, buffer: &mut EditorBuffer) -> SurfaceOutput {
@@ -297,7 +389,7 @@ impl EditorSurface {
         let scrolled = area.show_viewport(ui, |ui, viewport| {
             let initial = self.geometry(
                 ui,
-                buffer.text(),
+                buffer,
                 Pos2::ZERO,
                 self.composition
                     .as_ref()
@@ -353,7 +445,7 @@ impl EditorSurface {
                 geometry.origin = origin;
                 geometry
             } else {
-                self.geometry(ui, buffer.text(), origin, self.composition.as_ref())
+                self.geometry(ui, buffer, origin, self.composition.as_ref())
             };
             let painter = ui.painter().with_clip_rect(text_clip);
             if let Some((lines, color)) = &self.diff_lines {
@@ -560,7 +652,7 @@ impl EditorSurface {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct SyntaxPalette {
     pub comment: egui::Color32,
     pub string: egui::Color32,
