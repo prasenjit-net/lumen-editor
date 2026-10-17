@@ -3,14 +3,14 @@ use std::fs;
 pub(crate) fn configure(ctx: &egui::Context) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
-        "codicon".into(),
-        egui::FontData::from_static(include_bytes!("../../assets/codicon.ttf")).into(),
+        "lumen-icons".into(),
+        egui::FontData::from_static(include_bytes!("../../assets/lumen-icons.ttf")).into(),
     );
     fonts
         .families
         .entry(egui::FontFamily::Proportional)
         .or_default()
-        .push("codicon".into());
+        .push("lumen-icons".into());
     // Use platform fonts when available, retaining embedded fallbacks.
     #[cfg(not(target_os = "windows"))]
     let platform_fonts = [
