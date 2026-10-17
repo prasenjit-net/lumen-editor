@@ -1,234 +1,381 @@
 # Lumen
 
-Native Rust/egui file editor with native desktop menus.
+A native desktop code editor built with Rust and egui, inspired by VS Code’s compact workbench. Lumen brings file editing, project search, Git diffs, a terminal, language tools, and optional coding agents into one local application.
 
-On macOS, menus live in the desktop menu bar. The title strip uses the
-editor theme with real macOS traffic-light buttons. On Windows, the app
-uses a native Win32 menu and the native Windows title bar and caption buttons.
-File, Edit and View actions share the editor's commands; shortcuts use
-Command on macOS and Ctrl on Windows.
+![Lumen on macOS showing the Explorer, Rust syntax highlighting, breadcrumbs, and line numbers](assets/screenshots/workbench.jpg)
 
-The explorer follows [VS Code's workbench conventions](https://code.visualstudio.com/docs/editing/getting-started/userinterface):
-New File, New Folder and Rename use an inline tree input. Enter confirms;
-Escape cancels. Creation uses the selected folder, a selected file's parent,
-or the workspace root. Nested names (`src/components/button.rs`) create parent
-folders; a trailing slash creates a folder. Errors remain inline for correction.
-Cmd/Ctrl+N and the editor's plus button create an untitled tab, independently
-of the workspace, matching VS Code's New Text File action.
+*Actual macOS app capture using the light theme. Dark, light, high-contrast, and system appearance are available.*
 
-Right-click a file/folder for open, new file/folder, cut/copy/paste, copy path,
-copy relative path, reveal in the system file manager, rename and delete.
-The header offers New File, New Folder, Refresh and Collapse All. Tree arrows
-navigate/expand/collapse; F2 renames; Delete requests deletion. On macOS, Return
-renames, Cmd+Down opens and Cmd+Backspace requests deletion. Text-editor
-shortcuts remain separate from explorer operations.
+Lumen is under active development. The default editor uses a shared Rust editing core and cosmic-text/Swash shaping. Native IME, screen-reader behavior, and Windows runtime acceptance still have open validation work; see [known limitations](#known-limitations).
 
-Deletion requires confirmation and moves items to Trash/Recycle Bin, never
-silently falling back to permanent deletion. Clean affected tabs close; dirty
-buffers stay open without their old disk paths and use Save As next time.
-Rename/move updates descendant tabs and preserves unsaved text. Creation,
-rename and paste never overwrite an existing destination; copying into an
-occupied folder generates a unique copy name. A failed recursive copy can
-leave a partial destination, reported in the status bar for inspection.
+## Contents
 
-Current limits: single-selection operations, in-app file clipboard, no drag
-and drop or explorer operation undo. Symlink copying is rejected explicitly.
+- [Features](#features)
+- [Build and run](#build-and-run)
+- [Command-line usage](#command-line-usage)
+- [Workbench and file management](#workbench-and-file-management)
+- [Editing and navigation](#editing-and-navigation)
+- [Search and replace](#search-and-replace)
+- [Language tools](#language-tools)
+- [Source control](#source-control)
+- [Terminal and output](#terminal-and-output)
+- [Coding agents](#coding-agents)
+- [Settings](#settings)
+- [Saving and recovery](#saving-and-recovery)
+- [Large-file performance](#large-file-performance)
+- [Keyboard shortcuts](#keyboard-shortcuts)
+- [Known limitations](#known-limitations)
+- [Development](#development)
 
-## Opening from the command line
+## Features
 
-Start Lumen with files and folders to open them directly:
+| Area | Available today |
+| --- | --- |
+| Workbench | Resizable Explorer, editor tabs and split groups, breadcrumbs, command palette, recent files and folders |
+| Editing | Syntax highlighting, multiple cursors, column selections, undo/redo, indentation, bracket/quote pairing, code folding |
+| Navigation | Fuzzy Quick Open, Go to Line/Column, tab switching, language-server definitions and references |
+| Search | Per-document Find/Replace and background workspace search with replacement previews |
+| Language tools | Optional Rust and Go language servers, diagnostics, completion, hover, symbols, formatting, rename, semantic tokens |
+| Git | Status badges, staged/working diffs, staging, hunk staging, commits, amend, confirmed discard, push and fast-forward pull |
+| Terminal | Integrated PTY shell with terminal emulation and configurable typography/colors |
+| Coding agents | Optional Claude Code and Codex connections through Agent Client Protocol (ACP) adapters |
+| Settings | Searchable User/Project configuration, sparse TOML overrides, themes and editor/terminal preferences |
+| File safety | Dirty-buffer prompts, optional Auto Save, recovery snapshots, external-change detection, staged file writes |
 
-```
-lumen [OPTIONS] [PATH[:LINE[:COLUMN]]]...
-lumen .                       # open the current folder
-lumen src/main.rs:42:7 README.md
-```
+Run/Debug and Extensions activity icons are present, but do not imply a debugger or VS Code extension compatibility.
 
-A folder becomes the workspace (a workspace holds one folder, so extra folders
-are reported and skipped). Files open as tabs in the order given and the last
-one is shown; a file that is already open is simply activated. `LINE` and
-`COLUMN` are 1-based and place the caret; a path that really exists with a
-`:number` in its name is opened as written. Relative paths resolve against the
-directory Lumen was started from. A path that cannot be opened is logged to the
-Output panel and summarised in the status bar without stopping the others, and
-a named file that does not exist is not created. `-h`/`--help` and
-`-V`/`--version` print and exit; an unknown option exits with status 2; `--`
-ends option parsing. When any path is given, the "Reopen Last Folder" setting is
-not applied.
+## Build and run
 
-Limits: the `--help`/`--version` text is not visible from the Windows release
-build, which is a GUI-subsystem program without a console. Double-clicking a
-file in the Finder or Explorer, `open -a`, and a second `lumen` call forwarding
-its paths to a running window are not wired up yet; each launch starts its own
-window.
+### Requirements
 
-## Text editing
+- A stable Rust toolchain with Cargo and a native compiler/linker. The workspace uses Rust edition 2024.
+- A desktop environment and graphics support suitable for eframe/egui.
+- Git on `PATH` for Source Control features.
+- Optional language-server and coding-agent executables for those integrations; basic editing does not require them.
 
-The Search activity panel searches an open folder in a cancellable background
-scan, showing scanned-file and match counts while it runs. Press Cmd/Ctrl+Shift+F,
-type a literal query, then Enter; Match Case,
-Whole Word, include and exclude globs narrow results. The searchable
-`search.exclude` setting accepts comma-separated globs at user or project scope;
-the project value takes priority, and the panel's exclude field adds temporary
-patterns. Click a result to open
-its file at the match. Results form a virtualized, collapsible folder/file tree
-that keeps all bounded matches available, with Replace
-actions for all results or an individual folder or file. Replace offers a
-paginated, color-coded diff preview with nearby edits shown together
-(long groups use per-match excerpts), followed by explicit confirmation. An open
-editor tab is skipped, and a file changed
-since search is never silently overwritten; failures are reported in Search.
-Scans skip links, `.git`, `target`, binary/non-UTF-8 files and files over 2 MiB.
-Nested `.gitignore` files use Git-style pattern matching, including anchoring,
-escaped names, character classes and negation. The result-count tooltip breaks
-down skipped entries; descendants of a skipped directory are not counted.
-Git's global excludes and `.git/info/exclude` are not read. See
-[the roadmap](plans/vscode-core-feature-roadmap.md) for remaining validation.
-
-The shared editor colors comments, strings, numbers, keywords, types, functions,
-properties and markup using a compact dark syntax palette. Rust, TOML, Markdown,
-JSON, YAML, JavaScript/TypeScript, HTML, CSS, Python, Go, C/C++ and shell files
-receive lexical highlighting; other files remain plain text. Exact filenames
-also select their syntax: `CMakeLists.txt`, Makefiles,
-`Dockerfile`/`Containerfile`, ignore files, `.editorconfig`, `.env` variants,
-`Cargo.lock`, and extensionless `README`/`CHANGELOG`. CMake, SQL, INI and
-related file extensions are recognized too. The searchable
-`editor.syntax_highlighting` setting can disable colors per user or project.
-Highlighting is display-only and does not provide semantic language-server
-classification or embedded-language parsing yet. The legacy TextEdit fallback
-remains plain text.
-
-Each tab owns its cursor, undo history and scroll state. Right-click in the
-editor for Undo/Redo, Cut/Copy, Paste, Select All, Find and Replace.
-Right-click preserves the selection. Undoing to saved content clears the dirty
-marker; edits and replacements do not save automatically.
-
-With no selection, Copy copies the current logical line without moving the
-caret, and Cut removes that line in one undoable edit. Copied lines include a
-newline, including the final or empty line. Existing LF/CRLF endings are retained;
-cutting the last line removes its preceding terminator. Search inputs and Explorer
-clipboard commands remain separate. Pasting a line copied/cut in this Lumen
-session with no selection inserts above the current line and preserves the
-caret's original column, in one undo/redo step. Selected-text and external pastes
-remain ordinary text insertion. Session metadata is matched against exact pasted
-text and cleared on other copies or mismatched pastes. egui supplies no custom
-clipboard metadata: identical text copied in another app is indistinguishable,
-and line provenance does not survive restarting Lumen. The editor adapter retains
-received line endings without converting them to the destination convention.
-Requested editor pastes now read through a background native clipboard service,
-which does not normalize text and returns a request ID with text, empty, or error
-results. Superseded/duplicate service results are ignored; failures finish the
-request and report status without editing the document. This preserves CRLF line
-metadata through that read path. Focused-editor keyboard paste now rereads text
-through the same service, synchronously, keeping the event's position relative
-to typing/navigation. This bypasses winit's CRLF normalization. Non-editor fields
-and pointer-transition batches retain eframe's ordinary transport. The interim
-reread cannot recover an earlier clipboard snapshot if another application changes
-the clipboard between platform delivery and routing, and can block on the native
-read; a future input backend should own transport directly. Live native clipboard
-round trips still need verification: macOS automation captured the test app but
-could not deliver input (clipboard timeout / noWindowsAvailable). Windows
-compilation passes; Windows runtime testing remains pending, not a release gate
-for this milestone by user direction.
-Requested editor paste captures document ID, revision and selection. Changed text,
-caret, focus, modal or input mode cancels delivery before other inputs can consume
-it; returning to the original caret/focus does not reactivate a cancelled request.
-Native Edit-menu paste shares this validation; other text fields remain ordinary
-inputs. Service reads are independently correlated; untagged keyboard/platform
-events are not service completions and retain the existing guarded input path.
-If an accelerator already delivered a paste event, no additional asynchronous
-request is made; editor routing resolves its payload once through the service.
-Keyboard batches split at clipboard boundaries and continue in repaint frames:
-Copy/Cut see preceding typing/navigation, and later typing follows restored paste
-selection. New keyboard input stays behind an older deferred batch. Deferred input
-is cancelled, with status feedback, if its document revision, caret, focus, or input
-mode changes. This is a temporary TextEdit adapter, not a new editing/undo backend.
-Pointer gestures and IME remain on the widget's existing path; mixed clipboard
-gestures keep ordinary selected-text behavior. App-wide shortcuts still dispatch
-before widget input, rather than participating in this document keyboard queue.
-
-Find uses Cmd+F on macOS or Ctrl+F on Windows/Linux. Replace uses Cmd+Alt+F
-on macOS or Ctrl+H on Windows/Linux. The native Edit menu, command palette and
-editor context menu expose the same actions. Find seeds from selected text or
-the word at the caret and selects the query for easy overwriting. Enter and
-Shift+Enter navigate results, and Escape closes Find and returns editor focus.
-Use Match Case (`Aa`) or Match Whole Word (`ab`), Replace, or All (Replace All).
-Queries and options stay separate for each open document.
-
-This milestone supports literal search, not regex, selection-scoped search,
-preserve-case replacement, or multiline input controls. Case-insensitive matching
-uses Unicode lowercasing with original-byte boundary mapping, not full Unicode
-case folding. Replace All searches one snapshot and is one undoable widget edit.
-The gutter and text share vertical scrolling; long lines scroll horizontally
-without wrapping, while line numbers stay fixed at the left. Click a line number
-to select its whole line; Shift-click extends by lines, and dragging selects a
-line range. Holding a gutter drag above/below the viewport scrolls vertically
-and extends selection at the visible edge. Speed increases with distance from
-the edge; release or a blocking dialog stops the drag. Document bounds clamp
-scrolling, and reversing direction responds immediately. Unicode and existing
-line endings are preserved. The default shared editor also has gutter code-fold
-chevrons for bracket-delimited and Python/YAML indentation blocks. Folded rows
-retain original line numbers; Find/Go-to and caret entry reveal hidden targets.
-Fold state is per open tab and does not alter document text or undo history.
-Folding is not available in the optional legacy TextEdit fallback. See
-[the editor plan](plans/text-editor-improvement-plan.md) for the remaining work.
-
-Run from source:
+Clone the repository and start the editor:
 
 ```sh
-cargo run -- . src/main.rs Cargo.toml
+git clone https://github.com/prasenjit-net/lumen-editor.git
+cd lumen-editor
+cargo run --release -- . src/main.rs Cargo.toml
 ```
 
-Build the macOS app bundle:
+Use release builds when evaluating responsiveness. `cargo run` without `--release` is useful during development but is not representative of optimized large-file performance.
+
+### macOS
+
+Build an app bundle and open it:
 
 ```sh
-cargo xtask bundle
+cargo xtask bundle --release
 open target/Lumen.app
 ```
 
-Use `cargo xtask bundle --release` for an optimized app, or add `--offline`
-when dependencies are already downloaded. The Rust helper builds the editor
-first, then packages it; no shell script or recursive `build.rs` is involved.
-`CARGO_TARGET_DIR` is respected when set.
+The helper builds the binary before packaging it. Add `--offline` when all dependencies are already downloaded. `CARGO_TARGET_DIR` is respected.
 
-Build on Windows:
+Lumen uses the real macOS traffic-light controls and desktop menu bar, with a themed title strip. Shortcuts use Command where appropriate.
+
+### Windows
+
+With Rust and its native build tools installed:
 
 ```powershell
 cargo build --release
-.\target\release\lumen-editor.exe
+.\target\release\lumen-editor.exe .
 ```
 
-The bundled Codicons font is attributed in `assets/CODICON-LICENSE.txt`.
+Windows uses native menu, title-bar, and caption controls. Primary shortcuts use Ctrl.
 
-## Code layout
+### Linux
 
-`main.rs` is the entry point; `bootstrap.rs` wires the native window, theme,
-fonts, startup paths and platform menu. The application is split into layers:
+Build and run from a graphical desktop session:
 
-| Module | Responsibility |
+```sh
+cargo build --release
+./target/release/lumen-editor .
+```
+
+Native build dependencies depend on your distribution and desktop setup. If compilation reports a missing system library, install the corresponding development package and retry.
+
+### Release artifacts
+
+The repository’s [Release workflow](.github/workflows/release.yml) builds platform artifacts and SHA-256 checksums. Published builds are not signed or notarized. See the repository’s [Releases](https://github.com/prasenjit-net/lumen-editor/releases) for available versions.
+
+## Command-line usage
+
+The executable built by Cargo is named `lumen-editor`; examples below assume it is on your `PATH`:
+
+```sh
+lumen-editor [OPTIONS] [PATH[:LINE[:COLUMN]]]...
+lumen-editor .
+lumen-editor src/main.rs:42:7 README.md
+lumen-editor --help
+lumen-editor --version
+lumen-editor -- ./filename-starting-with-a-dash
+```
+
+- One folder becomes the workspace. Additional folders are reported and skipped.
+- Files open in argument order; the last file is activated. Already-open paths activate their existing tab.
+- Line and column are 1-based. A path that actually exists with a `:number` suffix is opened literally.
+- Relative paths resolve from the launch directory. Missing files are reported rather than created.
+- Failed targets appear in Output and the status bar without preventing other targets from opening.
+- Explicit paths bypass the Reopen Last Folder preference. Unknown options exit with status 2; `--` ends option parsing.
+
+Each launch creates its own window. Forwarding arguments to an existing window, Finder/Explorer file associations, and `open -a` file delivery are not wired up yet. The Windows GUI release executable does not display help/version output in a console.
+
+## Workbench and file management
+
+Open a folder to populate Explorer, or open individual files without a workspace. Use the activity bar to switch panels, the command palette to discover actions, and breadcrumbs to navigate the current path. Editor tabs can be reordered and split into groups; each document retains its editing state.
+
+Explorer’s header provides **New File**, **New Folder**, **Refresh**, and **Collapse All**. Creation and rename use inline inputs: Enter confirms, Escape cancels, and errors remain available for correction.
+
+- Creation starts in the selected folder, a selected file’s parent, or the workspace root.
+- A nested relative name such as `src/components/button.rs` creates missing parent folders. A trailing slash creates a folder.
+- **New Text File** (`Cmd/Ctrl+N`) and the editor’s plus button create untitled buffers independently of Explorer.
+- Context menus provide cut/copy/paste, path copying, reveal in the system file manager, rename, and delete.
+- Rename and move update descendant editor paths while preserving unsaved text.
+- Delete asks for confirmation and uses Trash/Recycle Bin. It never falls back to permanent deletion. Dirty affected buffers remain open as untitled documents; the workspace root is protected.
+- Create, rename, and paste do not overwrite existing destinations. Copying into an occupied folder generates a unique copy name. Failed recursive copies can leave a partial destination and report that failure.
+
+Explorer currently supports single selection and an in-app file clipboard. Bulk selection, filesystem drag/drop, operation undo, and symlink copying are not implemented.
+
+## Editing and navigation
+
+The default shared editor owns text mutations, cursor sets, and undo history. Tabs preserve their cursor, history, and scroll state. Undoing to saved content clears the dirty marker; edits never silently save unless Auto Save is configured.
+
+### Text and selections
+
+- Multiple cursors: Option/Alt-click adds a cursor; Option/Alt-drag adds a selected range.
+- Column selections: Shift+Option/Alt-drag.
+- Occurrences: `Cmd/Ctrl+D` selects the next occurrence; `Cmd/Ctrl+Shift+L` selects all occurrences.
+- Line-end cursors: Shift+Option/Alt+I adds cursors at the ends of selected lines.
+- Tab/Shift+Tab indent or outdent touched lines once, including overlapping selections.
+- Matching clipboard rows distribute across multiple selections in document order; a different row count pastes the full text at each cursor.
+
+Auto indentation, indentation detection, width, spaces/tabs, bracket/quote pairing, selection wrapping, and matching-bracket outlines are configurable. Bracket matching skips recognized comments and strings even when syntax colors are disabled.
+
+Long lines scroll horizontally without wrapping; the gutter stays fixed. Click a line number to select a line, Shift-click to extend, or drag for a range. Dragging beyond the viewport auto-scrolls until release, a blocking dialog, or document bounds.
+
+Gutter fold controls collapse bracket-delimited and Python/YAML indentation blocks. Fold state belongs to each open tab. Find, Go-to, and caret entry reveal hidden targets without changing document contents or history.
+
+### Copy, cut, and paste
+
+With no selection, Copy copies the logical line without moving the caret or dirtying the buffer. Cut removes the logical line in an undoable operation, including special handling for the last line and its preceding terminator. Existing LF/CRLF endings are retained.
+
+A line copied or cut in this Lumen session can paste above the current line while preserving the original caret column. Selected-text replacement remains ordinary paste. This behavior depends on exact-text session metadata; identical text copied by another app is indistinguishable, and metadata does not survive restarting Lumen.
+
+Requested paste validates document identity, revision, selection, focus, and input mode before delivery. Clipboard failures do not mutate text. Focused keyboard paste currently rereads the native clipboard synchronously at its event position to preserve line endings; this can block briefly and cannot recover an earlier clipboard snapshot if another app changes it. Generic input fields and pointer-transition batches use ordinary platform transport. These paths do not establish universal native event-ordering or request-ID correlation for untagged platform events.
+
+### Quick navigation
+
+Use Quick Open (`Cmd/Ctrl+P`) for fuzzy filename/path search. Workspace files rank ahead of external recent files. Recent-file history is bounded and saved under `~/.lumen/recent-files.toml` (the corresponding user directory on Windows).
+
+The workspace index skips ignored and generated trees. Reopen the folder to refresh it after external changes. Go to Line/Column (`Cmd/Ctrl+G`) accepts `line:column`, both 1-based. Use the command palette (`Cmd/Ctrl+Shift+P`) for additional workbench actions.
+
+## Search and replace
+
+### In the active document
+
+Find (`Cmd/Ctrl+F`) seeds from selected text or the caret’s word. Enter/Shift+Enter navigate matches; Escape returns focus to the editor. Case sensitivity, whole-word matching, Replace, and Replace All are available. Queries/options are separate for each document. Replace All is one undoable edit.
+
+Document search is literal: regex, selection-scoped search, preserve-case replacement, and multiline input controls are not implemented. Case-insensitive matching uses Unicode lowercasing with byte-boundary mapping, not full Unicode case folding. Replacements that would split a grapheme are rejected with feedback.
+
+### Across the workspace
+
+Open Search with `Cmd/Ctrl+Shift+F`, enter a literal query, and press Enter. A cancellable background scan reports progress and groups results by folder/file. Use Match Case, Whole Word, and include/exclude globs to narrow matches.
+
+Replace supports a file, folder, or all results. It shows a paginated diff preview before explicit confirmation. Files open in an editor are skipped, and files changed since the scan are not silently overwritten. Failures remain visible in Search.
+
+Scans skip symlinks, `.git`, `target`, binary/non-UTF-8 files, and files larger than 2 MiB. Nested `.gitignore` patterns are supported; global Git excludes and `.git/info/exclude` are not read. `search.exclude` adds persistent User/Project exclusions, while the panel’s exclude field adds temporary patterns.
+
+## Language tools
+
+Syntax highlighting works independently of language servers. Recognized languages include Rust, Go, C/C++, Python, JavaScript/TypeScript, shell, JSON, TOML, YAML, Markdown, HTML, CSS, CMake, SQL, and INI. Special filenames include `CMakeLists.txt`, Makefiles, `Dockerfile`/`Containerfile`, ignore files, `.editorconfig`, `.env` variants, `Cargo.lock`, and extensionless `README`/`CHANGELOG`.
+
+Optional language-server support currently targets **Rust (`rust-analyzer`)** and **Go (`gopls`)**. Install the appropriate server separately and make it discoverable on `PATH`, or set its absolute executable path in User Settings. Project configuration cannot choose language-server executables.
+
+Depending on server capabilities, Lumen exposes diagnostics and Problems, hover, Go to Definition, references, completion, signature help, document symbols, semantic highlighting, formatting, and symbol rename. Language edits have review/application workflows; availability depends on the active language and server response. Check the status bar and Output when startup or requests fail.
+
+Settings include `language.rust.enabled`, `language.go.enabled`, their `server_path` overrides, and `language.server.startup_timeout_seconds`. Lexical/parser highlighting remains available when a server is missing or disabled.
+
+## Source control
+
+Open a folder inside a Git repository and select Source Control. Lumen shows status groups and Explorer badges, with Git work performed outside the UI thread.
+
+- Open staged, working, or untracked changes in a side-by-side diff.
+- Working comparisons have a read-only Git side and an editable working-document side. Staged comparisons are read-only.
+- An already-open dirty document is reused without replacing its text. A clean diff-only preview is dropped on close; dirty previews retain their file tab.
+- Stage/unstage individual files or groups. Independent working-tree hunks can be staged when the editor has no unsaved changes; untracked files use whole-file staging.
+- Commit staged changes with a message. **Amend** updates the latest local commit; an empty message retains its subject. Amend rewrites local history and does not push automatically.
+- Push uses Git’s configured remote/upstream. Pull uses `git pull --ff-only` and is blocked while workspace documents have unsaved edits. Authentication is provided by your Git environment.
+- Discard asks for confirmation and restores eligible tracked files and their index state from `HEAD`. It preserves untracked files and does not run `git clean`.
+
+The visible panel refreshes to detect external Git changes. Reopen a comparison to update its snapshot; change markers are hidden when the editable text differs from that snapshot. Merge-resolution UI and a history browser are not implemented.
+
+## Terminal and output
+
+![Lumen’s integrated terminal below the Rust editor](assets/screenshots/terminal.jpg)
+
+Toggle the terminal with **Ctrl+`** on every platform or use the Terminal menu/activity button. It starts in the workspace directory, or the home directory when no folder is open. The native PTY uses `SHELL` on Unix (falling back to `/bin/sh`) and `COMSPEC` on Windows (falling back to `cmd.exe`).
+
+The terminal uses an Alacritty-based emulation core. Settings control its font family, font size, line height, cursor style/blink, ANSI palette, auto-scroll, and panel divider. Input while the terminal owns focus goes to the shell rather than document editing.
+
+Output (`Cmd/Ctrl+Shift+U`) is a separate workbench log for startup, file, language-server, agent, and other application feedback. It supports copying and clearing logs.
+
+## Coding agents
+
+Open **Coding Agents** with `Cmd/Ctrl+Shift+A`. Lumen integrates Claude Code and Codex through separate ACP adapters; these integrations are optional and require the provider’s CLI/account authentication.
+
+The integration currently pins these adapter packages:
+
+```text
+@agentclientprotocol/claude-agent-acp@0.92.0
+@agentclientprotocol/codex-acp@2.2.2
+```
+
+Install an adapter separately and expose `claude-agent-acp` or `codex-acp` on `PATH`, or use the panel’s download/run flow through `npx` (Node.js 22 or newer). Automatic fallback downloads require session consent. The first download can take time; status and failures appear in the panel/Output.
+
+The panel supports prompts, cancellation, sessions/history, file or selection attachments, permission requests, agent-provided configuration choices, and review/revert of reported file changes. Save or resolve unsaved workspace buffers when prompted before agent work. Sending a prompt or attachment shares that context with the selected agent/provider; provider authentication and usage limits remain separate from Lumen.
+
+See [agent integration](plans/agent-integration-acp-plan.md) and the [acceptance checklist](plans/agent-acceptance-checklist.md) for scope and validation details.
+
+## Settings
+
+![Lumen Settings showing searchable User and Project scopes and editor options](assets/screenshots/settings.jpg)
+
+Open Settings with `Cmd/Ctrl+,`, the gear, the native menu, or the command palette. Search names, descriptions, or IDs; filters include `@modified`, `@pending`, and `@id:editor.font_size`.
+
+| Scope | Location | Precedence |
+| --- | --- | --- |
+| Built-in | Section schemas | Base values |
+| User | `~/.lumen/settings.toml` | Overrides built-in defaults |
+| Project | `<workspace>/.lumen/settings.toml` | Overrides User values for applicable project settings |
+
+On Windows, the User directory is `%USERPROFILE%\.lumen\`. Outside-project documents use User settings; untitled documents inherit the current project’s applicable editor settings.
+
+**Apply** saves explicit overrides. **Remove Override** inherits the lower scope; **Set Built-in Default** writes an explicit default. **Cancel** discards the selected scope’s draft. Opening Settings or a folder creates no configuration files.
+
+For example:
+
+```toml
+schema_version = 1
+
+[editor]
+font_size = 14
+line_height = 20
+indent_size = 4
+insert_spaces = true
+syntax_highlighting = true
+
+[workbench]
+theme = "dark"
+ui_scale = 1.0
+
+[files]
+auto_save = "off"
+auto_save_delay = 1000
+```
+
+Available sections cover Editor, Files, Appearance, Workbench, Explorer, Language, Agents, Search, and Terminal. Keep line height at least as large as font size. Typography/theme changes preserve document text and history.
+
+External configuration changes currently require Reload; config files saved inside Lumen reload automatically. Invalid files and disk conflicts leave valid settings/drafts intact. Close a config-file tab before applying its form draft, or edit and save that file directly.
+
+Schema validation, precedence, search, and TOML encoding live in the independent [settings core](crates/settings-core/README.md).
+
+## Saving and recovery
+
+Explicit Save is the default. Auto Save can be configured as `off`, `afterDelay`, `onFocusChange`, or `onWindowChange`, with a 100–60000 ms delay (default 1000 ms). It does not name untitled buffers or resolve external-change conflicts automatically.
+
+Lumen checks open disk-backed files for external changes and rechecks disk content before saving. A changed/removed file blocks Save and Auto Save until resolved. The change banner offers a disk/editor comparison, Keep Editing, Save As, explicit Overwrite, and Reload from Disk. Reload discards that tab’s unsaved edits; Overwrite rechecks the disk version. Comparison previews are limited to 20,000 characters, and there is no automatic merge.
+
+Save/Save As stage writes in the destination directory before replacing the target. Close/quit prompts protect dirty buffers, including cancellation and failure paths.
+
+Dirty buffers are backed up about once per second under `~/.lumen/recovery/`, using per-instance files. On restart, Lumen skips live-process backups and restores interrupted sessions, including untitled text. Divergent recovered copies remain distinct; later copies require Save As. Invalid backups are retained and reported through Safety details.
+
+Recovery files contain **unencrypted document text**. They are local crash-recovery snapshots, not version history or cloud backups; a crash can lose edits since the latest snapshot.
+
+## Large-file performance
+
+The default editor caches geometry for **20 recently displayed layouts per editor surface**. Returning to an unchanged cached tab reuses layout and shaping; edits, buffer replacement, folding, typography, syntax/semantic inputs, scale, and font changes invalidate the relevant cached geometry. Only one revision per widget is retained.
+
+The cache is bounded by entry count, not memory. Split surfaces have separate caches, and large layouts can retain substantially more memory than their source text. Returning to an evicted entry requires a fresh layout. First opening still lays out the whole document synchronously; per-edit rebuilding and full undo snapshots also remain costs.
+
+A local release/headless CPU probe measured a 50,000-line, 1.85 MB fixture at about 437 ms for cold layout and 1.3 ms for cached tab returns. This excludes native fonts, disk I/O, workbench controllers, GPU presentation, syntax coloring, and accessibility in that tab-switch sample; it is not an end-to-end responsiveness guarantee.
+
+See [performance measurements and methodology](plans/editor-performance-baseline.md). Reproduce the surface probe with:
+
+```sh
+cargo run -p lumen-editor-surface --example profile --features shaped --release --offline
+```
+
+## Keyboard shortcuts
+
+`Cmd/Ctrl` means Command on macOS and Ctrl on Windows/Linux. Option is Alt on macOS. Language shortcuts require editor focus and an available server; Explorer rename shortcuts apply when the tree has focus.
+
+| Action | Shortcut |
 | --- | --- |
-| `model/` | Documents, open buffers, active tab and workspace; no UI or I/O |
-| `app/` | Typed commands, file-operation workflows, input routing and view state |
-| `services/` | Filesystem and file-dialog interfaces with local/native adapters |
-| `ui/` | Workbench components, shared widgets and theme |
-| `platform/` | Native menus and system font setup |
-| `xtask/` | Build-time app packaging, separate from runtime code |
+| New untitled file | Cmd/Ctrl+N |
+| Open file / Save / Close editor | Cmd/Ctrl+O / Cmd/Ctrl+S / Cmd/Ctrl+W |
+| Quick Open | Cmd/Ctrl+P |
+| Command palette | Cmd/Ctrl+Shift+P |
+| Go to Line/Column | Cmd/Ctrl+G |
+| Find | Cmd/Ctrl+F |
+| Replace | Cmd+Option+F on macOS; Ctrl+H elsewhere |
+| Workspace Search | Cmd/Ctrl+Shift+F |
+| Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
+| Reopen closed tab | Cmd/Ctrl+Shift+T |
+| Split editor | Cmd/Ctrl+\ |
+| Settings | Cmd/Ctrl+, |
+| Terminal | Ctrl+` on every platform |
+| Output | Cmd/Ctrl+Shift+U |
+| Coding Agents | Cmd/Ctrl+Shift+A |
+| Go to Definition / references | F12 / Shift+F12 |
+| Rename symbol | F2 |
+| Format document | Shift+Alt+F |
+| Completion / signature help | Ctrl+Space / Ctrl+Shift+Space |
+| Document symbols | Cmd/Ctrl+Shift+O while the editor has focus |
 
-The controller owns state and services. UI components borrow a `Workbench`
-context and issue `Command` values rather than opening dialogs or saving files.
-Buffer-only commands apply immediately to preserve same-frame tab behavior;
-I/O commands are dispatched after each component. The explorer uses the read
-side of the filesystem interface. Native menus, shortcuts and the command
-palette share the same command dispatcher.
+Explorer supports arrow navigation, F2 rename, and Delete to request deletion. On macOS, Return renames, Cmd+Down opens, and Cmd+Backspace requests deletion. Cursor-above/below uses Option+Cmd+Up/Down on macOS, Ctrl+Alt+Up/Down on Windows, and Shift+Alt+Up/Down on Linux.
 
-To add an action, define a `Command` and handle it in `app/dispatch.rs` (or
-`apply_local` for buffer-only changes), then connect its menu or component.
-Keep editor workflows in `app/documents.rs`, explorer workflows in
-`app/explorer_ops.rs`, document rules in `model/`, and
-reusable drawing helpers in `ui/widgets.rs`. Preserve widget IDs and render
-order when moving components so focus, scroll and resize state stay stable.
+## Known limitations
 
-Verify changes with:
+- Lumen is evolving toward a practical desktop workbench; it does not provide full VS Code feature or extension parity.
+- Cold large-file layout and per-edit/history memory costs remain. A larger cache improves revisits, not initial parsing/layout.
+- Native IME, VoiceOver/accessibility, clipboard round trips, and Windows runtime behavior still need broader acceptance testing. Compilation and headless tests do not establish native correctness.
+- Search is literal, and workspace scans have explicit file-size/type/ignore limits.
+- Explorer lacks bulk selection, filesystem drag/drop, and operation undo. Editor tabs have their own drag interactions.
+- Merge resolution, Git history browsing, a debugger, and an extension marketplace are not implemented.
+- File associations, single-instance argument forwarding, and automatic external-settings reload remain incomplete.
+- Clipboard line provenance is session-only, and the temporary native reread has latency/snapshot-race limitations.
+
+Track remaining work in the [core feature roadmap](plans/vscode-core-feature-roadmap.md), [native validation notes](plans/native-editor-validation.md), and [pending activities](plans/pending-activities.md).
+
+## Development
+
+### Architecture
+
+| Path | Responsibility |
+| --- | --- |
+| `src/main.rs`, `src/bootstrap.rs` | Entry point, window startup, fonts, platform wiring |
+| `src/model/` | Document/workspace state and rules; no egui or I/O |
+| `src/app/` | Controllers, typed commands, input routing, view state, document/explorer workflows |
+| `src/services/` | Filesystem, dialogs, clipboard, Git, PTY, language-server and process adapters |
+| `src/ui/` | Workbench panels, shared widgets, theme |
+| `src/platform/` | Native menus and platform font setup |
+| `crates/editor-core/` | Shared editing, selections, history, syntax and text rules |
+| `crates/editor-surface/` | Editor rendering, geometry, shaping, input and accessibility |
+| `crates/settings-core/` | UI/I/O-independent settings schemas, validation and serialization |
+| `crates/language-services/` | Language registry and language-service protocol/data support |
+| `crates/agent-protocol/` | Agent protocol support |
+| `crates/terminal-core/` | Terminal emulation integration |
+| `xtask/` | Packaging/version helpers, separate from runtime code |
+
+UI components borrow a `Workbench` and issue typed commands rather than performing disk writes or opening native dialogs. Menus, shortcuts, palette entries, and buttons share command behavior. Buffer-only actions apply locally for same-frame behavior; I/O workflows dispatch through controllers.
+
+Read [AGENTS.md](AGENTS.md) before changing the workbench. Preserve widget identity, focus, history, dirty-state handling, and cancellation/error feedback.
+
+### Verification
 
 ```sh
 cargo fmt --all --check
@@ -236,190 +383,36 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-GitHub Actions runs these checks on every push and pull request. Workspace tests
-run on Linux, macOS and Windows; the macOS job also tests the legacy editor and
-builds the app bundle. CI checks the native builds but does not replace live UI
-validation.
-
-To publish a release, manually run the Release workflow from the default branch
-and choose `patch`, `minor`, or `major`. It increments the version in
-`Cargo.toml`, `Cargo.lock`, and the macOS `Info.plist`, then tests and packages
-macOS, Windows, and Linux builds. Only after all builds pass does it push the
-version commit and `v<version>` tag and publish a GitHub release with archives
-and SHA-256 checksums. A changed default branch or conflicting tag stops the
-release; it never force-pushes or replaces an existing release. These builds
-are not signed or notarized. The workflow's version commit is pushed with
-`GITHUB_TOKEN`, so it does not trigger the normal push CI workflow; the release
-workflow runs the platform tests itself.
-
-Application tests use in-memory storage and dialog doubles for open/save,
-cancellation, failure and dirty-buffer workflows, plus an egui pointer test
-for the explorer resize handle. Windows compilation can also be checked with
-`cargo check --target x86_64-pc-windows-gnu` after installing that target.
-
-Quick Open uses Cmd/Ctrl+P to find files in the opened folder by fuzzy filename
-or path match; Cmd/Ctrl+Shift+P opens the command palette. Cmd/Ctrl+G opens Go to
-Line/Column (`line:column`, both 1-based). Quick Open shows recently opened files
-even without a folder and keeps its bounded history in the user-level
-`~/.lumen/recent-files.toml` (or the corresponding user directory on Windows).
-Workspace files rank ahead of external recents when searching. The workspace index skips
-`.gitignore` matches and generated `.git`/`target` trees; reopen the folder to
-refresh it after changes made outside Lumen. The native Open File dialog remains
-available through Cmd/Ctrl+O.
-
-The Source Control activity shows Git status for the repository containing the
-opened folder. Selecting a staged, working, or untracked change opens a diff
-editor tab. The Git version on the left is read-only; the working file on the
-right is a normal editable document with the usual save and undo behavior.
-Staged comparisons are read-only on both sides. An already-open dirty buffer is
-reused without replacing its text. A file opened solely for a diff has no
-separate file tab until opened from Explorer; closing a clean diff drops that
-preview buffer, while closing a dirty diff reveals its file tab. Change markers
-are hidden when its text
-differs from the Git snapshot. Refresh the Source Control panel after external
-changes, or reopen a comparison to update its snapshot.
-The Source Control panel also supports staging and unstaging individual changes
-or their visible groups, then committing staged changes with an explicit
-message. Its compact discard controls restore one file or all eligible tracked
-files, including their index state, from `HEAD` after confirmation. Discarding
-never removes untracked files or invokes `git clean`; newly added files that do
-not exist in `HEAD` must be removed through an intentional filesystem workflow.
-Git work runs outside the UI thread and refreshes the snapshot after completion.
-Explorer shows compact `M`, `S`, `U`, and `D` badges from that snapshot; Source
-Control refreshes while its panel is visible to detect external Git changes. A
-working diff with multiple independent hunks offers a Stage button for each
-hunk; Git applies that patch only to the index and leaves other edits in the
-working tree. Hunk staging is disabled while the diff editor has unsaved text,
-and untracked files use whole-file staging. Push/pull, merge resolution, and a
-history browser are not implemented yet. Enable **Amend** in the commit row to
-amend the latest local commit; an empty message retains its existing subject,
-while a supplied message replaces it. Amending rewrites local history and never
-pushes automatically.
-
-### Default shared editor and legacy fallback
-
-The default workbench uses the shared core for typing, clipboard, IME,
-Find/Replace and complete-selection undo/redo, with a cosmic-text/Swash renderer:
+For platform-sensitive work:
 
 ```sh
-cargo run
+cargo check --target x86_64-pc-windows-gnu
+cargo xtask bundle
 ```
 
-Its Editor settings include Auto Indent, Detect Indentation, Indent Size, and
-Insert Spaces. Enter carries the line's leading whitespace and adds one indent
-after an opening bracket. Tab and Shift+Tab use the detected or configured unit;
-project settings override user settings. The optional legacy TextEdit fallback
-keeps egui's built-in indentation behavior rather than these new rules.
-The shared editor can also auto-close brackets and quotes, wrap selected text,
-overtype an existing closer, and outline matching brackets. These behaviors
-have per-document Editor settings. Matching skips comments and strings in
-recognized syntax regions, even when syntax colors are disabled.
+The Windows cross-check requires the Rust target and a working MinGW C toolchain for native dependencies. [CI](.github/workflows/ci.yml) runs workspace tests on Linux, macOS, and Windows, plus formatting/Clippy, legacy tests, and macOS bundling. Native UI validation remains separate.
 
-Option/Alt-click adds a cursor; Option/Alt-drag adds another selected range;
-Shift+Option/Alt-drag makes a column selection. Shift+Option/Alt+I places a
-cursor at the end of each selected line. Cmd/Ctrl+D selects the next occurrence
-and Shift+Cmd/Ctrl+L selects all. Cursor-above/below uses Option+Cmd+Up/Down on macOS,
-Ctrl+Alt+Up/Down on Windows, and Shift+Alt+Up/Down on Linux. Tab/Shift+Tab
-indent/outdent touched lines once. Cut, copy and paste apply to every selection;
-matching clipboard rows distribute in document order, while a different row
-count pastes the full text at each cursor. Logical-line copy/cut, native/popup
-commands, save checkpoints and stable tab IDs share the same editing owner.
-The editor never instantiates TextEdit document history
-in this mode; generic fields such as Find remain ordinary text widgets.
+### Legacy editor and standalone fixture
 
-Build `cargo xtask bundle --offline` on macOS to produce `target/Lumen.app` with
-the shared editor. The legacy single-selection TextEdit backend remains available:
+The optional single-selection egui TextEdit fallback is available for comparison:
 
 ```sh
 cargo run --no-default-features
 cargo xtask bundle --offline --legacy-editor
 ```
 
-The latter produces a separate `target/Lumen Legacy.app`. The existing
-`--shared-editor` bundler option still creates `Lumen Experimental.app` for
-isolated validation, using the same shared backend as the normal build.
+The latter produces `target/Lumen Legacy.app`. `--shared-editor` produces a separately named `Lumen Experimental.app` using the same shared backend as the standard build. The legacy editor does not offer the shared backend’s complete editing/folding feature set.
 
-The shared editor retains core caret affinity, uses visual grapheme
-arrows and caches unchanged shaped layouts/character geometry. Large-file,
-many-cursor and long-line probes are recorded in the
-[performance baseline](plans/editor-performance-baseline.md).
-The user requested default promotion on 2026-10-12 with native acceptance still
-pending. This is a default configuration change, not a claim of completed native
-IME/VoiceOver validation. Earlier manual passes apply to the preceding prototype.
-Clipboard metadata is session-only; the service reread still has its
-documented latency/snapshot race. A current-match replacement inside a grapheme
-is rejected with feedback; the user explicitly accepted that grapheme-safe rule.
-Windows is compilation-
-checked, not runtime-tested. See [native validation](plans/native-editor-validation.md).
-
-### Settings
-
-Open Settings with the activity-bar gear, the native Settings menu, the command
-palette or Cmd/Ctrl+,. The searchable page is generated from section schemas.
-Schemas, validation, precedence, search and TOML encoding live in the independent
-[`lumen-settings-core`](crates/settings-core/README.md) crate; disk storage,
-application drafts and egui components remain outside it.
-Search names, descriptions or IDs; `@modified`, `@pending` and
-`@id:editor.font_size` are supported filters.
-
-User settings are stored at `~/.lumen/settings.toml` (Windows:
-`%USERPROFILE%\.lumen\settings.toml`). Project settings are stored inside the opened
-folder at `.lumen/settings.toml` and override user values. Apply saves only explicit
-overrides; Remove Override inherits, while Set Built-in Default writes an explicit
-default. Cancel discards the selected scope's draft. No files are created just by
-opening Settings or a folder.
-
-The initial controls cover font family (platform or bundled Hack), font size,
-line height, UI scale, sidebar visibility and hidden files. Both editor backends
-use the typography settings. Set line height at least as large as font size.
-Settings preserve document text and history. Outside-project files use user
-typography; untitled buffers inherit the current project.
-
-### Unsaved-work protection
-
-Explicit Save remains the default. The Files section in Settings offers
-`files.auto_save` (`off`, `afterDelay`, `onFocusChange`, `onWindowChange`) and
-`files.auto_save_delay` (100–60000 ms, default 1000). Project settings override
-user settings for files in the opened directory. Auto Save does not name or save
-untitled buffers, and it never resolves an external-change conflict on its own.
-
-Dirty buffers are backed up about once per second in per-instance files under
-`~/.lumen/recovery/` (`%USERPROFILE%\.lumen\recovery\` on Windows). Lumen
-skips backups owned by live processes and restores interrupted sessions on the
-next start, including untitled text. Divergent recovered copies of one path
-stay as distinct buffers; later copies require Save As. The old single-file
-`recovery.bin` is imported when present. Invalid backups are retained and
-reported in the status-bar Safety details. Backups contain unencrypted document
-text; they are not version history or cloud sync. A crash can lose edits since
-the latest snapshot.
-
-Lumen checks every open disk-backed tab for external changes and compares disk
-contents again just before saving. A changed or removed disk file blocks Save
-and Auto Save. The tab marker and active-editor banner open a side-by-side
-comparison of disk and editor text (preview limited to 20,000 characters).
-Keep Editing, Save As, explicit Overwrite, and Reload from Disk are available;
-Reload discards that tab's unsaved edits. An explicit Overwrite rechecks the
-disk version before replacing it. Save/Save As stage writes in the target
-directory and replace the file only after the write succeeds. There is no
-automatic merge or hunk-level diff yet; the remaining work and native
-acceptance are tracked in the [core feature roadmap](plans/vscode-core-feature-roadmap.md).
-
-External changes currently require Reload (config files saved in Lumen reload
-automatically). Invalid files and disk conflicts are reported without replacing
-valid settings or drafts. Close an open config tab before applying its form draft,
-or edit/save that config directly. Broader settings capabilities and native
-acceptance are tracked in [the settings plan](plans/settings-feature-plan.md).
-
-### Standalone multi-cursor fixture
-
-A separate in-memory prototype
-exercises real multi-location input/history and shared text/selection geometry:
+An in-memory editor fixture can be run independently of workbench documents:
 
 ```sh
-cargo run -p lumen-editor-surface --example spike
+cargo run -p lumen-editor-surface --example spike --features shaped
 ```
 
-It reuses Lumen's theme/fonts but does not open files or alter workbench buffers.
-Add `--features shaped` to exercise the new renderer. Native validation and
-platform runtime checks remain open. See
-[the spike evaluation](plans/multi-cursor-backend-spike.md) before backend migration.
+### Releases and attribution
+
+Maintainers can manually run the Release workflow from the default branch and choose `patch`, `minor`, or `major`. It updates Cargo/app metadata, validates platform builds, and only then publishes the version commit, tag, artifacts, and checksums. It does not force-push or replace existing releases.
+
+Bundled Codicons are credited in [assets/CODICON-LICENSE.txt](assets/CODICON-LICENSE.txt). Package metadata currently labels Lumen as proprietary; do not infer an open-source license from the repository’s availability.
+
+The screenshots in this README are real macOS app captures, stored in [assets/screenshots](assets/screenshots), rather than mockups. They illustrate a local light-theme configuration; native chrome and fonts vary by platform.
