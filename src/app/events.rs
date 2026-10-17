@@ -48,7 +48,7 @@ impl LumenApp {
                 self.execute(command, ctx);
             }
         }
-        let terminal_focused = self.view.terminal.open
+        let terminal_focused = (self.view.terminal.open || self.view.task_runs.panel_open)
             && ctx.memory(|memory| memory.has_focus(egui::Id::new("terminal_canvas")));
         // VS Code uses Ctrl+` on every desktop platform. Keep it available
         // while the terminal owns focus so the same shortcut can also close it.
@@ -224,6 +224,7 @@ impl LumenApp {
             || self.view.command_palette
             || self.view.navigation.mode.is_some()
             || self.view.pending_close.is_some()
+            || self.view.task_prompt_open()
             || self.view.pending_quit
         {
             return;

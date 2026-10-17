@@ -25,7 +25,7 @@ impl SettingsStore for LocalSettingsStore {
     fn read(&self, path: &Path) -> Result<Option<String>, String> {
         match fs::metadata(path) {
             Ok(metadata) if metadata.len() > 1024 * 1024 => {
-                Err("Settings file exceeds 1 MiB.".into())
+                Err("Config file exceeds 1 MiB.".into())
             }
             Ok(_) => fs::read_to_string(path)
                 .map(Some)
@@ -47,7 +47,7 @@ impl SettingsStore for LocalSettingsStore {
             for component in [parent, path] {
                 match fs::symlink_metadata(component) {
                     Ok(metadata) if metadata.file_type().is_symlink() => {
-                        return Err("Settings path is a symbolic link; refusing to write.".into());
+                        return Err("Config path is a symbolic link; refusing to write.".into());
                     }
                     Ok(_) => (),
                     Err(error) if error.kind() == io::ErrorKind::NotFound => (),
@@ -64,11 +64,11 @@ impl SettingsStore for LocalSettingsStore {
                         .map_err(|error| error.to_string())?
                         .starts_with(canonical_root)
                 {
-                    return Err("Project settings path escapes the opened directory.".into());
+                    return Err("Project config path escapes the opened directory.".into());
                 }
             }
             if self.read(path)?.as_deref() != expected {
-                return Err("Settings changed on disk. Reload before applying; your draft has been retained.".into());
+                return Err("Config file changed on disk. Reload before applying; your draft has been retained.".into());
             }
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
             let mut staging =
@@ -78,7 +78,7 @@ impl SettingsStore for LocalSettingsStore {
                 .and_then(|()| staging.as_file().sync_all())
                 .map_err(|error| error.to_string())?;
             if self.read(path)?.as_deref() != expected {
-                return Err("Settings changed during save. Reload before applying.".into());
+                return Err("Config file changed during save. Reload before applying.".into());
             }
             if expected.is_none() {
                 staging

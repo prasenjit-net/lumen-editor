@@ -114,6 +114,7 @@ impl Workbench<'_> {
             label: kind.label(),
             active: kind == active,
             command: Command::SelectAgent(kind),
+            tooltip: "",
         });
         let actions = [
             HeaderAction {

@@ -88,6 +88,10 @@ impl Workbench<'_> {
             self.settings_page(ui);
             return;
         }
+        if !hide_virtual && self.view.task_editors.active().is_some() {
+            self.task_editor_page(ui);
+            return;
+        }
         if !hide_virtual
             && self
                 .view

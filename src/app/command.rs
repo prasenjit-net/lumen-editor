@@ -12,6 +12,59 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
     Settings,
+    /// Open a blank task editor tab in the given scope.
+    NewTaskEditor(lumen_task_core::Scope),
+    /// Open (or focus) an existing task for editing.
+    OpenTaskEditor(lumen_task_core::TaskKey),
+    ActivateTaskEditor(super::task_editor::TaskEditorId),
+    SaveTaskEditor(super::task_editor::TaskEditorId),
+    RevertTaskEditor(super::task_editor::TaskEditorId),
+    ReloadTaskEditor(super::task_editor::TaskEditorId),
+    /// Close a task editor, asking first when it has unsaved changes.
+    CloseTaskEditor(super::task_editor::TaskEditorId),
+    SaveAndCloseTaskEditor(super::task_editor::TaskEditorId),
+    DiscardTaskEditor(super::task_editor::TaskEditorId),
+    CancelTaskEditorClose,
+    RefreshTasks,
+    RunTask(lumen_task_core::TaskKey),
+    RunSelectedTask,
+    RerunLastTask,
+    /// Run the default task of a group such as `build` or `test`.
+    RunDefaultTask(&'static str),
+    /// Switch to Run and Debug, where active runs are listed.
+    ShowRunningTasks,
+    StopTaskRun(super::task_runs::RunId),
+    RestartTaskRun(super::task_runs::RunId),
+    /// Remove a finished run's tab, or ask before stopping an active one.
+    CloseTaskRun(super::task_runs::RunId),
+    /// Stop an active run and remove its tab (answer to the close prompt).
+    StopAndCloseTaskRun(super::task_runs::RunId),
+    CancelCloseTaskRun,
+    ShowTaskRun(super::task_runs::RunId),
+    ClearTaskOutput(super::task_runs::RunId),
+    /// Keyboard input for an interactive (PTY) task run.
+    SendTaskInput(super::task_runs::RunId, Vec<u8>),
+    /// The task terminal was measured at this many rows and columns.
+    ResizeTaskTerminal(super::task_runs::RunId, u16, u16),
+    CopyTaskOutput(super::task_runs::RunId),
+    /// Answer the run review prompt; `true` saves dirty files first.
+    ConfirmTaskRun(bool),
+    CancelTaskRun,
+    /// Hide the task output panel; runs keep going.
+    HideTaskPanel,
+    /// Stop the workspace's running tasks, then change folder.
+    ConfirmWorkspaceSwitch,
+    CancelWorkspaceSwitch,
+    /// Stop running tasks, then quit.
+    ConfirmTaskQuit,
+    CancelTaskQuit,
+    SelectTask(lumen_task_core::TaskKey),
+    DuplicateTask(lumen_task_core::TaskKey),
+    RequestDeleteTask(lumen_task_core::TaskKey),
+    ConfirmDeleteTask(lumen_task_core::TaskKey),
+    CancelDeleteTask,
+    /// Open the raw tasks.toml of a scope as a document.
+    OpenTaskToml(lumen_task_core::Scope),
     ApplySettings,
     ReloadSettings,
     OpenSettingsFile,
@@ -198,7 +251,7 @@ impl Command {
                 view.explorer_focused = false;
             }
             Self::NewUntitled => {
-                view.settings.open = false;
+                view.leave_page_tabs();
                 if let Some(diff) = &mut view.source_control.diff {
                     diff.active = false;
                 }
@@ -222,7 +275,7 @@ impl Command {
                         view.reveal_edit_directory(editor);
                     }
                 } else {
-                    view.settings.open = false;
+                    view.leave_page_tabs();
                     if let Some(diff) = &mut view.source_control.diff {
                         diff.active = false;
                     }

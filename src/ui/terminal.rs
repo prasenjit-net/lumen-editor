@@ -1,6 +1,6 @@
 use super::{
     Workbench, theme,
-    widgets::{HeaderAction, PanelTab, tabbed_panel_header},
+    widgets::{HeaderAction, tabbed_panel_header},
 };
 use crate::{app::command::Command, icon};
 use eframe::egui::{
@@ -12,12 +12,18 @@ const MIN_TERMINAL_HEIGHT: f32 = 120.0;
 const MAX_TERMINAL_HEIGHT: f32 = 520.0;
 const CELL_WIDTH_FACTOR: f32 = 0.58;
 
+/// Font, cursor and colors the integrated terminal and task terminals share.
+pub(super) struct TerminalStyle {
+    pub(super) font: FontId,
+    pub(super) line_height: f32,
+    pub(super) cursor_style: String,
+    pub(super) color_scheme: &'static str,
+    pub(super) colors: theme::Palette,
+    pub(super) theme: theme::Theme,
+}
+
 impl Workbench<'_> {
-    pub(crate) fn terminal_panel(&mut self, ctx: &egui::Context) {
-        let colors = crate::ui::theme::palette(&ctx.style().visuals);
-        if !self.view.terminal.open {
-            return;
-        }
+    pub(super) fn terminal_style(&self, ctx: &egui::Context) -> TerminalStyle {
         let font_size = self.view.settings.number("terminal.font_size", None);
         let line_height = self.view.settings.number("terminal.line_height", None);
         let font = if self.view.settings.choice("terminal.font_family") == "Hack" {
@@ -38,7 +44,29 @@ impl Workbench<'_> {
             theme::Theme::HighContrast => "high_contrast",
             _ => "vscode_dark",
         };
-        let terminal_colors = terminal_theme.palette();
+        TerminalStyle {
+            font,
+            line_height,
+            cursor_style,
+            color_scheme,
+            colors: terminal_theme.palette(),
+            theme: terminal_theme,
+        }
+    }
+
+    pub(crate) fn terminal_panel(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        if !self.view.terminal.open {
+            return;
+        }
+        let TerminalStyle {
+            font,
+            line_height,
+            cursor_style,
+            color_scheme,
+            colors: terminal_colors,
+            theme: terminal_theme,
+        } = self.terminal_style(ctx);
         let cursor_blink = self.view.settings.boolean("terminal.cursor_blink");
         let auto_scroll = self.view.settings.boolean("terminal.auto_scroll");
         let panel_divider = self.view.settings.boolean("terminal.panel_divider");
@@ -73,18 +101,9 @@ impl Workbench<'_> {
                             enabled: true,
                         },
                     ];
-                    let tabs = [
-                        PanelTab {
-                            label: "TERMINAL",
-                            active: true,
-                            command: Command::ShowTerminal,
-                        },
-                        PanelTab {
-                            label: "OUTPUT",
-                            active: false,
-                            command: Command::ShowOutput,
-                        },
-                    ];
+                    let entries =
+                        self.bottom_tab_entries(super::bottom_tabs::ActiveBottom::Terminal);
+                    let tabs = super::bottom_tabs::as_panel_tabs(&entries);
                     if let Some(command) = tabbed_panel_header(ui, &tabs, &actions) {
                         self.command(command);
                     }
@@ -206,7 +225,7 @@ impl Workbench<'_> {
 
 /// Horizontal advance of one terminal cell, measured from the selected font so
 /// the PTY column count matches what is drawn at any font size or family.
-fn cell_advance(ui: &egui::Ui, font: &FontId) -> f32 {
+pub(super) fn cell_advance(ui: &egui::Ui, font: &FontId) -> f32 {
     let measured = ui.fonts_mut(|fonts| fonts.glyph_width(font, 'M'));
     if measured.is_finite() && measured > 1.0 {
         measured
@@ -215,7 +234,7 @@ fn cell_advance(ui: &egui::Ui, font: &FontId) -> f32 {
     }
 }
 
-fn terminal_line(
+pub(super) fn terminal_line(
     cells: &[lumen_terminal_core::Cell],
     font: &FontId,
     line_height: f32,
@@ -250,7 +269,7 @@ fn terminal_line(
     job
 }
 
-fn terminal_input_bytes(event: egui::Event) -> Option<Vec<u8>> {
+pub(super) fn terminal_input_bytes(event: egui::Event) -> Option<Vec<u8>> {
     match event {
         egui::Event::Text(text) => (!text.is_empty()).then(|| text.into_bytes()),
         egui::Event::Paste(text) => Some(text.into_bytes()),

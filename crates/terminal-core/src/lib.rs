@@ -72,9 +72,26 @@ pub struct Terminal {
 
 impl Terminal {
     pub fn new(rows: usize, columns: usize) -> Self {
+        Self::with_config(rows, columns, term::Config::default())
+    }
+
+    /// Like `new`, with the scrollback bounded to `history_lines`. Task output
+    /// uses a small budget so many retained runs cannot hold unbounded memory.
+    pub fn with_history(rows: usize, columns: usize, history_lines: usize) -> Self {
+        Self::with_config(
+            rows,
+            columns,
+            term::Config {
+                scrolling_history: history_lines,
+                ..term::Config::default()
+            },
+        )
+    }
+
+    fn with_config(rows: usize, columns: usize, config: term::Config) -> Self {
         let size = Size::new(rows, columns);
         Self {
-            term: Term::new(term::Config::default(), &size, VoidListener),
+            term: Term::new(config, &size, VoidListener),
             parser: vte::ansi::Processor::new(),
             size,
         }
@@ -97,6 +114,20 @@ impl Terminal {
         // The workbench Clear action is an output reset, not the shell's
         // escape-sequence-only erase command: discard retained scrollback too.
         self.term.grid_mut().reset::<Color>();
+    }
+
+    /// The retained text, one line per row, trailing blanks and empty tail trimmed.
+    pub fn text(&self) -> String {
+        let screen = self.screen();
+        let mut lines: Vec<String> = (0..screen.rows).map(|row| screen.line(row)).collect();
+        while lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
+        let mut text = lines.join("\n");
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text
     }
 
     pub fn screen(&self) -> Screen {
@@ -168,6 +199,30 @@ impl Dimensions for Size {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bounded_history_keeps_only_the_newest_lines_and_text_exports_them() {
+        let mut terminal = Terminal::with_history(4, 20, 10);
+        for n in 0..100 {
+            terminal.feed(format!("line {n}\r\n").as_bytes());
+        }
+        let screen = terminal.screen();
+        assert!(screen.rows <= 4 + 10, "history is bounded: {}", screen.rows);
+        let text = terminal.text();
+        assert!(text.contains("line 99\n"), "{text}");
+        assert!(!text.contains("line 0\n"), "old lines were dropped");
+        assert!(text.ends_with('\n') && !text.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn text_of_an_empty_terminal_is_empty_and_clear_resets_it() {
+        let mut terminal = Terminal::with_history(3, 10, 5);
+        assert_eq!(terminal.text(), "");
+        terminal.feed(b"hello\r\n");
+        assert_eq!(terminal.text(), "hello\n");
+        terminal.clear();
+        assert_eq!(terminal.text(), "");
+    }
+
     use super::{Terminal, TerminalColor};
 
     #[test]

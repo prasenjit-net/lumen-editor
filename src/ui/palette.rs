@@ -88,7 +88,7 @@ impl Workbench<'_> {
             ui.separator();
             if ui
                 .add_enabled(
-                    self.editor.active_index().is_some() || self.view.settings.open,
+                    self.editor.active_index().is_some() || self.view.page_tab_active(),
                     egui::Button::new(format!(
                         "{}  Close Document   {}",
                         icon::X,
@@ -128,10 +128,22 @@ impl Workbench<'_> {
                 | ShowDocumentSymbols
                 | AskAgentAboutSelection
         );
-        if needs_document && (self.active().is_none() || self.view.settings.open) {
+        if matches!(command, Save) && self.view.task_editors.active().is_some() {
+            return None;
+        }
+        if needs_document && (self.active().is_none() || self.view.page_tab_active()) {
             return Some("Open a text document first");
         }
-        if matches!(command, CloseEditor) && self.active().is_none() && !self.view.settings.open {
+        if matches!(
+            command,
+            NewTaskEditor(lumen_task_core::Scope::Workspace)
+                | OpenTaskToml(lumen_task_core::Scope::Workspace)
+        ) && self.editor.workspace.is_none()
+        {
+            return Some("Open a folder first");
+        }
+        if matches!(command, CloseEditor) && self.active().is_none() && !self.view.page_tab_active()
+        {
             return Some("No editor is open");
         }
         if matches!(
@@ -397,6 +409,45 @@ fn palette_commands() -> Vec<(String, Command)> {
         (
             format!("{}  Preferences: Open Settings", icon::GEAR),
             Command::Settings,
+        ),
+        (
+            format!("{}  Tasks: New Workspace Task", icon::DEBUG),
+            Command::NewTaskEditor(lumen_task_core::Scope::Workspace),
+        ),
+        (
+            format!("{}  Tasks: New User Task", icon::DEBUG),
+            Command::NewTaskEditor(lumen_task_core::Scope::User),
+        ),
+        (
+            format!("{}  Tasks: Run Selected Task", icon::PLAY),
+            Command::RunSelectedTask,
+        ),
+        (
+            format!("{}  Tasks: Rerun Last Task", icon::PLAY),
+            Command::RerunLastTask,
+        ),
+        (
+            format!("{}  Tasks: Run Build Task", icon::PLAY),
+            Command::RunDefaultTask("build"),
+        ),
+        (
+            format!("{}  Tasks: Run Test Task", icon::PLAY),
+            Command::RunDefaultTask("test"),
+        ),
+        (
+            format!("{}  Tasks: Show Running Tasks", icon::DEBUG),
+            Command::ShowRunningTasks,
+        ),
+        (
+            format!(
+                "{}  Tasks: Open Workspace Tasks File (TOML)",
+                icon::FILE_CODE
+            ),
+            Command::OpenTaskToml(lumen_task_core::Scope::Workspace),
+        ),
+        (
+            format!("{}  Tasks: Open User Tasks File (TOML)", icon::FILE_CODE),
+            Command::OpenTaskToml(lumen_task_core::Scope::User),
         ),
         (
             format!("{}  File: New Text File", icon::FILE_PLUS),

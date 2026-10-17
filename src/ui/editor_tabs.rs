@@ -4,6 +4,7 @@ use crate::{
     app::{
         command::Command,
         tab_commands::TabMove,
+        task_editor::TaskEditorId,
         view_state::{TabDrag, TabStripGeometry},
     },
     icon,
@@ -24,6 +25,7 @@ enum TabTarget {
     Document(DocumentId),
     Diff,
     Settings,
+    TaskEditor(TaskEditorId),
 }
 
 #[derive(Clone, PartialEq)]
@@ -100,6 +102,19 @@ impl Workbench<'_> {
         let diff_tab = !hide_virtual && self.view.source_control.diff.is_some();
         let settings_open = !hide_virtual && self.view.settings.open;
         let settings_tab = !hide_virtual && self.view.settings.tab_open;
+        let task_tabs: Vec<(TaskEditorId, String)> = if hide_virtual {
+            Vec::new()
+        } else {
+            self.view
+                .task_editors
+                .tabs()
+                .iter()
+                .map(|tab| (tab.id, format!("{} {}", icon::GEAR, tab.title())))
+                .collect()
+        };
+        let task_active = (!hide_virtual)
+            .then(|| self.view.task_editors.active())
+            .flatten();
         let hidden_document = self
             .view
             .source_control
@@ -146,6 +161,7 @@ impl Workbench<'_> {
                     }),
             )
             .chain(settings_tab.then(|| format!("{} Settings", icon::GEAR)))
+            .chain(task_tabs.iter().map(|(_, title)| title.clone()))
             .collect();
         let font = egui::TextStyle::Button.resolve(ui.style());
         let natural: Vec<_> = titles
@@ -168,7 +184,13 @@ impl Workbench<'_> {
                 .diff
                 .as_ref()
                 .is_some_and(|diff| diff.active);
-        let active_index = if settings_open {
+        let task_base = visible_files.len() + usize::from(diff_tab) + usize::from(settings_tab);
+        let active_index = if let Some(id) = task_active {
+            task_tabs
+                .iter()
+                .position(|(tab, _)| *tab == id)
+                .map(|position| task_base + position)
+        } else if settings_open {
             settings_tab.then_some(visible_files.len() + usize::from(diff_tab))
         } else if diff_active {
             Some(visible_files.len())
@@ -178,7 +200,9 @@ impl Workbench<'_> {
                 .and_then(|index| visible_files.iter().position(|visible| *visible == index))
         };
         let sizing = TabSizing::new(ui.available_width(), &natural, active_index);
-        let active = if settings_open {
+        let active = if let Some(id) = task_active {
+            Some(TabTarget::TaskEditor(id))
+        } else if settings_open {
             Some(TabTarget::Settings)
         } else if diff_active {
             Some(TabTarget::Diff)
@@ -213,6 +237,8 @@ impl Workbench<'_> {
         let mut drag_state: Option<TabDrag> = None;
         let mut outside_drop: Option<(DocumentId, egui::Pos2)> = None;
         let mut open_settings = false;
+        let mut open_task: Option<TaskEditorId> = None;
+        let mut close_task: Option<TaskEditorId> = None;
         let mut close_settings = false;
         let mut open_diff = false;
         let mut close_diff = false;
@@ -371,6 +397,37 @@ impl Workbench<'_> {
                                         ui.scroll_to_rect(response.rect, None);
                                     }
                                 }
+                                for (position, (id, _)) in task_tabs.iter().enumerate() {
+                                    let index = task_base + position;
+                                    let selected = active == Some(TabTarget::TaskEditor(*id));
+                                    let tooltip = self
+                                        .view
+                                        .task_editors
+                                        .get(*id)
+                                        .map(|tab| format!("{} task", tab.scope().label()))
+                                        .unwrap_or_default();
+                                    let response = tab(
+                                        ui,
+                                        &titles[index],
+                                        sizing.widths[index],
+                                        selected,
+                                        &tooltip,
+                                        "Close task editor",
+                                        self.view
+                                            .task_editors
+                                            .get(*id)
+                                            .is_some_and(|tab| tab.dirty()),
+                                    );
+                                    if response.select {
+                                        open_task = Some(*id);
+                                    }
+                                    if response.close {
+                                        close_task = Some(*id);
+                                    }
+                                    if selected && reveal {
+                                        ui.scroll_to_rect(response.rect, None);
+                                    }
+                                }
                             });
                         });
                 },
@@ -424,6 +481,15 @@ impl Workbench<'_> {
                             open_settings = true;
                             ui.close();
                         }
+                        for (id, title) in &task_tabs {
+                            if ui
+                                .selectable_label(active == Some(TabTarget::TaskEditor(*id)), title)
+                                .clicked()
+                            {
+                                open_task = Some(*id);
+                                ui.close();
+                            }
+                        }
                     });
                 })
                 .response
@@ -445,7 +511,7 @@ impl Workbench<'_> {
             // even if the user has manually scrolled its header out of view.
             ui.ctx()
                 .data_mut(|data| data.remove::<RevealSignature>(reveal_id));
-            self.view.settings.open = false;
+            self.view.leave_page_tabs();
             if let Some(diff) = &mut self.view.source_control.diff {
                 diff.active = false;
             }
@@ -479,7 +545,7 @@ impl Workbench<'_> {
         if close_diff {
             crate::app::source_control::close_diff_preview(self.editor, self.view);
         } else if open_diff {
-            self.view.settings.open = false;
+            self.view.leave_page_tabs();
             if let Some(diff) = &mut self.view.source_control.diff {
                 diff.active = true;
                 self.view.focus_editor = diff.document.is_some();
@@ -488,6 +554,11 @@ impl Workbench<'_> {
                         .and_then(|id| self.editor.files.iter().position(|file| file.id == id)),
                 );
             }
+        }
+        if let Some(id) = close_task {
+            self.command(Command::CloseTaskEditor(id));
+        } else if let Some(id) = open_task {
+            self.command(Command::ActivateTaskEditor(id));
         }
         if close_settings {
             self.view.settings.tab_open = false;

@@ -194,6 +194,101 @@ impl Workbench<'_> {
             });
     }
 
+    /// Confirmation before a task definition is removed from its tasks file.
+    pub(crate) fn task_delete_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(key) = self.view.task_delete_prompt.clone() else {
+            return;
+        };
+        let Some(label) = self.view.tasks.get(&key).map(|task| task.label.clone()) else {
+            self.view.task_delete_prompt = None;
+            return;
+        };
+        let dependents = self.view.tasks.dependents(&key);
+        egui::Window::new("Delete task definition")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_max_width(420.0);
+                ui.add(
+                    egui::Label::new(format!(
+                        "Delete the {} task '{label}' from its tasks file?",
+                        key.scope.label().to_lowercase()
+                    ))
+                    .wrap(),
+                );
+                ui.label(
+                    RichText::new("Files the task produced are not touched.").color(colors.muted),
+                );
+                if !dependents.is_empty() {
+                    ui.add_space(4.0);
+                    let names: Vec<String> = dependents
+                        .iter()
+                        .map(|dependent| dependent.id.clone())
+                        .collect();
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(format!(
+                                "These tasks depend on it and will stop validating: {}",
+                                names.join(", ")
+                            ))
+                            .color(colors.error),
+                        )
+                        .wrap(),
+                    );
+                }
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let delete = primary_button(ui, "Delete");
+                    let cancel = ui.button("Cancel");
+                    keep_focus(ui.ctx(), &[&delete, &cancel], &cancel);
+                    if delete.clicked() {
+                        self.command(Command::ConfirmDeleteTask(key.clone()));
+                    } else if cancel.clicked() || escape_pressed(ui.ctx()) {
+                        self.command(Command::CancelDeleteTask);
+                    }
+                });
+            });
+    }
+
+    /// Save / Don't Save / Cancel for a task editor with unsaved edits.
+    pub(crate) fn task_close_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(id) = self.view.task_close_prompt else {
+            return;
+        };
+        let Some(title) = self.view.task_editors.get(id).map(|tab| tab.title()) else {
+            self.view.task_close_prompt = None;
+            return;
+        };
+        egui::Window::new("Unsaved task changes")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_max_width(420.0);
+                ui.add(egui::Label::new(format!("Save changes to task '{title}'?")).wrap());
+                ui.label(
+                    RichText::new("Your edits will be lost if you don't save.").color(colors.muted),
+                );
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let save = primary_button(ui, "Save");
+                    let discard = ui.button("Don't Save");
+                    let cancel = ui.button("Cancel");
+                    keep_focus(ui.ctx(), &[&save, &discard, &cancel], &save);
+                    if save.clicked() {
+                        self.command(Command::SaveAndCloseTaskEditor(id));
+                    } else if discard.clicked() {
+                        self.command(Command::DiscardTaskEditor(id));
+                    } else if cancel.clicked() || escape_pressed(ui.ctx()) {
+                        self.command(Command::CancelTaskEditorClose);
+                    }
+                });
+            });
+    }
+
     pub(crate) fn unsaved_changes_dialog(&mut self, ctx: &egui::Context) {
         let colors = crate::ui::theme::palette(&ctx.style().visuals);
         let Some(id) = self.view.pending_close else {

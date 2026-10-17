@@ -8,6 +8,8 @@
 #![allow(dead_code)]
 
 use super::language_server::ServerWake;
+pub(crate) use super::process_tree::resolve_program;
+use super::process_tree::{isolate_process_tree, kill_process_tree};
 use lumen_agent_protocol::framing::{self, LineDecoder};
 use serde_json::Value;
 use std::{
@@ -231,70 +233,7 @@ fn read_stderr(mut output: impl Read, sender: Sender<AgentEvent>, wake: ServerWa
     flush(&mut pending);
 }
 
-/// Put the child in its own process group (Unix) so the whole tree can be killed.
-fn isolate_process_tree(command: &mut Command) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
-    }
-}
-
-/// Kill the child and everything it started (npx -> node -> agent -> tools).
-fn kill_process_tree(child: &Child) {
-    #[cfg(unix)]
-    {
-        let group = -(child.id() as libc::pid_t);
-        // SAFETY: signalling a process group we created; failure (already gone) is fine.
-        unsafe {
-            libc::kill(group, libc::SIGTERM);
-        }
-        thread::sleep(Duration::from_millis(30));
-        unsafe {
-            libc::kill(group, libc::SIGKILL);
-        }
-    }
-    #[cfg(windows)]
-    {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-}
-
 // ------------------------------------------------------------- environment
-
-/// Find an executable the way a shell would. On Windows, bare names also try
-/// `PATHEXT`-style suffixes, which is how `npx` becomes `npx.cmd`.
-pub(crate) fn resolve_program(name: &str, path_var: Option<&OsStr>) -> Option<PathBuf> {
-    let candidate = Path::new(name);
-    if candidate.components().count() > 1 {
-        return candidate.is_file().then(|| candidate.to_path_buf());
-    }
-    let suffixes: &[&str] = if cfg!(windows) {
-        &["", ".exe", ".cmd", ".bat"]
-    } else {
-        &[""]
-    };
-    for directory in std::env::split_paths(path_var?) {
-        for suffix in suffixes {
-            let path = directory.join(format!("{name}{suffix}"));
-            if path.is_file() {
-                return Some(path);
-            }
-        }
-    }
-    None
-}
 
 /// Login-shell directories first (they are what the user's terminal sees), then
 /// whatever the app inherited, without duplicates.

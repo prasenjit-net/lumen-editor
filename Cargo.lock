@@ -2185,6 +2185,7 @@ dependencies = [
  "lumen-editor-surface",
  "lumen-language-services",
  "lumen-settings-core",
+ "lumen-task-core",
  "lumen-terminal-core",
  "muda",
  "portable-pty",
@@ -2237,6 +2238,13 @@ dependencies = [
 
 [[package]]
 name = "lumen-settings-core"
+version = "0.1.0"
+dependencies = [
+ "toml_edit",
+]
+
+[[package]]
+name = "lumen-task-core"
 version = "0.1.0"
 dependencies = [
  "toml_edit",

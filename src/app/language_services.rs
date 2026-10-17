@@ -182,7 +182,7 @@ impl LumenApp {
             return;
         };
         self.editor.set_active_index(Some(index));
-        self.view.settings.open = false;
+        self.view.leave_page_tabs();
         if let Some(diff) = &mut self.view.source_control.diff {
             diff.active = false;
         }
