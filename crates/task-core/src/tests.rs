@@ -74,7 +74,10 @@ fn task(id: &str, deps: &[&str]) -> TaskDef {
 }
 
 fn file(tasks: Vec<TaskDef>) -> TaskFile {
-    TaskFile { tasks }
+    TaskFile {
+        tasks,
+        ..Default::default()
+    }
 }
 
 #[test]
@@ -276,11 +279,14 @@ fn variables_are_a_small_checked_vocabulary() {
             .unwrap_err()
             .contains("unknown variable")
     );
-    assert!(
-        find_variables("${input:x}")
-            .unwrap_err()
-            .contains("not supported yet")
+    assert_eq!(
+        find_variables("${input:token} and ${input:my-id}").unwrap(),
+        vec![
+            Variable::Input("token".into()),
+            Variable::Input("my-id".into())
+        ]
     );
+    assert!(find_variables("${input:bad id}").is_err());
     assert!(
         find_variables("${command:x}")
             .unwrap_err()
@@ -645,4 +651,102 @@ fn the_failure_policy_parses_validates_round_trips_and_defaults_to_fail_fast() {
     let base = execution_digest(&a);
     a.on_failure = None;
     assert_ne!(execution_digest(&a), base, "the policy changes what runs");
+}
+
+const WITH_INPUTS: &str = r#"schema_version = 1
+
+[[inputs]]
+id = "env"
+type = "choice"
+prompt = "Environment"
+options = ["staging", "prod"]
+default = "staging"
+
+[[inputs]]
+id = "token"
+type = "secret"
+prompt = "API token"
+
+[[inputs]]
+id = "note"
+type = "text"
+prompt = "Release note"
+default = "routine"
+
+[[tasks]]
+id = "deploy"
+label = "Deploy"
+type = "process"
+command = "deploy"
+args = ["--env", "${input:env}", "--note=${input:note}"]
+
+[tasks.env]
+API_TOKEN = "${input:token}"
+"#;
+
+#[test]
+fn declared_inputs_parse_and_tasks_report_which_they_use() {
+    let parsed = parse(WITH_INPUTS).unwrap();
+    assert_eq!(parsed.inputs.len(), 3);
+    let env = parsed.input("env").unwrap();
+    assert_eq!((env.kind, env.options.len()), (InputKind::Choice, 2));
+    assert_eq!(env.default.as_deref(), Some("staging"));
+    assert_eq!(parsed.input("token").unwrap().kind, InputKind::Secret);
+    let deploy = parsed.get("deploy").unwrap();
+    assert_eq!(input_references(deploy), ["env", "note", "token"]);
+    // Inputs survive edits of a task untouched.
+    let mut edited = deploy.clone();
+    edited.label = "Ship it".into();
+    let text = upsert_task(WITH_INPUTS, &edited).unwrap();
+    assert!(text.contains("id = \"token\"") && text.contains("Ship it"));
+    assert_eq!(parse(&text).unwrap().inputs, parsed.inputs);
+}
+
+#[test]
+fn input_declarations_and_references_are_validated() {
+    let bad = |from: &str, to: &str| issues(&WITH_INPUTS.replace(from, to));
+    assert!(
+        bad("${input:env}", "${input:nope}")
+            .iter()
+            .any(|i| i.contains("not declared in [[inputs]]"))
+    );
+    assert!(
+        bad("default = \"staging\"", "default = \"dev\"")
+            .iter()
+            .any(|i| i.contains("default is not one of the options"))
+    );
+    assert!(
+        bad("options = [\"staging\", \"prod\"]\n", "")
+            .iter()
+            .any(|i| i.contains("at least one option"))
+    );
+    assert!(
+        bad(
+            "prompt = \"API token\"",
+            "prompt = \"API token\"\ndefault = \"hunter2\""
+        )
+        .iter()
+        .any(|i| i.contains("secret cannot have a default"))
+    );
+    assert!(
+        bad("id = \"note\"", "id = \"env\"")
+            .iter()
+            .any(|i| i.contains("declared more than once"))
+    );
+    assert!(
+        bad("type = \"secret\"", "type = \"password\"")
+            .iter()
+            .any(|i| i.contains("not one of: text, choice, secret"))
+    );
+    assert!(
+        bad("prompt = \"Release note\"", "prompt = \" \"")
+            .iter()
+            .any(|i| i.contains("needs a prompt"))
+    );
+    assert!(has(
+        "schema_version = 1
+inputs = 3
+",
+        "array of tables"
+    ));
 }

@@ -92,6 +92,34 @@ impl RunLog {
         .collect()
     }
 
+    /// The most recent text (about `max_bytes`), including unfinished lines, for
+    /// literal pattern matching such as readiness. Lines are joined with `\n`.
+    pub(crate) fn tail_text(&self, max_bytes: usize) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        let mut bytes = 0;
+        for line in self.stdout_stderr_partials().into_iter().rev() {
+            bytes += line.len() + 1;
+            parts.push(line);
+        }
+        for line in self.lines.iter().rev() {
+            if bytes >= max_bytes {
+                break;
+            }
+            bytes += line.text.len() + 1;
+            parts.push(&line.text);
+        }
+        parts.reverse();
+        parts.join("\n")
+    }
+
+    fn stdout_stderr_partials(&self) -> Vec<&str> {
+        [&self.stdout, &self.stderr]
+            .into_iter()
+            .filter(|state| !state.line.is_empty())
+            .map(|state| state.line.as_str())
+            .collect()
+    }
+
     pub(crate) fn retained_bytes(&self) -> usize {
         self.retained_bytes
     }
@@ -426,5 +454,26 @@ mod tests {
         assert!(log.is_empty() && log.truncation_notice().is_none());
         log.push(Stream::Stdout, &vec![b'y'; MAX_LINE_BYTES]);
         assert_eq!(log.lines().len(), 1);
+    }
+
+    #[test]
+    fn the_tail_includes_unfinished_lines_so_a_pattern_split_across_chunks_matches() {
+        let mut log = log();
+        log.push(Stream::Stdout, b"starting\nready on http://loc");
+        assert!(!log.tail_text(1024).contains("Local:"));
+        log.push(Stream::Stdout, b"alhost\n  Local: http://x");
+        let tail = log.tail_text(1024);
+        assert!(tail.contains("ready on http://localhost"), "{tail}");
+        assert!(
+            tail.contains("Local: http://x"),
+            "unfinished lines count: {tail}"
+        );
+        // Only recent text is considered.
+        let mut log = RunLog::new(MAX_LINE_BYTES * 4);
+        for n in 0..2000 {
+            log.push(Stream::Stdout, format!("noise {n}\n").as_bytes());
+        }
+        let tail = log.tail_text(256);
+        assert!(tail.contains("noise 1999") && !tail.contains("noise 0\n") && tail.len() < 600);
     }
 }

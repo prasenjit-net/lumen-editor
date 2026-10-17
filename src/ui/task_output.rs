@@ -11,7 +11,7 @@ use super::{
 use crate::{
     app::{
         command::Command,
-        task_runs::{RunOutcome, RunState, TaskRun},
+        task_runs::{Readiness, RunOutcome, RunState, TaskRun},
     },
     icon,
     model::task_output::{LogLine, Stream},
@@ -30,7 +30,11 @@ fn clock(elapsed: Duration) -> String {
 
 fn status_text(run: &TaskRun, now: Instant) -> String {
     let state = match &run.state {
-        RunState::Running => "Running".to_string(),
+        RunState::Running => match &run.readiness {
+            Readiness::Waiting { pattern, .. } => format!("Starting, waiting for \"{pattern}\""),
+            Readiness::Ready => "Running · ready".to_string(),
+            _ => "Running".to_string(),
+        },
         RunState::Stopping => "Stopping…".to_string(),
         RunState::Finished(outcome) => outcome.summary(),
     };

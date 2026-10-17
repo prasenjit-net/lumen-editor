@@ -177,6 +177,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.unsaved_changes_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.task_close_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.task_delete_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.task_inputs_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.task_run_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.task_run_close_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.task_workspace_dialog(ctx));

@@ -8,7 +8,11 @@ use crate::{
     services::task_process::{ExitReport, TaskEvent, TaskProcess},
 };
 use eframe::egui;
-use lumen_task_core::{ResolvedTask, SavePolicy, TaskDef, TaskKey};
+use lumen_task_core::{InputValue, ResolvedTask, SavePolicy, Scope, TaskDef, TaskKey};
+use std::collections::HashMap;
+
+/// Values collected for a run's declared inputs, keyed by the scope's file and id.
+pub(crate) type InputMap = HashMap<(Scope, String), InputValue>;
 use std::{
     path::PathBuf,
     time::{Duration, Instant},
@@ -46,6 +50,10 @@ pub(crate) enum RunOutcome {
     Completed,
     /// A task group that ended because the named task failed (or could not start).
     GroupFailed(String),
+    /// A background task never printed its readiness text within this many seconds.
+    NotReady(u32),
+    /// A background task exited before becoming ready, whatever its exit code.
+    ExitedEarly(ExitReport),
 }
 
 impl RunOutcome {
@@ -62,6 +70,10 @@ impl RunOutcome {
             Self::TimedOut => "Timed out and was stopped".into(),
             Self::Completed => "Completed".into(),
             Self::GroupFailed(label) => format!("Stopped: '{label}' failed"),
+            Self::NotReady(seconds) => format!("Not ready within {seconds}s; stopped"),
+            Self::ExitedEarly(report) => {
+                format!("Exited before becoming ready ({})", report.describe())
+            }
         }
     }
 }
@@ -76,6 +88,21 @@ pub(crate) enum StopReason {
     Workspace,
     /// A sibling failed under the group's fail-fast policy.
     Group,
+    /// A background task did not become ready in time.
+    Readiness,
+}
+
+/// Whether a background task has printed its readiness text yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Readiness {
+    /// Not a background task, or one without a readiness pattern.
+    NotApplicable,
+    Waiting {
+        pattern: String,
+        deadline: Instant,
+    },
+    Ready,
+    TimedOut,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,6 +130,9 @@ pub(crate) struct TaskRun {
     pub(crate) ended: Option<Instant>,
     pub(crate) state: RunState,
     pub(crate) log: RunLog,
+    pub(crate) readiness: Readiness,
+    /// A terminal run's plain-text shadow, scanned for the readiness pattern.
+    ready_scan: Option<RunLog>,
     /// Pseudo-terminal runs render through an emulator instead of the text log.
     terminal: Option<lumen_terminal_core::Terminal>,
     /// The emulator's screen as of the last output, rebuilt only when it changed.
@@ -149,6 +179,8 @@ impl TaskRun {
             ended: None,
             state: RunState::Running,
             log,
+            readiness: Readiness::NotApplicable,
+            ready_scan: None,
             terminal: None,
             screen: None,
             screen_dirty: false,
@@ -167,6 +199,7 @@ impl TaskRun {
                 is_background: false,
                 ready_pattern: None,
                 ready_timeout_seconds: None,
+                secrets: Vec::new(),
             },
             process: None,
             exit: None,
@@ -348,13 +381,15 @@ impl TaskRuns {
 
 /// A command line for display: program and arguments, or the shell command.
 pub(super) fn command_line(task: &ResolvedTask) -> String {
-    match &task.program {
+    let line = match &task.program {
         lumen_task_core::Program::Process { program, args } => std::iter::once(program.as_str())
             .chain(args.iter().map(String::as_str))
             .collect::<Vec<_>>()
             .join(" "),
         lumen_task_core::Program::Shell { command } => command.clone(),
-    }
+    };
+    // Secret input values never appear in a preview, tooltip or log.
+    task.redact(&line)
 }
 
 impl LumenApp {
@@ -362,8 +397,22 @@ impl LumenApp {
     /// review/save prompt first. Nothing launches until the whole graph validated
     /// and resolved.
     pub(crate) fn run_task(&mut self, key: TaskKey, ctx: &egui::Context) {
-        let plan = match self.plan_for_run(&key) {
-            Ok(plan) => plan,
+        self.run_task_with(key, InputMap::new(), ctx);
+    }
+
+    /// `run_task` with the input values already collected. Inputs still needed are
+    /// asked for first; cancelling that prompt starts nothing.
+    pub(crate) fn run_task_with(&mut self, key: TaskKey, inputs: InputMap, ctx: &egui::Context) {
+        let plan = match self.plan_for_run(&key, &inputs) {
+            Ok(super::task_graph::PlanResult::Ready(plan)) => plan,
+            Ok(super::task_graph::PlanResult::NeedsInputs(prompts)) => {
+                self.view.task_inputs = Some(PendingInputs {
+                    key,
+                    prompts,
+                    collected: inputs,
+                });
+                return;
+            }
             Err(message) => {
                 self.view.status = message;
                 return;
@@ -443,6 +492,7 @@ impl LumenApp {
         &self,
         key: &TaskKey,
         def: &TaskDef,
+        inputs: &InputMap,
     ) -> Result<ResolvedTask, String> {
         let active_file = self
             .editor
@@ -460,6 +510,7 @@ impl LumenApp {
             user_base: user_base.as_deref(),
             platform: lumen_task_core::Platform::current(),
             env: &env,
+            inputs: &|id: &str| inputs.get(&(key.scope, id.to_string())).cloned(),
         };
         lumen_task_core::resolve(def, key.scope, &ctx).map_err(|error| error.to_string())
     }
@@ -506,6 +557,37 @@ impl LumenApp {
             }
         }
         self.start_plan(pending.plan, ctx);
+    }
+
+    /// Take the answers and continue the run; an incomplete prompt does nothing.
+    pub(crate) fn submit_task_inputs(&mut self, ctx: &egui::Context) {
+        if !self
+            .view
+            .task_inputs
+            .as_ref()
+            .is_some_and(PendingInputs::complete)
+        {
+            return;
+        }
+        let Some(pending) = self.view.task_inputs.take() else {
+            return;
+        };
+        let mut values = pending.collected;
+        for prompt in pending.prompts {
+            values.insert(
+                (prompt.scope, prompt.id),
+                InputValue {
+                    secret: prompt.kind == lumen_task_core::InputKind::Secret,
+                    value: prompt.value,
+                },
+            );
+        }
+        self.run_task_with(pending.key, values, ctx);
+    }
+
+    /// Cancelling starts nothing; typed values are dropped.
+    pub(crate) fn cancel_task_inputs(&mut self) {
+        self.view.task_inputs = None;
     }
 
     pub(crate) fn cancel_pending_task(&mut self) {
@@ -563,6 +645,17 @@ impl LumenApp {
             ended: None,
             state: RunState::Running,
             log: RunLog::new(RUN_LOG_BYTES),
+            readiness: match &resolved.ready_pattern {
+                Some(pattern) => Readiness::Waiting {
+                    pattern: pattern.clone(),
+                    deadline: now
+                        + Duration::from_secs(u64::from(
+                            resolved.ready_timeout_seconds.unwrap_or(60),
+                        )),
+                },
+                None => Readiness::NotApplicable,
+            },
+            ready_scan: None,
             terminal: None,
             screen: None,
             screen_dirty: false,
@@ -582,6 +675,9 @@ impl LumenApp {
         };
         match launched {
             Ok(process) => {
+                if process.is_pty() && matches!(run.readiness, Readiness::Waiting { .. }) {
+                    run.ready_scan = Some(RunLog::new(64 * 1024));
+                }
                 if process.is_pty() {
                     run.terminal = Some(lumen_terminal_core::Terminal::with_history(
                         usize::from(run.pty_size.0),
@@ -987,6 +1083,9 @@ fn feed(run: &mut TaskRun, stream: crate::model::task_output::Stream, bytes: &[u
         Some(terminal) => {
             terminal.feed(bytes);
             run.screen_dirty = true;
+            if let Some(scan) = &mut run.ready_scan {
+                scan.push(stream, bytes);
+            }
         }
         None => run.log.push(stream, bytes),
     }
@@ -1052,6 +1151,25 @@ fn poll_run_with(
         run.stop_requested_at = Some(now);
         process.request_stop();
     }
+    if let Readiness::Waiting { pattern, deadline } = run.readiness.clone() {
+        let window = (pattern.len() * 4).max(4096);
+        let seen = match &run.ready_scan {
+            Some(scan) => scan.tail_text(window),
+            None => run.log.tail_text(window),
+        };
+        if seen.contains(&pattern) {
+            run.readiness = Readiness::Ready;
+            run.ready_scan = None;
+        } else if now >= deadline && run.exit.is_none() && run.stop.is_none() {
+            // A readiness wait always ends: an unready service is stopped, not left
+            // half-started for dependents to wait on.
+            run.readiness = Readiness::TimedOut;
+            run.stop = Some(StopReason::Readiness);
+            run.state = RunState::Stopping;
+            run.stop_requested_at = Some(now);
+            process.request_stop();
+        }
+    }
     if run.exit.is_none()
         && !run.forced
         && let Some(requested) = run.stop_requested_at
@@ -1089,7 +1207,13 @@ fn poll_run_with(
     run.log.finish();
     let outcome = match run.stop {
         Some(StopReason::Timeout) => RunOutcome::TimedOut,
+        Some(StopReason::Readiness) => {
+            RunOutcome::NotReady(run.resolved.ready_timeout_seconds.unwrap_or(60))
+        }
         Some(_) => RunOutcome::Cancelled,
+        None if matches!(run.readiness, Readiness::Waiting { .. }) => {
+            RunOutcome::ExitedEarly(exited)
+        }
         None => match exited {
             ExitReport::Code(code) if run.resolved.exit_codes.contains(&code) => {
                 RunOutcome::Succeeded(exited)
@@ -1115,6 +1239,36 @@ pub(crate) struct PendingWorkspaceSwitch {
 pub(crate) struct PendingTaskQuit {
     /// The user chose to stop them; quit continues once they have (or at the deadline).
     pub(crate) deadline: Option<Instant>,
+}
+
+/// One value the run prompt asks for.
+pub(crate) struct InputPrompt {
+    pub(crate) scope: Scope,
+    pub(crate) id: String,
+    pub(crate) prompt: String,
+    pub(crate) kind: lumen_task_core::InputKind,
+    pub(crate) options: Vec<String>,
+    /// What the user has typed or chosen; masked in the dialog for secrets and
+    /// dropped as soon as the prompt is answered. Never written anywhere.
+    pub(crate) value: String,
+}
+
+/// A run waiting for input values.
+pub(crate) struct PendingInputs {
+    pub(crate) key: TaskKey,
+    pub(crate) prompts: Vec<InputPrompt>,
+    pub(crate) collected: InputMap,
+}
+
+impl PendingInputs {
+    /// Every prompt has an acceptable value (a secret or choice cannot be empty).
+    pub(crate) fn complete(&self) -> bool {
+        self.prompts.iter().all(|prompt| match prompt.kind {
+            lumen_task_core::InputKind::Text => true,
+            lumen_task_core::InputKind::Secret => !prompt.value.is_empty(),
+            lumen_task_core::InputKind::Choice => prompt.options.contains(&prompt.value),
+        })
+    }
 }
 
 /// One command the first-run review shows.
@@ -2520,21 +2674,6 @@ exit_codes = [0, 3]
             h.app.view.status
         );
 
-        h.write_tasks(&group_file(
-            &[(
-                "a",
-                "is_background = true\n[tasks.background]\nready_pattern = \"up\"",
-            )],
-            "depends_on = [\"a\"]",
-        ));
-        h.run("all");
-        assert!(
-            h.app.view.status.contains("background task"),
-            "{}",
-            h.app.view.status
-        );
-        assert!(h.fake.launched.lock().unwrap().is_empty());
-
         // A cycle is caught when the file is read: the whole file is refused.
         let path = crate::services::tasks::workspace_path(h.root.path());
         std::fs::write(
@@ -2677,6 +2816,390 @@ exit_codes = [0, 3]
         h.run("all");
         assert!(
             h.app.view.status.contains("problems") || h.app.view.status.contains("unknown"),
+            "{}",
+            h.app.view.status
+        );
+    }
+
+    const SERVICE: &str = "is_background = true\n[tasks.background]\nready_pattern = \"Local:\"\nready_timeout_seconds = 5";
+
+    fn say(h: &mut Harness, process: usize, text: &str) {
+        h.fake
+            .process(process)
+            .lock()
+            .unwrap()
+            .queued
+            .push(TaskEvent::Output(Stream::Stdout, text.as_bytes().to_vec()));
+    }
+
+    #[test]
+    fn a_background_task_becomes_ready_when_its_text_appears_even_split_across_chunks() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(&[("dev", SERVICE)], "depends_on = [\"dev\"]"));
+        h.run("dev");
+        assert!(matches!(h.run_at(0).readiness, Readiness::Waiting { .. }));
+        say(&mut h, 0, "compiling...\n  Loc");
+        h.poll_at(Instant::now());
+        assert!(matches!(h.run_at(0).readiness, Readiness::Waiting { .. }));
+        say(&mut h, 0, "al: http://localhost:3000\n");
+        h.poll_at(Instant::now());
+        assert_eq!(h.run_at(0).readiness, Readiness::Ready);
+        assert!(
+            h.run_at(0).is_active(),
+            "a service keeps running once ready"
+        );
+    }
+
+    #[test]
+    fn readiness_in_a_terminal_run_matches_through_colour_codes() {
+        let mut h = Harness::new();
+        h.write_tasks(
+            "\n[[tasks]]\nid = \"dev\"\nlabel = \"Dev\"\ntype = \"shell\"\ncommand = \"serve\"\nsave = \"none\"\nis_background = true\n[tasks.background]\nready_pattern = \"Local:\"\n",
+        );
+        h.run("dev");
+        assert!(h.run_at(0).is_pty());
+        say(&mut h, 0, "\x1b[32mLo");
+        say(&mut h, 0, "cal:\x1b[0m http://x\r\n");
+        h.poll_at(Instant::now());
+        assert_eq!(h.run_at(0).readiness, Readiness::Ready);
+    }
+
+    #[test]
+    fn a_service_that_is_never_ready_is_stopped_and_reported_not_left_half_started() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(&[("dev", SERVICE)], "depends_on = [\"dev\"]"));
+        h.run("dev");
+        let start = Instant::now();
+        h.poll_at(start + Duration::from_secs(3));
+        assert_eq!(h.fake.process(0).lock().unwrap().stop_requests, 0);
+        h.poll_at(start + Duration::from_secs(6));
+        assert_eq!(
+            h.fake.process(0).lock().unwrap().stop_requests,
+            1,
+            "the wait is finite"
+        );
+        assert_eq!(h.run_at(0).readiness, Readiness::TimedOut);
+        h.complete(0, 0);
+        assert_eq!(h.run_at(0).outcome(), Some(&RunOutcome::NotReady(5)));
+    }
+
+    #[test]
+    fn exiting_before_ready_is_a_failure_even_with_exit_code_zero() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(&[("dev", SERVICE)], "depends_on = [\"dev\"]"));
+        h.run("dev");
+        h.complete(0, 0);
+        assert!(matches!(
+            h.run_at(0).outcome(),
+            Some(RunOutcome::ExitedEarly(ExitReport::Code(0)))
+        ));
+        assert!(!h.run_at(0).outcome().unwrap().is_success());
+    }
+
+    #[test]
+    fn dependents_wait_for_readiness_and_the_group_stays_open_for_its_services() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("dev", SERVICE), ("test", "")],
+            "depends_on = [\"dev\", \"test\"]\ndepends_order = \"sequence\"",
+        ));
+        h.run("all");
+        assert_eq!(h.launched_labels(), ["DEV"]);
+        h.poll_at(Instant::now());
+        assert_eq!(h.launched_labels(), ["DEV"], "spawned is not ready");
+        say(&mut h, 0, "Local: http://x\n");
+        h.poll_at(Instant::now());
+        assert_eq!(
+            h.launched_labels(),
+            ["DEV", "TEST"],
+            "ready releases the dependent"
+        );
+        assert!(h.summary().log.text().contains("[ready] DEV"));
+        h.complete(1, 0);
+        assert!(h.summary().is_active(), "the group owns a running service");
+        assert!(
+            h.summary()
+                .log
+                .text()
+                .contains("background tasks are still running")
+        );
+        let parent = h.summary().id;
+        h.app.execute(Command::StopTaskRun(parent), &h.ctx);
+        assert_eq!(h.fake.process(0).lock().unwrap().stop_requests, 1);
+        h.complete(0, 0);
+        assert_eq!(
+            h.summary().outcome(),
+            Some(&RunOutcome::Completed),
+            "all work was done"
+        );
+    }
+
+    #[test]
+    fn a_service_dying_while_dependents_run_fails_the_group_under_fail_fast() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("dev", SERVICE), ("test", "")],
+            "depends_on = [\"dev\", \"test\"]\ndepends_order = \"sequence\"",
+        ));
+        h.run("all");
+        say(&mut h, 0, "Local: up\n");
+        h.poll_at(Instant::now());
+        assert_eq!(h.launched_labels(), ["DEV", "TEST"]);
+        h.complete(0, 0); // the service exits cleanly while the test still runs
+        assert_eq!(
+            h.fake.process(1).lock().unwrap().stop_requests,
+            1,
+            "dependents are stopped"
+        );
+        h.complete(1, 0);
+        let summary = h.summary();
+        assert_eq!(
+            summary.outcome(),
+            Some(&RunOutcome::GroupFailed("DEV".into()))
+        );
+        assert!(
+            summary
+                .log
+                .text()
+                .contains("stopped while other tasks still needed it")
+        );
+    }
+
+    #[test]
+    fn a_service_that_never_gets_ready_fails_the_group_and_skips_its_dependents() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("dev", SERVICE), ("test", "")],
+            "depends_on = [\"dev\", \"test\"]\ndepends_order = \"sequence\"",
+        ));
+        h.run("all");
+        let start = Instant::now();
+        h.poll_at(start + Duration::from_secs(6));
+        h.complete(0, 0);
+        let summary = h.summary();
+        assert_eq!(
+            summary.outcome(),
+            Some(&RunOutcome::GroupFailed("DEV".into()))
+        );
+        assert_eq!(h.launched_labels(), ["DEV"], "the dependent never ran");
+        assert!(summary.log.text().contains("[skipped] TEST"));
+    }
+
+    #[test]
+    fn graphs_whose_services_would_fill_every_slot_are_refused_up_front() {
+        let mut h = Harness::new();
+        let services: Vec<(String, &str)> = (0..MAX_ACTIVE_RUNS)
+            .map(|n| (format!("s{n}"), SERVICE))
+            .collect();
+        let extra: Vec<(&str, &str)> = services
+            .iter()
+            .map(|(id, more)| (id.as_str(), *more))
+            .collect();
+        let deps: Vec<String> = services.iter().map(|(id, _)| format!("\"{id}\"")).collect();
+        h.write_tasks(&group_file(
+            &extra,
+            &format!("depends_on = [{}]", deps.join(", ")),
+        ));
+        h.run("all");
+        assert!(h.fake.launched.lock().unwrap().is_empty());
+        assert!(
+            h.app.view.status.contains("no room"),
+            "{}",
+            h.app.view.status
+        );
+        // Room for the services plus one foreground task is fine.
+        let mut h = Harness::new();
+        let mut tasks: Vec<(String, &str)> = (0..MAX_ACTIVE_RUNS - 1)
+            .map(|n| (format!("s{n}"), SERVICE))
+            .collect();
+        tasks.push(("fg".into(), ""));
+        let extra: Vec<(&str, &str)> = tasks
+            .iter()
+            .map(|(id, more)| (id.as_str(), *more))
+            .collect();
+        let deps: Vec<String> = tasks.iter().map(|(id, _)| format!("\"{id}\"")).collect();
+        h.write_tasks(&group_file(
+            &extra,
+            &format!(
+                "depends_on = [{}]\ndepends_order = \"parallel\"",
+                deps.join(", ")
+            ),
+        ));
+        h.run("all");
+        assert!(
+            !h.fake.launched.lock().unwrap().is_empty(),
+            "{}",
+            h.app.view.status
+        );
+    }
+
+    const WITH_INPUTS: &str = r#"
+[[inputs]]
+id = "env"
+type = "choice"
+prompt = "Environment"
+options = ["staging", "prod"]
+default = "staging"
+
+[[inputs]]
+id = "token"
+type = "secret"
+prompt = "API token"
+
+[[tasks]]
+id = "deploy"
+label = "Deploy"
+type = "process"
+command = "deploy"
+args = ["--env", "${input:env}", "--token=${input:token}"]
+save = "none"
+
+[tasks.env]
+API_TOKEN = "${input:token}"
+
+[[tasks]]
+id = "smoke"
+label = "Smoke"
+type = "process"
+command = "smoke"
+args = ["${input:env}"]
+save = "none"
+
+[[tasks]]
+id = "release"
+label = "Release"
+type = "compound"
+depends_on = ["deploy", "smoke"]
+"#;
+
+    fn answer(h: &mut Harness, id: &str, value: &str) {
+        let pending = h.app.view.task_inputs.as_mut().expect("an input prompt");
+        pending
+            .prompts
+            .iter_mut()
+            .find(|p| p.id == id)
+            .unwrap()
+            .value = value.into();
+    }
+
+    #[test]
+    fn declared_inputs_are_asked_once_before_anything_resolves_and_cancel_starts_nothing() {
+        let mut h = Harness::new();
+        h.write_tasks(WITH_INPUTS);
+        h.run("deploy");
+        let pending = h.app.view.task_inputs.as_ref().expect("prompt");
+        let ids: Vec<_> = pending.prompts.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["env", "token"]);
+        assert_eq!(
+            pending.prompts[0].value, "staging",
+            "the default is preselected"
+        );
+        assert!(!pending.complete(), "an empty secret is not an answer");
+        assert!(h.fake.launched.lock().unwrap().is_empty());
+        h.app.execute(Command::SubmitTaskInputs, &h.ctx);
+        assert!(
+            h.app.view.task_inputs.is_some(),
+            "an incomplete prompt does nothing"
+        );
+        h.app.execute(Command::CancelTaskInputs, &h.ctx);
+        assert!(h.app.view.task_inputs.is_none() && h.fake.launched.lock().unwrap().is_empty());
+        assert!(h.app.view.task_pending.is_none() && h.app.view.task_runs.runs().is_empty());
+    }
+
+    #[test]
+    fn submitted_inputs_reach_the_command_and_secrets_stay_out_of_every_display() {
+        let mut h = Harness::new();
+        // Not trusted yet, so the review prompt appears after the inputs.
+        let path = crate::services::tasks::workspace_path(h.root.path());
+        std::fs::write(&path, format!("schema_version = 1\n{WITH_INPUTS}")).unwrap();
+        h.run("deploy");
+        answer(&mut h, "env", "prod");
+        answer(&mut h, "token", "hunter2");
+        // The unreviewed command is shown with the secret masked.
+        h.app.execute(Command::SubmitTaskInputs, &h.ctx);
+        let pending = h.app.view.task_pending.as_ref().expect("review prompt");
+        let shown = pending.review[0].command_line.clone();
+        assert!(
+            shown.contains("--env prod") && shown.contains("--token=••••"),
+            "{shown}"
+        );
+        assert!(!shown.contains("hunter2"));
+        h.app.execute(Command::ConfirmTaskRun(false), &h.ctx);
+        let launched = h.fake.launched.lock().unwrap()[0].clone();
+        let lumen_task_core::Program::Process { args, .. } = &launched.program else {
+            panic!()
+        };
+        assert_eq!(
+            args,
+            &["--env", "prod", "--token=hunter2"],
+            "the process gets the real value"
+        );
+        assert_eq!(launched.env["API_TOKEN"], "hunter2");
+        let run = h.run_at(0);
+        assert!(run.command_line.contains("••••") && !run.command_line.contains("hunter2"));
+        assert!(
+            h.app.view.task_inputs.is_none(),
+            "typed values are dropped once used"
+        );
+        assert!(!h.app.view.status.contains("hunter2"));
+    }
+
+    #[test]
+    fn a_group_asks_for_a_shared_input_once_and_every_task_sees_the_same_value() {
+        let mut h = Harness::new();
+        h.write_tasks(WITH_INPUTS);
+        h.run("release");
+        let ids: Vec<_> = h
+            .app
+            .view
+            .task_inputs
+            .as_ref()
+            .unwrap()
+            .prompts
+            .iter()
+            .map(|p| p.id.clone())
+            .collect();
+        assert_eq!(
+            ids,
+            ["env", "token"],
+            "env is shared by two tasks but asked once"
+        );
+        answer(&mut h, "env", "prod");
+        answer(&mut h, "token", "t0k");
+        h.app.execute(Command::SubmitTaskInputs, &h.ctx);
+        h.app.execute(Command::ConfirmTaskRun(false), &h.ctx);
+        h.complete(0, 0);
+        let launched = h.fake.launched.lock().unwrap().clone();
+        let [deploy, smoke] = [&launched[0], &launched[1]];
+        let lumen_task_core::Program::Process { args, .. } = &smoke.program else {
+            panic!()
+        };
+        assert_eq!(args, &["prod"]);
+        assert_eq!(deploy.label, "Deploy");
+        let log = h.summary().log.text();
+        assert!(
+            !log.contains("t0k"),
+            "the group log never shows the secret: {log}"
+        );
+        // Running again asks again: values are per run.
+        h.complete(1, 0);
+        h.run("release");
+        assert!(h.app.view.task_inputs.is_some());
+    }
+
+    #[test]
+    fn an_undeclared_input_makes_the_file_invalid_instead_of_running_with_a_blank() {
+        let mut h = Harness::new();
+        h.write_tasks(WITH_INPUTS);
+        let path = crate::services::tasks::workspace_path(h.root.path());
+        let text = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("${input:env}\"]\nsave", "${input:oops}\"]\nsave");
+        std::fs::write(&path, text).unwrap();
+        h.run("smoke");
+        assert!(h.app.view.task_inputs.is_none() && h.fake.launched.lock().unwrap().is_empty());
+        assert!(
+            h.app.view.status.contains("not declared"),
             "{}",
             h.app.view.status
         );

@@ -136,6 +136,75 @@ impl Workbench<'_> {
         }
     }
 
+    /// Ask for a run's declared inputs. Secrets are masked; the answers live only in
+    /// this prompt until submitted, and cancelling starts nothing.
+    pub(crate) fn task_inputs_dialog(&mut self, ctx: &egui::Context) {
+        let colors = super::theme::palette(&ctx.style().visuals);
+        let Some(pending) = self.view.task_inputs.as_mut() else {
+            return;
+        };
+        let title = pending.key.id.clone();
+        let complete = pending.complete();
+        let mut answer = None;
+        centered("Run task").show(ctx, |ui| {
+            ui.set_max_width(440.0);
+            ui.add(
+                egui::Label::new(RichText::new(format!("Inputs for '{title}'")).strong()).wrap(),
+            );
+            ui.add_space(6.0);
+            for (index, prompt) in pending.prompts.iter_mut().enumerate() {
+                ui.label(RichText::new(&prompt.prompt).size(11.0).color(colors.muted));
+                match prompt.kind {
+                    lumen_task_core::InputKind::Choice => {
+                        egui::ComboBox::from_id_salt(("task_input", index))
+                            .selected_text(prompt.value.clone())
+                            .width(260.0)
+                            .show_ui(ui, |ui| {
+                                for option in &prompt.options {
+                                    ui.selectable_value(&mut prompt.value, option.clone(), option);
+                                }
+                            });
+                    }
+                    kind => {
+                        let edit = egui::TextEdit::singleline(&mut prompt.value)
+                            .id_salt(("task_input", index))
+                            .password(kind == lumen_task_core::InputKind::Secret)
+                            .desired_width(f32::INFINITY);
+                        let response = ui.add(edit);
+                        if index == 0
+                            && !response.has_focus()
+                            && ui.memory(|m| m.focused().is_none())
+                        {
+                            response.request_focus();
+                        }
+                        if kind == lumen_task_core::InputKind::Secret {
+                            ui.label(
+                                RichText::new("Used for this run only; never saved or shown.")
+                                    .size(11.0)
+                                    .color(colors.muted),
+                            );
+                        }
+                    }
+                }
+                ui.add_space(4.0);
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(complete, |ui| {
+                    if primary_button(ui, "Run").clicked() {
+                        answer = Some(Command::SubmitTaskInputs);
+                    }
+                });
+                if ui.button("Cancel").clicked() || escape_pressed(ui.ctx()) {
+                    answer = Some(Command::CancelTaskInputs);
+                }
+            });
+        });
+        if let Some(command) = answer {
+            self.command(command);
+        }
+    }
+
     pub(crate) fn task_run_close_dialog(&mut self, ctx: &egui::Context) {
         let colors = super::theme::palette(&ctx.style().visuals);
         let Some(id) = self.view.task_run_close_prompt else {
@@ -282,5 +351,109 @@ impl Workbench<'_> {
             })
             .map(|run| self.view.task_runs.title(run.id))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app::{
+        LumenApp,
+        task_runs::{InputPrompt, PendingInputs},
+    };
+    use eframe::egui;
+    use lumen_task_core::{InputKind, Scope, TaskKey};
+
+    fn app_with_prompts() -> (LumenApp, egui::Context) {
+        let mut app = LumenApp::default();
+        app.view.task_inputs = Some(PendingInputs {
+            key: TaskKey::new(Scope::Workspace, "deploy"),
+            prompts: vec![
+                InputPrompt {
+                    scope: Scope::Workspace,
+                    id: "env".into(),
+                    prompt: "Environment".into(),
+                    kind: InputKind::Choice,
+                    options: vec!["staging".into(), "prod".into()],
+                    value: "staging".into(),
+                },
+                InputPrompt {
+                    scope: Scope::Workspace,
+                    id: "token".into(),
+                    prompt: "API token".into(),
+                    kind: InputKind::Secret,
+                    options: Vec::new(),
+                    value: "hunter2".into(),
+                },
+            ],
+            collected: Default::default(),
+        });
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        (app, ctx)
+    }
+
+    fn texts(app: &mut LumenApp, ctx: &egui::Context) -> String {
+        let mut all = String::new();
+        for _ in 0..3 {
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| app.render_component(ctx, |workbench| workbench.task_inputs_dialog(ctx)),
+            );
+            all = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        all
+    }
+
+    #[test]
+    fn the_prompt_lists_every_input_and_never_draws_a_secret() {
+        let (mut app, ctx) = app_with_prompts();
+        let shown = texts(&mut app, &ctx);
+        assert!(shown.contains("Inputs for 'deploy'"), "{shown}");
+        assert!(shown.contains("Environment") && shown.contains("staging"));
+        assert!(shown.contains("API token"));
+        assert!(shown.contains("never saved or shown"));
+        assert!(
+            !shown.contains("hunter2"),
+            "a secret is masked while typing: {shown}"
+        );
+    }
+
+    #[test]
+    fn escape_cancels_the_prompt_and_drops_what_was_typed() {
+        let (mut app, ctx) = app_with_prompts();
+        texts(&mut app, &ctx);
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 600.0),
+                )),
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ctx| app.render_component(ctx, |workbench| workbench.task_inputs_dialog(ctx)),
+        );
+        assert!(app.view.task_inputs.is_none());
+        assert!(app.view.task_runs.runs().is_empty());
     }
 }

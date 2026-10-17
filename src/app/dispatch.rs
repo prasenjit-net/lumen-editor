@@ -97,6 +97,8 @@ impl LumenApp {
             Command::CopyTaskOutput(id) => self.copy_task_output(id, ctx),
             Command::ConfirmTaskRun(save_first) => self.confirm_pending_task(save_first, ctx),
             Command::CancelTaskRun => self.cancel_pending_task(),
+            Command::SubmitTaskInputs => self.submit_task_inputs(ctx),
+            Command::CancelTaskInputs => self.cancel_task_inputs(),
             Command::HideTaskPanel => self.view.task_runs.panel_open = false,
             Command::ConfirmWorkspaceSwitch => self.confirm_workspace_switch(),
             Command::CancelWorkspaceSwitch => self.cancel_workspace_switch(),

@@ -3,12 +3,13 @@ use std::collections::{BTreeMap, HashSet};
 use toml_edit::{DocumentMut, Item, Table, Value};
 
 use crate::{
-    Background, DependsOrder, FailurePolicy, InstancePolicy, Issue, OutputReuse, Platform,
-    PlatformOverride, Presentation, Reveal, SCHEMA_VERSION, SavePolicy, TaskDef, TaskFile,
-    TaskKind, Transport, validate::validate_file,
+    Background, DependsOrder, FailurePolicy, InputDef, InputKind, InstancePolicy, Issue,
+    OutputReuse, Platform, PlatformOverride, Presentation, Reveal, SCHEMA_VERSION, SavePolicy,
+    TaskDef, TaskFile, TaskKind, Transport, validate::validate_file,
 };
 
-const TOP_KEYS: &[&str] = &["schema_version", "tasks"];
+const TOP_KEYS: &[&str] = &["schema_version", "tasks", "inputs"];
+const INPUT_KEYS: &[&str] = &["id", "type", "prompt", "default", "options"];
 const TASK_KEYS: &[&str] = &[
     "id",
     "label",
@@ -72,6 +73,20 @@ pub fn parse(text: &str) -> Result<TaskFile, Vec<Issue>> {
             "must be an array of tables ([[tasks]])",
         )),
     }
+    match document.get("inputs") {
+        None => {}
+        Some(Item::ArrayOfTables(tables)) => {
+            for table in tables {
+                if let Some(input) = read_input(table, &mut issues) {
+                    file.inputs.push(input);
+                }
+            }
+        }
+        Some(_) => issues.push(Issue::file(
+            "inputs",
+            "must be an array of tables ([[inputs]])",
+        )),
+    }
     if issues.is_empty() {
         issues = validate_file(&file);
     }
@@ -80,6 +95,46 @@ pub fn parse(text: &str) -> Result<TaskFile, Vec<Issue>> {
     } else {
         Err(issues)
     }
+}
+
+fn read_input(table: &Table, issues: &mut Vec<Issue>) -> Option<InputDef> {
+    let id = table
+        .get("id")
+        .and_then(Item::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let label = format!("inputs.{id}");
+    let mut reader = Reader {
+        table,
+        task: &label,
+        prefix: "",
+        issues,
+    };
+    reader.keys(INPUT_KEYS);
+    let kind = reader.choice(
+        "type",
+        &[
+            ("text", InputKind::Text),
+            ("choice", InputKind::Choice),
+            ("secret", InputKind::Secret),
+        ],
+    );
+    let prompt = reader.string("prompt").map(str::to_string);
+    let default = reader.string("default").map(str::to_string);
+    let options = reader.strings("options").unwrap_or_default();
+    if table.get("id").is_none() {
+        reader.problem("id", "required");
+    }
+    if table.get("type").is_none() {
+        reader.problem("type", "required: text, choice or secret");
+    }
+    Some(InputDef {
+        id,
+        kind: kind?,
+        prompt: prompt.unwrap_or_default(),
+        default,
+        options,
+    })
 }
 
 pub(crate) fn read_task(table: &Table, issues: &mut Vec<Issue>) -> TaskDef {

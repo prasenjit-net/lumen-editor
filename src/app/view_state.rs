@@ -324,6 +324,8 @@ pub(crate) struct ViewState {
     pub(crate) task_runs: super::task_runs::TaskRuns,
     /// A run waiting on the review / unsaved-files prompt.
     pub(crate) task_pending: Option<super::task_runs::PendingTaskRun>,
+    /// A run waiting for the values of its declared inputs.
+    pub(crate) task_inputs: Option<super::task_runs::PendingInputs>,
     /// A running task whose tab is being closed, awaiting Stop and Close / Cancel.
     pub(crate) task_run_close_prompt: Option<super::task_runs::RunId>,
     pub(crate) task_workspace_switch: Option<super::task_runs::PendingWorkspaceSwitch>,
@@ -434,6 +436,7 @@ impl ViewState {
         self.task_close_prompt.is_some()
             || self.task_delete_prompt.is_some()
             || self.task_pending.is_some()
+            || self.task_inputs.is_some()
             || self.task_run_close_prompt.is_some()
             || self.task_workspace_switch.is_some()
             || self.task_quit.is_some()
@@ -486,6 +489,7 @@ impl Default for ViewState {
             tasks: Default::default(),
             task_runs: Default::default(),
             task_pending: None,
+            task_inputs: None,
             task_run_close_prompt: None,
             task_workspace_switch: None,
             task_quit: None,

@@ -652,6 +652,25 @@ paths, plus simultaneous native output/exit stress tests.
 
 ### 5. Watch/service tasks and inputs
 
+**Status (2026-10-17): implemented.**
+Readiness: `is_background` tasks with a `[tasks.background] ready_pattern` are matched
+as a bounded literal substring over recent output (pipe text, or a plain-text shadow
+of terminal output so colour codes do not break a match) across chunk boundaries;
+the wait is always finite (default 60 s). An unready service is stopped and reported
+("Not ready within Ns"); exiting before ready fails regardless of exit code. In a
+group, a service is Serving once ready (releasing dependents) and keeps the group open
+until stopped; a service dying or being stopped while other tasks still need it fails
+the group under its policy; stopping a group whose work finished is a normal end.
+Graphs whose services would fill every process slot (services >= 4, or no slot left
+for foreground tasks) are refused before anything starts. Inputs: top-level
+`[[inputs]]` (`text`, `choice`, `secret`) referenced as `${input:ID}`; declared inputs
+are validated (undeclared use makes the file invalid) and asked once per run, shared
+across the whole group, before anything resolves; cancelling starts nothing. Secret
+values are masked in the prompt, redacted (bullets) in the review, tab tooltip and
+group log, never persisted, and dropped once used. Disclosed limits: a program can echo
+its secrets, and command-line secrets are visible to other local processes (prefer
+`env`). Not done: input editing in the form, `${command:...}` (deliberately never).
+
 Add declared text/choice/secret inputs, readiness, bounded matcher state, deadlines,
 service lifetime accounting, and dependency-aware parent cancellation.
 Gate: no launch on input cancellation, no secret persistence, no readiness slot

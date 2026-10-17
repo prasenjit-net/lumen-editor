@@ -266,11 +266,103 @@ fn env_rules(field: &str, env: &BTreeMap<String, String>, problem: &mut impl FnM
     }
 }
 
+/// Every text a definition may put variables in.
+fn variable_texts(def: &TaskDef) -> Vec<&str> {
+    let mut texts: Vec<&str> = Vec::new();
+    texts.extend(def.command.as_deref());
+    texts.extend(def.args.iter().map(String::as_str));
+    texts.extend(def.cwd.as_deref());
+    texts.extend(def.env.values().map(String::as_str));
+    for platform in Platform::ALL {
+        let over = def.platform_override(platform);
+        texts.extend(over.command.as_deref());
+        texts.extend(over.args.iter().flatten().map(String::as_str));
+        texts.extend(over.cwd.as_deref());
+        texts.extend(over.env.values().map(String::as_str));
+    }
+    texts
+}
+
+/// The declared inputs a definition references, in first-use order, without
+/// duplicates. Texts with syntax errors contribute nothing (validation reports them).
+pub fn input_references(def: &TaskDef) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for text in variable_texts(def) {
+        for variable in find_variables(text).unwrap_or_default() {
+            if let crate::Variable::Input(id) = variable
+                && !found.contains(&id)
+            {
+                found.push(id);
+            }
+        }
+    }
+    found
+}
+
+fn input_issues(file: &TaskFile) -> Vec<Issue> {
+    use crate::InputKind;
+    let mut issues = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for input in &file.inputs {
+        let mut problem = |message: String| {
+            issues.push(Issue::file(&format!("inputs.{}", input.id), message));
+        };
+        if !valid_id(&input.id) {
+            problem("must be a short id of letters, digits, '.', '_' or '-'".into());
+        } else if !seen.insert(input.id.as_str()) {
+            problem("is declared more than once".into());
+        }
+        if input.prompt.trim().is_empty() {
+            problem("needs a prompt to show".into());
+        }
+        match input.kind {
+            InputKind::Choice => {
+                if input.options.is_empty() {
+                    problem("a choice needs at least one option".into());
+                } else if input
+                    .default
+                    .as_ref()
+                    .is_some_and(|default| !input.options.contains(default))
+                {
+                    problem("its default is not one of the options".into());
+                }
+            }
+            InputKind::Secret => {
+                if input.default.is_some() {
+                    problem(
+                        "a secret cannot have a default (it would be stored in the file)".into(),
+                    );
+                }
+                if !input.options.is_empty() {
+                    problem("only a choice has options".into());
+                }
+            }
+            InputKind::Text => {
+                if !input.options.is_empty() {
+                    problem("only a choice has options".into());
+                }
+            }
+        }
+    }
+    for task in &file.tasks {
+        for id in input_references(task) {
+            if file.input(&id).is_none() {
+                issues.push(Issue::task(
+                    &task.id,
+                    "inputs",
+                    format!("uses ${{input:{id}}}, which is not declared in [[inputs]]"),
+                ));
+            }
+        }
+    }
+    issues
+}
+
 /// Per-definition checks plus everything that needs the whole file: duplicate IDs,
 /// same-scope dependency targets, cycles and conflicting defaults. `user:`
 /// references need both scopes, so [`crate::Catalog::validate`] checks them.
 pub fn validate_file(file: &TaskFile) -> Vec<Issue> {
-    let mut issues = Vec::new();
+    let mut issues = input_issues(file);
     let mut ids: HashMap<&str, usize> = HashMap::new();
     for task in &file.tasks {
         issues.extend(validate_task(task));

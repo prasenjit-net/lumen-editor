@@ -5,7 +5,10 @@
 //! the group's own summary tab. Child runs are ordinary runs with their own tabs.
 use super::{
     LumenApp,
-    task_runs::{MAX_ACTIVE_RUNS, RunId, RunOutcome, RunState, StopReason, TaskRun, command_line},
+    task_runs::{
+        InputMap, InputPrompt, MAX_ACTIVE_RUNS, Readiness, RunId, RunOutcome, RunState, StopReason,
+        TaskRun, command_line,
+    },
 };
 use crate::model::task_output::{RunLog, Stream};
 use eframe::egui;
@@ -21,6 +24,9 @@ pub(crate) struct InvocationId(pub(super) u64);
 pub(crate) enum NodeStatus {
     Pending,
     Running(RunId),
+    /// A background task that printed its readiness text and is still running:
+    /// dependents may start, and the group stays open until it ends.
+    Serving(RunId),
     Succeeded,
     Failed,
     Skipped,
@@ -37,6 +43,13 @@ pub(crate) struct PlannedNode {
     pub(crate) digest: String,
     pub(crate) save: SavePolicy,
     pub(crate) single: bool,
+}
+
+/// What planning a run produced.
+pub(crate) enum PlanResult {
+    Ready(StartPlan),
+    /// Declared inputs still without a value; ask before resolving anything.
+    NeedsInputs(Vec<InputPrompt>),
 }
 
 /// Everything needed to start a run or a group, fixed before the first process.
@@ -81,6 +94,13 @@ pub(crate) struct Invocation {
     /// Set once the group is winding down (a stop request or a fail-fast failure).
     stopping: Option<StopReason>,
     first_failure: Option<String>,
+    /// Whether the "only services left" notice was logged already.
+    announced_serving: bool,
+}
+
+/// A prerequisite that lets dependents start.
+fn satisfied(status: NodeStatus) -> bool {
+    matches!(status, NodeStatus::Succeeded | NodeStatus::Serving(_))
 }
 
 impl LumenApp {
@@ -109,7 +129,11 @@ impl LumenApp {
     /// Validate the dependency graph and resolve every task in it, from disk, so a
     /// stale sidebar can never run an outdated command. Any problem aborts the
     /// whole run before a process starts.
-    pub(super) fn plan_for_run(&self, key: &TaskKey) -> Result<StartPlan, String> {
+    pub(super) fn plan_for_run(
+        &self,
+        key: &TaskKey,
+        inputs: &InputMap,
+    ) -> Result<PlanResult, String> {
         let (user, workspace) = self.load_task_files()?;
         let catalog = Catalog {
             user: user.as_ref(),
@@ -121,25 +145,86 @@ impl LumenApp {
         let plan = catalog
             .plan(key)
             .map_err(|error| format!("Cannot run '{}': {error}", root_def.label))?;
+        // Ask for declared inputs before resolving: nothing starts on a cancelled prompt.
+        let mut needed: Vec<InputPrompt> = Vec::new();
+        for node in &plan.nodes {
+            let def = catalog.get(&node.key).expect("planned tasks exist");
+            for id in lumen_task_core::input_references(def) {
+                let slot = (node.key.scope, id.clone());
+                if inputs.contains_key(&slot)
+                    || needed.iter().any(|p| (p.scope, &p.id) == (slot.0, &slot.1))
+                {
+                    continue;
+                }
+                let Some(decl) = catalog
+                    .file(node.key.scope)
+                    .and_then(|file| file.input(&id))
+                else {
+                    return Err(format!(
+                        "Cannot run '{}': input '{id}' is not declared",
+                        root_def.label
+                    ));
+                };
+                let value = match decl.kind {
+                    lumen_task_core::InputKind::Choice => decl
+                        .default
+                        .clone()
+                        .or_else(|| decl.options.first().cloned())
+                        .unwrap_or_default(),
+                    lumen_task_core::InputKind::Text => decl.default.clone().unwrap_or_default(),
+                    lumen_task_core::InputKind::Secret => String::new(),
+                };
+                needed.push(InputPrompt {
+                    scope: node.key.scope,
+                    id,
+                    prompt: decl.prompt.clone(),
+                    kind: decl.kind,
+                    options: decl.options.clone(),
+                    value,
+                });
+            }
+        }
+        if !needed.is_empty() {
+            return Ok(PlanResult::NeedsInputs(needed));
+        }
+        // Services keep their slot for as long as they run; a graph whose services
+        // leave no room for the tasks that need them could never finish.
+        let services = plan
+            .nodes
+            .iter()
+            .filter(|node| catalog.get(&node.key).is_some_and(|d| d.is_background))
+            .count();
+        let foreground = plan
+            .nodes
+            .iter()
+            .filter(|node| {
+                catalog
+                    .get(&node.key)
+                    .is_some_and(|d| d.kind != TaskKind::Compound && !d.is_background)
+            })
+            .count();
+        if services >= MAX_ACTIVE_RUNS || (foreground > 0 && services + 1 > MAX_ACTIVE_RUNS) {
+            return Err(format!(
+                "Cannot run '{}': it needs {services} background task(s) running at once and \
+                 only {MAX_ACTIVE_RUNS} processes can run, which would leave no room for the \
+                 rest",
+                root_def.label
+            ));
+        }
         let mut nodes = Vec::with_capacity(plan.nodes.len());
         for node in &plan.nodes {
             let def = catalog.get(&node.key).expect("planned tasks exist");
-            let is_root = node.key == *key;
             let executable = def.kind != TaskKind::Compound;
-            if executable && def.is_background && !is_root {
-                return Err(format!(
-                    "Cannot run '{}': '{}' is a background task, and background tasks as \
-                     dependencies are not supported yet",
-                    root_def.label, def.label
-                ));
-            }
             let resolved = if executable {
-                Some(self.resolve_for_run(&node.key, def).map_err(|message| {
-                    format!(
-                        "Cannot run '{}': '{}': {message}",
-                        root_def.label, def.label
-                    )
-                })?)
+                Some(
+                    self.resolve_for_run(&node.key, def, inputs)
+                        .map_err(|message| {
+                            format!(
+                                "Cannot run '{}': '{}': {message}",
+                                root_def.label, def.label
+                            )
+                        })?,
+                )
             } else {
                 None
             };
@@ -153,14 +238,14 @@ impl LumenApp {
                 single: def.effective_instance_policy() == lumen_task_core::InstancePolicy::Single,
             });
         }
-        Ok(StartPlan {
+        Ok(PlanResult::Ready(StartPlan {
             root: key.clone(),
             label: root_def.label.clone(),
             nodes,
             policy: root_def.effective_failure_policy(),
             root_single: root_def.effective_instance_policy()
                 == lumen_task_core::InstancePolicy::Single,
-        })
+        }))
     }
 
     pub(super) fn start_plan(&mut self, plan: StartPlan, ctx: &egui::Context) {
@@ -230,6 +315,7 @@ impl LumenApp {
             policy: plan.policy,
             stopping: None,
             first_failure: None,
+            announced_serving: false,
         });
         self.advance_invocations(Instant::now(), ctx);
     }
@@ -252,7 +338,7 @@ impl LumenApp {
             .nodes
             .iter()
             .filter_map(|node| match node.status {
-                NodeStatus::Running(id) => Some(id),
+                NodeStatus::Running(id) | NodeStatus::Serving(id) => Some(id),
                 _ => None,
             })
             .collect();
@@ -302,28 +388,51 @@ impl LumenApp {
         }
         loop {
             let mut changed = false;
-            // 1. Learn how running children ended.
-            let running: Vec<(usize, RunId)> = self.view.task_runs.invocations[index]
+            // 1. Learn how running children are doing: ready, ended, or gone.
+            let watching: Vec<(usize, RunId, bool)> = self.view.task_runs.invocations[index]
                 .nodes
                 .iter()
                 .enumerate()
                 .filter_map(|(i, node)| match node.status {
-                    NodeStatus::Running(id) => Some((i, id)),
+                    NodeStatus::Running(id) => Some((i, id, false)),
+                    NodeStatus::Serving(id) => Some((i, id, true)),
                     _ => None,
                 })
                 .collect();
-            for (node_index, run_id) in running {
+            for (node_index, run_id, was_serving) in watching {
                 let outcome = match self.view.task_runs.get(run_id) {
-                    Some(run) => match run.outcome() {
-                        Some(outcome) => outcome.clone(),
-                        None => continue,
-                    },
+                    Some(run) if run.is_active() => {
+                        if !was_serving && matches!(run.readiness, Readiness::Ready) {
+                            let label = {
+                                let node =
+                                    &mut self.view.task_runs.invocations[index].nodes[node_index];
+                                node.status = NodeStatus::Serving(run_id);
+                                node.planned.label.clone()
+                            };
+                            self.log_group(parent, &format!("[ready] {label}"));
+                            changed = true;
+                        }
+                        continue;
+                    }
+                    Some(run) => run.outcome().cloned().unwrap_or(RunOutcome::Cancelled),
                     None => RunOutcome::GroupFailed("its tab was closed".into()),
                 };
-                let (label, ok) = {
+                let (label, ok, note) = {
                     let inv = &mut self.view.task_runs.invocations[index];
+                    let others_busy = inv.nodes.iter().enumerate().any(|(i, node)| {
+                        i != node_index
+                            && matches!(node.status, NodeStatus::Pending | NodeStatus::Running(_))
+                    });
+                    let winding = inv.stopping.is_some();
                     let node = &mut inv.nodes[node_index];
-                    let ok = outcome.is_success();
+                    // A service that is stopped by the group, or that simply ends once
+                    // nothing else needs it, is fine; one that dies while dependents are
+                    // still running (or exits badly) is a failure.
+                    let ok = if was_serving {
+                        winding || (outcome.is_success() && !others_busy)
+                    } else {
+                        outcome.is_success()
+                    };
                     node.status = if ok {
                         NodeStatus::Succeeded
                     } else {
@@ -332,15 +441,16 @@ impl LumenApp {
                     if !ok && inv.first_failure.is_none() {
                         inv.first_failure = Some(node.planned.label.clone());
                     }
-                    (node.planned.label.clone(), ok)
+                    let note = if was_serving && !ok && outcome.is_success() {
+                        "stopped while other tasks still needed it".to_string()
+                    } else {
+                        outcome.summary()
+                    };
+                    (node.planned.label.clone(), ok, note)
                 };
                 self.log_group(
                     parent,
-                    &format!(
-                        "[{}] {label}: {}",
-                        if ok { "ok" } else { "failed" },
-                        outcome.summary()
-                    ),
+                    &format!("[{}] {label}: {note}", if ok { "ok" } else { "failed" }),
                 );
                 changed = true;
             }
@@ -360,7 +470,7 @@ impl LumenApp {
                     .nodes
                     .iter()
                     .filter_map(|node| match node.status {
-                        NodeStatus::Running(id) => Some(id),
+                        NodeStatus::Running(id) | NodeStatus::Serving(id) => Some(id),
                         _ => None,
                     })
                     .collect();
@@ -392,7 +502,7 @@ impl LumenApp {
                             .planned
                             .needs
                             .iter()
-                            .all(|need| inv.nodes[*need].status == NodeStatus::Succeeded)
+                            .all(|need| satisfied(inv.nodes[*need].status))
                     {
                         inv.nodes[i].status = NodeStatus::Succeeded;
                         changed = true;
@@ -419,7 +529,7 @@ impl LumenApp {
                                 .planned
                                 .needs
                                 .iter()
-                                .all(|need| inv.nodes[*need].status == NodeStatus::Succeeded)
+                                .all(|need| satisfied(inv.nodes[*need].status))
                         {
                             to_start.push(i);
                             slots -= 1;
@@ -449,6 +559,32 @@ impl LumenApp {
                 break;
             }
         }
+        // Only services are left: say so once, since the group stays open for them.
+        {
+            let inv = &mut self.view.task_runs.invocations[index];
+            let only_services = !inv.announced_serving
+                && inv.stopping.is_none()
+                && inv
+                    .nodes
+                    .iter()
+                    .any(|n| matches!(n.status, NodeStatus::Serving(_)))
+                && inv.nodes.iter().all(|n| {
+                    matches!(
+                        n.status,
+                        NodeStatus::Succeeded
+                            | NodeStatus::Failed
+                            | NodeStatus::Skipped
+                            | NodeStatus::Serving(_)
+                    )
+                });
+            if only_services {
+                inv.announced_serving = true;
+                self.log_group(
+                    parent,
+                    "All tasks are done; background tasks are still running. Stop the group to end them.",
+                );
+            }
+        }
         // 5. Finished when nothing runs and nothing can still start.
         let done = self.view.task_runs.invocations[index]
             .nodes
@@ -462,15 +598,22 @@ impl LumenApp {
         if !done {
             return false;
         }
-        let (stopping, failure) = {
+        let (stopping, failure, skipped_any) = {
             let inv = &self.view.task_runs.invocations[index];
-            (inv.stopping, inv.first_failure.clone())
+            (
+                inv.stopping,
+                inv.first_failure.clone(),
+                inv.nodes.iter().any(|n| n.status == NodeStatus::Skipped),
+            )
         };
         let outcome = match (stopping, failure) {
             (Some(StopReason::Group), Some(label)) | (None, Some(label)) => {
                 RunOutcome::GroupFailed(label)
             }
             (Some(StopReason::Group), None) => RunOutcome::Cancelled,
+            // Stopping a group whose work all finished (only its services were
+            // left) is a normal end; stopping one with work still undone is a stop.
+            (Some(_), _) if !skipped_any => RunOutcome::Completed,
             (Some(_), _) => RunOutcome::Cancelled,
             (None, None) => RunOutcome::Completed,
         };
@@ -489,7 +632,7 @@ impl LumenApp {
         if let Some(run) = self.view.task_runs.get_mut(parent) {
             run.log.finish();
             run.ended = Some(now);
-            if run.restart_after && outcome == RunOutcome::Cancelled {
+            if run.restart_after && stopping == Some(StopReason::Restart) {
                 restart_key = Some(run.key.clone());
             }
             run.state = RunState::Finished(outcome);

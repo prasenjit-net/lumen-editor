@@ -683,6 +683,7 @@ mod tests {
             is_background: false,
             ready_pattern: None,
             ready_timeout_seconds: None,
+            secrets: Vec::new(),
         }
     }
 

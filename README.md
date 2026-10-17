@@ -19,6 +19,7 @@ Lumen is under active development. The default editor uses a shared Rust editing
 - [Language tools](#language-tools)
 - [Source control](#source-control)
 - [Terminal and output](#terminal-and-output)
+- [Tasks](#tasks)
 - [Coding agents](#coding-agents)
 - [Settings](#settings)
 - [Saving and recovery](#saving-and-recovery)
@@ -38,11 +39,12 @@ Lumen is under active development. The default editor uses a shared Rust editing
 | Language tools | Optional Rust and Go language servers, diagnostics, completion, hover, symbols, formatting, rename, semantic tokens |
 | Git | Status badges, staged/working diffs, staging, hunk staging, commits, amend, confirmed discard, push and fast-forward pull |
 | Terminal | Integrated PTY shell with terminal emulation and configurable typography/colors |
+| Tasks | Project and personal tasks in `tasks.toml`: guided editor, dependency groups, terminal or captured output tabs, background services, inputs |
 | Coding agents | Optional Claude Code and Codex connections through Agent Client Protocol (ACP) adapters |
 | Settings | Searchable User/Project configuration, sparse TOML overrides, themes and editor/terminal preferences |
 | File safety | Dirty-buffer prompts, optional Auto Save, recovery snapshots, external-change detection, staged file writes |
 
-Run/Debug and Extensions activity icons are present, but do not imply a debugger or VS Code extension compatibility.
+The Run and Debug activity lists and runs tasks; it is not a debugger. The Extensions activity icon is present, but does not imply VS Code extension compatibility.
 
 ## Build and run
 
@@ -223,6 +225,58 @@ The terminal uses an Alacritty-based emulation core. Settings control its font f
 
 Output (`Cmd/Ctrl+Shift+U`) is a separate workbench log for startup, file, language-server, agent, and other application feedback. It supports copying and clearing logs.
 
+## Tasks
+
+The **Run and Debug** activity is a task runner: it lists your tasks, runs them, and shows each run in its own tab beside TERMINAL and OUTPUT. It does not debug (no breakpoints or stepping).
+
+Tasks live in TOML files: `<folder>/.lumen/tasks.toml` for the opened folder, and `~/.lumen/tasks.toml` for personal tasks. Create and edit them from the sidebar (**New Task**, double-click or **Edit** in the row menu) or open the file with **Tasks: Open … Tasks File (TOML)**. The form edits one task and keeps comments and unknown keys; saving refuses to overwrite a file that changed on disk.
+
+```toml
+schema_version = 1
+
+[[inputs]]                      # asked for once per run, used as ${input:env}
+id = "env"
+type = "choice"                 # text | choice | secret (masked, never saved)
+prompt = "Environment"
+options = ["staging", "prod"]
+
+[[tasks]]
+id = "build"
+label = "Build"
+type = "process"                # a program and literal arguments (one per entry)
+command = "cargo"
+args = ["build", "--release"]
+group = "build"
+is_default = true               # used by "Tasks: Run Build Task"
+
+[[tasks]]
+id = "dev"
+label = "Dev server"
+type = "shell"                  # one command string for the shell; runs in a terminal
+command = "npm run dev"
+is_background = true
+[tasks.background]
+ready_pattern = "Local:"        # dependents wait until this text appears
+ready_timeout_seconds = 60
+
+[[tasks]]
+id = "verify"
+label = "Verify"
+type = "compound"               # only orders other tasks
+depends_on = ["build", "dev"]
+depends_order = "sequence"      # or "parallel"
+on_failure = "fail_fast"        # or "continue"
+```
+
+- **Variables:** `${workspaceFolder}`, `${workspaceFolderBasename}`, `${file}`, `${fileDirname}`, `${fileBasename}`, `${env:NAME}` and `${input:ID}`. A variable with nothing to resolve to (no folder, no saved file) is an error, never an empty string. `$${` writes a literal `${`.
+- **Running:** double-click a task, use **Run** in the row menu, or the palette (**Tasks: Run Selected / Rerun Last / Run Build / Run Test Task**). A workspace task shows its command for review the first time, and again whenever what it executes changes. Personal tasks run without that prompt. Nothing runs when a file is opened or a folder is loaded.
+- **Output:** shell tasks (and `transport = "pty"`) run in a pseudo-terminal rendered by the terminal emulator and accept typing; `process` tasks capture stdout and stderr as text. Output is bounded; hiding the panel never stops a task.
+- **Stopping:** Stop asks the task and everything it started to stop, then kills them after a short grace period. Closing a running tab, changing folder and quitting ask first.
+- **Groups:** tasks with `depends_on` run as a group with its own summary tab. The whole graph is validated and resolved before anything starts, shared prerequisites run once, and at most four processes run at a time. Background services keep the group open until you stop it.
+- **Secrets:** secret inputs are masked and never saved; Lumen does not show them in previews or its logs, but a program can still print what it receives, and a secret in command-line arguments is visible to other local processes. Prefer passing them through `env`.
+
+Not implemented: problem matchers and clickable output links, `${command:...}`, automatic task triggers, auto-restart, saving output to a file, and editing dependencies or inputs in the form (use the TOML file). Windows task execution has compiled but has not been run on a real Windows machine.
+
 ## Coding agents
 
 Open **Coding Agents** with `Cmd/Ctrl+Shift+A`. Lumen integrates Claude Code and Codex through separate ACP adapters; these integrations are optional and require the provider’s CLI/account authentication.
@@ -345,7 +399,7 @@ Explorer supports arrow navigation, F2 rename, and Delete to request deletion. O
 - Native IME, VoiceOver/accessibility, clipboard round trips, and Windows runtime behavior still need broader acceptance testing. Compilation and headless tests do not establish native correctness.
 - Search is literal, and workspace scans have explicit file-size/type/ignore limits.
 - Explorer lacks bulk selection, filesystem drag/drop, and operation undo. Editor tabs have their own drag interactions.
-- Merge resolution, Git history browsing, a debugger, and an extension marketplace are not implemented.
+- Merge resolution, Git history browsing, a debugger, and an extension marketplace are not implemented. Tasks run commands; they are not debug sessions.
 - File associations, single-instance argument forwarding, and automatic external-settings reload remain incomplete.
 - Clipboard line provenance is session-only, and the temporary native reread has latency/snapshot-race limitations.
 
@@ -369,6 +423,7 @@ Track remaining work in the [core feature roadmap](plans/vscode-core-feature-roa
 | `crates/language-services/` | Language registry and language-service protocol/data support |
 | `crates/agent-protocol/` | Agent protocol support |
 | `crates/terminal-core/` | Terminal emulation integration |
+| `crates/task-core/` | Task schema, TOML parsing/editing, validation, variable resolution and dependency planning; no I/O |
 | `xtask/` | Packaging/version helpers, separate from runtime code |
 
 UI components borrow a `Workbench` and issue typed commands rather than performing disk writes or opening native dialogs. Menus, shortcuts, palette entries, and buttons share command behavior. Buffer-only actions apply locally for same-frame behavior; I/O workflows dispatch through controllers.

@@ -16,7 +16,10 @@ pub use digest::execution_digest;
 pub use edit::{EditError, existing_ids, new_file, remove_task, upsert_task};
 pub use parse::parse;
 pub use plan::{Catalog, Plan, PlanError, PlanNode};
-pub use resolve::{Program, ResolveContext, ResolveError, ResolvedTask, expand, resolve};
+pub use resolve::{
+    InputValue, Program, ResolveContext, ResolveError, ResolvedTask, expand, resolve,
+};
+pub use validate::input_references;
 pub use validate::{validate_file, validate_task};
 pub use vars::{Variable, find_variables};
 
@@ -371,14 +374,49 @@ impl TaskDef {
     }
 }
 
+/// How a declared input is asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputKind {
+    Text,
+    Choice,
+    /// Masked while typing; never persisted, echoed in previews or written to logs
+    /// by Lumen (a program may still print what it receives).
+    Secret,
+}
+
+impl InputKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Choice => "choice",
+            Self::Secret => "secret",
+        }
+    }
+}
+
+/// A value asked for once per run and referenced as `${input:id}`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InputDef {
+    pub id: String,
+    pub kind: InputKind,
+    pub prompt: String,
+    pub default: Option<String>,
+    pub options: Vec<String>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TaskFile {
     pub tasks: Vec<TaskDef>,
+    pub inputs: Vec<InputDef>,
 }
 
 impl TaskFile {
     pub fn get(&self, id: &str) -> Option<&TaskDef> {
         self.tasks.iter().find(|task| task.id == id)
+    }
+
+    pub fn input(&self, id: &str) -> Option<&InputDef> {
+        self.inputs.iter().find(|input| input.id == id)
     }
 }
 

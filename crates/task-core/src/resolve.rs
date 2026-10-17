@@ -22,6 +22,15 @@ pub struct ResolveContext<'a> {
     pub user_base: Option<&'a Path>,
     pub platform: Platform,
     pub env: &'a dyn Fn(&str) -> Option<String>,
+    /// Values collected for this run's declared inputs.
+    pub inputs: &'a dyn Fn(&str) -> Option<InputValue>,
+}
+
+/// A collected input value; `secret` ones are masked wherever Lumen shows commands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InputValue {
+    pub value: String,
+    pub secret: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,6 +55,20 @@ pub struct ResolvedTask {
     pub is_background: bool,
     pub ready_pattern: Option<String>,
     pub ready_timeout_seconds: Option<u32>,
+    /// Secret input values that were substituted; never shown (see [`Self::redact`]).
+    pub secrets: Vec<String>,
+}
+
+impl ResolvedTask {
+    /// `text` with every secret value replaced by bullets, for any display, log or
+    /// preview of the command.
+    pub fn redact(&self, text: &str) -> String {
+        let mut text = text.to_string();
+        for secret in self.secrets.iter().filter(|secret| !secret.is_empty()) {
+            text = text.replace(secret.as_str(), "••••");
+        }
+        text
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +83,10 @@ pub enum ResolveError {
     },
     UnsetEnv {
         name: String,
+    },
+    /// A declared input that was never given a value.
+    MissingInput {
+        id: String,
     },
     /// No usable working directory (no workspace and no explicit `cwd`).
     NoWorkingDirectory,
@@ -81,6 +108,7 @@ impl std::fmt::Display for ResolveError {
             Self::UnsetEnv { name } => {
                 write!(f, "environment variable '{name}' is not set")
             }
+            Self::MissingInput { id } => write!(f, "input '{id}' has no value"),
             Self::NoWorkingDirectory => write!(
                 f,
                 "no working directory: open a folder or set 'cwd' on this task"
@@ -93,6 +121,15 @@ impl std::fmt::Display for ResolveError {
 
 /// Expand every `${...}` in `text`; `$${` yields a literal `${`.
 pub fn expand(text: &str, ctx: &ResolveContext<'_>) -> Result<String, ResolveError> {
+    expand_tracking(text, ctx, &mut Vec::new())
+}
+
+/// [`expand`], also noting each secret input value that was substituted.
+fn expand_tracking(
+    text: &str,
+    ctx: &ResolveContext<'_>,
+    secrets: &mut Vec<String>,
+) -> Result<String, ResolveError> {
     // Validate syntax first so errors match `find_variables`.
     find_variables(text).map_err(ResolveError::Invalid)?;
     let mut out = String::with_capacity(text.len());
@@ -112,7 +149,12 @@ pub fn expand(text: &str, ctx: &ResolveContext<'_>) -> Result<String, ResolveErr
         let variable = find_variables(&rest[start..start + 3 + end])
             .map_err(ResolveError::Invalid)?
             .remove(0);
-        out.push_str(&value(&variable, ctx, &rest[start..start + 3 + end])?);
+        out.push_str(&value(
+            &variable,
+            ctx,
+            &rest[start..start + 3 + end],
+            secrets,
+        )?);
         rest = &after[end + 1..];
     }
     out.push_str(rest);
@@ -123,6 +165,7 @@ fn value(
     variable: &Variable,
     ctx: &ResolveContext<'_>,
     source: &str,
+    secrets: &mut Vec<String>,
 ) -> Result<String, ResolveError> {
     let workspace = || {
         ctx.workspace.ok_or_else(|| ResolveError::NoWorkspace {
@@ -150,6 +193,14 @@ fn value(
         Variable::Env(name) => {
             (ctx.env)(name).ok_or_else(|| ResolveError::UnsetEnv { name: name.clone() })?
         }
+        Variable::Input(id) => {
+            let input =
+                (ctx.inputs)(id).ok_or_else(|| ResolveError::MissingInput { id: id.clone() })?;
+            if input.secret && !secrets.contains(&input.value) {
+                secrets.push(input.value.clone());
+            }
+            input.value
+        }
     })
 }
 
@@ -168,7 +219,8 @@ pub fn resolve(
         .as_deref()
         .or(def.command.as_deref())
         .ok_or_else(|| ResolveError::Invalid("task has no command".into()))?;
-    let command = expand(command, ctx)?;
+    let mut secrets = Vec::new();
+    let command = expand_tracking(command, ctx, &mut secrets)?;
     let program = match def.kind {
         TaskKind::Shell => Program::Shell { command },
         _ => Program::Process {
@@ -178,13 +230,13 @@ pub fn resolve(
                 .as_ref()
                 .unwrap_or(&def.args)
                 .iter()
-                .map(|arg| expand(arg, ctx))
+                .map(|arg| expand_tracking(arg, ctx, &mut secrets))
                 .collect::<Result<_, _>>()?,
         },
     };
     let mut env = BTreeMap::new();
     for (name, text) in def.env.iter().chain(over.env.iter()) {
-        env.insert(name.clone(), expand(text, ctx)?);
+        env.insert(name.clone(), expand_tracking(text, ctx, &mut secrets)?);
     }
     let unset_env: Vec<String> = def
         .unset_env
@@ -194,7 +246,7 @@ pub fn resolve(
         .collect();
     let cwd = match over.cwd.as_deref().or(def.cwd.as_deref()) {
         Some(cwd) => {
-            let expanded = PathBuf::from(expand(cwd, ctx)?);
+            let expanded = PathBuf::from(expand_tracking(cwd, ctx, &mut secrets)?);
             if expanded.is_absolute() {
                 expanded
             } else {
@@ -223,6 +275,7 @@ pub fn resolve(
         is_background: def.is_background,
         ready_pattern: def.background.as_ref().map(|b| b.ready_pattern.clone()),
         ready_timeout_seconds: def.effective_ready_timeout(),
+        secrets,
     })
 }
 
@@ -238,6 +291,10 @@ mod tests {
         }
     }
 
+    fn no_inputs(_: &str) -> Option<InputValue> {
+        None
+    }
+
     fn ctx<'a>(
         workspace: Option<&'a Path>,
         file: Option<&'a Path>,
@@ -249,6 +306,7 @@ mod tests {
             user_base: Some(Path::new("/user/.lumen")),
             platform,
             env: &env,
+            inputs: &no_inputs,
         }
     }
 
@@ -461,5 +519,53 @@ mod tests {
         let mut no_command = process("x", &[]);
         no_command.command = None;
         assert!(resolve(&no_command, Scope::Workspace, &context).is_err());
+    }
+
+    #[test]
+    fn inputs_expand_secrets_are_tracked_and_redacted_and_missing_ones_fail() {
+        let provide = |id: &str| match id {
+            "env" => Some(InputValue {
+                value: "prod".into(),
+                secret: false,
+            }),
+            "token" => Some(InputValue {
+                value: "s3cr3t".into(),
+                secret: true,
+            }),
+            _ => None,
+        };
+        let context = ResolveContext {
+            workspace: Some(Path::new("/w")),
+            active_file: None,
+            user_base: None,
+            platform: Platform::Linux,
+            env: &env,
+            inputs: &provide,
+        };
+        let mut task = process(
+            "deploy",
+            &["--env", "${input:env}", "--token=${input:token}"],
+        );
+        task.env.insert("API_TOKEN".into(), "${input:token}".into());
+        let resolved = resolve(&task, Scope::Workspace, &context).unwrap();
+        let Program::Process { args, .. } = &resolved.program else {
+            panic!()
+        };
+        assert_eq!(args, &["--env", "prod", "--token=s3cr3t"]);
+        assert_eq!(resolved.env["API_TOKEN"], "s3cr3t");
+        assert_eq!(resolved.secrets, ["s3cr3t"], "each secret is noted once");
+        assert_eq!(
+            resolved.redact("deploy --token=s3cr3t --env prod"),
+            "deploy --token=•••• --env prod"
+        );
+        let missing = process("x", &["${input:other}"]);
+        assert_eq!(
+            resolve(&missing, Scope::Workspace, &context).unwrap_err(),
+            ResolveError::MissingInput { id: "other".into() }
+        );
+        // A task without secrets redacts nothing.
+        let plain = resolve(&process("echo", &["hi"]), Scope::Workspace, &context).unwrap();
+        assert!(plain.secrets.is_empty());
+        assert_eq!(plain.redact("echo hi"), "echo hi");
     }
 }

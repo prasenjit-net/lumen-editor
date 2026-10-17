@@ -9,6 +9,8 @@ pub enum Variable {
     FileDirname,
     FileBasename,
     Env(String),
+    /// A declared input, asked for once per run.
+    Input(String),
 }
 
 impl Variable {
@@ -57,8 +59,11 @@ fn parse_name(name: &str) -> Result<Variable, String> {
                     "'${{{name}}}' names an invalid environment variable"
                 ));
             }
-            if name.starts_with("input:") {
-                return Err("input variables are not supported yet".into());
+            if let Some(id) = name.strip_prefix("input:") {
+                if crate::validate::valid_id(id) {
+                    return Ok(Variable::Input(id.into()));
+                }
+                return Err(format!("'${{{name}}}' names an invalid input"));
             }
             if name.starts_with("command:") {
                 return Err("command variables are not supported".into());

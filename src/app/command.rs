@@ -50,6 +50,9 @@ pub(crate) enum Command {
     /// Answer the run review prompt; `true` saves dirty files first.
     ConfirmTaskRun(bool),
     CancelTaskRun,
+    /// Answer the input prompt of a run (the values live in the prompt itself).
+    SubmitTaskInputs,
+    CancelTaskInputs,
     /// Hide the task output panel; runs keep going.
     HideTaskPanel,
     /// Stop the workspace's running tasks, then change folder.
