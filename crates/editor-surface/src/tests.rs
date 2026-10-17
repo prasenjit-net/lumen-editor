@@ -29,7 +29,7 @@ fn syntax_colors_keep_editor_geometry_and_document_unchanged() {
     assert_eq!(colored.geometry.caret_rect(9), plain_caret);
     assert_eq!(buffer.revision(), revision);
     assert!(!buffer.is_dirty());
-    let job = &colored.geometry.galley.job;
+    let job = &colored.geometry.galley().job;
     assert!(
         job.sections
             .iter()
@@ -45,7 +45,7 @@ fn syntax_colors_keep_editor_geometry_and_document_unchanged() {
     surface.set_syntax(None);
     let plain_again = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
     assert_eq!(plain_again.geometry.caret_rect(9), plain_caret);
-    assert_eq!(plain_again.geometry.galley.job.sections.len(), 1);
+    assert_eq!(plain_again.geometry.galley().job.sections.len(), 1);
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn parser_tokens_color_go_without_changing_editor_geometry() {
         test_syntax_palette(),
     )));
     let colored = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
-    let job = &colored.geometry.galley.job;
+    let job = &colored.geometry.galley().job;
     for (source, color) in [
         ("// note", egui::Color32::GREEN),
         ("package", egui::Color32::RED),
@@ -85,7 +85,7 @@ fn unsupported_parser_languages_keep_lexical_coloring() {
         test_syntax_palette(),
     )));
     let colored = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
-    let job = &colored.geometry.galley.job;
+    let job = &colored.geometry.galley().job;
     assert!(job.sections.iter().any(|section| {
         &job.text[section.byte_range.clone()] == "pass"
             && section.format.color == egui::Color32::RED
@@ -636,8 +636,8 @@ fn crlf_projection_and_unicode_boundaries_share_paint_and_hit_geometry() {
     let (mut surface, mut buffer, ctx) = fixture(text);
     for width in [180.0, 500.0, 1000.0] {
         let output = frame(&mut surface, &mut buffer, &ctx, vec![], width);
-        assert_eq!(output.geometry.galley.rows.len(), 3);
-        assert!(!output.geometry.galley.text().contains('\r'));
+        assert_eq!(output.geometry.galley().rows.len(), 3);
+        assert!(!output.geometry.visual_text().contains('\r'));
         for byte in [0, 2, 4, 7, 18, 19] {
             let point = output.geometry.caret_rect(byte).center();
             assert_eq!(output.geometry.hit_test(point), byte, "byte {byte}");
@@ -904,13 +904,13 @@ fn geometry_cache_retains_recent_tabs_and_rejects_replaced_buffers() {
     let first = render(&mut surface, &mut a, 1);
     render(&mut surface, &mut b, 2);
     let back = render(&mut surface, &mut a, 1);
-    assert!(std::sync::Arc::ptr_eq(&first.galley, &back.galley));
-    assert_eq!(first.galley.text(), back.galley.text());
+    assert!(std::sync::Arc::ptr_eq(first.galley(), back.galley()));
+    assert_eq!(first.galley().text(), back.galley().text());
     // Same widget, length and revision, but a fresh buffer (e.g. disk reload).
     a = EditorBuffer::new("other\r\n🌍".into());
     let replaced = render(&mut surface, &mut a, 1);
-    assert_eq!(replaced.galley.text(), "other\n🌍");
-    assert!(!std::sync::Arc::ptr_eq(&first.galley, &replaced.galley));
+    assert_eq!(replaced.galley().text(), "other\n🌍");
+    assert!(!std::sync::Arc::ptr_eq(first.galley(), replaced.galley()));
     for id in 3..(crate::GEOMETRY_CACHE_LIMIT as u64 + 5) {
         render(&mut surface, &mut b, id);
     }

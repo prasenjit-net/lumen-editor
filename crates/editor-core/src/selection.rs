@@ -1,4 +1,5 @@
 use std::ops::Range;
+#[cfg(test)]
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Which logical side of a byte boundary owns its visual caret in bidi text.
@@ -80,10 +81,9 @@ impl SelectionSet {
         if primary >= selections.len() {
             return Err(EditError::InvalidPrimary);
         }
-        let boundaries = grapheme_boundaries(text);
         for (selection, _) in &selections {
             for offset in [selection.anchor, selection.head] {
-                if boundaries.binary_search(&offset).is_err() {
+                if !crate::grapheme::is_boundary(text, offset) {
                     return Err(EditError::InvalidBoundary(offset));
                 }
             }
@@ -178,6 +178,7 @@ impl SelectionSet {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn grapheme_boundaries(text: &str) -> Vec<usize> {
     text.grapheme_indices(true)
         .map(|(offset, _)| offset)

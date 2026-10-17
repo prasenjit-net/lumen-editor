@@ -11,7 +11,7 @@ pub(crate) fn publish(
     geometry: &TextGeometry,
     buffer: &EditorBuffer,
 ) {
-    let text = geometry.galley.text();
+    let text = geometry.visual_text();
     response.widget_info(|| {
         egui::WidgetInfo::text_edit(ui.is_enabled(), text, text, "Editor prototype")
     });
@@ -34,7 +34,7 @@ pub(crate) fn publish(
         )),
         Role::MultilineTextInput,
         transform * egui::emath::TSTransform::from_translation(geometry.origin.to_vec2()),
-        &geometry.galley,
+        geometry.galley(),
     );
     ui.ctx().accesskit_node_builder(response.id, |node| {
         node.set_label("Multi-cursor editor prototype");
@@ -53,7 +53,7 @@ fn publish_shaped(ui: &Ui, response: &Response, geometry: &TextGeometry, buffer:
         let cursor = shaped.cursor(geometry.visual_byte(geometry.cursor(byte).index));
         TextPosition {
             node: NodeId(response.id.with(cursor.line).value()),
-            character_index: geometry.galley.text()
+            character_index: geometry.visual_text()
                 [shaped.starts[cursor.line]..shaped.starts[cursor.line] + cursor.index]
                 .chars()
                 .count(),
@@ -80,7 +80,7 @@ fn publish_shaped(ui: &Ui, response: &Response, geometry: &TextGeometry, buffer:
         .layer_transform_to_global(ui.layer_id())
         .unwrap_or_default();
     let rows = geometry.row_rects();
-    let text = geometry.galley.text();
+    let text = geometry.visual_text();
     let character_carets = shaped.character_carets(text);
     let mut character = 0;
     for (line, start) in shaped.starts.iter().copied().enumerate() {
@@ -106,7 +106,7 @@ fn publish_shaped(ui: &Ui, response: &Response, geometry: &TextGeometry, buffer:
                 x1: rect.right().into(),
                 y1: rect.bottom().into(),
             });
-            node.set_text_direction(if shaped.buffer.is_rtl(line).unwrap_or(false) {
+            node.set_text_direction(if shaped.is_rtl(line) {
                 TextDirection::RightToLeft
             } else {
                 TextDirection::LeftToRight

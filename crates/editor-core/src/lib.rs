@@ -4,6 +4,7 @@ mod clipboard;
 mod commands;
 mod composition;
 mod folding;
+mod grapheme;
 mod indentation;
 mod navigation;
 mod pairing;

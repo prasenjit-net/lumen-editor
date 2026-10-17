@@ -177,3 +177,62 @@ buffer replacement, LF/CRLF source mapping, and snapshot synchronization through
 editing, undo and save. Persistent geometry can outlive egui's own galley cache;
 source-projection tests therefore assert mapping/size equivalence rather than
 requiring shape allocation identity across different revisions.
+
+## Opening and editing large files (2026-10-17)
+
+Release build, macOS, headless 1200x800 egui frames with the shared editor and the
+shaped renderer; real layout, shaping, highlighting and status bar, no GPU.
+Reproduce with `cargo test --release --bin lumen-editor perf_probe:: -- --ignored --nocapture`
+(`big_file_open`, `big_file_typing`; the `*_loop` probes feed `sample`/Instruments).
+File contents are synthetic Rust-like text of about 30 bytes per line.
+
+**Cause.** Reading a file and creating its document takes 1-2 ms. Everything else
+happened in the first frame and was linear in file size: cosmic-text shaped the
+*entire* document up front (about 70% of the open time), egui laid out a whole-document
+galley the shaped renderer never draws (about 50% of what remained), and
+`EditorBuffer`/selection validation built a grapheme table of the whole text, as did
+every arrow key and delete. Each keystroke repeated the shaping, the galley and the
+tables.
+
+**Changes.**
+- The shaped layout shapes one source line at a time, on demand: the visible rows plus a
+  margin when painting, the caret line, the clicked row. Documents up to 256 KB still
+  shape everything immediately so their widths stay exact; larger ones estimate the width
+  of unshaped lines from the monospace advance until they scroll into view. After an
+  edit every shaped line whose text is unchanged is carried over, so only the edited line
+  is re-shaped. A test-only copy of the old whole-document layout is compared with the
+  lazy one on randomized mixed-direction, emoji, tab and empty-line text (carets,
+  bidirectional arrow stepping, hit testing, selection, row geometry).
+- egui's galley is not built when a shaper renders the text.
+- Grapheme boundary questions (selection validation, arrow, delete, caret snapping, word
+  and literal matching) look only at the offset in question instead of tabulating the
+  document; a randomized test checks them against the full table.
+
+| First frame after opening | before | after |
+| --- | ---: | ---: |
+| 600 KB Rust (20k lines) | 268 ms | 117 ms |
+| 3 MB Rust (100k lines) | 1,220-1,400 ms | 458 ms |
+| 9 MB Rust (300k lines) | 4,200-5,070 ms | 1,247 ms |
+| 9 MB plain text | 3,626 ms | 184 ms |
+| 9 MB log | 2,890 ms | 183 ms |
+
+| One typed character | before | after |
+| --- | ---: | ---: |
+| Rust, 10k lines (300 KB) | 120 ms | 38 ms |
+| Rust, 50k lines (1.5 MB) | 620 ms | 192 ms |
+| Rust, 200k lines (6 MB) | 4,000 ms | 780 ms |
+| Plain text, 10k lines | 80 ms | 5 ms |
+| Plain text, 50k lines | 420 ms | 29 ms |
+| Plain text, 200k lines | 3,000 ms | 120 ms |
+
+Idle frames (scrolling, caret blink, hover) were already cheap from the retained
+geometry cache: about 2 ms at 50k lines and 8 ms at 200k.
+
+**What is left.** For highlighted languages the remainder is tree-sitter: a full
+re-parse plus a query over the whole tree on every edit (about 80% of a Rust keystroke
+at 30k lines) and one full parse when opening. Incremental re-parsing with the previous
+tree, and running the highlight query only over the visible byte range, would take it to
+the plain-text numbers. Other whole-document passes still run per edit: the geometry
+tables (byte/visual offsets, line starts), fold discovery, whole-document undo snapshots
+and the status-bar facts. `row_rects()` allocates one rectangle per line for the gutter
+and sizing, and accessibility (screen readers only) still shapes every line.

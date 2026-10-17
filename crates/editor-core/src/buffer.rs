@@ -1,5 +1,6 @@
 use crate::{
-    EditError, Selection, SelectionAffinity, SelectionSet, selection::grapheme_boundaries,
+    EditError, Selection, SelectionAffinity, SelectionSet,
+    grapheme::{next_boundary, previous_boundary, snap_forward},
 };
 
 // Full snapshots are deliberately bounded for this correctness spike; measured
@@ -174,7 +175,7 @@ impl EditorBuffer {
     }
 
     pub fn move_horizontal(&mut self, direction: Direction, extend: bool) {
-        let boundaries = grapheme_boundaries(self.text());
+        let text = self.text();
         let selections = self
             .selections()
             .selections()
@@ -187,7 +188,7 @@ impl EditorBuffer {
                         Direction::Forward => range.end,
                     }
                 } else {
-                    neighbor(&boundaries, selection.head, direction)
+                    neighbor(text, selection.head, direction)
                 };
                 Selection {
                     anchor: if extend { selection.anchor } else { head },
@@ -200,7 +201,7 @@ impl EditorBuffer {
     }
 
     pub fn delete_graphemes(&mut self, direction: Direction) -> Result<bool, EditError> {
-        let boundaries = grapheme_boundaries(self.text());
+        let text = self.text();
         let selections = self
             .selections()
             .selections()
@@ -209,7 +210,7 @@ impl EditorBuffer {
                 if selection.range().is_empty() {
                     Selection {
                         anchor: selection.anchor,
-                        head: neighbor(&boundaries, selection.head, direction),
+                        head: neighbor(text, selection.head, direction),
                     }
                 } else {
                     *selection
@@ -254,10 +255,8 @@ impl EditorBuffer {
         }
         // Insertion can join a combining mark/ZWJ with neighboring text. Snap
         // forward in the final document instead of leaving a caret inside it.
-        let boundaries = grapheme_boundaries(&text);
         for caret in &mut carets {
-            let index = boundaries.partition_point(|boundary| *boundary < caret.head);
-            *caret = Selection::caret(boundaries[index]);
+            *caret = Selection::caret(snap_forward(&text, caret.head));
         }
         let selections = SelectionSet::new(&text, carets, selections.primary_index())?;
         Ok(self.commit_snapshot_with_history(text, selections, join))
@@ -311,10 +310,9 @@ impl EditorBuffer {
     }
 }
 
-fn neighbor(boundaries: &[usize], offset: usize, direction: Direction) -> usize {
-    let index = boundaries.binary_search(&offset).unwrap();
-    boundaries[match direction {
-        Direction::Backward => index.saturating_sub(1),
-        Direction::Forward => (index + 1).min(boundaries.len() - 1),
-    }]
+fn neighbor(text: &str, offset: usize, direction: Direction) -> usize {
+    match direction {
+        Direction::Backward => previous_boundary(text, offset),
+        Direction::Forward => next_boundary(text, offset),
+    }
 }

@@ -890,7 +890,7 @@ mod perf_probe {
         for n in 0..lines {
             match n % 5 {
                 0 => text.push_str(&format!("pub fn function_{n}(value: u32) -> u32 {{\n")),
-                1 => text.push_str("    let doubled = value * 2; // comment é\n"),
+                1 => text.push_str("    let doubled = value * 2; // comment e\n"),
                 2 => text.push_str("    println!(\"value {} of {}\", doubled, value);\n"),
                 3 => text.push_str("    doubled + 1\n"),
                 _ => text.push_str("}\n"),
@@ -993,6 +993,91 @@ mod perf_probe {
                     app.editor.files[0].text.len() > len_after
                 );
             }
+        }
+    }
+
+    #[test]
+    #[ignore = "timing probe"]
+    fn big_file_open() {
+        for (name, lines) in [
+            ("open.rs", 20_000usize),
+            ("open.rs", 100_000),
+            ("open.rs", 300_000),
+            ("open.txt", 300_000),
+            ("open.log", 300_000),
+        ] {
+            let dir = std::env::temp_dir().join(format!("lumen-open-probe-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join(name);
+            std::fs::write(&path, source(lines)).unwrap();
+            let bytes = std::fs::metadata(&path).unwrap().len();
+            let mut app = LumenApp::default();
+            #[cfg(feature = "shared-editor")]
+            {
+                app.view.shared_editor = true;
+            }
+            let ctx = egui::Context::default();
+            crate::ui::theme::configure_ui(&ctx);
+            let start = Instant::now();
+            app.open_file(path.clone());
+            let open = start.elapsed().as_secs_f64() * 1000.0;
+            let frame = |app: &mut LumenApp| {
+                let start = Instant::now();
+                let _ = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1200.0, 800.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        app.render_component(ctx, |w| w.status_bar(ctx));
+                        app.render_component(ctx, |w| w.editor(ctx));
+                    },
+                );
+                start.elapsed().as_secs_f64() * 1000.0
+            };
+            let first = frame(&mut app);
+            let second = frame(&mut app);
+            let third = frame(&mut app);
+            eprintln!(
+                "OPEN {name} lines={lines} bytes={bytes} open_file={open:.0}ms first_frame={first:.0}ms second={second:.0}ms third={third:.0}ms"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    #[ignore = "profiling loop"]
+    fn big_file_open_loop() {
+        let dir = std::env::temp_dir().join(format!("lumen-open-loop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("loop.rs");
+        std::fs::write(&path, source(100_000)).unwrap();
+        let end = Instant::now() + std::time::Duration::from_secs(25);
+        while Instant::now() < end {
+            let mut app = LumenApp::default();
+            #[cfg(feature = "shared-editor")]
+            {
+                app.view.shared_editor = true;
+            }
+            let ctx = egui::Context::default();
+            crate::ui::theme::configure_ui(&ctx);
+            app.open_file(path.clone());
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    app.render_component(ctx, |w| w.status_bar(ctx));
+                    app.render_component(ctx, |w| w.editor(ctx));
+                },
+            );
         }
     }
 }

@@ -155,7 +155,10 @@ struct CachedGeometry {
 
 #[cfg(feature = "shaped")]
 struct CachedShape {
-    galley: Arc<egui::Galley>,
+    visual: Arc<str>,
+    typography: Typography,
+    pixels_per_point: f32,
+    text_color: Color32,
     layout: Arc<shaping::ShapedLayout>,
 }
 
@@ -316,6 +319,12 @@ impl EditorSurface {
                 language: self.language,
                 syntax: self.syntax,
                 semantic: self.semantic.clone(),
+                // A shaper draws the text itself; egui's whole-document layout
+                // would only be thrown away.
+                #[cfg(feature = "shaped")]
+                galley: self.shaper.is_none(),
+                #[cfg(not(feature = "shaped"))]
+                galley: true,
             },
             &folds,
         );
@@ -323,18 +332,32 @@ impl EditorSurface {
         let geometry = {
             let mut geometry = geometry;
             if let Some(shaper) = &self.shaper {
-                // egui invalidates galley identity for text, fonts, scale and
-                // layout style changes. Cache only the matching immutable shape;
-                // source/preedit mappings remain owned by this geometry instance.
+                // Reuse the shape only for the same visual text, typography, scale
+                // and text colour. Source/preedit mappings remain owned by this
+                // geometry instance. A changed text keeps every shaped line that
+                // is still identical, so an edit re-shapes only what it touched.
+                let pixels_per_point = ui.ctx().pixels_per_point();
+                let text_color = ui.visuals().text_color();
                 let mut cache = self.shape_cache.borrow_mut();
                 let layout = if let Some(cached) = &*cache
-                    && Arc::ptr_eq(&cached.galley, &geometry.galley)
+                    && (Arc::ptr_eq(&cached.visual, &geometry.visual)
+                        || *cached.visual == *geometry.visual)
+                    && cached.typography == self.typography
+                    && cached.pixels_per_point == pixels_per_point
+                    && cached.text_color == text_color
                 {
                     cached.layout.clone()
                 } else {
-                    let layout = Arc::new(shaper.layout(geometry.galley.text(), self.typography));
+                    let layout = Arc::new(shaper.layout_after(
+                        geometry.visual_text(),
+                        self.typography,
+                        cache.as_ref().map(|previous| previous.layout.as_ref()),
+                    ));
                     *cache = Some(CachedShape {
-                        galley: geometry.galley.clone(),
+                        visual: geometry.visual.clone(),
+                        typography: self.typography,
+                        pixels_per_point,
+                        text_color,
                         layout: layout.clone(),
                     });
                     layout
@@ -448,6 +471,7 @@ impl EditorSurface {
                 self.geometry(ui, buffer, origin, self.composition.as_ref())
             };
             let painter = ui.painter().with_clip_rect(text_clip);
+            geometry.prepare_visible(text_clip);
             if let Some((lines, color)) = &self.diff_lines {
                 for (row, rect) in geometry.row_rects().into_iter().enumerate() {
                     if lines.contains(&geometry.source_line_for_row(row)) {
