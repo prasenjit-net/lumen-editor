@@ -19,6 +19,10 @@ impl EditorSurface {
     }
 
     fn rebuild_fold_intervals(&mut self, text: &str) {
+        if self.collapsed.is_empty() {
+            self.fold_intervals.clear();
+            return;
+        }
         let starts = line_starts(text);
         let mut intervals: Vec<_> = self
             .fold_ranges

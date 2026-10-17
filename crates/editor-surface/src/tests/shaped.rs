@@ -249,7 +249,6 @@ fn shaping_cache_reuses_idle_layout_and_invalidates_text_style_and_preedit() {
 
 #[test]
 fn shared_visual_shape_never_reuses_lf_source_offsets_for_crlf() {
-    use std::sync::Arc;
     let (mut surface, mut buffer, ctx) = shaped_fixture("a\nb");
     let before = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
     assert_eq!(
@@ -261,10 +260,9 @@ fn shared_visual_shape_never_reuses_lf_source_offsets_for_crlf() {
     buffer.replace_document("a\r\nb").unwrap();
     let after = frame(&mut surface, &mut buffer, &ctx, vec![], 500.0);
     assert_eq!(before.geometry.galley.text(), after.geometry.galley.text());
-    assert!(Arc::ptr_eq(
-        before.geometry.shaped.as_ref().unwrap(),
-        after.geometry.shaped.as_ref().unwrap()
-    ));
+    // Persistent geometry reuse lets egui evict its own galley cache between
+    // revisions. Shape allocation identity is therefore not guaranteed here.
+    assert_eq!(before.geometry.size(), after.geometry.size());
     assert_eq!(
         after
             .geometry

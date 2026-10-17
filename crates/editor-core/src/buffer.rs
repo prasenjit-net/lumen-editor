@@ -20,6 +20,7 @@ struct Snapshot {
 
 /// Shared editing/history authority in the feature-gated workbench and prototype.
 pub struct EditorBuffer {
+    identity: u64,
     current: Snapshot,
     saved_text: String,
     revision: u64,
@@ -39,7 +40,9 @@ const TYPING_PAUSE_SECONDS: f64 = 1.0;
 impl EditorBuffer {
     pub fn new(text: String) -> Self {
         let selections = SelectionSet::new(&text, vec![Selection::caret(0)], 0).unwrap();
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
+            identity: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             saved_text: text.clone(),
             current: Snapshot { text, selections },
             revision: 0,
@@ -54,6 +57,10 @@ impl EditorBuffer {
     }
     pub fn selections(&self) -> &SelectionSet {
         &self.current.selections
+    }
+    /// Stable identity for revision-keyed caches, including after buffer replacement.
+    pub fn identity(&self) -> u64 {
+        self.identity
     }
     pub fn revision(&self) -> u64 {
         self.revision

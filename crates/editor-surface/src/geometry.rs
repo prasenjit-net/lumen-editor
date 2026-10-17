@@ -108,21 +108,25 @@ fn visual_semantic_spans(
 
 /// One source-to-layout mapping for painting and pointer/caret geometry.
 /// CRLF projects to one visual newline without altering the stored document.
+///
+/// Cheap to clone: the per-character tables are shared, so an unchanged document
+/// reuses one layout across frames instead of rebuilding them every frame.
+#[derive(Clone)]
 pub struct TextGeometry {
     pub galley: Arc<Galley>,
     pub origin: Pos2,
-    byte_offsets: Vec<usize>,
-    graphemes: Vec<usize>,
+    byte_offsets: Arc<Vec<usize>>,
+    graphemes: Arc<Vec<usize>>,
     preedit: Option<(Range<usize>, usize)>,
-    syntax_spans: Vec<SyntaxSpan>,
+    syntax_spans: Arc<Vec<SyntaxSpan>>,
     #[cfg(feature = "shaped")]
     syntax_palette: Option<crate::SyntaxPalette>,
     #[cfg(feature = "shaped")]
     pub(crate) shaped: Option<Arc<crate::shaping::ShapedLayout>>,
-    visual_offsets: Vec<usize>,
-    folded: Vec<Range<usize>>,
+    visual_offsets: Arc<Vec<usize>>,
+    folded: Arc<Vec<Range<usize>>>,
     source_lines: usize,
-    row_lines: Vec<usize>,
+    row_lines: Arc<Vec<usize>>,
 }
 
 impl TextGeometry {
@@ -269,23 +273,24 @@ impl TextGeometry {
         Self {
             galley,
             origin,
-            byte_offsets,
-            graphemes: text
-                .grapheme_indices(true)
-                .map(|(offset, _)| offset)
-                .chain(std::iter::once(text.len()))
-                .collect(),
+            byte_offsets: Arc::new(byte_offsets),
+            graphemes: Arc::new(
+                text.grapheme_indices(true)
+                    .map(|(offset, _)| offset)
+                    .chain(std::iter::once(text.len()))
+                    .collect(),
+            ),
             preedit: preedit
                 .map(|composition| (composition.replacement_range(), composition.preedit().len())),
-            syntax_spans,
+            syntax_spans: Arc::new(syntax_spans),
             #[cfg(feature = "shaped")]
             syntax_palette: syntax.map(|(_, palette)| palette),
             #[cfg(feature = "shaped")]
             shaped: None,
-            visual_offsets,
-            folded: folded.to_vec(),
+            visual_offsets: Arc::new(visual_offsets),
+            folded: Arc::new(folded.to_vec()),
             source_lines: line_starts.len(),
-            row_lines,
+            row_lines: Arc::new(row_lines),
         }
     }
 
@@ -301,7 +306,7 @@ impl TextGeometry {
             Some((range, _)) if byte >= range.start => range.start,
             _ => byte,
         };
-        for range in &self.folded {
+        for range in self.folded.iter() {
             if range.start <= byte && byte < range.end {
                 return if self.byte_offsets.binary_search(&range.start).is_ok() {
                     range.start

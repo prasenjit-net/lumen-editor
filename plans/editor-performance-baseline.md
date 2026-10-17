@@ -141,3 +141,39 @@ eliminate per-edit buffer rebuilding, source-map construction or full snapshots.
   representation; preserve checkpoints, original cursor sets and atomic commands.
 - Extend probes to native release builds and larger Unicode fixtures. Do not
   promote the experimental editor based on these small local CPU samples.
+
+### Persistent geometry and tab-return follow-up (2026-10-16)
+
+The surface now retains up to 20 recently displayed layouts. Geometry tables
+are shared through `Arc`, and cache keys include widget and buffer identity,
+revision, typography, language/palette, semantic token identity, folds, scale,
+text color and font definitions. Buffer identity prevents a disk reload with the
+same revision/length from displaying old text. Composition bypasses this cache.
+Only one revision per widget is retained; eviction bounds layout count, not bytes.
+Large documents can still retain substantial layout memory until eviction or
+surface destruction. No syntax, shaping or accessibility features are disabled.
+
+The workbench also retains its text snapshot on unchanged revisions, and folding
+skips line indexing when there are no collapsed headers. These changes do not
+remove the core's full-buffer edit/history costs.
+
+The release surface probe now includes alternating large/small tabs, five return
+frames, accessibility disabled, embedded fonts, no syntax coloring or disk I/O:
+
+| Large document | First frame ms | Mean return frame ms |
+| --- | ---: | ---: |
+| 10,000 rows / 370 KB | 87.218 | 0.399 |
+| 50,000 rows / 1.85 MB | 437.304 | 1.298 |
+
+These are same-run cold/return measurements, not before/after measurements of the
+whole application. CPU results exclude workbench controllers, native fonts,
+renderer/GPU submission and disk reads. Returning to an evicted layout remains a
+cold operation. First opening still performs whole-document projection,
+highlighting (when configured), font layout and shaping synchronously. Visible-row
+or incremental layout remains necessary to reduce that cold latency materially.
+
+Regression coverage verifies recent-tab reuse, bounded retention, same-size
+buffer replacement, LF/CRLF source mapping, and snapshot synchronization through
+editing, undo and save. Persistent geometry can outlive egui's own galley cache;
+source-projection tests therefore assert mapping/size equivalence rather than
+requiring shape allocation identity across different revisions.

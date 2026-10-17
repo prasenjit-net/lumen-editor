@@ -66,8 +66,7 @@ impl EditorSurface {
             } = event
             {
                 if pressed {
-                    let geometry =
-                        self.geometry(ui, buffer.text(), origin, self.composition.as_ref());
+                    let geometry = self.geometry(ui, buffer, origin, self.composition.as_ref());
                     self.cancel_composition();
                     if clip.contains(pos) {
                         response.request_focus();
@@ -187,7 +186,7 @@ impl EditorSurface {
                         self.drag_anchor = None;
                         continue;
                     }
-                    let geometry = self.geometry(ui, buffer.text(), origin, None);
+                    let geometry = self.geometry(ui, buffer, origin, None);
                     let (selections, primary) = match drag {
                         DragSelection::Column { origin, .. } => {
                             column_selections(&geometry, origin, pos)
@@ -216,7 +215,7 @@ impl EditorSurface {
                 continue;
             }
             if let Event::AccessKitActionRequest(ref request) = event {
-                let geometry = self.geometry(ui, buffer.text(), origin, self.composition.as_ref());
+                let geometry = self.geometry(ui, buffer, origin, self.composition.as_ref());
                 if crate::accessibility::apply_action(ui, response, request, &geometry, buffer) {
                     self.cancel_composition();
                 }
@@ -386,7 +385,7 @@ impl EditorSurface {
                         Key::ArrowLeft | Key::ArrowRight
                             if !modifiers.command && !modifiers.alt && !modifiers.ctrl =>
                         {
-                            let geometry = self.geometry(ui, buffer.text(), origin, None);
+                            let geometry = self.geometry(ui, buffer, origin, None);
                             if geometry.is_shaped() {
                                 crate::visual_navigation::move_horizontal(
                                     buffer,

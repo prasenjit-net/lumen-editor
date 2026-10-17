@@ -121,7 +121,10 @@ impl Document {
     #[cfg(feature = "shared-editor")]
     pub(crate) fn sync_shared_editing(&mut self) {
         if let Some(buffer) = &self.editing {
-            self.text = buffer.text().to_owned();
+            if self.revision != buffer.revision() {
+                self.text.clear();
+                self.text.push_str(buffer.text());
+            }
             self.revision = buffer.revision();
             self.dirty = buffer.is_dirty();
         }
@@ -149,6 +152,45 @@ mod language_tests {
         document.relocate(PathBuf::from("src/Makefile"));
         assert_eq!(document.language, Language::Makefile);
         assert_eq!(document.text, "project(Lumen)");
+        assert!(!document.dirty);
+    }
+}
+
+#[cfg(all(test, feature = "shared-editor"))]
+mod synchronization_tests {
+    use super::*;
+
+    #[test]
+    fn unchanged_frames_retain_snapshot_and_edits_undo_and_save_still_sync() {
+        let mut document = Document::from_path("large.txt".into(), "line\n".repeat(10_000));
+        document.enable_shared_editing();
+        let snapshot = document.text.as_ptr();
+        document.sync_shared_editing();
+        assert_eq!(snapshot, document.text.as_ptr());
+        assert!(!document.dirty);
+        document
+            .editing
+            .as_mut()
+            .unwrap()
+            .replace_document("changed")
+            .unwrap();
+        document.sync_shared_editing();
+        assert_eq!(document.text, "changed");
+        assert!(document.dirty);
+        document.editing.as_mut().unwrap().undo();
+        document.sync_shared_editing();
+        assert_eq!(document.text, "line\n".repeat(10_000));
+        assert!(!document.dirty);
+        document
+            .editing
+            .as_mut()
+            .unwrap()
+            .replace_document("saved")
+            .unwrap();
+        document.sync_shared_editing();
+        document.mark_saved("large.txt".into());
+        document.sync_shared_editing();
+        assert_eq!(document.text, "saved");
         assert!(!document.dirty);
     }
 }

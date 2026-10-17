@@ -885,3 +885,37 @@ fn layout_output_exposes_every_caret_at_the_same_positions_used_for_hit_tests() 
         assert_eq!(output.geometry.hit_test(rect.center()), byte);
     }
 }
+
+#[test]
+fn geometry_cache_retains_recent_tabs_and_rejects_replaced_buffers() {
+    let ctx = Context::default();
+    let mut surface = EditorSurface::default();
+    let mut a = EditorBuffer::new("alpha\r\n🌍".into());
+    let mut b = EditorBuffer::new("bravo\r\n🌍".into());
+    let render = |surface: &mut EditorSurface, buffer: &mut EditorBuffer, id: u64| {
+        let mut result = None;
+        let _ = ctx.run(RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                result = Some(surface.show(ui, Id::new(id), buffer));
+            });
+        });
+        result.unwrap().geometry
+    };
+    let first = render(&mut surface, &mut a, 1);
+    render(&mut surface, &mut b, 2);
+    let back = render(&mut surface, &mut a, 1);
+    assert!(std::sync::Arc::ptr_eq(&first.galley, &back.galley));
+    assert_eq!(first.galley.text(), back.galley.text());
+    // Same widget, length and revision, but a fresh buffer (e.g. disk reload).
+    a = EditorBuffer::new("other\r\n🌍".into());
+    let replaced = render(&mut surface, &mut a, 1);
+    assert_eq!(replaced.galley.text(), "other\n🌍");
+    assert!(!std::sync::Arc::ptr_eq(&first.galley, &replaced.galley));
+    for id in 3..(crate::GEOMETRY_CACHE_LIMIT as u64 + 5) {
+        render(&mut surface, &mut b, id);
+    }
+    assert_eq!(
+        surface.geometry_cache.borrow().len(),
+        crate::GEOMETRY_CACHE_LIMIT
+    );
+}
