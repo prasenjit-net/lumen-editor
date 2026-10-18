@@ -86,6 +86,7 @@ pub fn validate_task(def: &TaskDef) -> Vec<Issue> {
             "only applies to a task with depends_on".into(),
         );
     }
+    matcher_rules(def, &mut problem);
     background_rules(def, &mut problem);
     dependency_syntax(def, &mut problem);
     issues
@@ -187,6 +188,22 @@ fn execution_rules(def: &TaskDef, problem: &mut impl FnMut(&str, String)) {
             text_rules(&format!("{key}.cwd"), cwd, problem);
         }
         env_rules(&format!("{key}.env"), &over.env, problem);
+    }
+}
+
+fn matcher_rules(def: &TaskDef, problem: &mut impl FnMut(&str, String)) {
+    match &def.problem_matcher {
+        None => {}
+        Some(_) if def.kind == TaskKind::Compound => problem(
+            "problem_matcher",
+            "compound tasks have no output of their own to scan".into(),
+        ),
+        Some(crate::ProblemMatcherSpec::Pattern { pattern, .. }) => {
+            if let Err(message) = crate::matcher::validate_pattern(pattern) {
+                problem("problem_matcher.pattern", message);
+            }
+        }
+        Some(_) => {}
     }
 }
 

@@ -514,6 +514,40 @@ mod tests {
     }
 
     #[test]
+    fn new_tasks_offer_templates_and_a_problem_matcher_but_existing_ones_do_not_offer_templates() {
+        let (mut app, ctx) = split_app();
+        let new = app.view.task_editors.open(
+            crate::app::task_editor::TaskEditorTarget::New(lumen_task_core::Scope::Workspace),
+            crate::app::task_editor::TaskEditorState::blank_draft(),
+        );
+        let output = settle(&mut app, &ctx, 1000.0);
+        let has = |output: &egui::FullOutput, needle: &str| {
+            output.shapes.iter().any(|shape| {
+                matches!(&shape.shape,
+                egui::Shape::Text(text) if text.galley.job.text.contains(needle))
+            })
+        };
+        assert!(has(&output, "Template") && has(&output, "Choose a starting point"));
+        assert!(has(&output, "Problem matcher"));
+        crate::app::task_editor::TaskTemplate::CargoBuild
+            .apply(&mut app.view.task_editors.get_mut(new).unwrap().draft);
+        let output = settle(&mut app, &ctx, 1000.0);
+        assert!(has(&output, "cargo"), "the template filled the command");
+        app.view.task_editors.close(new);
+        let mut def = crate::app::task_editor::TaskEditorState::blank_draft();
+        def.id = "x".into();
+        app.view.task_editors.open(
+            crate::app::task_editor::TaskEditorTarget::Existing(lumen_task_core::TaskKey::new(
+                lumen_task_core::Scope::Workspace,
+                "x",
+            )),
+            def,
+        );
+        let output = settle(&mut app, &ctx, 1000.0);
+        assert!(!has(&output, "Choose a starting point"));
+    }
+
+    #[test]
     fn joined_arguments_get_a_hint_that_goes_away_once_split() {
         let (mut app, ctx) = split_app();
         let id = app.view.task_editors.open(

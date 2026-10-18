@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, HashSet};
 use toml_edit::{DocumentMut, Item, Table, Value};
 
 use crate::{
-    Background, DependsOrder, FailurePolicy, InputDef, InputKind, InstancePolicy, Issue,
-    OutputReuse, Platform, PlatformOverride, Presentation, Reveal, SCHEMA_VERSION, SavePolicy,
-    TaskDef, TaskFile, TaskKind, Transport, validate::validate_file,
+    Background, BuiltinMatcher, DependsOrder, FailurePolicy, InputDef, InputKind, InstancePolicy,
+    Issue, OutputReuse, Platform, PlatformOverride, Presentation, ProblemMatcherSpec, Reveal,
+    SCHEMA_VERSION, SavePolicy, Severity, TaskDef, TaskFile, TaskKind, Transport,
+    validate::validate_file,
 };
 
 const TOP_KEYS: &[&str] = &["schema_version", "tasks", "inputs"];
@@ -33,6 +34,7 @@ const TASK_KEYS: &[&str] = &[
     "is_background",
     "background",
     "presentation",
+    "problem_matcher",
     "windows",
     "macos",
     "linux",
@@ -40,6 +42,7 @@ const TASK_KEYS: &[&str] = &[
 const OVERRIDE_KEYS: &[&str] = &["command", "args", "cwd", "env"];
 const PRESENTATION_KEYS: &[&str] = &["reveal", "focus", "reuse", "clear"];
 const BACKGROUND_KEYS: &[&str] = &["ready_pattern", "ready_timeout_seconds"];
+const MATCHER_KEYS: &[&str] = &["pattern", "severity"];
 
 /// Parse and fully validate a tasks file. Any problem (including an unknown key,
 /// so a misspelled lifecycle option is never ignored) fails the whole file.
@@ -222,6 +225,7 @@ pub(crate) fn read_task(table: &Table, issues: &mut Vec<Issue>) -> TaskDef {
     if let Some(sub) = reader.subtable("presentation") {
         def.presentation = read_presentation(sub, &id, reader.issues);
     }
+    def.problem_matcher = read_matcher(table, &id, reader.issues);
     for platform in Platform::ALL {
         if let Some(sub) = reader.subtable(platform.key()) {
             *def.platform_override_mut(platform) =
@@ -229,6 +233,67 @@ pub(crate) fn read_task(table: &Table, issues: &mut Vec<Issue>) -> TaskDef {
         }
     }
     def
+}
+
+fn read_matcher(table: &Table, task: &str, issues: &mut Vec<Issue>) -> Option<ProblemMatcherSpec> {
+    let item = table.get("problem_matcher")?;
+    let mut reader = Reader {
+        table,
+        task,
+        prefix: "",
+        issues,
+    };
+    match item {
+        Item::Value(Value::String(name)) => {
+            let found = BuiltinMatcher::ALL
+                .iter()
+                .find(|builtin| builtin.as_str() == name.value());
+            if found.is_none() {
+                let names: Vec<_> = BuiltinMatcher::ALL.iter().map(|b| b.as_str()).collect();
+                reader.problem(
+                    "problem_matcher",
+                    format!(
+                        "'{}' is not a built-in matcher ({}); use a [tasks.problem_matcher] table for a custom pattern",
+                        name.value(),
+                        names.join(", ")
+                    ),
+                );
+            }
+            found.map(|builtin| ProblemMatcherSpec::Builtin(*builtin))
+        }
+        Item::Table(sub) => {
+            let mut inner = Reader {
+                table: sub,
+                task,
+                prefix: "problem_matcher.",
+                issues: reader.issues,
+            };
+            inner.keys(MATCHER_KEYS);
+            let pattern = inner.string("pattern").map(str::to_string);
+            let severity = inner.choice(
+                "severity",
+                &[
+                    ("error", Severity::Error),
+                    ("warning", Severity::Warning),
+                    ("info", Severity::Info),
+                ],
+            );
+            match pattern {
+                Some(pattern) => Some(ProblemMatcherSpec::Pattern { pattern, severity }),
+                None => {
+                    inner.problem("pattern", "required");
+                    None
+                }
+            }
+        }
+        _ => {
+            reader.problem(
+                "problem_matcher",
+                "must be a built-in name or a table with a pattern",
+            );
+            None
+        }
+    }
 }
 
 fn read_background(table: &Table, task: &str, issues: &mut Vec<Issue>) -> Option<Background> {

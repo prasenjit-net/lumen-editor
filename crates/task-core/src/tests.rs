@@ -750,3 +750,85 @@ inputs = 3
         "array of tables"
     ));
 }
+
+#[test]
+fn problem_matchers_parse_validate_and_round_trip_in_both_forms() {
+    let builtin = EXAMPLE.replace(
+        "id = \"build\"\nlabel = \"Build\"",
+        "id = \"build\"\nproblem_matcher = \"cargo\"\nlabel = \"Build\"",
+    );
+    let parsed = parse(&builtin).unwrap();
+    assert_eq!(
+        parsed.get("build").unwrap().problem_matcher,
+        Some(ProblemMatcherSpec::Builtin(BuiltinMatcher::Cargo))
+    );
+    let custom = format!(
+        "{EXAMPLE}\n[[tasks]]\nid = \"lint\"\nlabel = \"Lint\"\ntype = \"process\"\ncommand = \"mylint\"\n\n[tasks.problem_matcher]\npattern = '^(?P<file>[^:]+):(?P<line>\\d+) (?P<message>.+)$'\nseverity = \"warning\"\n"
+    );
+    let parsed = parse(&custom).unwrap();
+    let lint = parsed.get("lint").unwrap();
+    assert!(matches!(
+        &lint.problem_matcher,
+        Some(ProblemMatcherSpec::Pattern {
+            severity: Some(Severity::Warning),
+            ..
+        })
+    ));
+    // Unchanged definitions leave the text identical; switching forms rewrites cleanly.
+    let mut text = custom.clone();
+    for def in &parsed.tasks {
+        text = upsert_task(&text, def).unwrap();
+    }
+    assert_eq!(text, custom);
+    let mut edited = lint.clone();
+    edited.problem_matcher = Some(ProblemMatcherSpec::Builtin(BuiltinMatcher::Gcc));
+    let text = upsert_task(&custom, &edited).unwrap();
+    assert!(text.contains("problem_matcher = \"gcc\""), "{text}");
+    assert!(!text.contains("[tasks.problem_matcher]"));
+    assert_eq!(parse(&text).unwrap().get("lint"), Some(&edited));
+    edited.problem_matcher = None;
+    assert!(
+        !upsert_task(&text, &edited)
+            .unwrap()
+            .contains("problem_matcher")
+    );
+}
+
+#[test]
+fn bad_problem_matchers_are_rejected_with_a_reason() {
+    let with = |value: &str| {
+        EXAMPLE.replace(
+            "id = \"build\"\nlabel = \"Build\"",
+            &format!("id = \"build\"\n{value}\nlabel = \"Build\""),
+        )
+    };
+    assert!(has(
+        &with("problem_matcher = \"clang-tidy\""),
+        "not a built-in matcher"
+    ));
+    assert!(has(
+        &with("problem_matcher = 3"),
+        "built-in name or a table"
+    ));
+    let table = |body: &str| {
+        EXAMPLE.replace(
+            "[tasks.presentation]",
+            &format!("[tasks.problem_matcher]\n{body}\n\n[tasks.presentation]"),
+        )
+    };
+    assert!(has(
+        &table("pattern = '(unclosed'"),
+        "problem_matcher.pattern"
+    ));
+    assert!(has(
+        &table("pattern = '^(?P<file>.+):(?P<line>\\d+)$'"),
+        "message"
+    ));
+    assert!(has(&table("severity = \"warning\""), "required"));
+    assert!(has(&table("pattern = 'x'\nextra = 1"), "unknown key"));
+    let compound = EXAMPLE.replace(
+        "id = \"verify\"\nlabel = \"Verify\"",
+        "id = \"verify\"\nproblem_matcher = \"cargo\"\nlabel = \"Verify\"",
+    );
+    assert!(has(&compound, "no output of their own"));
+}

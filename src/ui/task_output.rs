@@ -109,6 +109,12 @@ impl Workbench<'_> {
                         enabled: has_output,
                     },
                     HeaderAction {
+                        glyph: icon::FLOPPY_DISK,
+                        tooltip: "Save output to a file (what Lumen retained)",
+                        command: Command::SaveTaskOutput(run_id),
+                        enabled: has_output,
+                    },
+                    HeaderAction {
                         glyph: icon::X,
                         tooltip: "Close this task tab",
                         command: Command::CloseTaskRun(run_id),

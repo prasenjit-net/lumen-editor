@@ -4,6 +4,7 @@
 
 mod digest;
 mod edit;
+mod matcher;
 mod parse;
 mod plan;
 mod resolve;
@@ -14,6 +15,7 @@ use std::collections::BTreeMap;
 
 pub use digest::execution_digest;
 pub use edit::{EditError, existing_ids, new_file, remove_task, upsert_task};
+pub use matcher::{MAX_MATCH_LINE, Matcher, Problem, validate_pattern};
 pub use parse::parse;
 pub use plan::{Catalog, Plan, PlanError, PlanNode};
 pub use resolve::{
@@ -163,6 +165,57 @@ impl FailurePolicy {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Severity {
+    Error,
+    Warning,
+    Info,
+}
+
+impl Severity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warning => "warning",
+            Self::Info => "info",
+        }
+    }
+}
+
+/// Built-in output parsers; the name is what `problem_matcher = "..."` accepts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltinMatcher {
+    Cargo,
+    Gcc,
+    Go,
+    Tsc,
+}
+
+impl BuiltinMatcher {
+    pub const ALL: [BuiltinMatcher; 4] = [Self::Cargo, Self::Gcc, Self::Go, Self::Tsc];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cargo => "cargo",
+            Self::Gcc => "gcc",
+            Self::Go => "go",
+            Self::Tsc => "tsc",
+        }
+    }
+}
+
+/// How a task's output is scanned for problems.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProblemMatcherSpec {
+    Builtin(BuiltinMatcher),
+    /// A single-line regex with named groups `file`, `line`, `message` and optionally
+    /// `column` and `severity`.
+    Pattern {
+        pattern: String,
+        severity: Option<Severity>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reveal {
     Always,
     Silent,
@@ -279,6 +332,7 @@ pub struct TaskDef {
     pub is_background: bool,
     pub background: Option<Background>,
     pub presentation: Presentation,
+    pub problem_matcher: Option<ProblemMatcherSpec>,
     pub windows: PlatformOverride,
     pub macos: PlatformOverride,
     pub linux: PlatformOverride,
@@ -309,6 +363,7 @@ impl TaskDef {
             is_background: false,
             background: None,
             presentation: Presentation::default(),
+            problem_matcher: None,
             windows: PlatformOverride::default(),
             macos: PlatformOverride::default(),
             linux: PlatformOverride::default(),

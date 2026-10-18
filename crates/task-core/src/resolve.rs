@@ -57,6 +57,8 @@ pub struct ResolvedTask {
     pub ready_timeout_seconds: Option<u32>,
     /// Secret input values that were substituted; never shown (see [`Self::redact`]).
     pub secrets: Vec<String>,
+    /// How to scan this run's output for problems, if the task asks for it.
+    pub problem_matcher: Option<crate::ProblemMatcherSpec>,
 }
 
 impl ResolvedTask {
@@ -276,6 +278,7 @@ pub fn resolve(
         ready_pattern: def.background.as_ref().map(|b| b.ready_pattern.clone()),
         ready_timeout_seconds: def.effective_ready_timeout(),
         secrets,
+        problem_matcher: def.problem_matcher.clone(),
     })
 }
 

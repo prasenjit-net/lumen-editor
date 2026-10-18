@@ -95,6 +95,7 @@ impl LumenApp {
                 self.resize_task_terminal(id, rows, columns)
             }
             Command::CopyTaskOutput(id) => self.copy_task_output(id, ctx),
+            Command::SaveTaskOutput(id) => self.save_task_output(id),
             Command::ConfirmTaskRun(save_first) => self.confirm_pending_task(save_first, ctx),
             Command::CancelTaskRun => self.cancel_pending_task(),
             Command::SubmitTaskInputs => self.submit_task_inputs(ctx),
@@ -192,6 +193,10 @@ impl LumenApp {
             Command::CloseTerminal => self.close_terminal(),
             Command::CloseProblems => self.view.problems.open = false,
             Command::OpenProblem(document, range) => self.open_problem(document, range),
+            Command::OpenTaskProblem(path, line, column) => {
+                self.open_task_problem(path, line, column)
+            }
+            Command::ClearTaskProblems => self.clear_task_problems(),
             Command::ClearTerminal => self.clear_terminal(),
             Command::PullSourceControl => self.pull_source_control(ctx),
             Command::PushSourceControl => self.push_source_control(ctx),
@@ -362,6 +367,8 @@ impl LumenApp {
             Command::Quit => self.request_quit(ctx),
             Command::Palette => {
                 if !self.view.command_palette {
+                    // Run Task entries list the tasks as they are on disk now.
+                    self.refresh_tasks();
                     self.view.palette_previous_focus = ctx.memory(|memory| memory.focused());
                     self.view.palette_query.clear();
                     self.view.palette_selected = 0;

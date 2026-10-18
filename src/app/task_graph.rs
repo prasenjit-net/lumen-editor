@@ -297,7 +297,7 @@ impl LumenApp {
             .as_bytes(),
         );
         let parent_id = self.view.task_runs.insert(parent);
-        self.view.task_runs.last = Some(plan.root.clone());
+        self.view.task_runs.note_started(&plan.root);
         self.view.task_runs.selected = Some(parent_id);
         self.show_task_run(parent_id);
         self.view.status = format!("Running '{}'", plan.label);

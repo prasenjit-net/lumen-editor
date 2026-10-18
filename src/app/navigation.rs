@@ -408,7 +408,7 @@ fn parse_location(input: &str) -> Result<(usize, usize), &'static str> {
     Ok((line, column))
 }
 
-fn location_byte(text: &str, line: usize, column: usize) -> usize {
+pub(crate) fn location_byte(text: &str, line: usize, column: usize) -> usize {
     let starts = std::iter::once(0)
         .chain(text.match_indices('\n').map(|(index, _)| index + 1))
         .collect::<Vec<_>>();

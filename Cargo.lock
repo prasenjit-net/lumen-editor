@@ -2247,6 +2247,7 @@ dependencies = [
 name = "lumen-task-core"
 version = "0.1.0"
 dependencies = [
+ "regex",
  "toml_edit",
 ]
 

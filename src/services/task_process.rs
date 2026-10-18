@@ -684,6 +684,7 @@ mod tests {
             ready_pattern: None,
             ready_timeout_seconds: None,
             secrets: Vec::new(),
+            problem_matcher: None,
         }
     }
 

@@ -3,6 +3,37 @@ use crate::app::command::Command;
 use crate::icon;
 use eframe::egui::{self, CornerRadius, Frame, Stroke, TextEdit, Vec2};
 impl Workbench<'_> {
+    /// One `Run Task` entry per defined task, recently started ones first.
+    fn task_palette_entries(&self) -> Vec<(String, Command)> {
+        use lumen_task_core::{Scope, TaskKey};
+        let recent = &self.view.task_runs.recent;
+        let mut entries: Vec<(usize, String, Command)> = Vec::new();
+        for scope in [Scope::Workspace, Scope::User] {
+            for task in self.view.tasks.tasks(scope) {
+                let key = TaskKey::new(scope, &task.id);
+                let rank = recent
+                    .iter()
+                    .position(|other| *other == key)
+                    .unwrap_or(usize::MAX);
+                entries.push((
+                    rank,
+                    format!(
+                        "{}  Run Task: {} ({})",
+                        icon::PLAY,
+                        task.label,
+                        scope.label().to_lowercase()
+                    ),
+                    Command::RunTask(key),
+                ));
+            }
+        }
+        entries.sort_by_key(|(rank, label, _)| (*rank, label.clone()));
+        entries
+            .into_iter()
+            .map(|(_, label, command)| (label, command))
+            .collect()
+    }
+
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     pub(crate) fn file_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("File", |ui| {
@@ -290,7 +321,7 @@ impl Workbench<'_> {
                     query.request_focus();
                     self.view.command_palette_focus = false;
                 }
-                let results = matching_commands(&self.view.palette_query);
+                let results = matching_with(&self.view.palette_query, self.task_palette_entries());
                 if query.changed() {
                     self.view.palette_selected = 0;
                 }
@@ -352,10 +383,16 @@ impl Workbench<'_> {
     }
 }
 
+#[cfg(test)]
 fn matching_commands(query: &str) -> Vec<(String, Command)> {
+    matching_with(query, Vec::new())
+}
+
+fn matching_with(query: &str, extra: Vec<(String, Command)>) -> Vec<(String, Command)> {
     let query = query.trim().to_lowercase();
     palette_commands()
         .into_iter()
+        .chain(extra)
         .filter(|(label, _)| {
             let label = label.to_lowercase();
             query.split_whitespace().all(|word| label.contains(word))
@@ -836,5 +873,50 @@ mod tests {
                 caret: 0,
             });
         assert_eq!(reason(&mut app, Command::ReopenClosedTab), None);
+    }
+
+    #[test]
+    fn run_task_entries_list_defined_tasks_with_recent_ones_first() {
+        use crate::app::task_catalog::{ScopeState, ScopeTasks};
+        use lumen_task_core::{Scope, TaskDef, TaskKey, TaskKind};
+        let task = |id: &str, label: &str| {
+            let mut task = TaskDef::new(id, label, TaskKind::Process);
+            task.command = Some("true".into());
+            task
+        };
+        let (mut app, _) = opened();
+        app.view.tasks.workspace = ScopeTasks {
+            path: None,
+            state: ScopeState::Loaded {
+                tasks: vec![
+                    task("build", "Build"),
+                    task("test", "Test"),
+                    task("zed", "Zed"),
+                ],
+                text: String::new(),
+            },
+        };
+        app.view.tasks.user = ScopeTasks {
+            path: None,
+            state: ScopeState::Loaded {
+                tasks: vec![task("lint", "Lint")],
+                text: String::new(),
+            },
+        };
+        app.view
+            .task_runs
+            .note_started(&TaskKey::new(Scope::Workspace, "zed"));
+        let workbench = Workbench::new(&mut app.editor, &mut app.view, app.file_system.as_ref());
+        let entries = workbench.task_palette_entries();
+        let labels: Vec<&str> = entries.iter().map(|(label, _)| label.as_str()).collect();
+        assert!(
+            labels[0].contains("Run Task: Zed (workspace)"),
+            "recent first: {labels:?}"
+        );
+        assert!(labels.iter().any(|l| l.contains("Run Task: Lint (user)")));
+        assert_eq!(labels.len(), 4);
+        assert!(matches!(&entries[0].1, Command::RunTask(key) if key.id == "zed"));
+        let found = matching_with("run task lint", workbench.task_palette_entries());
+        assert_eq!(found.len(), 1);
     }
 }
