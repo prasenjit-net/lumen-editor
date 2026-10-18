@@ -538,7 +538,7 @@ impl LumenApp {
                 comparison.changed = Some(String::new());
             }
         }
-        self.view.settings.open = false;
+        self.view.leave_page_tabs();
         self.view.source_control.diff = Some(super::view_state::SourceDiffView {
             root,
             path,

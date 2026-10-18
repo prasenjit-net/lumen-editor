@@ -3,7 +3,7 @@
 //! user chose is kept when switching tabs).
 use super::{
     Workbench, theme,
-    widgets::{HeaderAction, PanelTab, tabbed_panel_header},
+    widgets::{HeaderAction, tabbed_panel_header},
 };
 use crate::{app::command::Command, icon, model::output_log::LogLevel};
 use eframe::egui::{
@@ -75,18 +75,8 @@ impl Workbench<'_> {
             .frame(egui::Frame::default().fill(colors.panel))
             .show(ctx, |ui| {
                 ui.set_min_height(ui.available_height());
-                let tabs = [
-                    PanelTab {
-                        label: "TERMINAL",
-                        active: false,
-                        command: Command::ShowTerminal,
-                    },
-                    PanelTab {
-                        label: "OUTPUT",
-                        active: true,
-                        command: Command::ShowOutput,
-                    },
-                ];
+                let entries = self.bottom_tab_entries(super::bottom_tabs::ActiveBottom::Output);
+                let tabs = super::bottom_tabs::as_panel_tabs(&entries);
                 let actions = [
                     HeaderAction {
                         glyph: icon::COPY,

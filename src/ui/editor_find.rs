@@ -12,6 +12,7 @@ impl Workbench<'_> {
         let blocked = self.view.command_palette
             || self.view.navigation.mode.is_some()
             || self.view.pending_close.is_some()
+            || self.view.task_prompt_open()
             || self.view.pending_quit
             || self.view.delete_prompt.is_some()
             || self.view.explorer_edit.is_some();

@@ -61,6 +61,11 @@ pub(crate) fn run() -> eframe::Result<()> {
             let opened_something = !targets.is_empty();
             app.open_command_line_targets(targets);
             app.initialize_settings(crate::services::settings::user_path());
+            app.task_user_path = crate::services::tasks::user_path();
+            app.task_login_path = true;
+            if let Some(path) = crate::services::task_trust::FileTrust::user_path() {
+                app.task_trust = Box::new(crate::services::task_trust::FileTrust::new(path));
+            }
             if !opened_something {
                 app.reopen_last_folder_if_enabled();
             }

@@ -319,6 +319,19 @@ impl Activity {
 
 pub(crate) struct ViewState {
     pub(crate) settings: super::settings::SettingsState,
+    pub(crate) task_editors: super::task_editor::TaskEditorState,
+    pub(crate) tasks: super::task_catalog::TaskCatalog,
+    pub(crate) task_runs: super::task_runs::TaskRuns,
+    /// A run waiting on the review / unsaved-files prompt.
+    pub(crate) task_pending: Option<super::task_runs::PendingTaskRun>,
+    /// A run waiting for the values of its declared inputs.
+    pub(crate) task_inputs: Option<super::task_runs::PendingInputs>,
+    /// A running task whose tab is being closed, awaiting Stop and Close / Cancel.
+    pub(crate) task_run_close_prompt: Option<super::task_runs::RunId>,
+    pub(crate) task_workspace_switch: Option<super::task_runs::PendingWorkspaceSwitch>,
+    pub(crate) task_quit: Option<super::task_runs::PendingTaskQuit>,
+    /// A definition awaiting delete confirmation.
+    pub(crate) task_delete_prompt: Option<lumen_task_core::TaskKey>,
     #[cfg(feature = "shared-editor")]
     pub(crate) shared_editor: bool,
     #[cfg(feature = "shared-editor")]
@@ -407,6 +420,8 @@ pub(crate) struct ViewState {
     /// Document waiting on the unsaved-changes prompt. A stable ID, so reordering
     /// or closing other tabs cannot retarget the prompt.
     pub(crate) pending_close: Option<crate::model::DocumentId>,
+    /// A dirty task editor awaiting Save / Don't Save / Cancel.
+    pub(crate) task_close_prompt: Option<super::task_editor::TaskEditorId>,
     pub(crate) bulk_close: crate::app::tab_close::BulkClose,
     /// Recently closed saved documents, newest last, for Reopen Closed Tab.
     pub(crate) closed_tabs: Vec<ClosedTab>,
@@ -416,6 +431,34 @@ pub(crate) struct ViewState {
     pub(crate) allow_quit: bool,
 }
 impl ViewState {
+    /// A task-related modal prompt is waiting for an answer.
+    pub(crate) fn task_prompt_open(&self) -> bool {
+        self.task_close_prompt.is_some()
+            || self.task_delete_prompt.is_some()
+            || self.task_pending.is_some()
+            || self.task_inputs.is_some()
+            || self.task_run_close_prompt.is_some()
+            || self.task_workspace_switch.is_some()
+            || self.task_quit.is_some()
+    }
+
+    /// Stop showing a non-document page (Settings or a task editor); the tabs stay open.
+    pub(crate) fn leave_page_tabs(&mut self) {
+        self.settings.open = false;
+        self.task_editors.deactivate();
+    }
+
+    /// Make a task editor the visible page (used when it must be answered).
+    pub(crate) fn leave_page_tabs_for_task(&mut self, id: super::task_editor::TaskEditorId) {
+        self.settings.open = false;
+        self.task_editors.activate(id);
+    }
+
+    /// A non-document page (Settings or a task editor) is what the editor area shows.
+    pub(crate) fn page_tab_active(&self) -> bool {
+        self.settings.open || self.task_editors.active().is_some()
+    }
+
     pub(crate) fn reveal_edit_directory(&mut self, editor: &crate::model::EditorState) {
         self.activity = Activity::Explorer;
         self.sidebar_visible = true;
@@ -442,6 +485,15 @@ impl Default for ViewState {
             #[cfg(feature = "shared-editor")]
             group_surfaces: Vec::new(),
             hide_virtual_tabs: false,
+            task_editors: Default::default(),
+            tasks: Default::default(),
+            task_runs: Default::default(),
+            task_pending: None,
+            task_inputs: None,
+            task_run_close_prompt: None,
+            task_workspace_switch: None,
+            task_quit: None,
+            task_delete_prompt: None,
             tab_strips: Vec::new(),
             tab_drag: None,
             tab_drop_request: None,
@@ -498,6 +550,7 @@ impl Default for ViewState {
             safety_notices: Vec::new(),
             safety_details_open: false,
             pending_close: None,
+            task_close_prompt: None,
             bulk_close: Default::default(),
             closed_tabs: Vec::new(),
             window_title: String::new(),

@@ -20,6 +20,7 @@ impl LumenApp {
         self.view.output.open = true;
         self.view.terminal.open = false;
         self.view.problems.open = false;
+        self.view.task_runs.panel_open = false;
         self.view.output.scroll_to_bottom = true;
     }
 

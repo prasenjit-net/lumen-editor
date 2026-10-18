@@ -24,14 +24,96 @@ impl LumenApp {
                 self.view.settings.tab_open = true;
                 self.view.settings.open = true;
                 self.view.settings.focus_search = true;
-                self.view.explorer_focused = false;
-                super::editor_input::cancel_input(&mut self.view);
-                self.view.pending_editor_action = None;
-                if let Some(file) = self.editor.active() {
-                    let id = super::editor_action::text_widget_id(file.id);
-                    ctx.memory_mut(|memory| memory.surrender_focus(id));
+                self.view.task_editors.deactivate();
+                self.enter_page_tab(ctx);
+            }
+            Command::NewTaskEditor(scope) => {
+                self.new_task_editor(scope);
+                if self.view.task_editors.active().is_some() {
+                    self.show_task_editor_page(ctx);
                 }
             }
+            Command::OpenTaskEditor(key) => {
+                if self.open_task_editor(key) {
+                    self.show_task_editor_page(ctx);
+                }
+            }
+            Command::ActivateTaskEditor(id) => {
+                if self.view.task_editors.activate(id) {
+                    self.show_task_editor_page(ctx);
+                }
+            }
+            Command::SaveTaskEditor(id) => {
+                self.save_task_editor(id);
+            }
+            Command::RevertTaskEditor(id) => self.revert_task_editor(id),
+            Command::ReloadTaskEditor(id) => self.reload_task_editor(id),
+            Command::CloseTaskEditor(id) => self.request_close_task_editor(id),
+            Command::SaveAndCloseTaskEditor(id) => self.save_and_close_task_editor(id),
+            Command::DiscardTaskEditor(id) => self.discard_task_editor(id),
+            Command::CancelTaskEditorClose => self.view.task_close_prompt = None,
+            Command::OpenTaskToml(scope) => self.open_task_toml(scope),
+            Command::RefreshTasks => self.refresh_tasks(),
+            Command::RunTask(key) => self.run_task(key, ctx),
+            Command::RunSelectedTask => match self.view.tasks.selected.clone() {
+                Some(key) => self.run_task(key, ctx),
+                None => self.view.status = "Select a task in Run and Debug first".into(),
+            },
+            Command::RerunLastTask => match self.view.task_runs.last.clone() {
+                Some(key) => self.run_task(key, ctx),
+                None => self.view.status = "No task has been run yet".into(),
+            },
+            Command::RunDefaultTask(group) => {
+                // The list may never have been shown, so read it fresh first.
+                self.refresh_tasks();
+                match self.view.tasks.default_for_group(group) {
+                    Some(key) => self.run_task(key, ctx),
+                    None => self.view.status = format!("No default {group} task is defined"),
+                }
+            }
+            Command::ShowRunningTasks => {
+                self.view.activity = super::view_state::Activity::RunDebug;
+                self.view.sidebar_visible = true;
+                self.view.explorer_focused = false;
+            }
+            Command::StopTaskRun(id) => self.stop_task_run(id, super::task_runs::StopReason::User),
+            Command::RestartTaskRun(id) => self.restart_task_run(id, ctx),
+            Command::CloseTaskRun(id) => self.close_task_run(id),
+            Command::StopAndCloseTaskRun(id) => {
+                self.view.task_run_close_prompt = None;
+                self.stop_task_run(id, super::task_runs::StopReason::Close);
+                self.view.task_runs.close_when_finished.push(id);
+            }
+            Command::CancelCloseTaskRun => self.view.task_run_close_prompt = None,
+            Command::ShowTaskRun(id) => {
+                super::output::clear_text_selection(ctx);
+                self.show_task_run(id);
+            }
+            Command::ClearTaskOutput(id) => self.clear_task_output(id),
+            Command::SendTaskInput(id, bytes) => self.send_task_input(id, &bytes),
+            Command::ResizeTaskTerminal(id, rows, columns) => {
+                self.resize_task_terminal(id, rows, columns)
+            }
+            Command::CopyTaskOutput(id) => self.copy_task_output(id, ctx),
+            Command::ConfirmTaskRun(save_first) => self.confirm_pending_task(save_first, ctx),
+            Command::CancelTaskRun => self.cancel_pending_task(),
+            Command::SubmitTaskInputs => self.submit_task_inputs(ctx),
+            Command::CancelTaskInputs => self.cancel_task_inputs(),
+            Command::HideTaskPanel => self.view.task_runs.panel_open = false,
+            Command::ConfirmWorkspaceSwitch => self.confirm_workspace_switch(),
+            Command::CancelWorkspaceSwitch => self.cancel_workspace_switch(),
+            Command::ConfirmTaskQuit => self.confirm_task_quit(std::time::Instant::now()),
+            Command::CancelTaskQuit => self.cancel_task_quit(),
+            Command::SelectTask(key) => self.view.tasks.selected = Some(key),
+            Command::DuplicateTask(key) => {
+                self.duplicate_task(key);
+                if self.view.task_editors.active().is_some() {
+                    self.show_task_editor_page(ctx);
+                }
+            }
+            Command::RequestDeleteTask(key) => self.request_delete_task(key),
+            Command::ConfirmDeleteTask(key) => self.delete_task_definition(key),
+            Command::CancelDeleteTask => self.view.task_delete_prompt = None,
             Command::ApplySettings => self.apply_settings(),
             Command::ReloadSettings => self.reload_settings(),
             Command::DiscardSettingsAndQuit => {
@@ -207,7 +289,13 @@ impl LumenApp {
                     "Settings use their selected User/Project config path; Save As is unavailable."
                         .into();
             }
-            Command::Save => self.save_active(),
+            Command::Save => match self.view.task_editors.active() {
+                // The focused task editor owns Save while its page shows.
+                Some(id) => {
+                    self.save_task_editor(id);
+                }
+                None => self.save_active(),
+            },
             Command::SaveAs => self.save_as_active(),
             Command::OverwriteConflict(document) => self.overwrite_conflict(document),
             Command::ReloadConflict(document) => self.reload_conflict(document),
@@ -248,6 +336,10 @@ impl LumenApp {
             }
             Command::FocusGroup(group) => self.focus_group_command(group),
             Command::CloseEditor => {
+                if let Some(id) = self.view.task_editors.active() {
+                    self.request_close_task_editor(id);
+                    return;
+                }
                 if self.view.settings.open {
                     self.view.settings.tab_open = false;
                     self.view.settings.open = false;
@@ -343,6 +435,28 @@ impl LumenApp {
             }
             Command::DiscardAndQuit => self.finish_quit(ctx),
         }
+    }
+
+    /// Common prelude for showing a non-document page: it takes over from the
+    /// explorer and from any text widget that held keyboard focus.
+    fn enter_page_tab(&mut self, ctx: &egui::Context) {
+        self.view.explorer_focused = false;
+        super::editor_input::cancel_input(&mut self.view);
+        self.view.pending_editor_action = None;
+        if let Some(file) = self.editor.active() {
+            let id = super::editor_action::text_widget_id(file.id);
+            ctx.memory_mut(|memory| memory.surrender_focus(id));
+        }
+    }
+
+    /// The task editor was just opened or activated: it replaces Settings and
+    /// the diff view as the page the editor area shows.
+    fn show_task_editor_page(&mut self, ctx: &egui::Context) {
+        self.view.settings.open = false;
+        if let Some(diff) = &mut self.view.source_control.diff {
+            diff.active = false;
+        }
+        self.enter_page_tab(ctx);
     }
 
     fn finish_quit(&mut self, ctx: &egui::Context) {

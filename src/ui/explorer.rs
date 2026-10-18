@@ -221,10 +221,39 @@ impl Workbench<'_> {
                             enabled: self.editor.workspace.is_some(),
                         },
                     ];
+                    let task_scope = self.default_task_scope();
+                    let task_actions = [
+                        HeaderAction {
+                            glyph: icon::PLAY,
+                            tooltip: "Run the selected task",
+                            command: Command::RunSelectedTask,
+                            enabled: self.view.tasks.selected.is_some(),
+                        },
+                        HeaderAction {
+                            glyph: icon::PLUS,
+                            tooltip: "New task",
+                            command: Command::NewTaskEditor(task_scope),
+                            enabled: true,
+                        },
+                        HeaderAction {
+                            glyph: icon::REFRESH,
+                            tooltip: "Refresh tasks",
+                            command: Command::RefreshTasks,
+                            enabled: true,
+                        },
+                        HeaderAction {
+                            glyph: icon::FILE_CODE,
+                            tooltip: "Open the tasks file as TOML",
+                            command: Command::OpenTaskToml(task_scope),
+                            enabled: true,
+                        },
+                    ];
                     let actions = if self.view.activity == Activity::Explorer {
                         &explorer_actions[..]
                     } else if self.view.activity == Activity::SourceControl {
                         &source_actions[..]
+                    } else if self.view.activity == Activity::RunDebug {
+                        &task_actions[..]
                     } else {
                         &[]
                     };
@@ -250,12 +279,9 @@ impl Workbench<'_> {
                                 .show(ui, |ui| self.source_control_panel(ui));
                         }
                         Activity::RunDebug => {
-                            unavailable_panel(
-                                ui,
-                                "Run and Debug",
-                                "Running and debugging projects is not available yet. Use the integrated terminal to run commands in the meantime.",
-                                Some(format!("{}  Run project", icon::PLAY)),
-                            );
+                            egui::Frame::NONE
+                                .inner_margin(egui::Margin::symmetric(8, 0))
+                                .show(ui, |ui| self.tasks_panel(ui));
                         }
                         Activity::Extensions => {
                             unavailable_panel(
@@ -294,10 +320,7 @@ mod tests {
 
     #[test]
     fn unfinished_activities_explain_themselves_and_offer_no_live_controls() {
-        for (activity, phrase) in [
-            (Activity::RunDebug, "not available yet"),
-            (Activity::Extensions, "not supported yet"),
-        ] {
+        for (activity, phrase) in [(Activity::Extensions, "not supported yet")] {
             let mut app = LumenApp::default();
             app.view.activity = activity;
             app.view.sidebar_visible = true;

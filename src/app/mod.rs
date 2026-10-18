@@ -27,6 +27,11 @@ pub(crate) mod settings;
 pub(crate) mod source_control;
 pub(crate) mod tab_close;
 pub(crate) mod tab_commands;
+pub(crate) mod task_catalog;
+pub(crate) mod task_editor;
+pub(crate) mod task_graph;
+pub(crate) mod task_runs;
+mod tasks;
 pub(crate) mod terminal;
 #[cfg(test)]
 mod tests;
@@ -48,6 +53,13 @@ pub(crate) struct LumenApp {
     pub(crate) dialogs: Box<dyn FileDialogs>,
     pub(crate) clipboard: Box<dyn ClipboardService>,
     pub(crate) settings_store: Box<dyn crate::services::settings::SettingsStore>,
+    /// Location of the user tasks file; `None` in tests so they never touch the real home.
+    pub(crate) task_user_path: Option<std::path::PathBuf>,
+    pub(crate) task_launcher: std::sync::Arc<dyn crate::services::task_process::TaskLauncher>,
+    pub(crate) task_shell: crate::services::task_process::ShellSpec,
+    pub(crate) task_trust: Box<dyn crate::services::task_trust::TaskTrustStore>,
+    /// Use the login shell's PATH when starting tasks (GUI apps do not inherit it).
+    pub(crate) task_login_path: bool,
     pub(crate) recovery_store: Box<dyn crate::services::recovery::RecoveryStore>,
     pub(crate) recent_files_store: Option<Box<dyn crate::services::recent_files::RecentFilesStore>>,
     pub(crate) safety: safety::SafetyState,
@@ -96,6 +108,11 @@ impl Default for LumenApp {
             clipboard: Box::<NativeClipboard>::default(),
             settings_store: Box::new(crate::services::settings::LocalSettingsStore),
             recovery_store: Box::new(crate::services::recovery::LocalRecoveryStore::new()),
+            task_user_path: None,
+            task_launcher: std::sync::Arc::new(crate::services::task_process::LocalTaskLauncher),
+            task_shell: crate::services::task_process::ShellSpec::platform_default(),
+            task_trust: Box::<crate::services::task_trust::MemoryTrust>::default(),
+            task_login_path: false,
             recent_files_store: None,
             safety: safety::SafetyState::default(),
             search_job: None,
@@ -141,10 +158,13 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.status_bar(ctx));
         self.render_component(ctx, |workbench| workbench.activity_bar(ctx));
         self.ensure_source_control(ctx);
+        self.ensure_tasks();
+        self.poll_task_runs(ctx);
         self.render_component(ctx, |workbench| workbench.sidebar(ctx));
         self.render_component(ctx, |workbench| workbench.agent_panel(ctx));
         self.render_component(ctx, |workbench| workbench.problems_panel(ctx));
         self.render_component(ctx, |workbench| workbench.output_panel(ctx));
+        self.render_component(ctx, |workbench| workbench.task_output_panel(ctx));
         self.render_component(ctx, |workbench| workbench.terminal_panel(ctx));
         self.resize_terminal(self.view.terminal.rows, self.view.terminal.columns);
         self.render_component(ctx, |workbench| workbench.editor(ctx));
@@ -155,6 +175,13 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.language_edit_preview(ctx));
         self.advance_bulk_close();
         self.render_component(ctx, |workbench| workbench.unsaved_changes_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.task_close_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.task_delete_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.task_inputs_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.task_run_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.task_run_close_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.task_workspace_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.task_quit_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.quit_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.settings_quit_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.delete_dialog(ctx));

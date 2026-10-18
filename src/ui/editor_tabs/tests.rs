@@ -6,6 +6,8 @@ use crate::{
 };
 fn fixture(count: usize) -> (LumenApp, egui::Context) {
     let mut app = LumenApp::default();
+    app.editor.workspace = Some("/workspace".into());
+    app.task_user_path = Some("/user/.lumen/tasks.toml".into());
     for index in 0..count {
         app.editor.files.push(Document::from_path(
             format!("file_{index}.rs").into(),
@@ -537,4 +539,105 @@ fn the_tab_menu_offers_move_left_and_right_with_end_states() {
     let right = label_rect(&menu, "Move Right");
     click(&mut app, &ctx, 900.0, right.center());
     assert_eq!(order(&app), ["file_1.rs", "file_0.rs", "file_2.rs"]);
+}
+
+fn texts_containing(output: &egui::FullOutput, needle: &str) -> usize {
+    output
+        .shapes
+        .iter()
+        .filter(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains(needle)))
+        .count()
+}
+
+#[test]
+fn a_task_editor_tab_shows_its_page_and_hands_back_to_documents() {
+    use lumen_task_core::Scope;
+    let (mut app, ctx) = fixture(2);
+    app.execute(Command::NewTaskEditor(Scope::Workspace), &ctx);
+    assert!(app.view.page_tab_active());
+    let (_, output) = frame(&mut app, &ctx, 800.0, vec![]);
+    assert_eq!(texts_containing(&output, "New task"), 1, "one strip tab");
+
+    // Choosing a document tab, creating a file or opening Settings leaves the page.
+    app.execute(Command::NewTaskEditor(Scope::User), &ctx);
+    assert_eq!(app.view.task_editors.tabs().len(), 2);
+    app.execute(Command::NewUntitled, &ctx);
+    assert!(app.view.task_editors.active().is_none());
+    assert_eq!(app.view.task_editors.tabs().len(), 2, "tabs stay open");
+    let first = app.view.task_editors.tabs()[0].id;
+    app.execute(Command::ActivateTaskEditor(first), &ctx);
+    app.execute(Command::Settings, &ctx);
+    assert!(app.view.settings.open && app.view.task_editors.active().is_none());
+    app.execute(Command::ActivateTaskEditor(first), &ctx);
+    assert!(!app.view.settings.open, "the task page replaces Settings");
+    let doc = app.editor.files[0].id;
+    app.show_document_tab(doc);
+    assert!(!app.view.page_tab_active());
+}
+
+#[test]
+fn closing_task_editors_by_command_and_by_the_tab_close_button() {
+    use lumen_task_core::Scope;
+    let (mut app, ctx) = fixture(1);
+    app.execute(Command::NewTaskEditor(Scope::Workspace), &ctx);
+    app.execute(Command::CloseEditor, &ctx);
+    assert!(app.view.task_editors.tabs().is_empty());
+    assert_eq!(
+        app.editor.files.len(),
+        1,
+        "Close Editor did not close a document"
+    );
+
+    app.execute(Command::NewTaskEditor(Scope::Workspace), &ctx);
+    let id = app.view.task_editors.tabs()[0].id;
+    app.execute(Command::CloseTaskEditor(id), &ctx);
+    app.execute(Command::CloseTaskEditor(id), &ctx);
+    app.execute(Command::ActivateTaskEditor(id), &ctx);
+    assert!(
+        app.view.task_editors.active().is_none(),
+        "stale ids do nothing"
+    );
+
+    app.execute(Command::NewTaskEditor(Scope::User), &ctx);
+    frame(&mut app, &ctx, 800.0, vec![]);
+    let (_, output) = frame(&mut app, &ctx, 800.0, vec![]);
+    let tab = label_rect(&output, "New task");
+    // The close button sits at the right edge of the tab's cell.
+    click(
+        &mut app,
+        &ctx,
+        800.0,
+        egui::pos2(tab.right() + 40.0, tab.center().y),
+    );
+    assert!(
+        app.view.task_editors.tabs().is_empty(),
+        "close button closed it"
+    );
+}
+
+#[test]
+fn commands_that_need_a_document_are_unavailable_while_a_task_editor_shows() {
+    use lumen_task_core::Scope;
+    let (mut app, ctx) = fixture(1);
+    let reason = |app: &mut LumenApp, command: Command| {
+        Workbench::new(&mut app.editor, &mut app.view, app.file_system.as_ref())
+            .palette_disabled_reason(&command)
+    };
+    assert!(reason(&mut app, Command::Find).is_none());
+    app.execute(Command::NewTaskEditor(Scope::Workspace), &ctx);
+    assert!(reason(&mut app, Command::Find).is_some());
+    assert!(reason(&mut app, Command::CloseEditor).is_none());
+}
+
+#[test]
+fn a_task_editor_tab_is_reachable_through_overflow() {
+    use lumen_task_core::Scope;
+    let (mut app, ctx) = fixture(30);
+    app.execute(Command::NewTaskEditor(Scope::Workspace), &ctx);
+    for _ in 0..3 {
+        frame(&mut app, &ctx, 300.0, vec![]);
+    }
+    let (_, output) = frame(&mut app, &ctx, 300.0, vec![]);
+    let tab = label_rect(&output, "New task");
+    assert!(tab.left() >= 0.0 && tab.right() <= 248.0, "{tab:?}");
 }

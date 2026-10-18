@@ -455,6 +455,87 @@ mod tests {
     }
 
     #[test]
+    fn a_task_editor_tab_lives_only_in_the_first_group() {
+        let (mut app, ctx) = split_app();
+        app.view.task_editors.open(
+            crate::app::task_editor::TaskEditorTarget::New(lumen_task_core::Scope::Workspace),
+            crate::app::task_editor::TaskEditorState::blank_draft(),
+        );
+        app.view.task_editors.deactivate();
+        let output = settle(&mut app, &ctx, 1000.0);
+        let all: Vec<Rect> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text.ends_with("New task") => {
+                    Some(Rect::from_min_size(text.pos, text.galley.size()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(all.len(), 1, "one task tab, not one per group: {all:?}");
+        assert!(all[0].center().x < 500.0, "and it is in the left group");
+    }
+
+    #[test]
+    fn the_task_editor_page_replaces_the_document_and_lists_validation_problems() {
+        let (mut app, ctx) = split_app();
+        app.view.task_editors.open(
+            crate::app::task_editor::TaskEditorTarget::New(lumen_task_core::Scope::Workspace),
+            crate::app::task_editor::TaskEditorState::blank_draft(),
+        );
+        let output = settle(&mut app, &ctx, 1000.0);
+        let has = |needle: &str| {
+            output.shapes.iter().any(|shape| {
+                matches!(&shape.shape,
+                egui::Shape::Text(text) if text.galley.job.text.contains(needle))
+            })
+        };
+        assert!(has("TASK · New task"));
+        assert!(
+            has("must not be empty"),
+            "blank draft shows its problems inline"
+        );
+        assert!(has("Workspace scope"));
+        // A valid draft previews the TOML a save would write.
+        let id = app.view.task_editors.active().unwrap();
+        let mut valid = crate::app::task_editor::TaskEditorState::blank_draft();
+        valid.id = "build".into();
+        valid.label = "Build".into();
+        valid.command = Some("cargo".into());
+        app.view.task_editors.close(id);
+        app.view.task_editors.open(
+            crate::app::task_editor::TaskEditorTarget::New(lumen_task_core::Scope::Workspace),
+            valid,
+        );
+        let output = settle(&mut app, &ctx, 1000.0);
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Text(text) if text.galley.job.text.contains("command = \"cargo\""))));
+    }
+
+    #[test]
+    fn joined_arguments_get_a_hint_that_goes_away_once_split() {
+        let (mut app, ctx) = split_app();
+        let id = app.view.task_editors.open(
+            crate::app::task_editor::TaskEditorTarget::New(lumen_task_core::Scope::Workspace),
+            crate::app::task_editor::TaskEditorState::blank_draft(),
+        );
+        app.view.task_editors.get_mut(id).unwrap().args_text = "build --release".into();
+        let shows = |output: &egui::FullOutput| {
+            output.shapes.iter().any(|shape| {
+                matches!(&shape.shape,
+                egui::Shape::Text(text) if text.galley.job.text.contains("single word"))
+            })
+        };
+        assert!(shows(&settle(&mut app, &ctx, 1000.0)));
+        let tab = app.view.task_editors.get_mut(id).unwrap();
+        tab.args_text = crate::app::task_editor::split_joined_args(&tab.args_text);
+        tab.sync_texts();
+        assert_eq!(tab.draft.args, ["build", "--release"]);
+        assert!(!shows(&settle(&mut app, &ctx, 1000.0)));
+    }
+
+    #[test]
     fn dragging_the_divider_resizes_within_the_minimums_and_double_click_resets() {
         let (mut app, ctx) = split_app();
         settle(&mut app, &ctx, 1000.0);

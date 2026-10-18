@@ -39,7 +39,12 @@ pub(crate) struct PanelTab<'a> {
     pub(crate) label: &'a str,
     pub(crate) active: bool,
     pub(crate) command: Command,
+    /// Hover text; empty for none.
+    pub(crate) tooltip: &'a str,
 }
+
+/// Longest a tab label may be before it is truncated with an ellipsis.
+const MAX_TAB_WIDTH: f32 = 170.0;
 
 /// Same geometry as `panel_header`, with tabs where the title would be. The
 /// active tab is underlined in the accent color; actions stay at the right.
@@ -52,35 +57,66 @@ pub(crate) fn tabbed_panel_header(
     header_row(ui, actions, |ui| {
         ui.spacing_mut().item_spacing.x = 14.0;
         let mut clicked = None;
-        for tab in tabs {
-            let response = ui.add(
-                egui::Label::new(RichText::new(tab.label).size(11.0).color(if tab.active {
-                    colors.text
-                } else {
-                    colors.muted
-                }))
-                // A selectable label would start a text selection on click, and
-                // that selection would then sweep over whatever panel replaces it.
-                .selectable(false)
-                .sense(egui::Sense::click())
-                .truncate(),
-            );
-            if tab.active {
-                let rect = response.rect;
-                ui.painter().hline(
-                    rect.x_range(),
-                    rect.bottom() + 3.0,
-                    Stroke::new(1.0_f32, colors.accent),
-                );
-            }
-            if response
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked()
-                && !tab.active
-            {
-                clicked = Some(tab.command.clone());
-            }
-        }
+        // Many tabs (task runs) must stay reachable: the strip scrolls sideways
+        // inside the space left of the actions, and the active tab is kept in view.
+        let seen_id = ui.id().with("tab_strip_active");
+        let active_label = tabs
+            .iter()
+            .find(|tab| tab.active)
+            .map(|tab| tab.label.to_string());
+        let previous: Option<Option<String>> = ui.data(|data| data.get_temp(seen_id));
+        let reveal = previous.as_ref() != Some(&active_label);
+        ui.data_mut(|data| data.insert_temp(seen_id, active_label));
+        egui::ScrollArea::horizontal()
+            .id_salt("bottom_tab_strip")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 14.0;
+                for tab in tabs {
+                    let response = ui
+                        .scope(|ui| {
+                            ui.set_max_width(MAX_TAB_WIDTH);
+                            ui.add(
+                                egui::Label::new(RichText::new(tab.label).size(11.0).color(
+                                    if tab.active {
+                                        colors.text
+                                    } else {
+                                        colors.muted
+                                    },
+                                ))
+                                // A selectable label would start a text selection on click, and
+                                // that selection would then sweep over whatever panel replaces it.
+                                .selectable(false)
+                                .sense(egui::Sense::click())
+                                .truncate(),
+                            )
+                        })
+                        .inner;
+                    let response = if tab.tooltip.is_empty() {
+                        response
+                    } else {
+                        response.on_hover_text(tab.tooltip)
+                    };
+                    if tab.active {
+                        let rect = response.rect;
+                        ui.painter().hline(
+                            rect.x_range(),
+                            rect.bottom() + 3.0,
+                            Stroke::new(1.0_f32, colors.accent),
+                        );
+                        if reveal {
+                            response.scroll_to_me(None);
+                        }
+                    }
+                    if response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                        && !tab.active
+                    {
+                        clicked = Some(tab.command.clone());
+                    }
+                }
+            });
         clicked
     })
 }

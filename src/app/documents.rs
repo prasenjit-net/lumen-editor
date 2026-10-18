@@ -6,7 +6,17 @@ use eframe::egui;
 use std::path::PathBuf;
 impl LumenApp {
     pub(crate) fn request_quit(&mut self, ctx: &egui::Context) {
-        if self.view.settings.has_drafts() {
+        if self.guard_quit_for_tasks() {
+            return;
+        }
+        if let Some(id) = self.view.task_editors.first_dirty() {
+            // Unsaved task drafts are never dropped silently: ask first, then the
+            // user quits again once the prompt is answered.
+            self.view.task_editors.activate(id);
+            self.view.task_close_prompt = Some(id);
+            self.view.leave_page_tabs_for_task(id);
+            self.view.status = "Unsaved task changes: save or discard them, then quit again".into();
+        } else if self.view.settings.has_drafts() {
             self.view.settings.pending_quit = true;
         } else if self.editor.has_unsaved_changes() {
             self.view.pending_quit = true;
@@ -44,6 +54,9 @@ impl LumenApp {
             self.view.status = format!("Folder not found: {}", folder.display());
             return;
         }
+        if self.guard_workspace_change(Some(folder.clone())) {
+            return;
+        }
         super::source_control::close_diff_preview(&mut self.editor, &mut self.view);
         self.cancel_file_index();
         self.view.navigation.indexed_root = None;
@@ -76,8 +89,14 @@ impl LumenApp {
     }
 
     pub(crate) fn close_folder(&mut self) {
-        let Some(folder) = self.editor.workspace.take() else {
+        if self.editor.workspace.is_none() {
             self.view.status = "No folder is open".into();
+            return;
+        }
+        if self.guard_workspace_change(None) {
+            return;
+        }
+        let Some(folder) = self.editor.workspace.take() else {
             return;
         };
         super::source_control::close_diff_preview(&mut self.editor, &mut self.view);
@@ -101,7 +120,7 @@ impl LumenApp {
     }
 
     pub(crate) fn open_file(&mut self, path: PathBuf) {
-        self.view.settings.open = false;
+        self.view.leave_page_tabs();
         if let Some(diff) = &mut self.view.source_control.diff {
             diff.active = false;
             if diff.diff_only_document.is_some_and(|id| {

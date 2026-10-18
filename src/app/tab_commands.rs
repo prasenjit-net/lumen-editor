@@ -119,7 +119,7 @@ impl LumenApp {
         if !self.editor.activate(id) {
             return;
         }
-        self.view.settings.open = false;
+        self.view.leave_page_tabs();
         if let Some(diff) = &mut self.view.source_control.diff {
             diff.active = false;
         }

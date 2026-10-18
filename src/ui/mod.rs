@@ -1,6 +1,7 @@
 //! Workbench components and shared drawing primitives.
 mod activity_bar;
 mod agent_panel;
+mod bottom_tabs;
 mod breadcrumbs;
 mod chrome;
 #[cfg(feature = "shared-editor")]
@@ -30,6 +31,10 @@ mod settings;
 pub(crate) mod shortcut;
 mod source_control;
 mod tab_drag;
+mod task_dialogs;
+mod task_editor;
+mod task_output;
+mod tasks;
 mod terminal;
 pub(crate) mod theme;
 pub(crate) mod transcript_layout;
