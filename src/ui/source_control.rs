@@ -826,7 +826,7 @@ mod tests {
                     }
                     _ => None,
                 });
-                // The branch text follows its Codicon; both labels still begin
+                // The branch text follows its icon; both labels still begin
                 // in the left portion of the panel rather than being centred.
                 assert!(x.is_some_and(|x| x < 80.0), "{width}: {expected} at {x:?}");
             }

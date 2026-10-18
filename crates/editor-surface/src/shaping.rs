@@ -36,7 +36,7 @@ impl Shaper {
     pub fn new(definitions: &FontDefinitions) -> Self {
         let mut database = fontdb::Database::new();
         for (name, font) in &definitions.font_data {
-            if name != "codicon" {
+            if name != "lumen-icons" {
                 database.load_font_data(font.font.to_vec());
             }
         }

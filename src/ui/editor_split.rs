@@ -358,7 +358,7 @@ mod tests {
                 .iter()
                 .filter(|shape| {
                     matches!(&shape.shape,
-                    egui::Shape::Text(text) if text.galley.job.text.starts_with('\u{eae9}'))
+                    egui::Shape::Text(text) if text.galley.job.text.starts_with(crate::icon::FILE_CODE))
                 })
                 .count();
             assert_eq!(
@@ -789,7 +789,7 @@ mod tests {
                 .iter()
                 .filter(|shape| {
                     matches!(&shape.shape,
-                    egui::Shape::Text(text) if text.galley.job.text.starts_with('\u{eae9}'))
+                    egui::Shape::Text(text) if text.galley.job.text.starts_with(crate::icon::FILE_CODE))
                 })
                 .count();
             assert_eq!(tab_titles, 4, "two tabs per group at {height}");
