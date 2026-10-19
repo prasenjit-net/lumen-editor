@@ -42,7 +42,7 @@ fn responder() -> Responder {
                 json!({"userAgent": "lumen/0.157.0 (Mac OS 26.5.2; arm64) unknown (lumen; 0.1)", "codexHome": "~/.codex", "platformFamily": "unix", "platformOs": "macos"})
             }
             "model/list" => {
-                json!({"data": [{"id": "gpt-6-astra", "model": "gpt-6-astra", "displayName": "GPT-6-Astra", "hidden": false}, {"id": "gpt-6-lite", "model": "gpt-6-lite", "displayName": "GPT-6-Lite", "hidden": false}], "nextCursor": null})
+                json!({"data": [{"id": "gpt-6-astra", "model": "gpt-6-astra", "displayName": "GPT-6-Astra", "hidden": false, "isDefault": true}, {"id": "gpt-6-lite", "model": "gpt-6-lite", "displayName": "GPT-6-Lite", "hidden": false}], "nextCursor": null})
             }
             "account/read" => {
                 json!({"account": {"type": "chatgpt", "email": "me@example.com", "planType": "plus"}, "requiresOpenaiAuth": true})
@@ -979,4 +979,16 @@ fn the_shared_contract_passes_with_the_codex_backend() {
     contract::basic(&mut backend());
     contract::unknown_targets_fail_typed(&mut backend(), ProviderId::Codex);
     contract::shutdown_is_final(&mut backend());
+}
+
+#[test]
+fn a_new_session_names_the_servers_default_model_so_a_config_default_cannot_leak_in() {
+    let mut rig = Rig::new();
+    rig.create(1);
+    let start = rig
+        .written()
+        .into_iter()
+        .find(|m| m["method"] == "thread/start")
+        .unwrap();
+    assert_eq!(start["params"]["model"], "gpt-6-astra");
 }

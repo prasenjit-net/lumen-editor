@@ -44,6 +44,9 @@ portable-pty = "0.9"
 serde_json = "1"
 unicode-segmentation = "1.13"
 toml_edit = "0.25"
+lumen-agent-claude = { path = "crates/agent-claude" }
+lumen-agent-codex = { path = "crates/agent-codex" }
+lumen-agent-core = { path = "crates/agent-core" }
 lumen-agent-protocol = { path = "crates/agent-protocol" }
 lumen-settings-core = { path = "crates/settings-core" }
 lumen-editor-core = { path = "crates/editor-core" }

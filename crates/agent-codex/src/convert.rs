@@ -382,6 +382,7 @@ pub fn auth_state(account_result: &Value) -> AuthState {
 pub struct ModelInfo {
     pub id: String,
     pub label: String,
+    pub is_default: bool,
 }
 
 pub fn models(result: &Value) -> Vec<ModelInfo> {
@@ -396,6 +397,7 @@ pub fn models(result: &Value) -> Vec<ModelInfo> {
             Some(ModelInfo {
                 id: id.to_string(),
                 label: text(model, "displayName").unwrap_or(id).to_string(),
+                is_default: model.get("isDefault").and_then(Value::as_bool) == Some(true),
             })
         })
         .collect()

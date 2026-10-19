@@ -347,6 +347,17 @@ impl CodexBackend {
                 if let Err(error) = apply_patch_to_start(&mut params, &config) {
                     return self.fail(op, error);
                 }
+                // A model from the user's own config can be one this account
+                // cannot use, so a session always names a model the server listed.
+                if params.get("model").is_none()
+                    && let Some(model) = self
+                        .models
+                        .iter()
+                        .find(|m| m.is_default)
+                        .or(self.models.first())
+                {
+                    params["model"] = json!(model.id);
+                }
                 self.send_op(op, "thread/start", params, Kind::Create { session });
             }
             O::AttachSession {
@@ -1553,7 +1564,9 @@ impl AgentBackend for CodexBackend {
         {
             self.fail_all_queued(error);
         }
-        if self.link == Link::Ready {
+        // Work waits for the model list so new sessions can name a usable model.
+        let models_pending = self.pending.values().any(|p| matches!(p, Pending::Models));
+        if self.link == Link::Ready && !models_pending {
             while let Some((op, operation)) = self.queue.pop_front() {
                 self.dispatch(op, operation);
                 // A dispatch can discover the child is gone.

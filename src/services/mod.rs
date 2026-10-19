@@ -7,6 +7,7 @@ mod file_operations;
 mod filesystem;
 pub(crate) mod language_server;
 pub(crate) mod logger;
+pub(crate) mod native_agent_launcher;
 pub(crate) mod process_tree;
 pub(crate) mod recent_files;
 pub(crate) mod recovery;
