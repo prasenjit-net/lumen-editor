@@ -432,6 +432,9 @@ pub(crate) struct ViewState {
     pub(crate) pending_quit: bool,
     pub(crate) save_conflict: Option<SaveConflict>,
     pub(crate) allow_quit: bool,
+    /// When native agents were asked to stop for quitting, and the time after
+    /// which the window closes regardless.
+    pub(crate) native_quit_deadline: Option<std::time::Instant>,
 }
 impl ViewState {
     /// A task-related modal prompt is waiting for an answer.
@@ -564,6 +567,7 @@ impl Default for ViewState {
             pending_quit: false,
             save_conflict: None,
             allow_quit: false,
+            native_quit_deadline: None,
         }
     }
 }

@@ -22,8 +22,7 @@ impl LumenApp {
             self.view.pending_quit = true;
         } else {
             if self.clear_recovery_for_exit() {
-                self.view.allow_quit = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                self.close_window(ctx);
             }
         }
     }

@@ -99,6 +99,8 @@ pub(crate) struct LumenApp {
     pub(crate) agent_runtime: agent::AgentRuntime,
     /// Where the native-agent session index is saved; `None` in tests.
     pub(crate) native_agents_store: Option<std::path::PathBuf>,
+    /// Folder of cached conversations; `None` in tests.
+    pub(crate) native_transcripts_dir: Option<std::path::PathBuf>,
     pub(crate) terminal_session: Option<crate::services::terminal::TerminalSession>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
@@ -145,6 +147,7 @@ impl Default for LumenApp {
             logged_terminal_error: None,
             agent_runtime: Default::default(),
             native_agents_store: None,
+            native_transcripts_dir: None,
             terminal_session: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,

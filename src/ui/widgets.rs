@@ -203,6 +203,19 @@ pub(crate) fn explorer_row(
     indent: usize,
     selected: bool,
 ) -> egui::Response {
+    explorer_row_with_icon(ui, None, None, text, indent, selected)
+}
+
+/// An explorer row with an optional disclosure caret and a coloured file or
+/// folder icon ahead of the label. `indent` is where the row's first element starts.
+pub(crate) fn explorer_row_with_icon(
+    ui: &mut egui::Ui,
+    caret: Option<&str>,
+    file_icon: Option<crate::ui::file_icons::FileIcon>,
+    text: String,
+    indent: usize,
+    selected: bool,
+) -> egui::Response {
     let colors = crate::ui::theme::palette(ui.visuals());
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), egui::Sense::click());
@@ -229,15 +242,35 @@ pub(crate) fn explorer_row(
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &text)
     });
-    ui.painter()
-        .with_clip_rect(rect.intersect(ui.clip_rect()))
-        .text(
-            egui::pos2(rect.left() + indent as f32, rect.center().y),
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let mut x = rect.left() + indent as f32;
+    if let Some(caret) = caret {
+        painter.text(
+            egui::pos2(x, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            text,
+            caret,
             FontId::proportional(13.0),
             colors.text,
         );
+        x += 16.0;
+    }
+    if let Some(file_icon) = file_icon {
+        painter.text(
+            egui::pos2(x, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            file_icon.glyph,
+            FontId::new(15.0, crate::ui::file_icons::family()),
+            file_icon.color,
+        );
+        x += 20.0;
+    }
+    painter.text(
+        egui::pos2(x, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        FontId::proportional(13.0),
+        colors.text,
+    );
     response
 }
 pub(crate) fn icon_button(ui: &mut egui::Ui, icon: &str, selected: bool) -> egui::Response {

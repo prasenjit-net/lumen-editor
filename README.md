@@ -1,10 +1,10 @@
 # Lumen
 
-A native desktop code editor built with Rust and egui, inspired by VS Code’s compact workbench. Lumen brings file editing, project search, Git diffs, a terminal, language tools, and optional coding agents into one local application.
+A native desktop code editor built with Rust and egui, inspired by VS Code’s compact workbench. Lumen brings file editing, project search, Git diffs, a terminal, language tools, and optional coding agents (Claude Code and Codex, run natively) into one local application.
 
-![Lumen on macOS showing the Explorer, Rust syntax highlighting, breadcrumbs, and line numbers](assets/screenshots/workbench.jpg)
+![Lumen on macOS showing colored Explorer file and folder icons, Rust syntax highlighting, breadcrumbs, and line numbers](assets/screenshots/workbench.jpg)
 
-*Actual macOS app capture using the light theme. Dark, light, high-contrast, and system appearance are available.*
+*Lumen 0.2.1 on macOS, captured from the current source on October 19, 2026 using the dark theme. Light, high-contrast, and system appearance are also available.*
 
 Lumen is under active development. The default editor uses a shared Rust editing core and cosmic-text/Swash shaping. Native IME, screen-reader behavior, and Windows runtime acceptance still have open validation work; see [known limitations](#known-limitations).
 
@@ -32,7 +32,7 @@ Lumen is under active development. The default editor uses a shared Rust editing
 
 | Area | Available today |
 | --- | --- |
-| Workbench | Resizable Explorer, editor tabs and split groups, breadcrumbs, command palette, recent files and folders |
+| Workbench | Resizable Explorer with colored per-type file and folder icons, editor tabs and split groups, breadcrumbs, command palette, recent files and folders |
 | Editing | Syntax highlighting, multiple cursors, column selections, undo/redo, indentation, bracket/quote pairing, code folding |
 | Navigation | Fuzzy Quick Open, Go to Line/Column, tab switching, language-server definitions and references |
 | Search | Per-document Find/Replace and background workspace search with replacement previews |
@@ -40,7 +40,7 @@ Lumen is under active development. The default editor uses a shared Rust editing
 | Git | Status badges, staged/working diffs, staging, hunk staging, commits, amend, confirmed discard, push and fast-forward pull |
 | Terminal | Integrated PTY shell with terminal emulation and configurable typography/colors |
 | Tasks | Project and personal tasks in `tasks.toml`: guided editor, dependency groups, terminal or captured output tabs, background services, inputs |
-| Coding agents | Optional Claude Code and Codex connections through Agent Client Protocol (ACP) adapters |
+| Coding agents | Native Claude Code and Codex sessions in one list, with chats in editor tabs, permission cards, per-session model/effort/permission settings and cached transcripts; the older ACP adapter panel remains as a fallback |
 | Settings | Searchable User/Project configuration, sparse TOML overrides, themes and editor/terminal preferences |
 | File safety | Dirty-buffer prompts, optional Auto Save, recovery snapshots, external-change detection, staged file writes |
 
@@ -130,6 +130,8 @@ Each launch creates its own window. Forwarding arguments to an existing window, 
 
 Open a folder to populate Explorer, or open individual files without a workspace. Use the activity bar to switch panels, the command palette to discover actions, and breadcrumbs to navigate the current path. Editor tabs can be reordered and split into groups; each document retains its editing state.
 
+Files and folders get colored icons by exact name (`Cargo.toml`, `Dockerfile`, `.gitignore`), compound suffix (`.d.ts`, `.spec.ts`), then extension, with about 300 extensions and about 30 well-known folder names (`node_modules`, `src`, `tests`, `docs`, `target`...). Unknown types show a generic file icon.
+
 Explorer’s header provides **New File**, **New Folder**, **Refresh**, and **Collapse All**. Creation and rename use inline inputs: Enter confirms, Escape cancels, and errors remain available for correction.
 
 - Creation starts in the selected folder, a selected file’s parent, or the workspace root.
@@ -217,7 +219,7 @@ The visible panel refreshes to detect external Git changes. Reopen a comparison 
 
 ## Terminal and output
 
-![Lumen’s integrated terminal below the Rust editor](assets/screenshots/terminal.jpg)
+![Lumen’s integrated terminal running Cargo and Rust version commands below the Rust editor](assets/screenshots/terminal.jpg)
 
 Toggle the terminal with **Ctrl+`** on every platform or use the Terminal menu/activity button. It starts in the workspace directory, or the home directory when no folder is open. The native PTY uses `SHELL` on Unix (falling back to `/bin/sh`) and `COMSPEC` on Windows (falling back to `cmd.exe`).
 
@@ -279,20 +281,38 @@ Not implemented: problem matchers and clickable output links, `${command:...}`, 
 
 ## Coding agents
 
-Open **Coding Agents** with `Cmd/Ctrl+Shift+A`. Lumen integrates Claude Code and Codex through separate ACP adapters; these integrations are optional and require the provider’s CLI/account authentication.
+Open **Agent Sessions** with `Cmd/Ctrl+Shift+A`. By default Lumen talks directly to your installed `claude` (Claude Code) and `codex` command-line programs; both are optional and use the provider’s own CLI login, so you must install and sign in to them separately. Nothing is started until you create or resume a session.
 
-The integration currently pins these adapter packages:
+### Sessions and chats
+
+- The side panel lists Codex and Claude Code sessions for the open folder in one list, colored by provider, with a compact age on each row. **+ Claude** / **+ Codex** start a new chat in the folder.
+- Each chat opens in an editor tab, so several can run side by side with your documents. Lumen queues turns and serializes workspace writes so two agents do not edit at the same time.
+- Messages are labelled by speaker. Tool calls appear as compact rows, and permission requests appear as cards you approve or reject inline. A working indicator shows while a turn runs, and you can cancel it.
+- Conversations are cached on disk, so a reopened chat keeps its transcript. If a provider forgets a session (for example after its agent restarts), Lumen re-attaches it. Idle sessions release their process, and quitting stops agents gracefully, waiting a few seconds before closing.
+- The settings above the composer choose the model, reasoning effort, fast mode, and permission mode per session. They are typed, can be reset to defaults, and persist. A staged choice is not proof that the provider applied it.
+
+Sending a prompt shares that context with the selected provider; authentication, usage limits and costs remain with the provider.
+
+### Configuration
+
+| Setting | Purpose |
+| --- | --- |
+| Native Agents (`agent.native.enabled`) | On by default; turn off, or start with `LUMEN_NATIVE_AGENTS=0`, to use the older panel. Takes effect after restart |
+| Claude Code Program / Codex Program | Absolute path of the executable when it is not on the GUI’s `PATH`. Honored only in User settings, never in project files |
+| Codex Start Mode, Unsaved Files, Follow Locations, Track Changes | Behavior of the older adapter-based panel |
+
+### Older ACP adapter panel
+
+With native agents off, Lumen uses Agent Client Protocol adapters instead, pinned to:
 
 ```text
 @agentclientprotocol/claude-agent-acp@0.92.0
 @agentclientprotocol/codex-acp@2.2.2
 ```
 
-Install an adapter separately and expose `claude-agent-acp` or `codex-acp` on `PATH`, or use the panel’s download/run flow through `npx` (Node.js 22 or newer). Automatic fallback downloads require session consent. The first download can take time; status and failures appear in the panel/Output.
+Install an adapter and expose `claude-agent-acp` or `codex-acp` on `PATH`, or use the panel’s download flow through `npx` (Node.js 22 or newer; downloads need session consent). That panel adds file or selection attachments, agent-provided configuration choices, and review/revert of reported file changes; these are not yet part of the native path.
 
-The panel supports prompts, cancellation, sessions/history, file or selection attachments, permission requests, agent-provided configuration choices, and review/revert of reported file changes. Save or resolve unsaved workspace buffers when prompted before agent work. Sending a prompt or attachment shares that context with the selected agent/provider; provider authentication and usage limits remain separate from Lumen.
-
-See [agent integration](plans/agent-integration-acp-plan.md) and the [acceptance checklist](plans/agent-acceptance-checklist.md) for scope and validation details.
+Native integration is newer and still being completed. See the [gap review](plans/native-agent-implementation-gap-review.md), [agent integration plan](plans/agent-integration-acp-plan.md) and [acceptance checklist](plans/agent-acceptance-checklist.md) for what is and is not done.
 
 ## Settings
 
@@ -421,7 +441,9 @@ Track remaining work in the [core feature roadmap](plans/vscode-core-feature-roa
 | `crates/editor-surface/` | Editor rendering, geometry, shaping, input and accessibility |
 | `crates/settings-core/` | UI/I/O-independent settings schemas, validation and serialization |
 | `crates/language-services/` | Language registry and language-service protocol/data support |
-| `crates/agent-protocol/` | Agent protocol support |
+| `crates/agent-core/` | Common native agent interface: sessions, operations, events, configuration and a test contract |
+| `crates/agent-claude/`, `crates/agent-codex/` | Native Claude Code (stream-json) and Codex (app-server) backends over stdio |
+| `crates/agent-protocol/` | ACP protocol support for the older adapter panel |
 | `crates/terminal-core/` | Terminal emulation integration |
 | `crates/task-core/` | Task schema, TOML parsing/editing, validation, variable resolution and dependency planning; no I/O |
 | `xtask/` | Packaging/version helpers, separate from runtime code |
@@ -468,6 +490,6 @@ cargo run -p lumen-editor-surface --example spike --features shaped
 
 Maintainers can manually run the Release workflow from the default branch and choose `patch`, `minor`, or `major`. It updates Cargo/app metadata, validates platform builds, and only then publishes the version commit, tag, artifacts, and checksums. It does not force-push or replace existing releases.
 
-Lumen ships its own icon set (`assets/lumen-icons.ttf`, generated by `tools/gen_icons.py`) and bundles no third-party icon font. Package metadata currently labels Lumen as proprietary; do not infer an open-source license from the repository’s availability.
+Lumen’s toolbar icons are its own (`assets/lumen-icons.ttf`, generated by `tools/gen_icons.py`). Explorer file and folder icons come from a subset of the [Nerd Fonts](https://github.com/ryanoasis/nerd-fonts) Symbols font (`assets/file-icons.ttf`, built by `tools/subset_file_icons.py`), which packages the MIT-licensed Seti-UI, Devicons and Material Design icon sets; its license is in `assets/NERD-FONTS-LICENSE.txt`. Package metadata currently labels Lumen as proprietary; do not infer an open-source license from the repository’s availability.
 
-The screenshots in this README are real macOS app captures, stored in [assets/screenshots](assets/screenshots), rather than mockups. They illustrate a local light-theme configuration; native chrome and fonts vary by platform.
+The screenshots in this README are real macOS captures of the current release build, refreshed on October 19, 2026 and stored in [assets/screenshots](assets/screenshots). They show the workbench with colored Explorer icons, the integrated terminal, and searchable Settings using the dark theme. Native chrome and fonts vary by platform.

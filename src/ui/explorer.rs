@@ -1,10 +1,11 @@
 use super::Workbench;
-use super::widgets::{self, HeaderAction, canvas, explorer_row, panel_header, surface};
+use super::widgets::{self, HeaderAction, canvas, panel_header, surface};
 use crate::app::command::Command;
 use crate::app::view_state::ExplorerEditKind;
 use crate::app::view_state::{Activity, ExplorerSelection};
 use crate::icon;
 use crate::model::display_name;
+use crate::ui::file_icons;
 use eframe::egui::{self, RichText, ScrollArea};
 use std::path::Path;
 impl Workbench<'_> {
@@ -81,20 +82,16 @@ impl Workbench<'_> {
         }
         if self.file_system.is_directory(path) {
             let expanded = self.view.expanded_dirs.contains(path);
-            let response = explorer_row(
+            let response = widgets::explorer_row_with_icon(
                 ui,
+                Some(if expanded {
+                    icon::CARET_DOWN
+                } else {
+                    icon::CARET_RIGHT
+                }),
+                Some(file_icons::for_folder(path, expanded)),
                 format!(
-                    "{}  {}  {}{}",
-                    if expanded {
-                        icon::CARET_DOWN
-                    } else {
-                        icon::CARET_RIGHT
-                    },
-                    if expanded {
-                        icon::FOLDER_OPEN
-                    } else {
-                        icon::FOLDER
-                    },
+                    "{}{}",
                     display_name(path),
                     self.git_badge(path, true)
                         .map(|badge| format!("  {badge}"))
@@ -135,11 +132,12 @@ impl Workbench<'_> {
                     .and_then(|file| file.path.as_deref())
                     .is_some_and(|open_path| open_path == path)
             };
-            let response = explorer_row(
+            let response = widgets::explorer_row_with_icon(
                 ui,
+                None,
+                Some(file_icons::for_file(path)),
                 format!(
-                    "{}  {}{}",
-                    widgets::file_icon(path),
+                    "{}{}",
                     display_name(path),
                     self.git_badge(path, false)
                         .map(|badge| format!("  {badge}"))

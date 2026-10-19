@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use lumen_agent_core::{
     AgentError, RequestToken,
     api::{
-        ApprovalDecisionId, AuthState, ConfigChoice, ConfigOption, ConfigRevision, ConfigScope,
-        InputBlock, Mutability, SessionConfig,
+        ApprovalDecisionId, AuthState, ConfigChoice, ConfigOption, ConfigRevision, InputBlock,
+        SessionConfig,
     },
     event::{ApprovalChoice, ApprovalRequest, RiskLevel, TurnOutcome, Usage},
     model::{ToolCall, ToolKind},
@@ -206,52 +206,101 @@ pub fn approval_request(request: &Value, token: RequestToken) -> Option<Approval
 
 // ------------------------------------------------------------------ config
 
-pub const MODELS: [(&str, &str); 4] = [
+pub const MODELS: [(&str, &str); 5] = [
     ("default", "Default"),
-    ("sonnet", "Sonnet"),
+    ("fable", "Fable"),
     ("opus", "Opus"),
+    ("sonnet", "Sonnet"),
     ("haiku", "Haiku"),
 ];
 
-pub const MODES: [(&str, &str); 3] = [
-    ("default", "Ask before editing"),
-    ("acceptEdits", "Accept edits"),
-    ("plan", "Plan only"),
+/// Reasoning effort levels the CLI accepts with `--effort`; `default` passes none.
+pub const EFFORTS: [(&str, &str); 6] = [
+    ("default", "Default"),
+    ("low", "Low"),
+    ("medium", "Medium"),
+    ("high", "High"),
+    ("xhigh", "Extra high"),
+    ("max", "Max"),
 ];
 
-pub fn session_config(revision: u64, model: &str, mode: &str) -> SessionConfig {
+/// The permission modes offered. `bypassPermissions` is deliberately absent: it
+/// would let the agent act without any approval, so it stays a deliberate
+/// choice in Claude Code itself.
+pub const MODES: [(&str, &str); 5] = [
+    ("manual", "Ask before each action"),
+    ("acceptEdits", "Accept edits"),
+    ("plan", "Plan only"),
+    ("auto", "Auto"),
+    ("dontAsk", "Don't ask"),
+];
+
+pub const DEFAULT_MODE: &str = "manual";
+
+/// The user's choices for a session; `default` means "let Claude Code decide".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prefs {
+    pub model: String,
+    pub effort: String,
+    pub mode: String,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Self {
+            model: "default".into(),
+            effort: "default".into(),
+            mode: DEFAULT_MODE.into(),
+        }
+    }
+}
+
+pub fn session_config(revision: u64, prefs: &Prefs) -> SessionConfig {
     let choices = |pairs: &[(&str, &str)]| -> Vec<ConfigChoice> {
         pairs
             .iter()
-            .map(|(v, l)| ConfigChoice {
-                value: (*v).into(),
-                label: (*l).into(),
-            })
+            .map(|(v, l)| ConfigChoice::new(*v, *l))
             .collect()
     };
     SessionConfig {
         revision: ConfigRevision(revision),
         options: vec![
-            ConfigOption {
-                id: "model".into(),
-                label: "Model".into(),
-                description: "Applied when the session's process next starts, so it takes effect on the next message".into(),
-                choices: choices(&MODELS),
-                current: model.into(),
-                scope: ConfigScope::Session,
-                mutability: Mutability::NextTurn,
-            },
-            ConfigOption {
-                id: "permission_mode".into(),
-                label: "Permissions".into(),
-                description: "Whether the agent asks before editing files".into(),
-                choices: choices(&MODES),
-                current: mode.into(),
-                scope: ConfigScope::Session,
-                mutability: Mutability::NextTurn,
-            },
+            ConfigOption::select(
+                "model",
+                "Model",
+                "Used from the next message: the session restarts with it.",
+                choices(&MODELS),
+                prefs.model.clone(),
+            )
+            .with_default("default"),
+            ConfigOption::select(
+                "effort",
+                "Effort",
+                "How much reasoning to spend. Default lets the model choose.",
+                choices(&EFFORTS),
+                prefs.effort.clone(),
+            )
+            .with_default("default"),
+            ConfigOption::select(
+                "permission_mode",
+                "Permissions",
+                "Whether the agent asks before editing files or running commands.",
+                choices(&MODES),
+                prefs.mode.clone(),
+            )
+            .with_default(DEFAULT_MODE),
         ],
     }
+}
+
+/// What the running process reported about itself in its `init` message, as
+/// `(model, permission mode)`. Used to show the effective value next to the
+/// requested one; either can be missing.
+pub fn init_report(init: &Value) -> (Option<String>, Option<String>) {
+    (
+        text(init, "model").map(str::to_string),
+        text(init, "permissionMode").map(str::to_string),
+    )
 }
 
 // ------------------------------------------------------------- input & auth
@@ -513,9 +562,15 @@ mod tests {
 
     #[test]
     fn config_offers_models_and_permission_modes_without_bypass() {
-        let config = session_config(2, "sonnet", "plan");
+        let prefs = Prefs {
+            model: "sonnet".into(),
+            mode: "plan".into(),
+            ..Prefs::default()
+        };
+        let config = session_config(2, &prefs);
         assert_eq!(config.revision, ConfigRevision(2));
         assert_eq!(config.get("model").unwrap().current, "sonnet");
+        assert_eq!(config.get("effort").unwrap().current, "default");
         let modes: Vec<_> = config
             .get("permission_mode")
             .unwrap()
@@ -523,7 +578,7 @@ mod tests {
             .iter()
             .map(|c| c.value.as_str())
             .collect();
-        assert_eq!(modes, ["default", "acceptEdits", "plan"]);
+        assert_eq!(modes, ["manual", "acceptEdits", "plan", "auto", "dontAsk"]);
         assert!(!modes.contains(&"bypassPermissions"));
     }
 }

@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use lumen_agent_core::{
     AgentError, ItemId, NativeSessionRef, ProfileId, ProviderId, RequestToken, TurnId,
     api::{
-        ApprovalDecisionId, AuthState, ConfigChoice, ConfigOption, ConfigRevision, ConfigScope,
-        InputBlock, Mutability, SessionConfig, SessionSummary,
+        ApprovalDecisionId, AuthState, ConfigChoice, ConfigOption, ConfigPatch, ConfigRevision,
+        InputBlock, SessionConfig, SessionSummary,
     },
     event::{
         AgentEvent, ApprovalChoice, ApprovalRequest, FileChange, FileChangeKind, QuestionKind,
@@ -383,6 +383,11 @@ pub struct ModelInfo {
     pub id: String,
     pub label: String,
     pub is_default: bool,
+    /// Reasoning levels this model accepts, with the server's description.
+    pub efforts: Vec<(String, String)>,
+    pub default_effort: Option<String>,
+    /// The service tier that makes this model faster, when it offers one.
+    pub fast_tier: Option<String>,
 }
 
 pub fn models(result: &Value) -> Vec<ModelInfo> {
@@ -394,10 +399,35 @@ pub fn models(result: &Value) -> Vec<ModelInfo> {
         .filter(|model| model.get("hidden").and_then(Value::as_bool) != Some(true))
         .filter_map(|model| {
             let id = text(model, "model").or_else(|| text(model, "id"))?;
+            let efforts = model
+                .get("supportedReasoningEfforts")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| {
+                    Some((
+                        text(e, "reasoningEffort")?.to_string(),
+                        text(e, "description").unwrap_or_default().to_string(),
+                    ))
+                })
+                .collect();
+            let fast_tier = model
+                .get("serviceTiers")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|tier| {
+                    text(tier, "id") == Some("priority") || text(tier, "name") == Some("Fast")
+                })
+                .and_then(|tier| text(tier, "id"))
+                .map(str::to_string);
             Some(ModelInfo {
                 id: id.to_string(),
                 label: text(model, "displayName").unwrap_or(id).to_string(),
                 is_default: model.get("isDefault").and_then(Value::as_bool) == Some(true),
+                efforts,
+                default_effort: text(model, "defaultReasoningEffort").map(str::to_string),
+                fast_tier,
             })
         })
         .collect()
@@ -415,72 +445,237 @@ pub const APPROVALS: [(&str, &str); 3] = [
     ("never", "Never ask"),
 ];
 
-/// The session's settings as advertised options. Provider mode names are not
-/// assumed to match Claude's.
+pub const DEFAULT_SANDBOX: &str = "workspace-write";
+pub const DEFAULT_APPROVAL: &str = "on-request";
+
+/// The user's choices for a session. `effort` empty means the model's default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prefs {
+    pub model: String,
+    pub effort: String,
+    pub fast: bool,
+    pub sandbox: String,
+    pub approval: String,
+}
+
+impl Prefs {
+    pub fn new(model: &str, sandbox: &str, approval: &str) -> Self {
+        Self {
+            model: model.into(),
+            effort: String::new(),
+            fast: false,
+            sandbox: sandbox.into(),
+            approval: approval.into(),
+        }
+    }
+
+    /// Drop choices the current model cannot honour: an unsupported effort goes
+    /// back to the model's default and fast mode turns off without a fast tier.
+    pub fn normalize(&mut self, models: &[ModelInfo]) {
+        let Some(model) = models.iter().find(|m| m.id == self.model) else {
+            return;
+        };
+        if !self.effort.is_empty()
+            && !model.efforts.is_empty()
+            && !model.efforts.iter().any(|(value, _)| *value == self.effort)
+        {
+            self.effort.clear();
+        }
+        if model.fast_tier.is_none() {
+            self.fast = false;
+        }
+    }
+}
+
+/// The session's settings as advertised options. Effort and fast mode depend on
+/// the chosen model, so they are rebuilt whenever it changes.
 pub fn session_config(
     revision: u64,
     models: &[ModelInfo],
-    model: &str,
-    sandbox: &str,
-    approval: &str,
+    prefs: &Prefs,
+    effective_model: Option<&str>,
 ) -> SessionConfig {
+    let known = models.iter().find(|m| m.id == prefs.model);
     let mut model_choices: Vec<ConfigChoice> = models
         .iter()
-        .map(|m| ConfigChoice {
-            value: m.id.clone(),
-            label: m.label.clone(),
-        })
+        .map(|m| ConfigChoice::new(m.id.clone(), m.label.clone()))
         .collect();
-    if !model.is_empty() && !model_choices.iter().any(|c| c.value == model) {
+    if !prefs.model.is_empty() && known.is_none() {
         model_choices.insert(
             0,
-            ConfigChoice {
-                value: model.into(),
-                label: model.into(),
-            },
+            ConfigChoice::new(prefs.model.clone(), prefs.model.clone()),
         );
     }
     let simple = |pairs: &[(&str, &str)]| -> Vec<ConfigChoice> {
         pairs
             .iter()
-            .map(|(v, l)| ConfigChoice {
-                value: (*v).into(),
-                label: (*l).into(),
-            })
+            .map(|(v, l)| ConfigChoice::new(*v, *l))
             .collect()
     };
+    let default_model = models
+        .iter()
+        .find(|m| m.is_default)
+        .or(models.first())
+        .map(|m| m.id.clone());
+    let mut model = ConfigOption::select(
+        "model",
+        "Model",
+        "The model that answers.",
+        model_choices,
+        prefs.model.clone(),
+    );
+    model.default = default_model;
+    model.effective = effective_model.map(str::to_string);
+
+    let model_default_effort = known.and_then(|m| m.default_effort.clone());
+    let effort_choices: Vec<ConfigChoice> = known
+        .map(|m| {
+            m.efforts
+                .iter()
+                .map(|(value, description)| {
+                    ConfigChoice::new(value.clone(), title_case(value))
+                        .described(description.clone())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let effort_current = if prefs.effort.is_empty() {
+        model_default_effort.clone().unwrap_or_default()
+    } else {
+        prefs.effort.clone()
+    };
+    let mut effort = ConfigOption::select(
+        "effort",
+        "Reasoning",
+        "How much reasoning the model spends before answering.",
+        if effort_choices.is_empty() && !effort_current.is_empty() {
+            vec![ConfigChoice::new(
+                effort_current.clone(),
+                title_case(&effort_current),
+            )]
+        } else {
+            effort_choices.clone()
+        },
+        effort_current,
+    );
+    effort.default = model_default_effort;
+    if effort_choices.is_empty() {
+        effort.disabled = Some(if known.is_some() {
+            "this model does not offer reasoning levels".into()
+        } else {
+            "this model's reasoning levels are unknown".into()
+        });
+    }
+
+    let mut fast = ConfigOption::toggle(
+        "fast",
+        "Fast mode",
+        "Priority processing: quicker answers that use more of your plan.",
+        prefs.fast,
+    );
+    if known.is_none_or(|m| m.fast_tier.is_none()) {
+        fast.disabled = Some("this model has no fast mode".into());
+    }
+
+    let mut sandbox = ConfigOption::select(
+        "sandbox",
+        "Sandbox",
+        "What commands the agent may run without asking.",
+        simple(&SANDBOXES),
+        prefs.sandbox.clone(),
+    );
+    sandbox.default = Some(DEFAULT_SANDBOX.into());
+    let mut approval = ConfigOption::select(
+        "approval",
+        "Approvals",
+        "When the agent asks before acting.",
+        simple(&APPROVALS),
+        prefs.approval.clone(),
+    );
+    approval.default = Some(DEFAULT_APPROVAL.into());
+
     SessionConfig {
         revision: ConfigRevision(revision),
-        options: vec![
-            ConfigOption {
-                id: "model".into(),
-                label: "Model".into(),
-                description: "The model that answers".into(),
-                choices: model_choices,
-                current: model.into(),
-                scope: ConfigScope::Session,
-                mutability: Mutability::NextTurn,
-            },
-            ConfigOption {
-                id: "sandbox".into(),
-                label: "Sandbox".into(),
-                description: "What commands the agent may run without asking".into(),
-                choices: simple(&SANDBOXES),
-                current: sandbox.into(),
-                scope: ConfigScope::Session,
-                mutability: Mutability::NextTurn,
-            },
-            ConfigOption {
-                id: "approval".into(),
-                label: "Approvals".into(),
-                description: "When the agent asks before acting".into(),
-                choices: simple(&APPROVALS),
-                current: approval.into(),
-                scope: ConfigScope::Session,
-                mutability: Mutability::NextTurn,
-            },
-        ],
+        options: vec![model, effort, fast, sandbox, approval],
     }
+}
+
+/// The user's choices read back from an advertised configuration.
+pub fn prefs_of(config: &SessionConfig, models: &[ModelInfo]) -> Prefs {
+    let current = |id: &str| {
+        config
+            .get(id)
+            .map(|o| o.current.clone())
+            .unwrap_or_default()
+    };
+    let model = current("model");
+    let default_effort = models
+        .iter()
+        .find(|m| m.id == model)
+        .and_then(|m| m.default_effort.clone())
+        .unwrap_or_default();
+    let effort = current("effort");
+    Prefs {
+        effort: if effort == default_effort {
+            String::new()
+        } else {
+            effort
+        },
+        fast: current("fast") == "true",
+        sandbox: current("sandbox"),
+        approval: current("approval"),
+        model,
+    }
+}
+
+fn title_case(value: &str) -> String {
+    let mut chars = value.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+        .unwrap_or_default()
+}
+
+/// Apply a patch as a whole: dependent options are rebuilt for the model the patch
+/// selects first, so a model and its effort can change together, and anything the
+/// new model cannot honour falls back with the rest of the patch still applied.
+pub fn apply_patch(
+    current: &SessionConfig,
+    models: &[ModelInfo],
+    patch: &ConfigPatch,
+    effective_model: Option<&str>,
+) -> Result<SessionConfig, AgentError> {
+    let mut prefs = prefs_of(current, models);
+    let target = patch
+        .values
+        .iter()
+        .find(|(id, _)| id == "model")
+        .map(|(_, value)| value.clone())
+        .or_else(|| {
+            patch.resets.iter().any(|id| id == "model").then(|| {
+                current
+                    .get("model")
+                    .and_then(|o| o.default.clone())
+                    .unwrap_or_else(|| prefs.model.clone())
+            })
+        })
+        .unwrap_or_else(|| prefs.model.clone());
+    let sets_model = patch.values.iter().any(|(id, _)| id == "model");
+    if sets_model && !models.is_empty() && !models.iter().any(|m| m.id == target) {
+        return Err(AgentError::InvalidConfig {
+            detail: format!("Model cannot be {target}"),
+        });
+    }
+    prefs.model = target.clone();
+    prefs.normalize(models);
+    let provisional = session_config(current.revision.0, models, &prefs, effective_model);
+    // The model itself is validated against the offered models.
+    let mut staged = provisional.applying(patch)?;
+    let mut next = prefs_of(&staged, models);
+    next.normalize(models);
+    let revision = staged.revision.0;
+    staged = session_config(revision, models, &next, effective_model);
+    Ok(staged)
 }
 
 /// `sandboxPolicy` for `turn/start` from a sandbox mode name.
@@ -889,7 +1084,12 @@ mod tests {
             list.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
             ["gpt-a", "gpt-b"]
         );
-        let config = session_config(3, &list, "gpt-z", "read-only", "on-request");
+        let config = session_config(
+            3,
+            &list,
+            &Prefs::new("gpt-z", "read-only", "on-request"),
+            None,
+        );
         assert_eq!(config.revision, ConfigRevision(3));
         let model = config.get("model").unwrap();
         assert_eq!(model.current, "gpt-z");
@@ -1003,5 +1203,134 @@ mod tests {
         );
         let many = json!({"questions":[{"id":"1","question":"a","header":""},{"id":"2","question":"b","header":""}]});
         assert!(question_request(&many, token()).is_none());
+    }
+
+    fn catalog() -> Vec<ModelInfo> {
+        models(&json!({"data":[
+            {"id":"big","model":"big","displayName":"Big","isDefault":true,
+             "defaultReasoningEffort":"medium",
+             "supportedReasoningEfforts":[
+                {"reasoningEffort":"low","description":"quick"},
+                {"reasoningEffort":"medium","description":"balanced"},
+                {"reasoningEffort":"high","description":"thorough"}],
+             "serviceTiers":[{"id":"priority","name":"Fast","description":"2x"}]},
+            {"id":"small","model":"small","displayName":"Small",
+             "defaultReasoningEffort":"low",
+             "supportedReasoningEfforts":[{"reasoningEffort":"low","description":"only"}]}
+        ]}))
+    }
+
+    fn base() -> SessionConfig {
+        session_config(
+            1,
+            &catalog(),
+            &Prefs::new("big", "workspace-write", "on-request"),
+            None,
+        )
+    }
+
+    #[test]
+    fn effort_and_fast_come_from_the_selected_models_metadata() {
+        let config = base();
+        let effort = config.get("effort").unwrap();
+        assert_eq!(effort.current, "medium", "the model's default");
+        assert_eq!(effort.default.as_deref(), Some("medium"));
+        assert_eq!(effort.choices.len(), 3);
+        assert_eq!(effort.choices[1].description, "balanced");
+        assert!(config.get("fast").unwrap().disabled.is_none());
+        let small = session_config(
+            1,
+            &catalog(),
+            &Prefs::new("small", "workspace-write", "on-request"),
+            None,
+        );
+        assert!(
+            small.get("fast").unwrap().disabled.is_some(),
+            "no fast tier"
+        );
+        assert_eq!(small.get("effort").unwrap().choices.len(), 1);
+    }
+
+    #[test]
+    fn a_model_and_an_effort_can_change_together_and_unsupported_choices_fall_back() {
+        let models = catalog();
+        let high =
+            apply_patch(&base(), &models, &ConfigPatch::set("effort", "high"), None).unwrap();
+        assert_eq!(high.get("effort").unwrap().current, "high");
+        let on = apply_patch(&high, &models, &ConfigPatch::set("fast", "true"), None).unwrap();
+        assert!(on.get("fast").unwrap().is_on());
+        // Switching to a model that has neither: effort returns to its default, fast turns off.
+        let small = apply_patch(&on, &models, &ConfigPatch::set("model", "small"), None).unwrap();
+        assert_eq!(small.get("model").unwrap().current, "small");
+        assert_eq!(small.get("effort").unwrap().current, "low");
+        assert!(!small.get("fast").unwrap().is_on());
+        assert_eq!(small.revision, ConfigRevision(base().revision.0 + 3));
+        // A model and an effort only that model has, in one patch.
+        let both = apply_patch(
+            &small,
+            &models,
+            &ConfigPatch {
+                values: vec![
+                    ("model".into(), "big".into()),
+                    ("effort".into(), "high".into()),
+                ],
+                resets: Vec::new(),
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(both.get("effort").unwrap().current, "high");
+    }
+
+    #[test]
+    fn unknown_models_and_unsupported_efforts_reject_the_whole_patch() {
+        let models = catalog();
+        let before = base();
+        for patch in [
+            ConfigPatch::set("model", "mystery"),
+            ConfigPatch::set("effort", "extreme"),
+            ConfigPatch {
+                values: vec![
+                    ("model".into(), "small".into()),
+                    ("effort".into(), "high".into()),
+                ],
+                resets: Vec::new(),
+            },
+        ] {
+            assert!(
+                apply_patch(&before, &models, &patch, None).is_err(),
+                "{patch:?}"
+            );
+        }
+        let small =
+            apply_patch(&before, &models, &ConfigPatch::set("model", "small"), None).unwrap();
+        assert!(apply_patch(&small, &models, &ConfigPatch::set("fast", "true"), None).is_err());
+    }
+
+    #[test]
+    fn reset_returns_effort_to_the_models_default_and_model_to_the_servers_default() {
+        let models = catalog();
+        let low = apply_patch(&base(), &models, &ConfigPatch::set("effort", "low"), None).unwrap();
+        let reset = apply_patch(&low, &models, &ConfigPatch::reset("effort"), None).unwrap();
+        assert_eq!(reset.get("effort").unwrap().current, "medium");
+        let small =
+            apply_patch(&reset, &models, &ConfigPatch::set("model", "small"), None).unwrap();
+        let back = apply_patch(&small, &models, &ConfigPatch::reset("model"), None).unwrap();
+        assert_eq!(back.get("model").unwrap().current, "big");
+    }
+
+    #[test]
+    fn the_effective_model_is_reported_without_changing_the_choice() {
+        let config = session_config(
+            1,
+            &catalog(),
+            &Prefs::new("big", "workspace-write", "on-request"),
+            Some("big-2026"),
+        );
+        let option = config.get("model").unwrap();
+        assert_eq!(
+            (option.current.as_str(), option.effective.as_deref()),
+            ("big", Some("big-2026"))
+        );
     }
 }

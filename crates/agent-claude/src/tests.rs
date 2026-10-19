@@ -542,6 +542,7 @@ fn changing_the_model_while_idle_restarts_the_process_with_resume() {
         expected_revision: ConfigRevision(1),
         patch: ConfigPatch {
             values: vec![("model".into(), "opus".into())],
+            ..Default::default()
         },
     });
     assert!(
@@ -568,6 +569,7 @@ fn invalid_config_and_stale_revisions_are_rejected() {
         expected_revision: ConfigRevision(1),
         patch: ConfigPatch {
             values: vec![("model".into(), "gpt-9".into())],
+            ..Default::default()
         },
     });
     assert!(matches!(
@@ -772,4 +774,107 @@ fn the_shared_contract_passes_with_the_claude_backend() {
     contract::basic(&mut backend());
     contract::unknown_targets_fail_typed(&mut backend(), ProviderId::Claude);
     contract::shutdown_is_final(&mut backend());
+}
+
+#[test]
+fn effort_and_permission_mode_become_launch_flags_and_default_effort_adds_none() {
+    let mut rig = Rig::new();
+    rig.create(1);
+    rig.start(1, "x");
+    let a = args(&rig.launches()[0]);
+    assert!(!a.contains(&"--effort".to_string()), "{a:?}");
+    assert!(
+        a.windows(2).any(|w| w == ["--permission-mode", "manual"]),
+        "{a:?}"
+    );
+    rig.say(json!({"type": "result", "subtype": "success", "is_error": false}));
+    rig.poll();
+    let (outcome, _) = rig.run(AgentOperation::SetConfig {
+        session: SessionId(1),
+        expected_revision: ConfigRevision(1),
+        patch: ConfigPatch {
+            values: vec![
+                ("effort".into(), "high".into()),
+                ("permission_mode".into(), "plan".into()),
+            ],
+            ..Default::default()
+        },
+    });
+    assert!(
+        matches!(outcome, OperationOutcome::Succeeded(_)),
+        "{outcome:?}"
+    );
+    rig.start(1, "y");
+    let a = args(&rig.launches()[1]);
+    assert!(a.windows(2).any(|w| w == ["--effort", "high"]), "{a:?}");
+    assert!(
+        a.windows(2).any(|w| w == ["--permission-mode", "plan"]),
+        "{a:?}"
+    );
+}
+
+#[test]
+fn a_patch_with_one_bad_value_changes_nothing_and_reset_returns_to_the_default() {
+    let mut rig = Rig::new();
+    rig.create(1);
+    let (outcome, _) = rig.run(AgentOperation::SetConfig {
+        session: SessionId(1),
+        expected_revision: ConfigRevision(1),
+        patch: ConfigPatch {
+            values: vec![
+                ("model".into(), "opus".into()),
+                ("effort".into(), "ludicrous".into()),
+            ],
+            ..Default::default()
+        },
+    });
+    assert!(matches!(
+        outcome,
+        OperationOutcome::Failed(AgentError::InvalidConfig { .. })
+    ));
+    let (config, _) = rig.run(AgentOperation::ReadConfig {
+        session: SessionId(1),
+    });
+    let OperationOutcome::Succeeded(OperationOutput::Config(config)) = config else {
+        panic!()
+    };
+    assert_eq!(
+        (
+            config.revision,
+            config.get("model").unwrap().current.as_str()
+        ),
+        (ConfigRevision(1), "default")
+    );
+    rig.run(AgentOperation::SetConfig {
+        session: SessionId(1),
+        expected_revision: ConfigRevision(1),
+        patch: ConfigPatch::set("model", "opus"),
+    });
+    let (outcome, _) = rig.run(AgentOperation::SetConfig {
+        session: SessionId(1),
+        expected_revision: ConfigRevision(2),
+        patch: ConfigPatch::reset("model"),
+    });
+    let OperationOutcome::Succeeded(OperationOutput::Config(config)) = outcome else {
+        panic!()
+    };
+    assert_eq!(config.get("model").unwrap().current, "default");
+}
+
+#[test]
+fn the_init_message_reports_the_effective_model_and_mode_without_changing_the_choice() {
+    let mut rig = Rig::new();
+    rig.create(1);
+    rig.start(1, "x");
+    rig.say(json!({"type": "system", "subtype": "init", "model": "claude-opus-9-1", "permissionMode": "default"}));
+    rig.poll();
+    let model = rig.model(1);
+    let config = model.config.expect("config reported");
+    let option = config.get("model").unwrap();
+    assert_eq!(option.current, "default", "the request is unchanged");
+    assert_eq!(option.effective.as_deref(), Some("claude-opus-9-1"));
+    assert_eq!(
+        config.get("permission_mode").unwrap().effective.as_deref(),
+        Some("default")
+    );
 }

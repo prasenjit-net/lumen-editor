@@ -222,6 +222,19 @@ impl SessionModel {
         })
     }
 
+    /// Restore a saved transcript into an empty session (a cached conversation
+    /// shown again after a restart). Does nothing when the session already has
+    /// items, so live events are never reordered behind old ones.
+    pub fn restore_items(&mut self, items: Vec<TranscriptItem>) -> bool {
+        if !self.items.is_empty() {
+            return false;
+        }
+        for item in items {
+            self.push(item);
+        }
+        true
+    }
+
     pub fn can_start_turn(&self) -> bool {
         matches!(self.state, TurnState::Idle | TurnState::Unknown)
     }

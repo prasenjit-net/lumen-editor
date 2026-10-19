@@ -11,7 +11,20 @@ use lumen_agent_core::{
 use std::time::Duration;
 
 /// How often the UI re-polls while agent work is in flight and no event woke it.
+/// How long quitting waits for agents to stop before closing anyway.
+const QUIT_GRACE: Duration = Duration::from_secs(4);
+
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// The configured program, or the bare name to search PATH for.
+fn program(configured: &str, default: &str) -> String {
+    let configured = configured.trim();
+    if configured.is_empty() {
+        default.into()
+    } else {
+        configured.into()
+    }
+}
 
 impl LumenApp {
     /// Turn on the native Codex / Claude Code integration. Providers are launched
@@ -27,6 +40,9 @@ impl LumenApp {
             crate::services::agent_process::cached_login_path().map(|p| p.as_os_str()),
             std::env::var_os("PATH").as_deref(),
         );
+        // Programs are chosen in User settings only, never by a project file.
+        let codex_program = self.view.settings.user_text("agent.native.codex_command");
+        let claude_program = self.view.settings.user_text("agent.native.claude_command");
         let launcher = std::sync::Arc::new(NativeChildLauncher { path: Some(path) });
         let repaint = ctx.clone();
         let wake: lumen_agent_core::launcher::Wake =
@@ -43,13 +59,14 @@ impl LumenApp {
             None => (crate::model::agent_registry::Registry::new(), None),
         };
         self.native_agents_store = store;
+        self.native_transcripts_dir = crate::services::agent_transcripts_store::user_dir();
         let backends: Vec<(ProviderId, Box<dyn AgentBackend>)> = vec![
             (
                 ProviderId::Codex,
                 Box::new(lumen_agent_codex::CodexBackend::new(
                     launcher.clone(),
                     wake.clone(),
-                    lumen_agent_codex::CodexConfig::new("codex"),
+                    lumen_agent_codex::CodexConfig::new(program(&codex_program, "codex")),
                 )),
             ),
             (
@@ -57,11 +74,40 @@ impl LumenApp {
                 Box::new(lumen_agent_claude::ClaudeBackend::new(
                     launcher,
                     wake,
-                    lumen_agent_claude::ClaudeConfig::new("claude"),
+                    lumen_agent_claude::ClaudeConfig::new(program(&claude_program, "claude")),
                 )),
             ),
         ];
         self.view.native_agents = Some(super::agent_hub::AgentHub::new(backends, registry));
+    }
+
+    /// The window is closing for good. Agents are asked to stop first (turns
+    /// interrupted, approvals declined, processes ended); the window closes when
+    /// they report done or after a short deadline. Without agents it closes now.
+    pub(crate) fn close_window(&mut self, ctx: &egui::Context) {
+        if let Some(hub) = self.view.native_agents.as_mut()
+            && !hub.is_shut_down()
+        {
+            if self.view.native_quit_deadline.is_none() {
+                hub.begin_shutdown();
+                self.view.native_quit_deadline = Some(std::time::Instant::now() + QUIT_GRACE);
+                self.view.status = "Stopping agents…".into();
+            }
+            ctx.request_repaint();
+            return;
+        }
+        self.view.allow_quit = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    /// Closing the window should first stop running agents.
+    pub(crate) fn native_agents_need_shutdown(&self) -> bool {
+        self.view.native_quit_deadline.is_none()
+            && self
+                .view
+                .native_agents
+                .as_ref()
+                .is_some_and(|hub| !hub.is_shut_down())
     }
 
     pub(crate) fn poll_native_agents(&mut self, ctx: &egui::Context) {
@@ -69,6 +115,26 @@ impl LumenApp {
             return;
         };
         hub.tick();
+        if let Some(dir) = &self.native_transcripts_dir {
+            for (provider, native, items) in hub.take_dirty_transcripts() {
+                if let Err(error) =
+                    crate::services::agent_transcripts_store::save(dir, provider, &native, &items)
+                {
+                    self.view.status = error;
+                }
+            }
+        }
+        if self.view.native_quit_deadline.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
+        if let Some(deadline) = self.view.native_quit_deadline
+            && (hub.is_shut_down() || std::time::Instant::now() >= deadline)
+        {
+            self.view.native_quit_deadline = None;
+            self.view.allow_quit = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
         if hub.registry_dirty
             && let Some(path) = &self.native_agents_store
         {
@@ -117,6 +183,10 @@ impl LumenApp {
         if !known {
             return;
         }
+        self.load_cached_transcript(id);
+        if let Some(hub) = self.view.native_agents.as_mut() {
+            hub.ensure_ready(id);
+        }
         self.view.chats.open(id);
         self.view.settings.open = false;
         self.view.task_editors.deactivate();
@@ -124,6 +194,33 @@ impl LumenApp {
             diff.active = false;
         }
         self.enter_page_tab(ctx);
+    }
+
+    /// Show what was said in this chat the last time, read from the cache. Done
+    /// once per session per run, and only into an empty conversation.
+    fn load_cached_transcript(&mut self, id: SessionId) {
+        let Some(hub) = self.view.native_agents.as_mut() else {
+            return;
+        };
+        if hub.transcript_loaded(id) {
+            return;
+        }
+        let key = hub
+            .registry
+            .get(id)
+            .and_then(|r| r.native.clone().map(|native| (r.provider, native)));
+        let (Some(dir), Some((provider, native))) = (&self.native_transcripts_dir, key) else {
+            hub.restore_transcript(id, Vec::new());
+            return;
+        };
+        match crate::services::agent_transcripts_store::load(dir, provider, &native) {
+            Ok(items) => hub.restore_transcript(id, items),
+            Err(error) => {
+                // Leave the file alone and start this chat's view empty.
+                hub.restore_transcript(id, Vec::new());
+                self.view.status = error;
+            }
+        }
     }
 
     pub(super) fn chat_send(&mut self, id: SessionId) {
@@ -163,6 +260,28 @@ impl LumenApp {
     ) {
         if let Some(hub) = self.view.native_agents.as_mut() {
             hub.reply_approval(id, token, decision);
+        }
+    }
+
+    pub(super) fn chat_set_config(&mut self, id: SessionId, option: String, value: String) {
+        let Some(hub) = self.view.native_agents.as_mut() else {
+            return;
+        };
+        let patch = lumen_agent_core::api::ConfigPatch {
+            values: vec![(option, value)],
+            ..Default::default()
+        };
+        if !hub.set_config(id, patch) {
+            self.view.status = "The session is not ready yet; try again in a moment".into();
+        }
+    }
+
+    pub(super) fn chat_reset_config(&mut self, id: SessionId, option: String) {
+        let Some(hub) = self.view.native_agents.as_mut() else {
+            return;
+        };
+        if !hub.set_config(id, lumen_agent_core::api::ConfigPatch::reset(option)) {
+            self.view.status = "The session is not ready yet; try again in a moment".into();
         }
     }
 
@@ -352,5 +471,162 @@ mod tests {
         app.execute(Command::OpenChat(SessionId(1)), &ctx);
         assert!(app.view.chats.tabs().is_empty());
         assert!(app.view.status.contains("not enabled"));
+    }
+
+    #[test]
+    fn the_chat_header_offers_the_session_settings_and_changing_one_applies_it() {
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
+        let id = app.view.chats.active().unwrap();
+        settle(&mut app, &ctx);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "Model"), "the model selector is shown");
+        app.execute(
+            Command::ChatSetConfig(id, "model".into(), "smart".into()),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+        let hub = app.view.native_agents.as_ref().unwrap();
+        let config = hub.live(id).unwrap().model.config.as_ref().unwrap();
+        assert_eq!(config.get("model").unwrap().current, "smart");
+    }
+
+    #[test]
+    fn messages_are_told_apart_and_permissions_and_working_state_are_clear() {
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        let id = app.view.chats.active().unwrap();
+        app.view.chats.draft_mut(id).push_str("approve: touch file");
+        app.execute(Command::ChatSend(id), &ctx);
+        settle(&mut app, &ctx);
+        for width in [620.0, 1000.0, 1800.0] {
+            frame(&mut app, &ctx, width);
+            let output = frame(&mut app, &ctx, width);
+            assert!(has_text(&output, "You"), "user label at {width}");
+            assert!(has_text(&output, "Codex"), "agent label at {width}");
+            assert!(has_text(&output, "Permission needed"), "{width}");
+            assert!(has_text(&output, "Needs your answer"), "status at {width}");
+            assert!(has_text(&output, "Send"), "composer at {width}");
+            assert!(
+                has_text(&output, "Model"),
+                "settings above the composer at {width}"
+            );
+        }
+        let request = app
+            .view
+            .native_agents
+            .as_ref()
+            .unwrap()
+            .live(id)
+            .unwrap()
+            .model
+            .pending_approvals[0]
+            .clone();
+        let allow = request
+            .choices
+            .iter()
+            .find(|c| c.allows)
+            .unwrap()
+            .id
+            .clone();
+        app.execute(Command::ChatApproval(id, request.token, allow), &ctx);
+        app.view.chats.draft_mut(id).push_str("slow: keep going");
+        app.execute(Command::ChatSend(id), &ctx);
+        settle(&mut app, &ctx);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "Working"), "a clear working state");
+        assert!(
+            has_text(&output, "Stop"),
+            "stop replaces nothing but is offered"
+        );
+        app.execute(Command::ChatStop(id), &ctx);
+        settle(&mut app, &ctx);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(!has_text(&output, "Working"));
+        assert!(!has_text(&output, "Stop"));
+    }
+
+    #[test]
+    fn quitting_stops_the_agents_first_and_closes_when_they_are_done() {
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
+        let id = app.view.chats.active().unwrap();
+        app.view.chats.draft_mut(id).push_str("slow: long running");
+        app.execute(Command::ChatSend(id), &ctx);
+        settle(&mut app, &ctx);
+        assert!(app.native_agents_need_shutdown());
+        app.close_window(&ctx);
+        assert!(!app.view.allow_quit, "not closed while agents are stopping");
+        assert!(app.view.native_quit_deadline.is_some());
+        assert!(
+            !app.native_agents_need_shutdown(),
+            "a second close request goes through"
+        );
+        settle(&mut app, &ctx);
+        assert!(app.view.allow_quit, "closed once they reported done");
+        assert!(app.view.native_quit_deadline.is_none());
+    }
+
+    #[test]
+    fn quitting_without_native_agents_closes_immediately() {
+        let mut app = LumenApp::default();
+        let ctx = egui::Context::default();
+        assert!(!app.native_agents_need_shutdown());
+        app.close_window(&ctx);
+        assert!(app.view.allow_quit);
+    }
+
+    #[test]
+    fn a_conversation_is_still_there_after_the_app_is_closed_and_reopened() {
+        let dir = std::env::temp_dir().join(format!("lumen-reopen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (mut app, ctx) = fixture();
+        app.native_transcripts_dir = Some(dir.clone());
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        let id = app.view.chats.active().unwrap();
+        app.view
+            .chats
+            .draft_mut(id)
+            .push_str("remember the tangerine");
+        app.execute(Command::ChatSend(id), &ctx);
+        // Wait for the turn to finish and the cache file to be written.
+        for _ in 0..1000 {
+            app.poll_native_agents(&ctx);
+            let finished = app.view.native_agents.as_ref().unwrap().status(id)
+                == crate::app::agent_hub::SessionStatus::Idle
+                && dir.exists()
+                && std::fs::read_dir(&dir).is_ok_and(|mut d| d.next().is_some());
+            if finished {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let registry = app.view.native_agents.as_ref().unwrap().registry.to_json();
+
+        // A new run: same index file, same cache folder, fresh agents.
+        let (mut app, ctx) = fixture();
+        app.native_transcripts_dir = Some(dir.clone());
+        app.view.native_agents.as_mut().unwrap().registry =
+            crate::model::agent_registry::Registry::from_json(&registry).unwrap();
+        assert!(app.view.native_agents.as_ref().unwrap().live(id).is_none());
+        app.execute(Command::OpenChat(id), &ctx);
+        frame(&mut app, &ctx, 1000.0);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(
+            has_text(&output, "remember the tangerine"),
+            "the user's message"
+        );
+        let live = app.view.native_agents.as_ref().unwrap().live(id).unwrap();
+        assert!(
+            live.model.items.len() >= 2,
+            "the answer too: {:?}",
+            live.model.items
+        );
+        // Opening again does not duplicate anything.
+        let count = live.model.items.len();
+        app.execute(Command::OpenChat(id), &ctx);
+        let live = app.view.native_agents.as_ref().unwrap().live(id).unwrap();
+        assert_eq!(live.model.items.len(), count);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

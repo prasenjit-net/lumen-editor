@@ -33,6 +33,7 @@ behavior. Preserve existing functionality unless a task explicitly changes it.
   of emoji, Unicode approximations, or an unrelated icon set. Workbench action
   buttons are compact and unobtrusive; large activity icons are a separate
   component and should not dictate toolbar sizing.
+- Explorer file/folder icons come from `assets/file-icons.ttf` (Nerd Fonts Symbols subset, MIT; `tools/subset_file_icons.py`) mapped in `src/ui/file_icons.rs`; add new types there.
 - Keep system UI fonts with existing embedded fallbacks, and monospace fonts
   for text editing. Match established text sizes and row heights; don't enlarge
   an entire panel to make one control easier to lay out.
