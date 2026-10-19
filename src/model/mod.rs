@@ -1,4 +1,5 @@
 //! UI-independent document and workspace state.
+pub(crate) mod agent_registry;
 pub(crate) mod agent_scheduler;
 pub(crate) mod breadcrumbs;
 mod document;

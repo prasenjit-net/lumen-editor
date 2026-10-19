@@ -12,7 +12,7 @@
 // Wired to the agent controller in a later step.
 #![allow(dead_code)]
 use lumen_agent_core::SessionId;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Initial global limit on turns executing at once.
 pub(crate) const DEFAULT_SLOTS: usize = 2;
@@ -121,10 +121,10 @@ impl Scheduler {
         self.entries.iter().filter(|e| e.holds_slot).count()
     }
 
-    fn lease_holder(&self, workspace: &PathBuf, except: Ticket) -> Option<&Entry> {
+    fn lease_holder(&self, workspace: &Path, except: Ticket) -> Option<&Entry> {
         self.entries
             .iter()
-            .find(|e| e.holds_lease && e.ticket != except && &e.workspace == workspace)
+            .find(|e| e.holds_lease && e.ticket != except && e.workspace == workspace)
     }
 
     /// The oldest turn of each session is the only one allowed to start.
