@@ -97,6 +97,8 @@ enum Pending {
     Start(SessionId),
     Interrupt,
     Reply,
+    /// A settings change; a refusal is shown on the session.
+    Config(SessionId),
     Other,
 }
 
@@ -167,7 +169,15 @@ impl AgentHub {
             .create(provider, profile, workspace, (self.now)());
         self.live.insert(id, Live::new());
         self.registry_dirty = true;
+        self.prepare(id, provider);
         id
+    }
+
+    /// Make sure a listed session is attached (used when its chat is opened).
+    pub(crate) fn ensure_ready(&mut self, session: SessionId) {
+        if let Some(provider) = self.registry.get(session).map(|r| r.provider) {
+            self.prepare(session, provider);
+        }
     }
 
     /// Queue a message. It starts as soon as the session is free and the scheduler
@@ -287,7 +297,7 @@ impl AgentHub {
                 expected_revision: revision,
                 patch,
             },
-            Pending::Other,
+            Pending::Config(session),
         );
         true
     }
@@ -329,7 +339,7 @@ impl AgentHub {
                 None => {}
             }
         }
-        if live.preparing {
+        if live.preparing && live.current.is_some() {
             return SessionStatus::Working;
         }
         if let Some(error) = &live.error {
@@ -410,8 +420,24 @@ impl AgentHub {
             self.start_current(session, provider);
             return;
         }
+        if live.preparing {
+            // The session is being created; its completion starts this turn.
+            return;
+        }
+        self.prepare(session, provider);
+    }
+
+    /// Create or attach the provider session so its settings are known and
+    /// editable before the first message.
+    pub(crate) fn prepare(&mut self, session: SessionId, provider: ProviderId) {
+        let live = self.live_mut(session);
+        if live.ready || live.preparing {
+            return;
+        }
         live.preparing = true;
-        let record = self.registry.get(session).expect("checked above");
+        let Some(record) = self.registry.get(session) else {
+            return;
+        };
         let (workspace, native) = (record.workspace.clone(), record.native_ref());
         let operation = match native {
             Some(native) => AgentOperation::AttachSession {
@@ -586,6 +612,11 @@ impl AgentHub {
             ) => {
                 if let Some(live) = self.live.get_mut(&session) {
                     live.turn = Some(turn.clone());
+                }
+            }
+            (Pending::Config(session), OperationOutcome::Failed(error)) => {
+                if let Some(live) = self.live.get_mut(&session) {
+                    live.error = Some(format!("Could not change the setting: {}", describe(error)));
                 }
             }
             // Interrupt, reply and housekeeping results need no follow-up: their
@@ -768,7 +799,12 @@ mod tests {
     #[test]
     fn a_failed_backend_operation_ends_the_turn_with_a_message_and_frees_the_queue() {
         let mut hub = hub();
-        let session = hub.create_session(ProviderId::Codex, "/w".into());
+        let session = hub.registry.create(
+            ProviderId::Codex,
+            lumen_agent_core::ProfileId::default_profile(),
+            "/w".into(),
+            1,
+        );
         // Pretend the index knows a native session the backend has never heard of.
         let native = lumen_agent_core::NativeSessionRef {
             provider: ProviderId::Codex,
@@ -812,5 +848,69 @@ mod tests {
         });
         assert!(hub.interrupt(a) && hub.interrupt(b));
         settle(&mut hub, |h| idle(h, a) && idle(h, b));
+    }
+
+    #[test]
+    fn a_new_session_is_ready_with_editable_settings_before_any_message() {
+        let mut hub = hub();
+        let session = hub.create_session(ProviderId::Claude, "/w".into());
+        assert_eq!(
+            hub.status(session),
+            SessionStatus::Idle,
+            "preparing is not working"
+        );
+        settle(&mut hub, |h| {
+            h.live(session).is_some_and(|l| l.model.config.is_some())
+        });
+        let config = hub.live(session).unwrap().model.config.clone().unwrap();
+        assert_eq!(config.get("model").unwrap().current, "fast");
+        assert!(hub.set_config(
+            session,
+            ConfigPatch {
+                values: vec![("model".into(), "smart".into())]
+            }
+        ));
+        settle(&mut hub, |h| {
+            h.live(session)
+                .and_then(|l| l.model.config.as_ref())
+                .is_some_and(|c| c.get("model").unwrap().current == "smart")
+        });
+        // A message sent now reuses the prepared session instead of creating another.
+        hub.send(session, text("hi")).unwrap();
+        settle(&mut hub, |h| idle(h, session));
+        assert_eq!(
+            hub.live(session).unwrap().model.last_outcome,
+            Some(TurnOutcome::Completed)
+        );
+    }
+
+    #[test]
+    fn a_message_sent_while_the_session_is_still_preparing_waits_for_it() {
+        let mut hub = hub();
+        let session = hub.create_session(ProviderId::Codex, "/w".into());
+        hub.send(session, text("immediately")).unwrap();
+        settle(&mut hub, |h| idle(h, session));
+        assert_eq!(
+            hub.live(session).unwrap().model.last_outcome,
+            Some(TurnOutcome::Completed)
+        );
+    }
+
+    #[test]
+    fn a_refused_setting_is_reported_on_the_session() {
+        let mut hub = hub();
+        let session = hub.create_session(ProviderId::Codex, "/w".into());
+        settle(&mut hub, |h| {
+            h.live(session).is_some_and(|l| l.model.config.is_some())
+        });
+        hub.set_config(
+            session,
+            ConfigPatch {
+                values: vec![("model".into(), "no-such-model".into())],
+            },
+        );
+        settle(&mut hub, |h| {
+            matches!(h.status(session), SessionStatus::Failed(_))
+        });
     }
 }

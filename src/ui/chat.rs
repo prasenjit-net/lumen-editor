@@ -129,6 +129,36 @@ impl Workbench<'_> {
                         .size(10.5)
                         .color(colors.muted),
                 );
+                if let Some(config) = hub.live(id).and_then(|live| live.model.config.as_ref()) {
+                    ui.horizontal_wrapped(|ui| {
+                        for option in &config.options {
+                            let current = option
+                                .choices
+                                .iter()
+                                .find(|c| c.value == option.current)
+                                .map_or(option.current.as_str(), |c| c.label.as_str());
+                            ui.label(RichText::new(&option.label).size(10.5).color(colors.muted));
+                            egui::ComboBox::from_id_salt(("chat_option", id.0, &option.id))
+                                .selected_text(RichText::new(current).size(11.0))
+                                .show_ui(ui, |ui| {
+                                    for choice in &option.choices {
+                                        let selected = choice.value == option.current;
+                                        if ui.selectable_label(selected, &choice.label).clicked()
+                                            && !selected
+                                        {
+                                            commands.push(Command::ChatSetConfig(
+                                                id,
+                                                option.id.clone(),
+                                                choice.value.clone(),
+                                            ));
+                                        }
+                                    }
+                                })
+                                .response
+                                .on_hover_text(&option.description);
+                        }
+                    });
+                }
             });
         ui.separator();
 

@@ -28,6 +28,8 @@ pub(crate) enum Command {
         lumen_agent_core::RequestToken,
         lumen_agent_core::api::ApprovalDecisionId,
     ),
+    /// Change one setting (model, permission mode, ...) of a session.
+    ChatSetConfig(lumen_agent_core::SessionId, String, String),
     ArchiveChat(lumen_agent_core::SessionId),
     PinChat(lumen_agent_core::SessionId, bool),
     /// Open a blank task editor tab in the given scope.

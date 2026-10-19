@@ -117,6 +117,9 @@ impl LumenApp {
         if !known {
             return;
         }
+        if let Some(hub) = self.view.native_agents.as_mut() {
+            hub.ensure_ready(id);
+        }
         self.view.chats.open(id);
         self.view.settings.open = false;
         self.view.task_editors.deactivate();
@@ -163,6 +166,18 @@ impl LumenApp {
     ) {
         if let Some(hub) = self.view.native_agents.as_mut() {
             hub.reply_approval(id, token, decision);
+        }
+    }
+
+    pub(super) fn chat_set_config(&mut self, id: SessionId, option: String, value: String) {
+        let Some(hub) = self.view.native_agents.as_mut() else {
+            return;
+        };
+        let patch = lumen_agent_core::api::ConfigPatch {
+            values: vec![(option, value)],
+        };
+        if !hub.set_config(id, patch) {
+            self.view.status = "The session is not ready yet; try again in a moment".into();
         }
     }
 
@@ -352,5 +367,23 @@ mod tests {
         app.execute(Command::OpenChat(SessionId(1)), &ctx);
         assert!(app.view.chats.tabs().is_empty());
         assert!(app.view.status.contains("not enabled"));
+    }
+
+    #[test]
+    fn the_chat_header_offers_the_session_settings_and_changing_one_applies_it() {
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
+        let id = app.view.chats.active().unwrap();
+        settle(&mut app, &ctx);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "Model"), "the model selector is shown");
+        app.execute(
+            Command::ChatSetConfig(id, "model".into(), "smart".into()),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+        let hub = app.view.native_agents.as_ref().unwrap();
+        let config = hub.live(id).unwrap().model.config.as_ref().unwrap();
+        assert_eq!(config.get("model").unwrap().current, "smart");
     }
 }
