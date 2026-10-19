@@ -53,6 +53,8 @@ pub(crate) enum SendError {
     Archived,
     EmptyMessage,
     ProviderUnavailable,
+    /// Lumen is quitting; nothing new starts.
+    ShuttingDown,
 }
 
 /// Per-session runtime state; the persistent facts live in the registry.
@@ -77,6 +79,13 @@ pub(crate) struct Live {
     config_queue: VecDeque<ConfigPatch>,
     /// `StartTurn` has been sent for the current prompt.
     starting: bool,
+    /// The current turn was already retried once after the provider lost the
+    /// session (for example after the agent restarted).
+    reattached: bool,
+    /// A turn has run since the session was attached, so it may hold a process.
+    had_turn: bool,
+    /// When the session last became idle (seconds); drives releasing idle sessions.
+    idle_since: u64,
 }
 
 enum HeldReply {
@@ -98,6 +107,9 @@ impl Live {
             config_in_flight: 0,
             config_queue: VecDeque::new(),
             starting: false,
+            reattached: false,
+            had_turn: false,
+            idle_since: 0,
         }
     }
 }
@@ -123,6 +135,8 @@ pub(crate) struct AgentHub {
     now: Box<dyn Fn() -> u64 + Send>,
     /// Set when the registry changed and should be saved.
     pub(crate) registry_dirty: bool,
+    /// Shutdown operations still open, per provider; `Some` once shutdown began.
+    shutdown_ops: Option<Vec<(ProviderId, OperationId)>>,
 }
 
 fn system_seconds() -> u64 {
@@ -146,6 +160,7 @@ impl AgentHub {
             next_client_id: 1,
             now: Box::new(system_seconds),
             registry_dirty: false,
+            shutdown_ops: None,
         }
     }
 
@@ -198,6 +213,9 @@ impl AgentHub {
         session: SessionId,
         input: Vec<InputBlock>,
     ) -> Result<Ticket, SendError> {
+        if self.shutdown_ops.is_some() {
+            return Err(SendError::ShuttingDown);
+        }
         let record = self
             .registry
             .get(session)
@@ -295,14 +313,19 @@ impl AgentHub {
     /// against the revision the previous one produced, so quick edits in a row
     /// all apply instead of colliding.
     pub(crate) fn set_config(&mut self, session: SessionId, patch: ConfigPatch) -> bool {
-        let Some(live) = self.live.get_mut(&session).filter(|l| l.ready) else {
-            return false;
-        };
-        if patch.is_empty() {
+        if patch.is_empty() || self.shutdown_ops.is_some() {
             return false;
         }
+        let Some(live) = self.live.get_mut(&session) else {
+            return false;
+        };
         live.config_queue.push_back(patch);
-        self.pump_config(session);
+        if live.ready {
+            self.pump_config(session);
+        } else {
+            // Released or lost: attach again, then the change goes out.
+            self.ensure_ready(session);
+        }
         true
     }
 
@@ -570,6 +593,9 @@ impl AgentHub {
             }
             live.turn = None;
             live.starting = false;
+            live.reattached = false;
+            live.had_turn = true;
+            live.idle_since = now;
             live.preparing = false;
             live.held_reply = None;
             live.error = error;
@@ -592,6 +618,7 @@ impl AgentHub {
             }
         }
         self.run_scheduler();
+        self.release_idle();
     }
 
     fn handle(&mut self, provider: ProviderId, envelope: EventEnvelope) {
@@ -603,6 +630,9 @@ impl AgentHub {
         let session = envelope.session;
         match &envelope.event {
             AgentEvent::OperationFinished(outcome) => {
+                if let (Some(open), Some(op)) = (self.shutdown_ops.as_mut(), envelope.operation) {
+                    open.retain(|entry| *entry != (provider, op));
+                }
                 if let Some(op) = envelope.operation
                     && let Some(pending) = self.ops.remove(&(provider, op))
                 {
@@ -641,6 +671,17 @@ impl AgentHub {
                     self.end_turn(session, error, label);
                 }
             }
+            AgentEvent::RuntimeExited { .. } => {
+                // A shared agent process (Codex) took its sessions with it; they
+                // must be attached again before the next turn.
+                if provider == ProviderId::Codex
+                    && self.shutdown_ops.is_none()
+                    && let Some(live) = session.and_then(|s| self.live.get_mut(&s))
+                {
+                    live.ready = false;
+                    live.preparing = false;
+                }
+            }
             AgentEvent::MetadataChanged { title } => {
                 if let Some(session) = session {
                     self.registry.suggest_title(session, title);
@@ -649,6 +690,26 @@ impl AgentHub {
             }
             _ => {}
         }
+    }
+
+    /// The provider no longer knows the session (its agent restarted): attach it
+    /// again and let the turn go through once. False when already retried.
+    fn reattach_once(&mut self, session: SessionId) -> bool {
+        let Some(provider) = self.registry.get(session).map(|r| r.provider) else {
+            return false;
+        };
+        let Some(live) = self.live.get_mut(&session) else {
+            return false;
+        };
+        if live.reattached || live.current.is_none() {
+            return false;
+        }
+        live.reattached = true;
+        live.ready = false;
+        live.preparing = false;
+        live.starting = false;
+        self.prepare(session, provider);
+        true
     }
 
     /// A settings change was answered: send the next one, or let a waiting turn go.
@@ -681,11 +742,14 @@ impl AgentHub {
                     }
                 }
                 self.restore_prefs(session);
+                self.pump_config(session);
                 self.start_current(session, provider);
             }
             (Pending::Prepare(session), OperationOutcome::Succeeded(_)) => {
                 self.fail_turn(session, "The agent answered unexpectedly".into());
             }
+            (Pending::Start(session), OperationOutcome::Failed(AgentError::Stale { .. }))
+                if self.reattach_once(session) => {}
             (
                 Pending::Prepare(session) | Pending::Start(session),
                 OperationOutcome::Failed(error),
@@ -729,11 +793,84 @@ impl AgentHub {
         }
     }
 
-    /// Stop everything: cancel queued work, ask backends to shut down. The caller
-    /// keeps ticking until [`AgentHub::is_shut_down`].
+    /// Stop everything: queued work is cancelled, waiting approvals declined,
+    /// running turns interrupted and every process stopped. Keep ticking until
+    /// [`AgentHub::is_shut_down`]. Safe to call twice.
     pub(crate) fn begin_shutdown(&mut self) {
-        for backend in self.backends.values_mut() {
-            let _ = backend.begin_shutdown(Duration::from_secs(3));
+        if self.shutdown_ops.is_some() {
+            return;
+        }
+        let mut open = Vec::new();
+        for (provider, backend) in &mut self.backends {
+            if let Ok(op) = backend.begin_shutdown(Duration::from_secs(3)) {
+                open.push((*provider, op));
+            }
+        }
+        self.shutdown_ops = Some(open);
+    }
+
+    pub(crate) fn shutdown_started(&self) -> bool {
+        self.shutdown_ops.is_some()
+    }
+
+    /// Every backend has finished shutting down.
+    pub(crate) fn is_shut_down(&self) -> bool {
+        self.shutdown_ops.as_ref().is_some_and(Vec::is_empty)
+    }
+
+    /// Sessions idle this long give up their provider session (and with it any
+    /// process). They attach again on the next message.
+    pub(crate) const IDLE_RELEASE_SECONDS: u64 = 300;
+    /// At most this many idle sessions keep a warm provider session.
+    pub(crate) const WARM_IDLE_SESSIONS: usize = 2;
+
+    /// Release idle sessions: those past the timeout, and the oldest beyond the
+    /// warm limit. Never touches a session that is working, waiting, has queued
+    /// messages or unanswered settings changes.
+    pub(crate) fn release_idle(&mut self) {
+        if self.shutdown_ops.is_some() {
+            return;
+        }
+        let now = (self.now)();
+        let mut idle: Vec<(u64, SessionId)> = self
+            .live
+            .iter()
+            .filter(|(id, live)| {
+                live.ready
+                    && live.had_turn
+                    && live.current.is_none()
+                    && live.prompts.is_empty()
+                    && live.config_in_flight == 0
+                    && live.config_queue.is_empty()
+                    && !live.model.needs_attention()
+                    && live.model.state == TurnState::Idle
+                    && self.status(**id) != SessionStatus::Working
+            })
+            .map(|(id, live)| (live.idle_since, *id))
+            .collect();
+        idle.sort();
+        let excess = idle.len().saturating_sub(Self::WARM_IDLE_SESSIONS);
+        let release: Vec<SessionId> = idle
+            .iter()
+            .enumerate()
+            .filter(|(index, (since, _))| {
+                *index < excess || now.saturating_sub(*since) >= Self::IDLE_RELEASE_SECONDS
+            })
+            .map(|(_, (_, id))| *id)
+            .collect();
+        for session in release {
+            let Some(provider) = self.registry.get(session).map(|r| r.provider) else {
+                continue;
+            };
+            if self.submit(
+                provider,
+                AgentOperation::DetachSession { session },
+                Pending::Other,
+            ) && let Some(live) = self.live.get_mut(&session)
+            {
+                live.ready = false;
+                live.had_turn = false;
+            }
         }
     }
 }
@@ -1087,5 +1224,141 @@ mod tests {
         hub.set_config(session, ConfigPatch::reset("verbose"));
         settle(&mut hub, |h| current(h, session, "verbose") == "false");
         assert!(hub.registry.get(session).unwrap().prefs.is_empty());
+    }
+
+    /// Fails the first `StartTurn` the way Codex does after its agent restarted.
+    struct LosesSessionOnce {
+        inner: FakeBackend,
+        failed_once: bool,
+    }
+
+    impl AgentBackend for LosesSessionOnce {
+        fn descriptor(&self) -> &lumen_agent_core::ProviderDescriptor {
+            self.inner.descriptor()
+        }
+
+        fn try_submit(
+            &mut self,
+            request: Request,
+        ) -> Result<OperationId, lumen_agent_core::SubmitError> {
+            if matches!(request.operation, AgentOperation::StartTurn { .. }) && !self.failed_once {
+                self.failed_once = true;
+                // A request the fake answers with Stale stands in for the real one.
+                return self.inner.try_submit(Request {
+                    client_request_id: request.client_request_id,
+                    operation: AgentOperation::InterruptTurn {
+                        session: SessionId(9999),
+                        turn: TurnId("lost".into()),
+                    },
+                });
+            }
+            self.inner.try_submit(request)
+        }
+
+        fn poll_events(&mut self, budget: PollBudget) -> Vec<EventEnvelope> {
+            self.inner.poll_events(budget)
+        }
+
+        fn begin_shutdown(
+            &mut self,
+            deadline: Duration,
+        ) -> Result<OperationId, lumen_agent_core::SubmitError> {
+            self.inner.begin_shutdown(deadline)
+        }
+    }
+
+    #[test]
+    fn a_session_the_provider_lost_is_attached_again_and_the_turn_still_runs() {
+        let backends: Vec<(ProviderId, Box<dyn AgentBackend>)> = vec![(
+            ProviderId::Codex,
+            Box::new(LosesSessionOnce {
+                inner: FakeBackend::new(ProviderId::Codex),
+                failed_once: false,
+            }),
+        )];
+        let mut hub = AgentHub::new(backends, Registry::new()).with_clock(|| 1000);
+        let session = hub.create_session(ProviderId::Codex, "/w".into());
+        hub.send(session, text("hello")).unwrap();
+        settle(&mut hub, |h| idle(h, session));
+        let live = hub.live(session).unwrap();
+        assert_eq!(live.model.last_outcome, Some(TurnOutcome::Completed));
+        assert!(live.error.is_none(), "{:?}", live.error);
+    }
+
+    #[test]
+    fn shutdown_stops_work_refuses_new_messages_and_finishes() {
+        let mut hub = hub();
+        let session = hub.create_session(ProviderId::Claude, "/w".into());
+        hub.send(session, text("slow: long task")).unwrap();
+        settle(&mut hub, |h| {
+            h.live(session)
+                .is_some_and(|l| l.model.state != TurnState::Idle)
+        });
+        assert!(!hub.is_shut_down());
+        hub.begin_shutdown();
+        hub.begin_shutdown();
+        assert_eq!(
+            hub.send(session, text("more")),
+            Err(SendError::ShuttingDown)
+        );
+        settle(&mut hub, |h| h.is_shut_down());
+        assert!(hub.shutdown_started());
+        assert!(!hub.set_config(session, ConfigPatch::set("model", "smart")));
+    }
+
+    #[test]
+    fn idle_sessions_are_released_after_a_timeout_and_beyond_the_warm_limit_and_come_back() {
+        let clock = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1000));
+        let reader = clock.clone();
+        let backends: Vec<(ProviderId, Box<dyn AgentBackend>)> = vec![(
+            ProviderId::Codex,
+            Box::new(FakeBackend::new(ProviderId::Codex)),
+        )];
+        let mut hub = AgentHub::new(backends, Registry::new())
+            .with_clock(move || reader.load(std::sync::atomic::Ordering::SeqCst));
+        let ids: Vec<SessionId> = (0..4)
+            .map(|n| hub.create_session(ProviderId::Codex, format!("/w{n}").into()))
+            .collect();
+        for (n, id) in ids.iter().enumerate() {
+            clock.store(1000 + n as u64 * 10, std::sync::atomic::Ordering::SeqCst);
+            hub.send(*id, text("hi")).unwrap();
+            settle(&mut hub, |h| idle(h, *id));
+        }
+        // Four idle sessions: only the two most recent stay warm.
+        let ready: Vec<bool> = ids.iter().map(|id| hub.live(*id).unwrap().ready).collect();
+        assert_eq!(ready, [false, false, true, true]);
+        // Past the timeout the rest are released too.
+        clock.store(1000 + 400, std::sync::atomic::Ordering::SeqCst);
+        hub.tick();
+        assert!(ids.iter().all(|id| !hub.live(*id).unwrap().ready));
+        // A message to a released session attaches it again with its history intact.
+        hub.send(ids[0], text("back again")).unwrap();
+        settle(&mut hub, |h| idle(h, ids[0]));
+        let live = hub.live(ids[0]).unwrap();
+        assert_eq!(live.model.last_outcome, Some(TurnOutcome::Completed));
+        assert!(live.error.is_none(), "{:?}", live.error);
+    }
+
+    #[test]
+    fn a_working_or_waiting_session_is_never_released() {
+        let clock = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1000));
+        let reader = clock.clone();
+        let backends: Vec<(ProviderId, Box<dyn AgentBackend>)> = vec![(
+            ProviderId::Codex,
+            Box::new(FakeBackend::new(ProviderId::Codex)),
+        )];
+        let mut hub = AgentHub::new(backends, Registry::new())
+            .with_clock(move || reader.load(std::sync::atomic::Ordering::SeqCst));
+        let waiting = hub.create_session(ProviderId::Codex, "/a".into());
+        hub.send(waiting, text("approve: touch")).unwrap();
+        settle(&mut hub, |h| {
+            h.status(waiting) == SessionStatus::NeedsAttention
+        });
+        clock.store(1000 + 10_000, std::sync::atomic::Ordering::SeqCst);
+        hub.tick();
+        assert!(
+            hub.live(waiting).unwrap().ready,
+            "an unanswered approval keeps its session"
+        );
     }
 }

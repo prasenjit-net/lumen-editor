@@ -11,6 +11,9 @@ use lumen_agent_core::{
 use std::time::Duration;
 
 /// How often the UI re-polls while agent work is in flight and no event woke it.
+/// How long quitting waits for agents to stop before closing anyway.
+const QUIT_GRACE: Duration = Duration::from_secs(4);
+
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// The configured program, or the bare name to search PATH for.
@@ -77,11 +80,51 @@ impl LumenApp {
         self.view.native_agents = Some(super::agent_hub::AgentHub::new(backends, registry));
     }
 
+    /// The window is closing for good. Agents are asked to stop first (turns
+    /// interrupted, approvals declined, processes ended); the window closes when
+    /// they report done or after a short deadline. Without agents it closes now.
+    pub(crate) fn close_window(&mut self, ctx: &egui::Context) {
+        if let Some(hub) = self.view.native_agents.as_mut()
+            && !hub.is_shut_down()
+        {
+            if self.view.native_quit_deadline.is_none() {
+                hub.begin_shutdown();
+                self.view.native_quit_deadline = Some(std::time::Instant::now() + QUIT_GRACE);
+                self.view.status = "Stopping agents…".into();
+            }
+            ctx.request_repaint();
+            return;
+        }
+        self.view.allow_quit = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    /// Closing the window should first stop running agents.
+    pub(crate) fn native_agents_need_shutdown(&self) -> bool {
+        self.view.native_quit_deadline.is_none()
+            && self
+                .view
+                .native_agents
+                .as_ref()
+                .is_some_and(|hub| !hub.is_shut_down())
+    }
+
     pub(crate) fn poll_native_agents(&mut self, ctx: &egui::Context) {
         let Some(hub) = self.view.native_agents.as_mut() else {
             return;
         };
         hub.tick();
+        if self.view.native_quit_deadline.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
+        if let Some(deadline) = self.view.native_quit_deadline
+            && (hub.is_shut_down() || std::time::Instant::now() >= deadline)
+        {
+            self.view.native_quit_deadline = None;
+            self.view.allow_quit = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
         if hub.registry_dirty
             && let Some(path) = &self.native_agents_store
         {
@@ -463,5 +506,35 @@ mod tests {
         let output = frame(&mut app, &ctx, 1000.0);
         assert!(!has_text(&output, "Working"));
         assert!(!has_text(&output, "Stop"));
+    }
+
+    #[test]
+    fn quitting_stops_the_agents_first_and_closes_when_they_are_done() {
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
+        let id = app.view.chats.active().unwrap();
+        app.view.chats.draft_mut(id).push_str("slow: long running");
+        app.execute(Command::ChatSend(id), &ctx);
+        settle(&mut app, &ctx);
+        assert!(app.native_agents_need_shutdown());
+        app.close_window(&ctx);
+        assert!(!app.view.allow_quit, "not closed while agents are stopping");
+        assert!(app.view.native_quit_deadline.is_some());
+        assert!(
+            !app.native_agents_need_shutdown(),
+            "a second close request goes through"
+        );
+        settle(&mut app, &ctx);
+        assert!(app.view.allow_quit, "closed once they reported done");
+        assert!(app.view.native_quit_deadline.is_none());
+    }
+
+    #[test]
+    fn quitting_without_native_agents_closes_immediately() {
+        let mut app = LumenApp::default();
+        let ctx = egui::Context::default();
+        assert!(!app.native_agents_need_shutdown());
+        app.close_window(&ctx);
+        assert!(app.view.allow_quit);
     }
 }

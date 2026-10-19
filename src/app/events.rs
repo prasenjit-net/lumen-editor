@@ -120,7 +120,9 @@ impl LumenApp {
         }
         if ctx.input(|input| input.viewport().close_requested())
             && !self.view.allow_quit
-            && (self.editor.has_unsaved_changes() || self.view.settings.has_drafts())
+            && (self.editor.has_unsaved_changes()
+                || self.view.settings.has_drafts()
+                || self.native_agents_need_shutdown())
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.request_quit(ctx);
