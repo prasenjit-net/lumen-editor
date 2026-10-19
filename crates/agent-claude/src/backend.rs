@@ -153,8 +153,8 @@ struct Runtime {
     controls: HashMap<String, OperationId>,
     stream: StreamState,
     /// The settings this process was launched with.
-    launched_model: String,
-    launched_mode: String,
+    /// The settings this process was started with (see `launch_key`).
+    launched_key: String,
     stderr_tail: String,
 }
 
@@ -445,25 +445,6 @@ impl ClaudeBackend {
         }
     }
 
-    fn model_and_mode(patch: &ConfigPatch, config: &mut SessionConfig) -> Result<(), AgentError> {
-        for (id, value) in &patch.values {
-            let valid = config
-                .get(id)
-                .is_some_and(|o| o.choices.iter().any(|c| c.value == *value));
-            if !valid {
-                return Err(AgentError::InvalidConfig {
-                    detail: format!("{id} cannot be {value}"),
-                });
-            }
-        }
-        for (id, value) in &patch.values {
-            if let Some(option) = config.options.iter_mut().find(|o| o.id == *id) {
-                option.current = value.clone();
-            }
-        }
-        Ok(())
-    }
-
     fn register(
         &mut self,
         session: SessionId,
@@ -500,10 +481,19 @@ impl ClaudeBackend {
                 },
             );
         }
-        let mut config = convert::session_config(1, "default", "default");
-        if let Err(error) = Self::model_and_mode(&patch, &mut config) {
-            return self.fail(op, error);
-        }
+        let base = convert::session_config(1, &convert::Prefs::default());
+        let config = if patch.is_empty() {
+            base
+        } else {
+            match base.applying(&patch) {
+                Ok(mut config) => {
+                    // Choosing settings at creation is not a revision of them.
+                    config.revision = ConfigRevision(1);
+                    config
+                }
+                Err(error) => return self.fail(op, error),
+            }
+        };
         let native = (self.config.new_session_id)();
         self.register(session, native.clone(), workspace, config.clone(), false);
         self.emit(Some(op), session, None, AgentEvent::SessionCreated);
@@ -544,7 +534,7 @@ impl ClaudeBackend {
             .sessions
             .get(&session)
             .map(|s| s.config.clone())
-            .unwrap_or_else(|| convert::session_config(1, "default", "default"));
+            .unwrap_or_else(|| convert::session_config(1, &convert::Prefs::default()));
         self.register(session, native.id.clone(), workspace, config.clone(), true);
         self.emit(Some(op), session, None, AgentEvent::SessionAttached);
         let out = OperationOutput::SessionReady {
@@ -578,11 +568,10 @@ impl ClaudeBackend {
                 },
             );
         }
-        let mut next = record.config.clone();
-        if let Err(error) = Self::model_and_mode(&patch, &mut next) {
-            return self.fail(op, error);
-        }
-        next.revision = ConfigRevision(next.revision.0 + 1);
+        let next = match record.config.applying(&patch) {
+            Ok(next) => next,
+            Err(error) => return self.fail(op, error),
+        };
         record.config = next.clone();
         self.emit(
             Some(op),
@@ -594,6 +583,15 @@ impl ClaudeBackend {
             op,
             OperationOutcome::Succeeded(OperationOutput::Config(next)),
         );
+    }
+
+    /// Settings that are only read when the process starts; a change restarts it.
+    fn launch_key(record: &Session) -> String {
+        ["model", "effort", "permission_mode"]
+            .iter()
+            .map(|id| record.config.get(id).map_or("", |o| o.current.as_str()))
+            .collect::<Vec<_>>()
+            .join("|")
     }
 
     fn launch_args(record: &Session) -> Vec<OsString> {
@@ -625,6 +623,11 @@ impl ClaudeBackend {
             args.push("--model".into());
             args.push(model.into());
         }
+        let effort = current("effort");
+        if !effort.is_empty() && effort != "default" {
+            args.push("--effort".into());
+            args.push(effort.into());
+        }
         args.push(
             if record.history {
                 "--resume"
@@ -639,20 +642,14 @@ impl ClaudeBackend {
 
     /// Make sure the session has a process matching its current settings.
     fn ensure_runtime(&mut self, session: SessionId) -> Result<(), AgentError> {
-        let (model, mode, stale) = {
+        let (key, stale) = {
             let record = &self.sessions[&session];
-            let current = |id: &str| {
-                record
-                    .config
-                    .get(id)
-                    .map(|o| o.current.clone())
-                    .unwrap_or_default()
-            };
-            let (model, mode) = (current("model"), current("permission_mode"));
-            let stale = record.runtime.as_ref().is_some_and(|r| {
-                r.active.is_none() && (r.launched_model != model || r.launched_mode != mode)
-            });
-            (model, mode, stale)
+            let key = Self::launch_key(record);
+            let stale = record
+                .runtime
+                .as_ref()
+                .is_some_and(|r| r.active.is_none() && r.launched_key != key);
+            (key, stale)
         };
         if stale {
             // Settings changed while idle: restart the process so they apply.
@@ -677,8 +674,7 @@ impl ClaudeBackend {
                 requests: HashMap::new(),
                 controls: HashMap::new(),
                 stream: StreamState::default(),
-                launched_model: model,
-                launched_mode: mode,
+                launched_key: key,
                 stderr_tail: String::new(),
             });
         }
@@ -1096,10 +1092,35 @@ impl ClaudeBackend {
                     }
                 }
             }
+            Message::System { subtype, value } if subtype == "init" => {
+                self.reconcile_init(session, &value)
+            }
             Message::StreamEvent { .. }
             | Message::System { .. }
             | Message::RateLimit(_)
             | Message::Other(_) => {}
+        }
+    }
+
+    /// Record what the process says it is really using, next to what was asked.
+    fn reconcile_init(&mut self, session: SessionId, init: &Value) {
+        let (model, mode) = convert::init_report(init);
+        let Some(record) = self.sessions.get_mut(&session) else {
+            return;
+        };
+        let mut changed = false;
+        for (id, value) in [("model", model), ("permission_mode", mode)] {
+            if let (Some(option), Some(value)) =
+                (record.config.options.iter_mut().find(|o| o.id == id), value)
+                && option.effective.as_ref() != Some(&value)
+            {
+                option.effective = Some(value);
+                changed = true;
+            }
+        }
+        if changed {
+            let config = record.config.clone();
+            self.emit(None, session, None, AgentEvent::ConfigChanged(config));
         }
     }
 

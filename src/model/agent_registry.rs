@@ -33,6 +33,10 @@ pub(crate) struct SessionRecord {
     pub(crate) updated: u64,
     /// Short note of how the last turn ended ("completed", "failed", ...).
     pub(crate) last_outcome: Option<String>,
+    /// The user's explicit setting choices (model, effort, ...) that differ from
+    /// the provider defaults, re-applied when the session is resumed. Provider
+    /// observations are never stored here.
+    pub(crate) prefs: Vec<(String, String)>,
 }
 
 impl SessionRecord {
@@ -97,6 +101,7 @@ impl Registry {
             archived: false,
             updated: now,
             last_outcome: None,
+            prefs: Vec::new(),
         });
         id
     }
@@ -176,6 +181,14 @@ impl Registry {
             if let Some(outcome) = outcome {
                 record.last_outcome = Some(outcome.into());
             }
+        }
+    }
+
+    pub(crate) fn set_prefs(&mut self, id: SessionId, prefs: Vec<(String, String)>) {
+        if let Some(record) = self.get_mut(id)
+            && record.prefs != prefs
+        {
+            record.prefs = prefs;
         }
     }
 
@@ -274,6 +287,7 @@ impl Registry {
                     "archived": r.archived,
                     "updated": r.updated,
                     "last_outcome": r.last_outcome,
+                    "prefs": r.prefs.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
                 })
             })
             .collect();
@@ -325,6 +339,22 @@ fn read_record(row: &Value) -> Option<SessionRecord> {
         archived: flag("archived"),
         updated: row.get("updated").and_then(Value::as_u64).unwrap_or(0),
         last_outcome: text("last_outcome").map(str::to_string),
+        prefs: row
+            .get("prefs")
+            .and_then(Value::as_array)
+            .map(|pairs| {
+                pairs
+                    .iter()
+                    .filter_map(|pair| {
+                        let pair = pair.as_array()?;
+                        Some((
+                            pair.first()?.as_str()?.to_string(),
+                            pair.get(1)?.as_str()?.to_string(),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -462,6 +492,13 @@ mod tests {
         registry.set_native(a, &native(ProviderId::Codex, "t1"));
         registry.rename(a, "Titled");
         registry.touch(a, 77, Some("completed"));
+        registry.set_prefs(
+            a,
+            vec![
+                ("model".into(), "opus".into()),
+                ("effort".into(), "high".into()),
+            ],
+        );
         let loaded = Registry::from_json(&registry.to_json()).unwrap();
         assert_eq!(loaded.records(), registry.records());
         let mut next = loaded;

@@ -36,6 +36,7 @@ impl LumenApp {
             Command::ChatCancelQueued(id, ticket) => self.chat_cancel_queued(id, ticket),
             Command::ChatApproval(id, token, decision) => self.chat_approval(id, token, decision),
             Command::ChatSetConfig(id, option, value) => self.chat_set_config(id, option, value),
+            Command::ChatResetConfig(id, option) => self.chat_reset_config(id, option),
             Command::ArchiveChat(id) => self.archive_chat(id),
             Command::PinChat(id, pinned) => self.pin_chat(id, pinned),
             Command::NewTaskEditor(scope) => {

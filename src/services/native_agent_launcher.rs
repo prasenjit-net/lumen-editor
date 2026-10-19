@@ -353,7 +353,7 @@ mod live {
         panic!("timed out; events: {seen:#?}");
     }
 
-    fn run_turn(backend: &mut dyn AgentBackend) -> SessionModel {
+    fn run_turn(backend: &mut dyn AgentBackend, config: ConfigPatch) -> SessionModel {
         let mut seen = Vec::new();
         let workspace = std::env::temp_dir();
         let mut id = 0;
@@ -391,7 +391,7 @@ mod live {
             AgentOperation::CreateSession {
                 session: SessionId(1),
                 workspace,
-                config: ConfigPatch::default(),
+                config,
             },
         );
         assert!(
@@ -436,8 +436,8 @@ mod live {
         let launcher = Arc::new(NativeChildLauncher::default());
         let mut backend =
             ClaudeBackend::new(launcher, Arc::new(|| {}), ClaudeConfig::new("claude"));
-        let model = run_turn(&mut backend);
-        println!("{:#?}", model.items);
+        let model = run_turn(&mut backend, ConfigPatch::set("effort", "low"));
+        println!("{:#?}", model.config);
         assert_eq!(model.last_outcome, Some(TurnOutcome::Completed));
     }
 
@@ -446,7 +446,7 @@ mod live {
     fn live_codex_answers_one_prompt() {
         let launcher = Arc::new(NativeChildLauncher::default());
         let mut backend = CodexBackend::new(launcher, Arc::new(|| {}), CodexConfig::new("codex"));
-        let model = run_turn(&mut backend);
+        let model = run_turn(&mut backend, ConfigPatch::set("effort", "low"));
         println!("{:#?}", model.items);
         assert_eq!(model.last_outcome, Some(TurnOutcome::Completed));
     }

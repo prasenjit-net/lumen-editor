@@ -13,6 +13,16 @@ use std::time::Duration;
 /// How often the UI re-polls while agent work is in flight and no event woke it.
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+/// The configured program, or the bare name to search PATH for.
+fn program(configured: &str, default: &str) -> String {
+    let configured = configured.trim();
+    if configured.is_empty() {
+        default.into()
+    } else {
+        configured.into()
+    }
+}
+
 impl LumenApp {
     /// Turn on the native Codex / Claude Code integration. Providers are launched
     /// lazily, so this costs nothing until a chat sends its first message.
@@ -27,6 +37,9 @@ impl LumenApp {
             crate::services::agent_process::cached_login_path().map(|p| p.as_os_str()),
             std::env::var_os("PATH").as_deref(),
         );
+        // Programs are chosen in User settings only, never by a project file.
+        let codex_program = self.view.settings.user_text("agent.native.codex_command");
+        let claude_program = self.view.settings.user_text("agent.native.claude_command");
         let launcher = std::sync::Arc::new(NativeChildLauncher { path: Some(path) });
         let repaint = ctx.clone();
         let wake: lumen_agent_core::launcher::Wake =
@@ -49,7 +62,7 @@ impl LumenApp {
                 Box::new(lumen_agent_codex::CodexBackend::new(
                     launcher.clone(),
                     wake.clone(),
-                    lumen_agent_codex::CodexConfig::new("codex"),
+                    lumen_agent_codex::CodexConfig::new(program(&codex_program, "codex")),
                 )),
             ),
             (
@@ -57,7 +70,7 @@ impl LumenApp {
                 Box::new(lumen_agent_claude::ClaudeBackend::new(
                     launcher,
                     wake,
-                    lumen_agent_claude::ClaudeConfig::new("claude"),
+                    lumen_agent_claude::ClaudeConfig::new(program(&claude_program, "claude")),
                 )),
             ),
         ];
@@ -175,8 +188,18 @@ impl LumenApp {
         };
         let patch = lumen_agent_core::api::ConfigPatch {
             values: vec![(option, value)],
+            ..Default::default()
         };
         if !hub.set_config(id, patch) {
+            self.view.status = "The session is not ready yet; try again in a moment".into();
+        }
+    }
+
+    pub(super) fn chat_reset_config(&mut self, id: SessionId, option: String) {
+        let Some(hub) = self.view.native_agents.as_mut() else {
+            return;
+        };
+        if !hub.set_config(id, lumen_agent_core::api::ConfigPatch::reset(option)) {
             self.view.status = "The session is not ready yet; try again in a moment".into();
         }
     }

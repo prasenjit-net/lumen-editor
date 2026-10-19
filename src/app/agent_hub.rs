@@ -69,6 +69,14 @@ pub(crate) struct Live {
     /// An answer waiting for a slot before it is sent to the provider.
     held_reply: Option<HeldReply>,
     pub(crate) error: Option<String>,
+    /// Settings changes sent to the provider and not yet answered. A turn waits
+    /// for them so it starts with the revision the user last saw.
+    config_in_flight: usize,
+    /// Changes waiting for the previous one to be answered (each needs the
+    /// revision the last produced).
+    config_queue: VecDeque<ConfigPatch>,
+    /// `StartTurn` has been sent for the current prompt.
+    starting: bool,
 }
 
 enum HeldReply {
@@ -87,6 +95,9 @@ impl Live {
             turn: None,
             held_reply: None,
             error: None,
+            config_in_flight: 0,
+            config_queue: VecDeque::new(),
+            starting: false,
         }
     }
 }
@@ -280,26 +291,86 @@ impl AgentHub {
         self.run_scheduler();
     }
 
+    /// Queue a settings change. Changes go to the provider one at a time, each
+    /// against the revision the previous one produced, so quick edits in a row
+    /// all apply instead of colliding.
     pub(crate) fn set_config(&mut self, session: SessionId, patch: ConfigPatch) -> bool {
-        let Some(provider) = self.registry.get(session).map(|r| r.provider) else {
+        let Some(live) = self.live.get_mut(&session).filter(|l| l.ready) else {
             return false;
         };
-        let Some(live) = self.live.get(&session).filter(|l| l.ready) else {
+        if patch.is_empty() {
             return false;
-        };
-        let Some(SessionConfig { revision, .. }) = live.model.config.clone() else {
-            return false;
-        };
-        self.submit(
-            provider,
-            AgentOperation::SetConfig {
-                session,
-                expected_revision: revision,
-                patch,
-            },
-            Pending::Config(session),
-        );
+        }
+        live.config_queue.push_back(patch);
+        self.pump_config(session);
         true
+    }
+
+    fn pump_config(&mut self, session: SessionId) {
+        let Some(provider) = self.registry.get(session).map(|r| r.provider) else {
+            return;
+        };
+        let Some(live) = self.live.get_mut(&session) else {
+            return;
+        };
+        if live.config_in_flight > 0 {
+            return;
+        }
+        let Some(revision) = live.model.config.as_ref().map(|c| c.revision) else {
+            return;
+        };
+        let Some(patch) = live.config_queue.pop_front() else {
+            return;
+        };
+        live.config_in_flight = 1;
+        let operation = AgentOperation::SetConfig {
+            session,
+            expected_revision: revision,
+            patch,
+        };
+        if !self.submit(provider, operation, Pending::Config(session))
+            && let Some(live) = self.live.get_mut(&session)
+        {
+            live.config_in_flight = 0;
+        }
+    }
+
+    /// Re-apply the user's saved choices to a resumed session.
+    fn restore_prefs(&mut self, session: SessionId) {
+        let saved = self
+            .registry
+            .get(session)
+            .map(|r| r.prefs.clone())
+            .unwrap_or_default();
+        let Some(live) = self.live.get_mut(&session) else {
+            return;
+        };
+        let Some(config) = live.model.config.as_ref() else {
+            return;
+        };
+        let values: Vec<(String, String)> = saved
+            .into_iter()
+            .filter(|(id, value)| config.get(id).is_some_and(|o| &o.current != value))
+            .collect();
+        if !values.is_empty() {
+            live.config_queue.push_back(ConfigPatch {
+                values,
+                ..Default::default()
+            });
+            self.pump_config(session);
+        }
+    }
+
+    /// Remember the choices that differ from the provider's defaults.
+    fn remember_prefs(&mut self, session: SessionId, config: &SessionConfig) {
+        let prefs: Vec<(String, String)> = config
+            .options
+            .iter()
+            .filter(|o| o.default.as_ref() != Some(&o.current))
+            .map(|o| (o.id.clone(), o.current.clone()))
+            .collect();
+        self.registry.set_prefs(session, prefs);
+        self.registry_dirty = true;
     }
 
     pub(crate) fn archive(&mut self, session: SessionId) {
@@ -463,6 +534,10 @@ impl AgentHub {
         let (Some(ticket), Some(prompt)) = (live.current, live.prompts.front()) else {
             return;
         };
+        if live.starting || live.config_in_flight > 0 {
+            return;
+        }
+        let expected_revision = live.model.config.as_ref().map(|c| c.revision);
         debug_assert_eq!(prompt.ticket, ticket);
         let shown: Vec<String> = prompt.input.iter().map(describe_block).collect();
         let (item, shown) = (ItemId(format!("user-{}", ticket.0)), shown.join("\n"));
@@ -470,10 +545,11 @@ impl AgentHub {
             session,
             client_turn: ClientTurnId(format!("t{}", ticket.0)),
             input: prompt.input.clone(),
-            expected_revision: None,
+            expected_revision,
         };
         if let Some(live) = self.live.get_mut(&session) {
             live.model.record_user_message(item, shown);
+            live.starting = true;
         }
         if !self.submit(provider, operation, Pending::Start(session)) {
             self.fail_turn(session, "The agent could not be reached".into());
@@ -493,6 +569,7 @@ impl AgentHub {
                 live.prompts.retain(|p| p.ticket != ticket);
             }
             live.turn = None;
+            live.starting = false;
             live.preparing = false;
             live.held_reply = None;
             live.error = error;
@@ -574,6 +651,17 @@ impl AgentHub {
         }
     }
 
+    /// A settings change was answered: send the next one, or let a waiting turn go.
+    fn config_settled(&mut self, session: SessionId) {
+        if let Some(live) = self.live.get_mut(&session) {
+            live.config_in_flight = 0;
+        }
+        self.pump_config(session);
+        if let Some(provider) = self.registry.get(session).map(|r| r.provider) {
+            self.start_current(session, provider);
+        }
+    }
+
     fn settle(&mut self, pending: Pending, outcome: &OperationOutcome) {
         match (pending, outcome) {
             (
@@ -592,6 +680,7 @@ impl AgentHub {
                         live.model.config = Some(config.clone());
                     }
                 }
+                self.restore_prefs(session);
                 self.start_current(session, provider);
             }
             (Pending::Prepare(session), OperationOutcome::Succeeded(_)) => {
@@ -614,11 +703,20 @@ impl AgentHub {
                     live.turn = Some(turn.clone());
                 }
             }
+            (
+                Pending::Config(session),
+                OperationOutcome::Succeeded(OperationOutput::Config(config)),
+            ) => {
+                self.remember_prefs(session, config);
+                self.config_settled(session);
+            }
             (Pending::Config(session), OperationOutcome::Failed(error)) => {
                 if let Some(live) = self.live.get_mut(&session) {
                     live.error = Some(format!("Could not change the setting: {}", describe(error)));
                 }
+                self.config_settled(session);
             }
+            (Pending::Config(session), _) => self.config_settled(session),
             // Interrupt, reply and housekeeping results need no follow-up: their
             // effects arrive as events. A failed reply is shown on the session.
             (Pending::Reply, OperationOutcome::Failed(error)) => {
@@ -867,7 +965,8 @@ mod tests {
         assert!(hub.set_config(
             session,
             ConfigPatch {
-                values: vec![("model".into(), "smart".into())]
+                values: vec![("model".into(), "smart".into())],
+                ..Default::default()
             }
         ));
         settle(&mut hub, |h| {
@@ -907,10 +1006,86 @@ mod tests {
             session,
             ConfigPatch {
                 values: vec![("model".into(), "no-such-model".into())],
+                ..Default::default()
             },
         );
         settle(&mut hub, |h| {
             matches!(h.status(session), SessionStatus::Failed(_))
         });
+    }
+
+    fn current(hub: &AgentHub, session: SessionId, option: &str) -> String {
+        hub.live(session)
+            .and_then(|l| l.model.config.as_ref())
+            .and_then(|c| c.get(option))
+            .map(|o| o.current.clone())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn quick_edits_in_a_row_all_apply_instead_of_colliding_on_the_revision() {
+        let mut hub = hub();
+        let session = hub.create_session(ProviderId::Codex, "/w".into());
+        settle(&mut hub, |h| {
+            h.live(session).is_some_and(|l| l.model.config.is_some())
+        });
+        assert!(hub.set_config(session, ConfigPatch::set("model", "smart")));
+        assert!(hub.set_config(session, ConfigPatch::set("verbose", "true")));
+        settle(&mut hub, |h| current(h, session, "verbose") == "true");
+        assert_eq!(current(&hub, session, "model"), "smart");
+        assert!(hub.live(session).unwrap().error.is_none());
+    }
+
+    #[test]
+    fn a_turn_waits_for_pending_settings_and_starts_with_the_latest_revision() {
+        let mut hub = hub();
+        let session = hub.create_session(ProviderId::Claude, "/w".into());
+        settle(&mut hub, |h| {
+            h.live(session).is_some_and(|l| l.model.config.is_some())
+        });
+        hub.set_config(session, ConfigPatch::set("model", "smart"));
+        hub.send(session, text("hi")).unwrap();
+        settle(&mut hub, |h| idle(h, session));
+        let live = hub.live(session).unwrap();
+        assert_eq!(live.model.last_outcome, Some(TurnOutcome::Completed));
+        assert!(
+            live.error.is_none(),
+            "the revision guard did not reject the turn"
+        );
+    }
+
+    #[test]
+    fn choices_are_remembered_per_session_and_reapplied_when_it_is_resumed() {
+        let mut hub = hub();
+        let session = hub.create_session(ProviderId::Codex, "/w".into());
+        let other = hub.create_session(ProviderId::Codex, "/w".into());
+        settle(&mut hub, |h| {
+            h.live(session).is_some_and(|l| l.model.config.is_some())
+                && h.live(other).is_some_and(|l| l.model.config.is_some())
+        });
+        hub.set_config(session, ConfigPatch::set("verbose", "true"));
+        settle(&mut hub, |h| current(h, session, "verbose") == "true");
+        assert_eq!(
+            hub.registry.get(session).unwrap().prefs,
+            vec![("verbose".to_string(), "true".to_string())],
+            "only the non-default choice is stored"
+        );
+        assert!(
+            hub.registry.get(other).unwrap().prefs.is_empty(),
+            "other sessions are untouched"
+        );
+        assert_eq!(current(&hub, other, "verbose"), "false");
+        // A resume starts from the provider's own state; the saved choice is re-applied.
+        hub.registry
+            .set_prefs(session, vec![("verbose".to_string(), "true".to_string())]);
+        let live = hub.live.get_mut(&session).unwrap();
+        live.ready = false;
+        live.model.config = None;
+        hub.ensure_ready(session);
+        settle(&mut hub, |h| current(h, session, "verbose") == "true");
+        // Reset returns to the default and clears the stored choice.
+        hub.set_config(session, ConfigPatch::reset("verbose"));
+        settle(&mut hub, |h| current(h, session, "verbose") == "false");
+        assert!(hub.registry.get(session).unwrap().prefs.is_empty());
     }
 }

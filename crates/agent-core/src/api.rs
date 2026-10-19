@@ -184,10 +184,33 @@ pub enum InputBlock {
     },
 }
 
-/// What a requested config change touches.
+/// A requested settings change. Evaluated as a whole: either every part applies
+/// or none does. `resets` clear an override so the setting follows the provider's
+/// own default again, which is different from choosing a literal value.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ConfigPatch {
     pub values: Vec<(String, String)>,
+    pub resets: Vec<String>,
+}
+
+impl ConfigPatch {
+    pub fn set(id: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            values: vec![(id.into(), value.into())],
+            resets: Vec::new(),
+        }
+    }
+
+    pub fn reset(id: impl Into<String>) -> Self {
+        Self {
+            values: Vec::new(),
+            resets: vec![id.into()],
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty() && self.resets.is_empty()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -197,17 +220,44 @@ pub enum ConfigScope {
     Turn,
 }
 
+/// When a change takes effect.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mutability {
+    /// Only while no turn is running.
     IdleOnly,
+    /// Staged now, used from the next turn.
     NextTurn,
     Live,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ConfigKind {
+    #[default]
+    Select,
+    /// On/off; the choices are `"true"` and `"false"`.
+    Toggle,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigChoice {
     pub value: String,
     pub label: String,
+    pub description: String,
+}
+
+impl ConfigChoice {
+    pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+            description: String::new(),
+        }
+    }
+
+    pub fn described(mut self, description: impl Into<String>) -> Self {
+        self.description = description.into();
+        self
+    }
 }
 
 /// One advertised setting (model, reasoning effort, permission profile, ...).
@@ -217,10 +267,73 @@ pub struct ConfigOption {
     pub id: String,
     pub label: String,
     pub description: String,
+    pub kind: ConfigKind,
     pub choices: Vec<ConfigChoice>,
+    /// What Lumen will use on the next turn (the user's choice, or the default).
     pub current: String,
+    /// What a reset returns to; `None` means the setting cannot be reset.
+    pub default: Option<String>,
+    /// What the provider reported actually using, when known. It can differ from
+    /// `current` (a staged change, or a value outside the offered choices).
+    pub effective: Option<String>,
+    /// Why the setting cannot be changed right now, if it cannot.
+    pub disabled: Option<String>,
     pub scope: ConfigScope,
     pub mutability: Mutability,
+}
+
+impl ConfigOption {
+    pub fn select(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        description: impl Into<String>,
+        choices: Vec<ConfigChoice>,
+        current: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            description: description.into(),
+            kind: ConfigKind::Select,
+            choices,
+            current: current.into(),
+            default: None,
+            effective: None,
+            disabled: None,
+            scope: ConfigScope::Session,
+            mutability: Mutability::NextTurn,
+        }
+    }
+
+    pub fn toggle(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        description: impl Into<String>,
+        on: bool,
+    ) -> Self {
+        let mut option = Self::select(
+            id,
+            label,
+            description,
+            vec![
+                ConfigChoice::new("true", "On"),
+                ConfigChoice::new("false", "Off"),
+            ],
+            if on { "true" } else { "false" },
+        );
+        option.kind = ConfigKind::Toggle;
+        option.default = Some("false".into());
+        option
+    }
+
+    pub fn with_default(mut self, default: impl Into<String>) -> Self {
+        self.default = Some(default.into());
+        self
+    }
+
+    pub fn is_on(&self) -> bool {
+        self.current == "true"
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -232,6 +345,65 @@ pub struct SessionConfig {
 impl SessionConfig {
     pub fn get(&self, id: &str) -> Option<&ConfigOption> {
         self.options.iter().find(|option| option.id == id)
+    }
+
+    /// Check a patch against the offered options without changing anything. Every
+    /// part must be valid and editable, so a bad part rejects the whole patch.
+    pub fn validate(&self, patch: &ConfigPatch) -> Result<(), crate::AgentError> {
+        let invalid = |detail: String| crate::AgentError::InvalidConfig { detail };
+        for (id, value) in &patch.values {
+            let option = self
+                .get(id)
+                .ok_or_else(|| invalid(format!("there is no setting called {id}")))?;
+            if let Some(reason) = &option.disabled {
+                return Err(invalid(format!(
+                    "{} cannot be changed: {reason}",
+                    option.label
+                )));
+            }
+            if !option.choices.iter().any(|choice| choice.value == *value) {
+                return Err(invalid(format!("{} cannot be {value}", option.label)));
+            }
+        }
+        for id in &patch.resets {
+            let option = self
+                .get(id)
+                .ok_or_else(|| invalid(format!("there is no setting called {id}")))?;
+            if let Some(reason) = &option.disabled {
+                return Err(invalid(format!(
+                    "{} cannot be changed: {reason}",
+                    option.label
+                )));
+            }
+            if option.default.is_none() {
+                return Err(invalid(format!(
+                    "{} has no default to return to",
+                    option.label
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// The configuration after a patch, with a higher revision. Nothing changes
+    /// when the patch is invalid.
+    pub fn applying(&self, patch: &ConfigPatch) -> Result<SessionConfig, crate::AgentError> {
+        self.validate(patch)?;
+        let mut next = self.clone();
+        for id in &patch.resets {
+            if let Some(option) = next.options.iter_mut().find(|o| &o.id == id)
+                && let Some(default) = option.default.clone()
+            {
+                option.current = default;
+            }
+        }
+        for (id, value) in &patch.values {
+            if let Some(option) = next.options.iter_mut().find(|o| &o.id == id) {
+                option.current = value.clone();
+            }
+        }
+        next.revision = ConfigRevision(self.revision.0 + 1);
+        Ok(next)
     }
 }
 
@@ -310,4 +482,92 @@ pub enum OperationOutcome {
     Succeeded(OperationOutput),
     Failed(AgentError),
     Cancelled,
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    fn config() -> SessionConfig {
+        let mut effort = ConfigOption::select(
+            "effort",
+            "Effort",
+            "",
+            vec![
+                ConfigChoice::new("low", "Low"),
+                ConfigChoice::new("high", "High"),
+            ],
+            "low",
+        );
+        effort.default = None;
+        let mut locked = ConfigOption::toggle("fast", "Fast", "", false);
+        locked.disabled = Some("this model has no fast mode".into());
+        SessionConfig {
+            revision: ConfigRevision(3),
+            options: vec![
+                ConfigOption::select(
+                    "model",
+                    "Model",
+                    "",
+                    vec![ConfigChoice::new("a", "A"), ConfigChoice::new("b", "B")],
+                    "a",
+                )
+                .with_default("a"),
+                effort,
+                locked,
+            ],
+        }
+    }
+
+    #[test]
+    fn a_valid_patch_applies_everything_and_bumps_the_revision() {
+        let next = config()
+            .applying(&ConfigPatch {
+                values: vec![
+                    ("model".into(), "b".into()),
+                    ("effort".into(), "high".into()),
+                ],
+                resets: Vec::new(),
+            })
+            .unwrap();
+        assert_eq!(next.revision, ConfigRevision(4));
+        assert_eq!(next.get("model").unwrap().current, "b");
+        assert_eq!(next.get("effort").unwrap().current, "high");
+    }
+
+    #[test]
+    fn one_bad_part_rejects_the_whole_patch_and_changes_nothing() {
+        let before = config();
+        for patch in [
+            ConfigPatch {
+                values: vec![
+                    ("model".into(), "b".into()),
+                    ("effort".into(), "ultra".into()),
+                ],
+                resets: Vec::new(),
+            },
+            ConfigPatch::set("nope", "x"),
+            ConfigPatch::set("fast", "true"),
+            ConfigPatch::reset("effort"),
+            ConfigPatch::reset("fast"),
+        ] {
+            assert!(
+                matches!(
+                    before.applying(&patch),
+                    Err(crate::AgentError::InvalidConfig { .. })
+                ),
+                "{patch:?}"
+            );
+        }
+        assert_eq!(before, config());
+    }
+
+    #[test]
+    fn reset_returns_to_the_default_and_differs_from_choosing_a_value() {
+        let changed = config().applying(&ConfigPatch::set("model", "b")).unwrap();
+        let reset = changed.applying(&ConfigPatch::reset("model")).unwrap();
+        assert_eq!(reset.get("model").unwrap().current, "a");
+        assert_eq!(reset.revision, ConfigRevision(5));
+        assert!(ConfigPatch::default().is_empty());
+    }
 }

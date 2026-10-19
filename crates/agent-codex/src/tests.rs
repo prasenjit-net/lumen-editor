@@ -42,7 +42,16 @@ fn responder() -> Responder {
                 json!({"userAgent": "lumen/0.157.0 (Mac OS 26.5.2; arm64) unknown (lumen; 0.1)", "codexHome": "~/.codex", "platformFamily": "unix", "platformOs": "macos"})
             }
             "model/list" => {
-                json!({"data": [{"id": "gpt-6-astra", "model": "gpt-6-astra", "displayName": "GPT-6-Astra", "hidden": false, "isDefault": true}, {"id": "gpt-6-lite", "model": "gpt-6-lite", "displayName": "GPT-6-Lite", "hidden": false}], "nextCursor": null})
+                // Two pages, so a client that stops after the first one is caught.
+                if params["cursor"].as_str() == Some("p2") {
+                    json!({"data": [{"id": "gpt-6-lite", "model": "gpt-6-lite", "displayName": "GPT-6-Lite", "hidden": false,
+                        "defaultReasoningEffort": "low", "supportedReasoningEfforts": [{"reasoningEffort": "low", "description": "only"}]}], "nextCursor": null})
+                } else {
+                    json!({"data": [{"id": "gpt-6-astra", "model": "gpt-6-astra", "displayName": "GPT-6-Astra", "hidden": false, "isDefault": true,
+                        "defaultReasoningEffort": "low",
+                        "supportedReasoningEfforts": [{"reasoningEffort": "low", "description": "quick"}, {"reasoningEffort": "high", "description": "thorough"}],
+                        "serviceTiers": [{"id": "priority", "name": "Fast", "description": "2x"}]}], "nextCursor": "p2"})
+                }
             }
             "account/read" => {
                 json!({"account": {"type": "chatgpt", "email": "me@example.com", "planType": "plus"}, "requiresOpenaiAuth": true})
@@ -204,7 +213,13 @@ fn the_first_operation_launches_app_server_handshakes_and_only_then_dispatches()
         .collect();
     assert_eq!(
         methods,
-        ["initialize", "initialized", "model/list", "account/read"],
+        [
+            "initialize",
+            "initialized",
+            "model/list",
+            "model/list",
+            "account/read"
+        ],
         "handshake precedes the first operation"
     );
     assert_eq!(written[0]["params"]["clientInfo"]["name"], "lumen");
@@ -259,6 +274,7 @@ fn creating_a_session_passes_the_workspace_and_choices_and_reports_config_and_id
                 ("model".into(), "gpt-6-lite".into()),
                 ("sandbox".into(), "read-only".into()),
             ],
+            ..Default::default()
         },
     });
     let start = rig
@@ -303,6 +319,7 @@ fn creating_a_session_passes_the_workspace_and_choices_and_reports_config_and_id
         workspace: "/w".into(),
         config: ConfigPatch {
             values: vec![("sandbox".into(), "bogus".into())],
+            ..Default::default()
         },
     });
     assert!(matches!(
@@ -805,6 +822,7 @@ fn config_changes_apply_to_the_next_turn_and_check_revision_and_values() {
             expected_revision: ConfigRevision(rev),
             patch: ConfigPatch {
                 values: vec![(id.into(), value.into())],
+                ..Default::default()
             },
         })
         .0
@@ -991,4 +1009,125 @@ fn a_new_session_names_the_servers_default_model_so_a_config_default_cannot_leak
         .find(|m| m["method"] == "thread/start")
         .unwrap();
     assert_eq!(start["params"]["model"], "gpt-6-astra");
+}
+
+#[test]
+fn every_page_of_the_model_list_is_loaded() {
+    let mut rig = Rig::new();
+    let out = rig.create(1);
+    let OperationOutput::SessionReady { config, .. } = out else {
+        panic!()
+    };
+    let model = config.get("model").unwrap();
+    let ids: Vec<_> = model.choices.iter().map(|c| c.value.as_str()).collect();
+    assert_eq!(ids, ["gpt-6-astra", "gpt-6-lite"]);
+    assert_eq!(model.effective.as_deref(), Some("gpt-6-astra"));
+}
+
+#[test]
+fn effort_and_fast_mode_are_sent_with_the_turn_and_fast_off_clears_the_tier() {
+    let mut rig = Rig::new();
+    rig.create(1);
+    let (outcome, _) = rig.run(AgentOperation::SetConfig {
+        session: SessionId(1),
+        expected_revision: ConfigRevision(1),
+        patch: ConfigPatch {
+            values: vec![
+                ("effort".into(), "high".into()),
+                ("fast".into(), "true".into()),
+            ],
+            ..Default::default()
+        },
+    });
+    assert!(
+        matches!(outcome, OperationOutcome::Succeeded(_)),
+        "{outcome:?}"
+    );
+    rig.start(1, "go");
+    let first = rig
+        .written()
+        .into_iter()
+        .rfind(|m| m["method"] == "turn/start")
+        .unwrap();
+    assert_eq!(first["params"]["effort"], "high");
+    assert_eq!(first["params"]["serviceTier"], "priority");
+    rig.notify(
+        "turn/completed",
+        json!({"threadId": THREAD, "turn": {"id": "turn-1", "status": "completed"}}),
+    );
+    rig.poll();
+    rig.run(AgentOperation::SetConfig {
+        session: SessionId(1),
+        expected_revision: ConfigRevision(2),
+        patch: ConfigPatch::set("fast", "false"),
+    });
+    rig.start(1, "again");
+    let second = rig
+        .written()
+        .into_iter()
+        .rfind(|m| m["method"] == "turn/start")
+        .unwrap();
+    assert!(
+        second["params"]
+            .get("serviceTier")
+            .is_some_and(Value::is_null),
+        "explicit clear: {second}"
+    );
+}
+
+#[test]
+fn switching_to_a_model_without_fast_mode_turns_it_off_and_a_bad_patch_changes_nothing() {
+    let mut rig = Rig::new();
+    rig.create(1);
+    rig.run(AgentOperation::SetConfig {
+        session: SessionId(1),
+        expected_revision: ConfigRevision(1),
+        patch: ConfigPatch::set("fast", "true"),
+    });
+    let (outcome, _) = rig.run(AgentOperation::SetConfig {
+        session: SessionId(1),
+        expected_revision: ConfigRevision(2),
+        patch: ConfigPatch {
+            values: vec![
+                ("model".into(), "gpt-6-lite".into()),
+                ("effort".into(), "high".into()),
+            ],
+            ..Default::default()
+        },
+    });
+    assert!(matches!(
+        outcome,
+        OperationOutcome::Failed(AgentError::InvalidConfig { .. })
+    ));
+    let (outcome, _) = rig.run(AgentOperation::SetConfig {
+        session: SessionId(1),
+        expected_revision: ConfigRevision(2),
+        patch: ConfigPatch::set("model", "gpt-6-lite"),
+    });
+    let OperationOutcome::Succeeded(OperationOutput::Config(config)) = outcome else {
+        panic!()
+    };
+    assert!(!config.get("fast").unwrap().is_on());
+    assert_eq!(config.get("effort").unwrap().current, "low");
+}
+
+#[test]
+fn creating_with_an_effort_choice_keeps_it_for_the_first_turn() {
+    let mut rig = Rig::new();
+    let (outcome, _) = rig.run(AgentOperation::CreateSession {
+        session: SessionId(1),
+        workspace: "/w".into(),
+        config: ConfigPatch::set("effort", "high"),
+    });
+    let OperationOutcome::Succeeded(OperationOutput::SessionReady { config, .. }) = outcome else {
+        panic!("{outcome:?}")
+    };
+    assert_eq!(config.get("effort").unwrap().current, "high");
+    rig.start(1, "go");
+    let turn = rig
+        .written()
+        .into_iter()
+        .rfind(|m| m["method"] == "turn/start")
+        .unwrap();
+    assert_eq!(turn["params"]["effort"], "high");
 }

@@ -66,7 +66,8 @@ enum Link {
 /// What an in-flight JSON-RPC request is for.
 enum Pending {
     Initialize,
-    Models,
+    /// A page of `model/list`; `true` for the first page.
+    Models(bool),
     Op(OperationId, Kind),
 }
 
@@ -74,13 +75,26 @@ enum Kind {
     Probe,
     Auth,
     List,
-    Create { session: SessionId },
-    Attach { session: SessionId },
+    Create {
+        session: SessionId,
+        /// Choices that only exist on Lumen's side until the first turn.
+        held: convert::Prefs,
+    },
+    Attach {
+        session: SessionId,
+    },
     History,
-    Rename { session: SessionId, title: String },
-    StartTurn { session: SessionId },
+    Rename {
+        session: SessionId,
+        title: String,
+    },
+    StartTurn {
+        session: SessionId,
+    },
     Interrupt,
-    Detach { session: SessionId },
+    Detach {
+        session: SessionId,
+    },
     Archive,
 }
 
@@ -92,6 +106,9 @@ struct Session {
     /// A `turn/start` is in flight but the server has not reported the turn yet.
     starting: bool,
     loaded: bool,
+    /// A service tier override was sent on an earlier turn, so turning fast mode
+    /// off must send an explicit clear.
+    tier_sent: bool,
 }
 
 struct ServerRequest {
@@ -343,22 +360,52 @@ impl CodexBackend {
                 workspace,
                 config,
             } => {
-                let mut params = json!({"cwd": workspace.to_string_lossy(), "ephemeral": false});
-                if let Err(error) = apply_patch_to_start(&mut params, &config) {
-                    return self.fail(op, error);
-                }
                 // A model from the user's own config can be one this account
                 // cannot use, so a session always names a model the server listed.
-                if params.get("model").is_none()
-                    && let Some(model) = self
-                        .models
-                        .iter()
-                        .find(|m| m.is_default)
-                        .or(self.models.first())
-                {
-                    params["model"] = json!(model.id);
+                let base_model = self
+                    .models
+                    .iter()
+                    .find(|m| m.is_default)
+                    .or(self.models.first())
+                    .map(|m| m.id.clone())
+                    .unwrap_or_default();
+                let base = convert::session_config(
+                    1,
+                    &self.models,
+                    &convert::Prefs::new(
+                        &base_model,
+                        convert::DEFAULT_SANDBOX,
+                        convert::DEFAULT_APPROVAL,
+                    ),
+                    None,
+                );
+                let chosen = match convert::apply_patch(&base, &self.models, &config, None) {
+                    Ok(config) => convert::prefs_of(&config, &self.models),
+                    Err(error) => return self.fail(op, error),
+                };
+                let mut params = json!({"cwd": workspace.to_string_lossy(), "ephemeral": false});
+                if !chosen.model.is_empty() {
+                    params["model"] = json!(chosen.model);
                 }
-                self.send_op(op, "thread/start", params, Kind::Create { session });
+                let touches = |id: &str| {
+                    config.values.iter().any(|(v, _)| v == id)
+                        || config.resets.iter().any(|r| r == id)
+                };
+                if touches("sandbox") {
+                    params["sandbox"] = json!(chosen.sandbox);
+                }
+                if touches("approval") {
+                    params["approvalPolicy"] = json!(chosen.approval);
+                }
+                self.send_op(
+                    op,
+                    "thread/start",
+                    params,
+                    Kind::Create {
+                        session,
+                        held: chosen,
+                    },
+                );
             }
             O::AttachSession {
                 session,
@@ -534,26 +581,17 @@ impl CodexBackend {
                 },
             );
         }
-        for (id, value) in &patch.values {
-            let valid = record
-                .config
-                .get(id)
-                .is_some_and(|option| option.choices.iter().any(|c| c.value == *value));
-            if !valid {
-                return self.fail(
-                    op,
-                    AgentError::InvalidConfig {
-                        detail: format!("{id} cannot be {value}"),
-                    },
-                );
-            }
-        }
-        for (id, value) in &patch.values {
-            if let Some(option) = record.config.options.iter_mut().find(|o| o.id == *id) {
-                option.current = value.clone();
-            }
-        }
-        record.config.revision = ConfigRevision(record.config.revision.0 + 1);
+        let effective = record.config.get("model").and_then(|o| o.effective.clone());
+        let next = match convert::apply_patch(
+            &record.config,
+            &self.models,
+            &patch,
+            effective.as_deref(),
+        ) {
+            Ok(next) => next,
+            Err(error) => return self.fail(op, error),
+        };
+        record.config = next;
         let config = record.config.clone();
         self.emit(
             Some(op),
@@ -622,8 +660,26 @@ impl CodexBackend {
         if let Some(approval) = current("approval") {
             params["approvalPolicy"] = json!(approval);
         }
+        // Reasoning effort is always an explicit level; fast mode is the model's
+        // priority tier, cleared with null once it has been sent and is turned off.
+        if let Some(effort) = current("effort") {
+            params["effort"] = json!(effort);
+        }
+        let fast_tier = current("model")
+            .and_then(|id| self.models.iter().find(|m| m.id == id))
+            .and_then(|m| m.fast_tier.clone());
+        let fast_on = current("fast").as_deref() == Some("true");
+        let mut tier_sent = record.tier_sent;
+        if fast_on && let Some(tier) = fast_tier {
+            params["serviceTier"] = json!(tier);
+            tier_sent = true;
+        } else if tier_sent {
+            params["serviceTier"] = Value::Null;
+            tier_sent = false;
+        }
         if let Some(record) = self.sessions.get_mut(&session) {
             record.starting = true;
+            record.tier_sent = tier_sent;
         }
         if !self.rpc(
             "turn/start",
@@ -819,7 +875,7 @@ impl CodexBackend {
                 self.fail_all_queued(error);
                 self.link = Link::Down;
             }
-            Pending::Models => self.diagnostic(
+            Pending::Models(_) => self.diagnostic(
                 DiagnosticLevel::Warning,
                 format!("Could not list Codex models: {message}"),
             ),
@@ -848,14 +904,34 @@ impl CodexBackend {
                 }
                 self.send_raw(&wire::notification("initialized"));
                 self.link = Link::Ready;
-                self.rpc("model/list", json!({}), Pending::Models);
+                self.rpc("model/list", json!({}), Pending::Models(true));
             }
-            Pending::Models => self.models = convert::models(&result),
+            Pending::Models(first) => {
+                if first {
+                    self.models.clear();
+                }
+                self.models.extend(convert::models(&result));
+                // Keep paging until the server has no more models to offer.
+                if let Some(cursor) = result.get("nextCursor").and_then(Value::as_str) {
+                    self.rpc(
+                        "model/list",
+                        json!({"cursor": cursor}),
+                        Pending::Models(false),
+                    );
+                }
+            }
             Pending::Op(op, kind) => self.on_op_response(op, kind, &result),
         }
     }
 
-    fn session_config(&self, thread: &Value, revision: u64) -> SessionConfig {
+    /// The advertised settings for a created or resumed thread, from what the
+    /// server says it is using plus the choices Lumen holds for it.
+    fn session_config(
+        &self,
+        thread: &Value,
+        revision: u64,
+        held: Option<&convert::Prefs>,
+    ) -> SessionConfig {
         let model = thread
             .get("model")
             .and_then(Value::as_str)
@@ -865,12 +941,24 @@ impl CodexBackend {
             .and_then(|s| s.get("type"))
             .and_then(Value::as_str)
             .map(sandbox_name)
-            .unwrap_or("workspace-write");
+            .unwrap_or(convert::DEFAULT_SANDBOX);
         let approval = thread
             .get("approvalPolicy")
             .and_then(Value::as_str)
-            .unwrap_or("on-request");
-        convert::session_config(revision, &self.models, model, sandbox, approval)
+            .unwrap_or(convert::DEFAULT_APPROVAL);
+        let mut prefs = convert::Prefs::new(model, sandbox, approval);
+        prefs.effort = thread
+            .get("reasoningEffort")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_default();
+        prefs.fast = thread.get("serviceTier").and_then(Value::as_str).is_some();
+        if let Some(held) = held {
+            prefs.effort = held.effort.clone();
+            prefs.fast = held.fast;
+        }
+        prefs.normalize(&self.models);
+        convert::session_config(revision, &self.models, &prefs, Some(model))
     }
 
     fn register(&mut self, session: SessionId, thread_id: &str, config: SessionConfig) {
@@ -888,6 +976,7 @@ impl CodexBackend {
                 active: None,
                 starting: false,
                 loaded: true,
+                tier_sent: false,
             },
         );
     }
@@ -899,6 +988,7 @@ impl CodexBackend {
         session: SessionId,
         result: &Value,
         created: bool,
+        held: Option<convert::Prefs>,
     ) {
         let thread = result.get("thread").cloned().unwrap_or(Value::Null);
         let Some(id) = thread.get("id").and_then(Value::as_str).map(str::to_string) else {
@@ -913,7 +1003,7 @@ impl CodexBackend {
         if merged.get("model").is_none() {
             merged["model"] = thread.get("model").cloned().unwrap_or(Value::Null);
         }
-        let config = self.session_config(&merged, 1);
+        let config = self.session_config(&merged, 1, held.as_ref());
         self.register(session, &id, config);
         let config = self.sessions[&session].config.clone();
         let event = if created {
@@ -976,8 +1066,10 @@ impl CodexBackend {
                 };
                 self.finish(op, OperationOutcome::Succeeded(out));
             }
-            Kind::Create { session } => self.session_ready(op, session, result, true),
-            Kind::Attach { session } => self.session_ready(op, session, result, false),
+            Kind::Create { session, held } => {
+                self.session_ready(op, session, result, true, Some(held))
+            }
+            Kind::Attach { session } => self.session_ready(op, session, result, false, None),
             Kind::History => {
                 let thread = result.get("thread").cloned().unwrap_or(Value::Null);
                 let mut items = Vec::new();
@@ -1064,37 +1156,6 @@ fn sandbox_name(kind: &str) -> &'static str {
         "dangerFullAccess" => "danger-full-access",
         _ => "workspace-write",
     }
-}
-
-/// Apply create-time config choices to `thread/start` parameters.
-fn apply_patch_to_start(params: &mut Value, patch: &ConfigPatch) -> Result<(), AgentError> {
-    for (id, value) in &patch.values {
-        match id.as_str() {
-            "model" => params["model"] = json!(value),
-            "sandbox" => {
-                if !convert::SANDBOXES.iter().any(|(v, _)| v == value) {
-                    return Err(AgentError::InvalidConfig {
-                        detail: format!("sandbox cannot be {value}"),
-                    });
-                }
-                params["sandbox"] = json!(value);
-            }
-            "approval" => {
-                if !convert::APPROVALS.iter().any(|(v, _)| v == value) {
-                    return Err(AgentError::InvalidConfig {
-                        detail: format!("approvals cannot be {value}"),
-                    });
-                }
-                params["approvalPolicy"] = json!(value);
-            }
-            other => {
-                return Err(AgentError::InvalidConfig {
-                    detail: format!("unknown setting {other}"),
-                });
-            }
-        }
-    }
-    Ok(())
 }
 
 // ------------------------------------------------------------ notifications
@@ -1565,7 +1626,10 @@ impl AgentBackend for CodexBackend {
             self.fail_all_queued(error);
         }
         // Work waits for the model list so new sessions can name a usable model.
-        let models_pending = self.pending.values().any(|p| matches!(p, Pending::Models));
+        let models_pending = self
+            .pending
+            .values()
+            .any(|p| matches!(p, Pending::Models(_)));
         if self.link == Link::Ready && !models_pending {
             while let Some((op, operation)) = self.queue.pop_front() {
                 self.dispatch(op, operation);

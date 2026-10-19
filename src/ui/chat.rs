@@ -130,34 +130,7 @@ impl Workbench<'_> {
                         .color(colors.muted),
                 );
                 if let Some(config) = hub.live(id).and_then(|live| live.model.config.as_ref()) {
-                    ui.horizontal_wrapped(|ui| {
-                        for option in &config.options {
-                            let current = option
-                                .choices
-                                .iter()
-                                .find(|c| c.value == option.current)
-                                .map_or(option.current.as_str(), |c| c.label.as_str());
-                            ui.label(RichText::new(&option.label).size(10.5).color(colors.muted));
-                            egui::ComboBox::from_id_salt(("chat_option", id.0, &option.id))
-                                .selected_text(RichText::new(current).size(11.0))
-                                .show_ui(ui, |ui| {
-                                    for choice in &option.choices {
-                                        let selected = choice.value == option.current;
-                                        if ui.selectable_label(selected, &choice.label).clicked()
-                                            && !selected
-                                        {
-                                            commands.push(Command::ChatSetConfig(
-                                                id,
-                                                option.id.clone(),
-                                                choice.value.clone(),
-                                            ));
-                                        }
-                                    }
-                                })
-                                .response
-                                .on_hover_text(&option.description);
-                        }
-                    });
+                    config_row(ui, id, config, &mut commands);
                 }
             });
         ui.separator();
@@ -417,4 +390,103 @@ fn queue_list<'a>(
             }
         });
     }
+}
+
+/// The session's settings as compact controls: selects as drop-downs, toggles as
+/// checkboxes. Generic over the option schema, so nothing here knows a provider.
+/// A setting that cannot change says why; a staged value that differs from what
+/// the provider reported shows both.
+fn config_row(
+    ui: &mut egui::Ui,
+    id: SessionId,
+    config: &lumen_agent_core::api::SessionConfig,
+    commands: &mut Vec<Command>,
+) {
+    use lumen_agent_core::api::ConfigKind;
+    let colors = theme::palette(ui.visuals());
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        for option in &config.options {
+            let enabled = option.disabled.is_none();
+            let hover = match &option.disabled {
+                Some(reason) => format!("{}\nUnavailable: {reason}", option.description),
+                None => option.description.clone(),
+            };
+            match option.kind {
+                ConfigKind::Toggle => {
+                    let mut on = option.is_on();
+                    let response = ui
+                        .add_enabled(enabled, egui::Checkbox::new(&mut on, &option.label))
+                        .on_hover_text(hover)
+                        .on_disabled_hover_text(format!(
+                            "{}\nUnavailable: {}",
+                            option.description,
+                            option.disabled.as_deref().unwrap_or_default()
+                        ));
+                    if response.changed() {
+                        commands.push(Command::ChatSetConfig(
+                            id,
+                            option.id.clone(),
+                            on.to_string(),
+                        ));
+                    }
+                }
+                ConfigKind::Select => {
+                    ui.label(RichText::new(&option.label).size(10.5).color(colors.muted));
+                    let current = option
+                        .choices
+                        .iter()
+                        .find(|c| c.value == option.current)
+                        .map_or(option.current.as_str(), |c| c.label.as_str());
+                    ui.add_enabled_ui(enabled, |ui| {
+                        egui::ComboBox::from_id_salt(("chat_option", id.0, &option.id))
+                            .selected_text(RichText::new(current).size(11.0))
+                            .show_ui(ui, |ui| {
+                                for choice in &option.choices {
+                                    let selected = choice.value == option.current;
+                                    let response = ui.selectable_label(selected, &choice.label);
+                                    let response = if choice.description.is_empty() {
+                                        response
+                                    } else {
+                                        response.on_hover_text(&choice.description)
+                                    };
+                                    if response.clicked() && !selected {
+                                        commands.push(Command::ChatSetConfig(
+                                            id,
+                                            option.id.clone(),
+                                            choice.value.clone(),
+                                        ));
+                                    }
+                                }
+                            })
+                            .response
+                            .on_hover_text(hover)
+                    });
+                }
+            }
+            // What the provider says it is actually using, when that differs.
+            if let Some(effective) = &option.effective
+                && *effective != option.current
+                && option.kind == ConfigKind::Select
+            {
+                ui.label(
+                    RichText::new(format!("using {effective}"))
+                        .size(10.0)
+                        .color(colors.muted),
+                );
+            }
+            let at_default = option.default.as_ref() == Some(&option.current);
+            if enabled
+                && option.default.is_some()
+                && !at_default
+                && ui
+                    .small_button(icon::DISCARD)
+                    .on_hover_text(format!("Reset {} to its default", option.label))
+                    .clicked()
+            {
+                commands.push(Command::ChatResetConfig(id, option.id.clone()));
+            }
+            ui.add_space(6.0);
+        }
+    });
 }

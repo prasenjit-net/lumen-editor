@@ -14,8 +14,8 @@ use crate::{
     SessionId, SubmitError, TurnId,
     api::{
         AgentBackend, AgentOperation, ApprovalDecisionId, AuthState, ConfigChoice, ConfigOption,
-        ConfigRevision, ConfigScope, InputBlock, Mutability, OperationOutcome, OperationOutput,
-        QuestionAnswer, Request, SessionConfig, SessionSummary,
+        ConfigRevision, InputBlock, OperationOutcome, OperationOutput, QuestionAnswer, Request,
+        SessionConfig, SessionSummary,
     },
     event::{
         AgentEvent, ApprovalChoice, ApprovalRequest, QuestionKind, QuestionRequest, RiskLevel,
@@ -119,24 +119,20 @@ impl FakeBackend {
     fn config(revision: u64) -> SessionConfig {
         SessionConfig {
             revision: ConfigRevision(revision),
-            options: vec![ConfigOption {
-                id: "model".into(),
-                label: "Model".into(),
-                description: "Which model answers".into(),
-                choices: vec![
-                    ConfigChoice {
-                        value: "fast".into(),
-                        label: "Fast".into(),
-                    },
-                    ConfigChoice {
-                        value: "smart".into(),
-                        label: "Smart".into(),
-                    },
-                ],
-                current: "fast".into(),
-                scope: ConfigScope::Session,
-                mutability: Mutability::NextTurn,
-            }],
+            options: vec![
+                ConfigOption::select(
+                    "model",
+                    "Model",
+                    "Which model answers",
+                    vec![
+                        ConfigChoice::new("fast", "Fast"),
+                        ConfigChoice::new("smart", "Smart"),
+                    ],
+                    "fast",
+                )
+                .with_default("fast"),
+                ConfigOption::toggle("verbose", "Verbose", "Explain more", false),
+            ],
         }
     }
 
@@ -350,27 +346,10 @@ impl FakeBackend {
                         },
                     );
                 }
-                for (id, value) in &patch.values {
-                    let valid = record
-                        .config
-                        .get(id)
-                        .is_some_and(|o| o.choices.iter().any(|c| c.value == *value));
-                    if !valid {
-                        return self.fail(
-                            op,
-                            AgentError::InvalidConfig {
-                                detail: format!("{id}={value}"),
-                            },
-                        );
-                    }
+                match record.config.applying(&patch) {
+                    Ok(next) => record.config = next,
+                    Err(error) => return self.fail(op, error),
                 }
-                let next = ConfigRevision(record.config.revision.0 + 1);
-                for (id, value) in &patch.values {
-                    if let Some(option) = record.config.options.iter_mut().find(|o| o.id == *id) {
-                        option.current = value.clone();
-                    }
-                }
-                record.config.revision = next;
                 let config = record.config.clone();
                 self.emit(
                     Some(op),
@@ -1452,6 +1431,7 @@ mod tests {
                         expected_revision: ConfigRevision(rev),
                         patch: crate::api::ConfigPatch {
                             values: vec![("model".into(), value.into())],
+                            ..Default::default()
                         },
                     },
                 ))
