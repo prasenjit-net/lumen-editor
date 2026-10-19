@@ -1120,14 +1120,15 @@ impl LumenApp {
         self.view.focus_editor = true;
     }
 
-    /// Forget the problems of finished runs. Running tasks keep theirs.
+    /// Forget the problems of finished runs and of running background tasks (a
+    /// watcher never finishes). Other running tasks keep theirs.
     pub(crate) fn clear_task_problems(&mut self) {
         for run in self
             .view
             .task_runs
             .runs
             .iter_mut()
-            .filter(|run| !run.is_active())
+            .filter(|run| !run.is_active() || run.resolved.is_background)
         {
             run.problems.clear();
             run.problems_dropped = 0;
@@ -1140,7 +1141,13 @@ impl LumenApp {
         let Some(run) = self.view.task_runs.get(id) else {
             return;
         };
-        let (text, name) = (run.output_text(), format!("{}-output.txt", run.label));
+        let (text, name) = (
+            run.output_text(),
+            format!(
+                "{}-output.txt",
+                run.label.replace(['/', '\\', ':', '\0'], "-")
+            ),
+        );
         let Some(path) = self.dialogs.save_as(&name) else {
             return; // cancelled: nothing changes
         };
@@ -1159,6 +1166,27 @@ impl LumenApp {
     }
 }
 
+/// Make a printed path absolute. Tools print paths relative to the task's working
+/// directory, but cargo prints them relative to the workspace root, so when the
+/// first guess does not exist the workspace root is tried.
+fn locate_problem_file(
+    printed: &str,
+    cwd: &std::path::Path,
+    workspace: Option<&std::path::Path>,
+) -> String {
+    let path = std::path::Path::new(printed);
+    if path.is_absolute() {
+        return printed.to_string();
+    }
+    let from_cwd = cwd.join(path);
+    match workspace.map(|root| root.join(path)) {
+        Some(from_root) if !from_cwd.exists() && from_root.exists() => {
+            from_root.display().to_string()
+        }
+        _ => from_cwd.display().to_string(),
+    }
+}
+
 fn feed(run: &mut TaskRun, stream: crate::model::task_output::Stream, bytes: &[u8]) {
     let lines = match &mut run.terminal {
         Some(terminal) => {
@@ -1173,12 +1201,19 @@ fn feed(run: &mut TaskRun, stream: crate::model::task_output::Stream, bytes: &[u
     };
     if let Some(matcher) = &mut run.matcher {
         for line in lines {
-            if let Some(problem) = matcher.feed_line(&line) {
-                if run.problems.len() < MAX_PROBLEMS_PER_RUN {
-                    run.problems.push(problem);
-                } else {
+            if let Some(mut problem) = matcher.feed_line(&line) {
+                problem.path =
+                    locate_problem_file(&problem.path, &run.cwd, run.workspace.as_deref());
+                if run.problems.len() >= MAX_PROBLEMS_PER_RUN {
+                    if !run.resolved.is_background {
+                        run.problems_dropped += 1;
+                        continue;
+                    }
+                    // A watcher keeps running: keep the newest, forget the oldest.
+                    run.problems.remove(0);
                     run.problems_dropped += 1;
                 }
+                run.problems.push(problem);
             }
         }
     }
@@ -3337,7 +3372,7 @@ depends_on = ["deploy", "smoke"]
                 problems[1].line,
                 problems[1].column
             ),
-            ("src/lib.rs", 10, 5)
+            (h.run_at(0).cwd.join("src/lib.rs").to_str().unwrap(), 10, 5)
         );
         // Matching errors does not make the task fail: the exit code decides.
         h.complete(0, 0);
@@ -3453,6 +3488,33 @@ depends_on = ["deploy", "smoke"]
     }
 
     #[test]
+    fn a_background_task_keeps_its_newest_problems_and_clear_reaches_it_while_running() {
+        let mut h = Harness::new();
+        h.write_tasks(&format!(
+            "\n[[tasks]]\nid = \"w\"\nlabel = \"W\"\ntype = \"process\"\ncommand = \"watch\"\nsave = \"none\"\nproblem_matcher = \"gcc\"\n{SERVICE}\n"
+        ));
+        h.trust_everything();
+        h.run("w");
+        let mut text = String::new();
+        for n in 0..(MAX_PROBLEMS_PER_RUN + 5) {
+            text.push_str(&format!("f.c:{}:1: error: e{n}\n", n + 1));
+        }
+        say(&mut h, 0, &text);
+        for _ in 0..10 {
+            h.poll_at(Instant::now());
+        }
+        let run = h.run_at(0);
+        assert_eq!(run.problems.len(), MAX_PROBLEMS_PER_RUN);
+        assert_eq!(
+            run.problems.last().unwrap().message,
+            format!("e{}", MAX_PROBLEMS_PER_RUN + 4)
+        );
+        assert_eq!(run.problems[0].message, "e5", "the oldest were forgotten");
+        h.app.execute(Command::ClearTaskProblems, &h.ctx);
+        assert!(h.run_at(0).problems.is_empty());
+    }
+
+    #[test]
     fn opening_a_task_problem_opens_the_file_at_its_line_and_column() {
         let mut h = Harness::new();
         let file = h.root.path().join("src.c");
@@ -3551,5 +3613,34 @@ depends_on = ["deploy", "smoke"]
         }
         assert_eq!(runs.recent.len(), 10);
         assert_eq!(runs.recent[0].id, "t24");
+    }
+}
+
+#[cfg(test)]
+mod problem_location_tests {
+    use super::*;
+
+    #[test]
+    fn a_printed_path_falls_back_to_the_workspace_root_when_the_cwd_has_no_such_file() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("src")).unwrap();
+        std::fs::create_dir_all(root.path().join("crate_a/src")).unwrap();
+        std::fs::write(root.path().join("src/lib.rs"), "").unwrap();
+        std::fs::write(root.path().join("crate_a/src/own.rs"), "").unwrap();
+        let cwd = root.path().join("crate_a");
+        let at = |printed: &str| locate_problem_file(printed, &cwd, Some(root.path()));
+        assert_eq!(
+            at("src/own.rs"),
+            cwd.join("src/own.rs").display().to_string()
+        );
+        assert_eq!(
+            at("src/lib.rs"),
+            root.path().join("src/lib.rs").display().to_string()
+        );
+        assert_eq!(
+            at("src/gone.rs"),
+            cwd.join("src/gone.rs").display().to_string()
+        );
+        assert_eq!(at("/abs/x.rs"), "/abs/x.rs");
     }
 }
