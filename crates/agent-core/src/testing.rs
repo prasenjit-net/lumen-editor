@@ -841,6 +841,9 @@ impl AgentBackend for FakeBackend {
 
 // ----------------------------------------------------------------- fake child
 
+/// Reacts to a line written to a fake child (typically by queueing a reply).
+pub type Responder = Arc<dyn Fn(&str, &FakeChildHandle) + Send + Sync>;
+
 /// A scripted child process for provider-crate tests: queue stdout lines, read
 /// what the library wrote, and decide when it "exits".
 #[derive(Clone, Default)]
@@ -850,6 +853,9 @@ pub struct FakeChildHandle {
 
 #[derive(Default)]
 pub struct FakeChildState {
+    /// Called with each complete line the library writes, to script a server.
+    pub responder: Option<Responder>,
+    partial: String,
     pub queued: VecDeque<ChildEvent>,
     pub written: Vec<u8>,
     pub exit: Option<ExitInfo>,
@@ -887,11 +893,25 @@ struct FakeChild(FakeChildHandle);
 
 impl Child for FakeChild {
     fn write(&mut self, bytes: &[u8]) -> Result<(), String> {
-        let mut state = self.0.state.lock().unwrap();
-        if state.exit.is_some() {
-            return Err("the process has exited".into());
+        let (responder, lines) = {
+            let mut state = self.0.state.lock().unwrap();
+            if state.exit.is_some() {
+                return Err("the process has exited".into());
+            }
+            state.written.extend_from_slice(bytes);
+            state.partial.push_str(&String::from_utf8_lossy(bytes));
+            let mut lines = Vec::new();
+            while let Some(newline) = state.partial.find('\n') {
+                let line: String = state.partial.drain(..=newline).collect();
+                lines.push(line.trim_end().to_string());
+            }
+            (state.responder.clone(), lines)
+        };
+        if let Some(responder) = responder {
+            for line in lines {
+                responder(&line, &self.0);
+            }
         }
-        state.written.extend_from_slice(bytes);
         Ok(())
     }
     fn close_stdin(&mut self) {
@@ -950,6 +970,8 @@ impl Drop for FakeChild {
 /// Launches `FakeChild`ren and records what it was asked to start.
 #[derive(Clone, Default)]
 pub struct FakeLauncher {
+    /// Installed on every child this launcher starts.
+    pub responder: Arc<Mutex<Option<Responder>>>,
     pub launched: Arc<Mutex<Vec<ChildSpec>>>,
     pub children: Arc<Mutex<Vec<FakeChildHandle>>>,
     pub fail_with: Arc<Mutex<Option<LaunchError>>>,
@@ -968,6 +990,7 @@ impl ChildLauncher for FakeLauncher {
         }
         self.launched.lock().unwrap().push(spec.clone());
         let handle = FakeChildHandle::default();
+        handle.state.lock().unwrap().responder = self.responder.lock().unwrap().clone();
         self.children.lock().unwrap().push(handle.clone());
         Ok(Box::new(FakeChild(handle)))
     }

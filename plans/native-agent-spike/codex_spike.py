@@ -89,8 +89,8 @@ send({"method": "initialized"})
 
 MODEL = None  # set by the "models" step
 
-def start_thread():
-    params = {"cwd": workspace, "sandbox": "read-only", "approvalPolicy": "on-request", "ephemeral": True}
+def start_thread(ephemeral=True):
+    params = {"cwd": workspace, "sandbox": "read-only", "approvalPolicy": "on-request", "ephemeral": ephemeral}
     if MODEL:
         params["model"] = MODEL
     rid = request("thread/start", params)
@@ -147,6 +147,17 @@ elif scenario == "approval":
     run_turn(tid, "Create a file named note.txt containing the word hi. Use a shell command or a patch; do not just describe it.",
              on_server_request=answer)
     print("server requests:", asked)
+elif scenario == "resume":
+    # Persisted thread -> unsubscribe -> resume -> read history -> rename -> archive (cleans up).
+    tid, _ = start_thread(ephemeral=False)
+    run_turn(tid, "Remember the word tangerine. Reply with just: stored")
+    for method, params in [("thread/unsubscribe", {"threadId": tid}),
+                           ("thread/resume", {"threadId": tid, "cwd": workspace}),
+                           ("thread/read", {"threadId": tid, "includeTurns": True}),
+                           ("thread/name/set", {"threadId": tid, "name": "Lumen spike"}),
+                           ("thread/list", {"limit": 5, "cwd": workspace}),
+                           ("thread/archive", {"threadId": tid})]:
+        pump(response_for(request(method, params)))
 elif scenario == "interrupt":
     tid, _ = start_thread()
     run_turn(tid, "Count slowly from 1 to 200, one number per line, with a sentence after each.", interrupt_after=3)
