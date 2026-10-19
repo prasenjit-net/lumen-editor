@@ -56,6 +56,9 @@ lumen-terminal-core = { path = "crates/terminal-core" }
 lumen-task-core = { path = "crates/task-core" }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 
+[dev-dependencies]
+lumen-agent-core = { path = "crates/agent-core", features = ["testing"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

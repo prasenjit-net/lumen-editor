@@ -212,6 +212,16 @@ impl SessionModel {
     }
 
     /// Whether a new turn may start (one active turn per session).
+    /// Add the user's own message, which the providers never echo back during a
+    /// live turn. Returns false when an item with that id already exists.
+    pub fn record_user_message(&mut self, id: ItemId, text: String) -> bool {
+        self.push(TranscriptItem {
+            id,
+            turn: None,
+            kind: ItemKind::User(text),
+        })
+    }
+
     pub fn can_start_turn(&self) -> bool {
         matches!(self.state, TurnState::Idle | TurnState::Unknown)
     }
