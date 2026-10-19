@@ -118,6 +118,21 @@ fn form(
         crate::app::task_editor::TaskEditorTarget::New(_)
     );
 
+    if is_new {
+        row(ui, "Template", &issues, &["template"], colors, |ui| {
+            egui::ComboBox::from_id_salt(("task_template", id))
+                .selected_text("Choose a starting point…")
+                .show_ui(ui, |ui| {
+                    for template in crate::app::task_editor::TaskTemplate::ALL {
+                        if ui.selectable_label(false, template.label()).clicked() {
+                            template.apply(&mut tab.draft);
+                            tab.follow_label();
+                            tab.rebuild_texts();
+                        }
+                    }
+                });
+        });
+    }
     row(ui, "Label", &issues, &["label"], colors, |ui| {
         let response = ui.add(
             TextEdit::singleline(&mut tab.draft.label)
@@ -240,6 +255,40 @@ fn form(
                 tab.draft.group = Some(group).filter(|text| !text.is_empty());
             }
             ui.checkbox(&mut tab.draft.is_default, "Default for group");
+        },
+    );
+    row(
+        ui,
+        "Problem matcher",
+        &issues,
+        &["problem_matcher"],
+        colors,
+        |ui| {
+            use lumen_task_core::{BuiltinMatcher, ProblemMatcherSpec};
+            let current = match &tab.draft.problem_matcher {
+                None => "None".to_string(),
+                Some(ProblemMatcherSpec::Builtin(builtin)) => builtin.as_str().to_string(),
+                Some(ProblemMatcherSpec::Pattern { .. }) => "Custom pattern (edit in TOML)".into(),
+            };
+            egui::ComboBox::from_id_salt(("task_matcher", id))
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(tab.draft.problem_matcher.is_none(), "None")
+                        .clicked()
+                    {
+                        tab.draft.problem_matcher = None;
+                    }
+                    for builtin in BuiltinMatcher::ALL {
+                        let selected =
+                            tab.draft.problem_matcher == Some(ProblemMatcherSpec::Builtin(builtin));
+                        if ui.selectable_label(selected, builtin.as_str()).clicked() {
+                            tab.draft.problem_matcher = Some(ProblemMatcherSpec::Builtin(builtin));
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Finds file:line problems in the output and lists them in Problems");
         },
     );
     row(ui, "Save before run", &issues, &["save"], colors, |ui| {

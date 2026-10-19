@@ -275,9 +275,11 @@ on_failure = "fail_fast"        # or "continue"
 - **Output:** shell tasks (and `transport = "pty"`) run in a pseudo-terminal rendered by the terminal emulator and accept typing; `process` tasks capture stdout and stderr as text. Output is bounded; hiding the panel never stops a task.
 - **Stopping:** Stop asks the task and everything it started to stop, then kills them after a short grace period. Closing a running tab, changing folder and quitting ask first.
 - **Groups:** tasks with `depends_on` run as a group with its own summary tab. The whole graph is validated and resolved before anything starts, shared prerequisites run once, and at most four processes run at a time. Background services keep the group open until you stop it.
+- **Problems:** `problem_matcher = "cargo"` (also `gcc`, `go`, `tsc`) or a `[tasks.problem_matcher]` table with a regex using named groups `file`, `line`, `message` (optional `column`, `severity`) lists file:line problems from the output in the Problems panel. Clicking one opens the file at that position; a rerun replaces that task's problems only. Matching never decides whether a task succeeded.
+- **Templates and Run Task:** a new task can start from a template (Cargo build/test/clippy, npm script, blank). The command palette lists every defined task as **Run Task: …**, recently started ones first. Output can be copied or saved to a file (what Lumen retained, including any truncation notice).
 - **Secrets:** secret inputs are masked and never saved; Lumen does not show them in previews or its logs, but a program can still print what it receives, and a secret in command-line arguments is visible to other local processes. Prefer passing them through `env`.
 
-Not implemented: problem matchers and clickable output links, `${command:...}`, automatic task triggers, auto-restart, saving output to a file, and editing dependencies or inputs in the form (use the TOML file). Windows task execution has compiled but has not been run on a real Windows machine.
+Not implemented: clickable links inside the output text, multi-line custom matchers, `${command:...}`, automatic task triggers, auto-restart, `presentation.clear = false`, and editing dependencies, inputs or custom matchers in the form (use the TOML file). Windows task execution has compiled but has not been run on a real Windows machine.
 
 ## Coding agents
 

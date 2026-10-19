@@ -8,11 +8,21 @@ use lumen_language_services::diagnostics::DiagnosticSeverity;
 
 const DEFAULT_HEIGHT: f32 = 210.0;
 
+/// Where a problem points: an open document's range (from a language server), or
+/// a file location printed by a task, which may not be open.
+#[derive(Clone)]
+enum ProblemTarget {
+    Document {
+        id: crate::model::DocumentId,
+        range: std::ops::Range<usize>,
+    },
+    Location(std::path::PathBuf),
+}
+
 #[derive(Clone)]
 struct ProblemRow {
-    document: crate::model::DocumentId,
+    target: ProblemTarget,
     file: String,
-    range: std::ops::Range<usize>,
     line: usize,
     column: usize,
     severity: DiagnosticSeverity,
@@ -46,12 +56,23 @@ impl Workbench<'_> {
                 super::widgets::surface(colors.panel).show(ui, |ui| {
                     ui.set_min_size(ui.available_size());
                     ui.set_min_height(ui.available_height());
-                    let actions = [HeaderAction {
-                        glyph: icon::X,
-                        tooltip: "Close Problems",
-                        command: Command::CloseProblems,
-                        enabled: true,
-                    }];
+                    let has_task_problems = rows
+                        .iter()
+                        .any(|row| matches!(row.target, ProblemTarget::Location(_)));
+                    let actions = [
+                        HeaderAction {
+                            glyph: icon::CLEAR_ALL,
+                            tooltip: "Clear problems found in task output",
+                            command: Command::ClearTaskProblems,
+                            enabled: has_task_problems,
+                        },
+                        HeaderAction {
+                            glyph: icon::X,
+                            tooltip: "Close Problems",
+                            command: Command::CloseProblems,
+                            enabled: true,
+                        },
+                    ];
                     if let Some(command) = panel_header(ui, "PROBLEMS", &actions) {
                         self.command(command);
                     }
@@ -181,27 +202,48 @@ impl Workbench<'_> {
                                                 }
                                             });
                                             if response.clicked() {
-                                                self.command(Command::OpenProblem(
-                                                    row.document,
-                                                    row.range.clone(),
-                                                ));
+                                                match &row.target {
+                                                    ProblemTarget::Document { id, range } => {
+                                                        self.command(Command::OpenProblem(
+                                                            *id,
+                                                            range.clone(),
+                                                        ));
+                                                    }
+                                                    ProblemTarget::Location(path) => {
+                                                        self.command(Command::OpenTaskProblem(
+                                                            path.clone(),
+                                                            row.line,
+                                                            row.column,
+                                                        ));
+                                                    }
+                                                }
                                             }
-                                            let fix = ui
-                                        .add(egui::Button::new(icon::AGENT).small().frame(false))
-                                        .on_hover_text(
-                                            "Fix with agent: prefill a request in the agent panel",
-                                        );
-                                            if super::widgets::named(
-                                                fix,
-                                                true,
-                                                "Fix this problem with the agent",
-                                            )
-                                            .clicked()
+                                            // Agent fixes work on an open document's range;
+                                            // a task's printed location has neither.
+                                            if let ProblemTarget::Document { id, range } =
+                                                &row.target
                                             {
-                                                self.command(Command::FixProblemWithAgent(
-                                                    row.document,
-                                                    row.range.clone(),
-                                                ));
+                                                let fix = ui
+                                                    .add(
+                                                        egui::Button::new(icon::AGENT)
+                                                            .small()
+                                                            .frame(false),
+                                                    )
+                                                    .on_hover_text(
+                                                        "Fix with agent: prefill a request in the agent panel",
+                                                    );
+                                                if super::widgets::named(
+                                                    fix,
+                                                    true,
+                                                    "Fix this problem with the agent",
+                                                )
+                                                .clicked()
+                                                {
+                                                    self.command(Command::FixProblemWithAgent(
+                                                        *id,
+                                                        range.clone(),
+                                                    ));
+                                                }
                                             }
                                         });
                                     }
@@ -256,9 +298,11 @@ impl Workbench<'_> {
                     (None, None) => String::new(),
                 };
                 rows.push(ProblemRow {
-                    document: document.id,
+                    target: ProblemTarget::Document {
+                        id: document.id,
+                        range: diagnostic.range.clone(),
+                    },
                     file: file.clone(),
-                    range: diagnostic.range.clone(),
                     line,
                     column,
                     severity: diagnostic.severity,
@@ -273,11 +317,62 @@ impl Workbench<'_> {
                 });
             }
         }
+        rows.extend(self.task_problem_rows());
         rows.sort_by(|left, right| {
             left.file
                 .cmp(&right.file)
-                .then(left.range.start.cmp(&right.range.start))
+                .then(left.line.cmp(&right.line))
+                .then(left.column.cmp(&right.column))
         });
+        rows
+    }
+
+    /// Problems found in task output: only the newest run of each task counts, so
+    /// a rerun replaces its own older problems and nothing else's.
+    fn task_problem_rows(&self) -> Vec<ProblemRow> {
+        let mut seen = std::collections::HashSet::new();
+        let mut rows = Vec::new();
+        for run in self.view.task_runs.runs().iter().rev() {
+            if run.summary || !seen.insert(run.key.clone()) {
+                continue;
+            }
+            for problem in &run.problems {
+                let path = std::path::Path::new(&problem.path);
+                let full = if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    run.cwd.join(path)
+                };
+                let shown = self
+                    .editor
+                    .workspace
+                    .as_deref()
+                    .and_then(|root| full.strip_prefix(root).ok())
+                    .unwrap_or(&full)
+                    .display()
+                    .to_string();
+                let severity = match problem.severity {
+                    lumen_task_core::Severity::Error => DiagnosticSeverity::Error,
+                    lumen_task_core::Severity::Warning => DiagnosticSeverity::Warning,
+                    lumen_task_core::Severity::Info => DiagnosticSeverity::Information,
+                };
+                rows.push(ProblemRow {
+                    target: ProblemTarget::Location(full),
+                    file: shown,
+                    line: problem.line as usize,
+                    column: problem.column as usize,
+                    severity,
+                    message: problem
+                        .message
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .to_owned(),
+                    full_message: problem.message.clone(),
+                    detail: format!("  {}", run.label),
+                });
+            }
+        }
         rows
     }
 }
@@ -420,5 +515,101 @@ mod tests {
             all.iter()
                 .any(|(text, ..)| text.contains("match the current filters"))
         );
+    }
+}
+
+#[cfg(test)]
+mod task_problem_tests {
+    use crate::{
+        app::{LumenApp, command::Command},
+        model::task_output::Stream,
+        services::task_process::{TaskEvent, fake::FakeTaskLauncher},
+    };
+    use eframe::egui;
+    use lumen_task_core::{Scope, TaskKey};
+    use std::sync::Arc;
+
+    fn texts(app: &mut LumenApp, ctx: &egui::Context) -> String {
+        let mut all = String::new();
+        for _ in 0..3 {
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| app.render_component(ctx, |workbench| workbench.problems_panel(ctx)),
+            );
+            all = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        all
+    }
+
+    #[test]
+    fn task_output_problems_appear_with_their_task_and_clear_on_request() {
+        let root = tempfile::tempdir().unwrap();
+        let path = crate::services::tasks::workspace_path(root.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "schema_version = 1\n[[tasks]]\nid = \"check\"\nlabel = \"Check\"\ntype = \"process\"\ncommand = \"cc\"\nsave = \"none\"\nproblem_matcher = \"gcc\"\n",
+        )
+        .unwrap();
+        let fake = FakeTaskLauncher::default();
+        let mut app = LumenApp::default();
+        app.editor.workspace = Some(root.path().to_path_buf());
+        app.task_launcher = Arc::new(fake.clone());
+        let key = TaskKey::new(Scope::Workspace, "check");
+        let (def, _) = app.read_task(&key).unwrap();
+        app.task_trust
+            .trust(root.path(), &lumen_task_core::execution_digest(&def))
+            .unwrap();
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        app.execute(Command::RunTask(key), &ctx);
+        fake.process(0)
+            .lock()
+            .unwrap()
+            .queued
+            .push(TaskEvent::Output(
+                Stream::Stdout,
+                b"src/a.c:12:5: error: expected ';'\nsrc/b.c:3:1: warning: unused\n".to_vec(),
+            ));
+        app.poll_task_runs(&ctx);
+        app.view.problems.open = true;
+        let shown = texts(&mut app, &ctx);
+        assert!(
+            shown.contains("src/a.c") && shown.contains("expected ';'"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("[12:5]") && shown.contains("Check"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("2 Errors") || shown.contains("1 Errors"),
+            "{shown}"
+        );
+        // Finish the run, then clear: the rows go away.
+        {
+            let state = fake.process(0);
+            let mut state = state.lock().unwrap();
+            state.exit = Some(crate::services::task_process::ExitReport::Code(1));
+            state.queued.push(TaskEvent::Closed(Stream::Stdout));
+            state.queued.push(TaskEvent::Closed(Stream::Stderr));
+        }
+        app.poll_task_runs(&ctx);
+        app.execute(Command::ClearTaskProblems, &ctx);
+        assert!(!texts(&mut app, &ctx).contains("expected ';'"));
     }
 }

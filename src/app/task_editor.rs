@@ -180,6 +180,87 @@ pub(crate) fn split_joined_args(args_text: &str) -> String {
         .join("\n")
 }
 
+/// A starting point for a new task. Templates are editable examples: choosing one
+/// fills the draft, nothing is discovered or run implicitly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TaskTemplate {
+    BlankProcess,
+    BlankShell,
+    CargoBuild,
+    CargoTest,
+    CargoClippy,
+    NpmScript,
+}
+
+impl TaskTemplate {
+    pub(crate) const ALL: [TaskTemplate; 6] = [
+        Self::BlankProcess,
+        Self::BlankShell,
+        Self::CargoBuild,
+        Self::CargoTest,
+        Self::CargoClippy,
+        Self::NpmScript,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::BlankProcess => "Blank process",
+            Self::BlankShell => "Blank shell command",
+            Self::CargoBuild => "Cargo build",
+            Self::CargoTest => "Cargo test",
+            Self::CargoClippy => "Cargo clippy",
+            Self::NpmScript => "npm script",
+        }
+    }
+
+    /// Replace the execution fields of `draft` (keeping its ID and any label the
+    /// user already typed).
+    pub(crate) fn apply(self, draft: &mut TaskDef) {
+        use lumen_task_core::{BuiltinMatcher, ProblemMatcherSpec};
+        let cargo = |args: &[&str], draft: &mut TaskDef, label: &str, group: Option<&str>| {
+            draft.kind = TaskKind::Process;
+            draft.command = Some("cargo".into());
+            draft.args = args.iter().map(|arg| arg.to_string()).collect();
+            draft.group = group.map(str::to_string);
+            draft.problem_matcher = Some(ProblemMatcherSpec::Builtin(BuiltinMatcher::Cargo));
+            if draft.label.trim().is_empty() {
+                draft.label = label.into();
+            }
+        };
+        draft.group = None;
+        draft.problem_matcher = None;
+        draft.transport = None;
+        match self {
+            Self::BlankProcess => {
+                draft.kind = TaskKind::Process;
+                draft.command = None;
+                draft.args.clear();
+            }
+            Self::BlankShell => {
+                draft.kind = TaskKind::Shell;
+                draft.command = None;
+                draft.args.clear();
+            }
+            Self::CargoBuild => cargo(&["build"], draft, "Build", Some("build")),
+            Self::CargoTest => cargo(&["test", "--workspace"], draft, "Test", Some("test")),
+            Self::CargoClippy => cargo(
+                &["clippy", "--workspace", "--all-targets"],
+                draft,
+                "Clippy",
+                None,
+            ),
+            Self::NpmScript => {
+                draft.kind = TaskKind::Process;
+                draft.command = Some("npm".into());
+                draft.args = vec!["run".into(), "build".into()];
+                if draft.label.trim().is_empty() {
+                    draft.label = "npm build".into();
+                }
+            }
+        }
+    }
+}
+
 /// `Build & Test!` -> `build-test`: letters/digits joined by single dashes.
 pub(crate) fn slug(label: &str) -> String {
     let mut slug = String::new();
@@ -475,5 +556,52 @@ mod tests {
             "build\n--release\n--target\nx86\n/My Docs/a b"
         );
         assert_eq!(split_joined_args(""), "");
+    }
+
+    #[test]
+    fn every_template_yields_a_valid_runnable_draft_once_named() {
+        for template in TaskTemplate::ALL {
+            let mut draft = TaskEditorState::blank_draft();
+            draft.id = "t".into();
+            draft.label = "T".into();
+            draft.command = Some("placeholder".into());
+            template.apply(&mut draft);
+            if matches!(
+                template,
+                TaskTemplate::BlankProcess | TaskTemplate::BlankShell
+            ) {
+                assert!(draft.command.is_none(), "{template:?} starts empty");
+                draft.command = Some("echo".into());
+            }
+            assert!(
+                lumen_task_core::validate_task(&draft).is_empty(),
+                "{template:?}: {:?}",
+                lumen_task_core::validate_task(&draft)
+            );
+        }
+    }
+
+    #[test]
+    fn cargo_templates_set_group_matcher_and_keep_a_typed_label_while_blanks_clear_them() {
+        let mut draft = TaskEditorState::blank_draft();
+        TaskTemplate::CargoBuild.apply(&mut draft);
+        assert_eq!(draft.label, "Build");
+        assert_eq!(
+            (draft.command.as_deref(), draft.args.as_slice()),
+            (Some("cargo"), &["build".to_string()][..])
+        );
+        assert_eq!(draft.group.as_deref(), Some("build"));
+        assert!(draft.problem_matcher.is_some());
+        draft.label = "My build".into();
+        TaskTemplate::CargoTest.apply(&mut draft);
+        assert_eq!(draft.label, "My build", "a label the user typed is kept");
+        assert_eq!(draft.group.as_deref(), Some("test"));
+        TaskTemplate::BlankShell.apply(&mut draft);
+        assert_eq!(draft.kind, TaskKind::Shell);
+        assert!(
+            draft.group.is_none() && draft.problem_matcher.is_none() && draft.command.is_none()
+        );
+        TaskTemplate::NpmScript.apply(&mut draft);
+        assert_eq!(draft.args, ["run", "build"]);
     }
 }

@@ -6,3 +6,4 @@ publish = false
 
 [dependencies]
 toml_edit = "0.25"
+regex = "1"

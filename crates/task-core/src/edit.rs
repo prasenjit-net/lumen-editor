@@ -4,8 +4,8 @@
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, value};
 
 use crate::{
-    Background, Issue, Platform, PlatformOverride, Presentation, SCHEMA_VERSION, TaskDef,
-    validate::validate_task,
+    Background, Issue, Platform, PlatformOverride, Presentation, ProblemMatcherSpec,
+    SCHEMA_VERSION, TaskDef, validate::validate_task,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -144,6 +144,7 @@ fn write_task(table: &mut Table, task: &TaskDef) {
     set_bool(table, "is_background", task.is_background.then_some(true));
     write_background(table, task.background.as_ref());
     write_presentation(table, &task.presentation);
+    write_matcher(table, task.problem_matcher.as_ref());
     for platform in Platform::ALL {
         write_override(table, platform.key(), task.platform_override(platform));
     }
@@ -162,6 +163,30 @@ fn write_background(table: &mut Table, background: Option<&Background>) {
                 "ready_timeout_seconds",
                 background.ready_timeout_seconds,
             );
+        }
+    }
+}
+
+/// A built-in matcher is a string value, a custom one a sub-table; switching
+/// between them removes the other form first.
+fn write_matcher(table: &mut Table, matcher: Option<&ProblemMatcherSpec>) {
+    match matcher {
+        None => {
+            table.remove("problem_matcher");
+        }
+        Some(ProblemMatcherSpec::Builtin(builtin)) => {
+            if !matches!(table.get("problem_matcher"), Some(Item::Value(_))) {
+                table.remove("problem_matcher");
+            }
+            set_str(table, "problem_matcher", Some(builtin.as_str()));
+        }
+        Some(ProblemMatcherSpec::Pattern { pattern, severity }) => {
+            if !matches!(table.get("problem_matcher"), Some(Item::Table(_))) {
+                table.remove("problem_matcher");
+            }
+            let sub = sub_table(table, "problem_matcher");
+            set_str(sub, "pattern", Some(pattern));
+            set_str(sub, "severity", severity.map(|s| s.as_str()));
         }
     }
 }

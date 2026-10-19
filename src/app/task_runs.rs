@@ -32,6 +32,8 @@ pub(crate) const GLOBAL_LOG_BYTES: usize = 32 * 1024 * 1024;
 pub(crate) const MAX_FINISHED_RUNS: usize = 20;
 /// Concurrent running processes (settings will make this configurable, 1-32).
 pub(crate) const MAX_ACTIVE_RUNS: usize = 4;
+/// Problems kept per run; more are counted but not stored.
+pub(crate) const MAX_PROBLEMS_PER_RUN: usize = 500;
 /// Scrollback kept by a pseudo-terminal run (a bounded emulator, not a text log).
 pub(crate) const PTY_HISTORY_LINES: usize = 2000;
 
@@ -131,6 +133,11 @@ pub(crate) struct TaskRun {
     pub(crate) state: RunState,
     pub(crate) log: RunLog,
     pub(crate) readiness: Readiness,
+    matcher: Option<lumen_task_core::Matcher>,
+    /// Problems found in this run's output (see the Problems panel).
+    pub(crate) problems: Vec<lumen_task_core::Problem>,
+    /// How many matched beyond `MAX_PROBLEMS_PER_RUN`.
+    pub(crate) problems_dropped: usize,
     /// A terminal run's plain-text shadow, scanned for the readiness pattern.
     ready_scan: Option<RunLog>,
     /// Pseudo-terminal runs render through an emulator instead of the text log.
@@ -179,6 +186,9 @@ impl TaskRun {
             ended: None,
             state: RunState::Running,
             log,
+            matcher: None,
+            problems: Vec::new(),
+            problems_dropped: 0,
             readiness: Readiness::NotApplicable,
             ready_scan: None,
             terminal: None,
@@ -200,6 +210,7 @@ impl TaskRun {
                 ready_pattern: None,
                 ready_timeout_seconds: None,
                 secrets: Vec::new(),
+                problem_matcher: None,
             },
             process: None,
             exit: None,
@@ -267,6 +278,8 @@ pub(crate) struct TaskRuns {
     pub(crate) focus_canvas: bool,
     /// The task most recently started, for Rerun Last Task.
     pub(crate) last: Option<TaskKey>,
+    /// Recently started tasks, newest first, for the palette (kept in memory only).
+    pub(crate) recent: Vec<TaskKey>,
     /// Runs to remove from the panel as soon as they finish (Stop and Close).
     pub(crate) close_when_finished: Vec<RunId>,
 }
@@ -312,6 +325,14 @@ impl TaskRuns {
             .iter()
             .find(|candidate| candidate.summary && candidate.invocation == Some(group))
             .map(|parent| parent.label.clone())
+    }
+
+    /// Remember a task as the most recent one.
+    pub(crate) fn note_started(&mut self, key: &TaskKey) {
+        self.last = Some(key.clone());
+        self.recent.retain(|other| other != key);
+        self.recent.insert(0, key.clone());
+        self.recent.truncate(10);
     }
 
     /// Whether a run belongs to a group that is still going (its tab must stay).
@@ -645,6 +666,9 @@ impl LumenApp {
             ended: None,
             state: RunState::Running,
             log: RunLog::new(RUN_LOG_BYTES),
+            matcher: None,
+            problems: Vec::new(),
+            problems_dropped: 0,
             readiness: match &resolved.ready_pattern {
                 Some(pattern) => Readiness::Waiting {
                     pattern: pattern.clone(),
@@ -673,9 +697,20 @@ impl LumenApp {
             forced: false,
             restart_after: false,
         };
+        if let Some(spec) = &run.resolved.problem_matcher {
+            match lumen_task_core::Matcher::new(spec) {
+                Ok(matcher) => run.matcher = Some(matcher),
+                Err(message) => run.log.push(
+                    crate::model::task_output::Stream::Stderr,
+                    format!("Problem matcher disabled: {message}\n").as_bytes(),
+                ),
+            }
+        }
         match launched {
             Ok(process) => {
-                if process.is_pty() && matches!(run.readiness, Readiness::Waiting { .. }) {
+                let wants_scan =
+                    matches!(run.readiness, Readiness::Waiting { .. }) || run.matcher.is_some();
+                if process.is_pty() && wants_scan {
                     run.ready_scan = Some(RunLog::new(64 * 1024));
                 }
                 if process.is_pty() {
@@ -701,7 +736,7 @@ impl LumenApp {
         }
         let id = self.view.task_runs.insert(run);
         if invocation.is_none() {
-            self.view.task_runs.last = Some(key.clone());
+            self.view.task_runs.note_started(&key);
         }
         if reveal {
             self.reveal_task_run(id, &key);
@@ -1069,6 +1104,59 @@ impl LumenApp {
         self.advance_task_transitions(now, ctx);
     }
 
+    /// Open a problem's file at its line and column.
+    pub(crate) fn open_task_problem(&mut self, path: PathBuf, line: usize, column: usize) {
+        self.open_file(path.clone());
+        let Some(file) = self
+            .editor
+            .active()
+            .filter(|file| file.path.as_ref() == Some(&path))
+        else {
+            // open_file already reported why (missing file, unreadable, ...).
+            return;
+        };
+        let byte = super::navigation::location_byte(&file.text, line, column);
+        self.view.pending_goto = Some((file.id, byte));
+        self.view.focus_editor = true;
+    }
+
+    /// Forget the problems of finished runs and of running background tasks (a
+    /// watcher never finishes). Other running tasks keep theirs.
+    pub(crate) fn clear_task_problems(&mut self) {
+        for run in self
+            .view
+            .task_runs
+            .runs
+            .iter_mut()
+            .filter(|run| !run.is_active() || run.resolved.is_background)
+        {
+            run.problems.clear();
+            run.problems_dropped = 0;
+        }
+    }
+
+    /// Write the retained output (with its truncation notice, if any) to a file the
+    /// user picks. It is only what Lumen kept, never a full raw log.
+    pub(crate) fn save_task_output(&mut self, id: RunId) {
+        let Some(run) = self.view.task_runs.get(id) else {
+            return;
+        };
+        let (text, name) = (
+            run.output_text(),
+            format!(
+                "{}-output.txt",
+                run.label.replace(['/', '\\', ':', '\0'], "-")
+            ),
+        );
+        let Some(path) = self.dialogs.save_as(&name) else {
+            return; // cancelled: nothing changes
+        };
+        self.view.status = match self.file_system.write_text(&path, &text) {
+            Ok(()) => format!("Saved task output to {}", path.display()),
+            Err(error) => format!("Could not save task output: {error}"),
+        };
+    }
+
     pub(crate) fn copy_task_output(&mut self, id: RunId, ctx: &egui::Context) {
         if let Some(run) = self.view.task_runs.get(id) {
             let text = run.output_text();
@@ -1078,16 +1166,56 @@ impl LumenApp {
     }
 }
 
+/// Make a printed path absolute. Tools print paths relative to the task's working
+/// directory, but cargo prints them relative to the workspace root, so when the
+/// first guess does not exist the workspace root is tried.
+fn locate_problem_file(
+    printed: &str,
+    cwd: &std::path::Path,
+    workspace: Option<&std::path::Path>,
+) -> String {
+    let path = std::path::Path::new(printed);
+    if path.is_absolute() {
+        return printed.to_string();
+    }
+    let from_cwd = cwd.join(path);
+    match workspace.map(|root| root.join(path)) {
+        Some(from_root) if !from_cwd.exists() && from_root.exists() => {
+            from_root.display().to_string()
+        }
+        _ => from_cwd.display().to_string(),
+    }
+}
+
 fn feed(run: &mut TaskRun, stream: crate::model::task_output::Stream, bytes: &[u8]) {
-    match &mut run.terminal {
+    let lines = match &mut run.terminal {
         Some(terminal) => {
             terminal.feed(bytes);
             run.screen_dirty = true;
-            if let Some(scan) = &mut run.ready_scan {
-                scan.push(stream, bytes);
+            match &mut run.ready_scan {
+                Some(scan) => scan.push_lines(stream, bytes),
+                None => Vec::new(),
             }
         }
-        None => run.log.push(stream, bytes),
+        None => run.log.push_lines(stream, bytes),
+    };
+    if let Some(matcher) = &mut run.matcher {
+        for line in lines {
+            if let Some(mut problem) = matcher.feed_line(&line) {
+                problem.path =
+                    locate_problem_file(&problem.path, &run.cwd, run.workspace.as_deref());
+                if run.problems.len() >= MAX_PROBLEMS_PER_RUN {
+                    if !run.resolved.is_background {
+                        run.problems_dropped += 1;
+                        continue;
+                    }
+                    // A watcher keeps running: keep the newest, forget the oldest.
+                    run.problems.remove(0);
+                    run.problems_dropped += 1;
+                }
+                run.problems.push(problem);
+            }
+        }
     }
 }
 
@@ -1159,7 +1287,9 @@ fn poll_run_with(
         };
         if seen.contains(&pattern) {
             run.readiness = Readiness::Ready;
-            run.ready_scan = None;
+            if run.matcher.is_none() {
+                run.ready_scan = None;
+            }
         } else if now >= deadline && run.exit.is_none() && run.stop.is_none() {
             // A readiness wait always ends: an unready service is stopped, not left
             // half-started for dependents to wait on.
@@ -1222,7 +1352,15 @@ fn poll_run_with(
         },
     };
     run.ended = Some(now);
-    let message = format!("'{}': {}", run.label, outcome.summary());
+    let found = if run.problems.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " · {} problem(s) found",
+            run.problems.len() + run.problems_dropped
+        )
+    };
+    let message = format!("'{}': {}{found}", run.label, outcome.summary());
     run.state = RunState::Finished(outcome);
     Some(message)
 }
@@ -3203,5 +3341,306 @@ depends_on = ["deploy", "smoke"]
             "{}",
             h.app.view.status
         );
+    }
+
+    const RUSTC_OUTPUT: &str = "warning: unused variable: `x`\n --> src/main.rs:3:9\n  |\nerror[E0425]: cannot find value `y`\n  --> src/lib.rs:10:5\n";
+
+    #[test]
+    fn matched_problems_are_collected_across_chunks_and_do_not_change_success() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[("check", "problem_matcher = \"cargo\"")],
+            "depends_on = [\"check\"]",
+        ));
+        h.run("check");
+        // Split mid-line: the second chunk completes the location line.
+        let (first, second) = RUSTC_OUTPUT.split_at(RUSTC_OUTPUT.find("src/lib").unwrap() + 4);
+        say(&mut h, 0, first);
+        h.poll_at(Instant::now());
+        assert_eq!(
+            h.run_at(0).problems.len(),
+            1,
+            "the first problem is complete already"
+        );
+        say(&mut h, 0, second);
+        h.poll_at(Instant::now());
+        let problems = &h.run_at(0).problems;
+        assert_eq!(problems.len(), 2);
+        assert_eq!(
+            (
+                problems[1].path.as_str(),
+                problems[1].line,
+                problems[1].column
+            ),
+            (h.run_at(0).cwd.join("src/lib.rs").to_str().unwrap(), 10, 5)
+        );
+        // Matching errors does not make the task fail: the exit code decides.
+        h.complete(0, 0);
+        assert_eq!(
+            h.run_at(0).outcome(),
+            Some(&RunOutcome::Succeeded(ExitReport::Code(0)))
+        );
+        assert!(
+            h.app.view.status.contains("2 problem(s) found"),
+            "{}",
+            h.app.view.status
+        );
+    }
+
+    #[test]
+    fn terminal_runs_are_matched_through_colour_codes() {
+        let mut h = Harness::new();
+        h.write_tasks(
+            "\n[[tasks]]\nid = \"t\"\nlabel = \"T\"\ntype = \"shell\"\ncommand = \"make\"\nsave = \"none\"\nproblem_matcher = \"gcc\"\n",
+        );
+        h.run("t");
+        assert!(h.run_at(0).is_pty());
+        say(
+            &mut h,
+            0,
+            "\x1b[1msrc/a.c:12:5:\x1b[0m \x1b[31merror:\x1b[0m expected ';'\r\n",
+        );
+        h.poll_at(Instant::now());
+        assert_eq!(h.run_at(0).problems.len(), 1);
+        assert_eq!(h.run_at(0).problems[0].message, "expected ';'");
+    }
+
+    #[test]
+    fn a_rerun_replaces_its_own_problems_and_leaves_other_tasks_alone() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[
+                ("a", "problem_matcher = \"gcc\""),
+                ("b", "problem_matcher = \"gcc\""),
+            ],
+            "depends_on = [\"a\"]",
+        ));
+        h.run("a");
+        h.run("b");
+        say(&mut h, 0, "a.c:1:1: error: first\n");
+        say(&mut h, 1, "b.c:2:2: error: other\n");
+        h.poll_at(Instant::now());
+        h.complete(0, 1);
+        h.complete(1, 1);
+        h.run("a");
+        say(&mut h, 2, "a.c:9:9: warning: second\n");
+        h.poll_at(Instant::now());
+        let runs = h.app.view.task_runs.runs();
+        let a = runs.iter().find(|r| r.label == "A").unwrap();
+        let b = runs.iter().find(|r| r.label == "B").unwrap();
+        assert_eq!(
+            a.problems.len(),
+            1,
+            "the old tab (and its problems) were replaced"
+        );
+        assert_eq!(a.problems[0].message, "second");
+        assert_eq!(
+            b.problems[0].message, "other",
+            "another task's problems stay"
+        );
+    }
+
+    #[test]
+    fn problems_are_bounded_and_clear_only_touches_finished_runs() {
+        let mut h = Harness::new();
+        h.write_tasks(&group_file(
+            &[
+                ("a", "problem_matcher = \"gcc\""),
+                ("b", "problem_matcher = \"gcc\""),
+            ],
+            "depends_on = [\"a\"]",
+        ));
+        h.run("a");
+        let mut text = String::new();
+        for n in 0..(MAX_PROBLEMS_PER_RUN + 20) {
+            text.push_str(&format!("f.c:{}:1: error: e{n}\n", n + 1));
+        }
+        say(&mut h, 0, &text);
+        for _ in 0..10 {
+            h.poll_at(Instant::now());
+        }
+        assert_eq!(h.run_at(0).problems.len(), MAX_PROBLEMS_PER_RUN);
+        assert_eq!(h.run_at(0).problems_dropped, 20);
+        h.complete(0, 1);
+        assert!(
+            h.app
+                .view
+                .status
+                .contains(&format!("{} problem(s)", MAX_PROBLEMS_PER_RUN + 20))
+        );
+        h.run("b");
+        say(&mut h, 1, "b.c:1:1: error: live\n");
+        h.poll_at(Instant::now());
+        h.app.execute(Command::ClearTaskProblems, &h.ctx);
+        let runs = h.app.view.task_runs.runs();
+        assert!(
+            runs.iter()
+                .find(|r| r.label == "A")
+                .unwrap()
+                .problems
+                .is_empty()
+        );
+        assert_eq!(
+            runs.iter().find(|r| r.label == "B").unwrap().problems.len(),
+            1,
+            "running tasks keep theirs"
+        );
+    }
+
+    #[test]
+    fn a_background_task_keeps_its_newest_problems_and_clear_reaches_it_while_running() {
+        let mut h = Harness::new();
+        h.write_tasks(&format!(
+            "\n[[tasks]]\nid = \"w\"\nlabel = \"W\"\ntype = \"process\"\ncommand = \"watch\"\nsave = \"none\"\nproblem_matcher = \"gcc\"\n{SERVICE}\n"
+        ));
+        h.trust_everything();
+        h.run("w");
+        let mut text = String::new();
+        for n in 0..(MAX_PROBLEMS_PER_RUN + 5) {
+            text.push_str(&format!("f.c:{}:1: error: e{n}\n", n + 1));
+        }
+        say(&mut h, 0, &text);
+        for _ in 0..10 {
+            h.poll_at(Instant::now());
+        }
+        let run = h.run_at(0);
+        assert_eq!(run.problems.len(), MAX_PROBLEMS_PER_RUN);
+        assert_eq!(
+            run.problems.last().unwrap().message,
+            format!("e{}", MAX_PROBLEMS_PER_RUN + 4)
+        );
+        assert_eq!(run.problems[0].message, "e5", "the oldest were forgotten");
+        h.app.execute(Command::ClearTaskProblems, &h.ctx);
+        assert!(h.run_at(0).problems.is_empty());
+    }
+
+    #[test]
+    fn opening_a_task_problem_opens_the_file_at_its_line_and_column() {
+        let mut h = Harness::new();
+        let file = h.root.path().join("src.c");
+        std::fs::write(&file, "one\ntwo three\nfour\n").unwrap();
+        h.app
+            .execute(Command::OpenTaskProblem(file.clone(), 2, 5), &h.ctx);
+        assert_eq!(
+            h.app.editor.active().unwrap().path.as_deref(),
+            Some(file.as_path())
+        );
+        let (id, byte) = h.app.view.pending_goto.expect("a caret move is queued");
+        assert_eq!(id, h.app.editor.active().unwrap().id);
+        assert_eq!(
+            &h.app.editor.active().unwrap().text[byte..byte + 5],
+            "three"
+        );
+        // A missing file reports and moves nothing.
+        h.app.view.pending_goto = None;
+        h.app.execute(
+            Command::OpenTaskProblem(h.root.path().join("nope.c"), 1, 1),
+            &h.ctx,
+        );
+        assert!(h.app.view.pending_goto.is_none());
+    }
+
+    struct PickPath(Option<PathBuf>);
+
+    impl crate::services::FileDialogs for PickPath {
+        fn open_file(&self) -> Option<PathBuf> {
+            None
+        }
+        fn open_folder(&self) -> Option<PathBuf> {
+            None
+        }
+        fn save_as(&self, _name: &str) -> Option<PathBuf> {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn saving_output_writes_what_was_retained_and_cancel_or_failure_changes_nothing() {
+        let mut h = Harness::new();
+        h.trust_everything();
+        h.run("build");
+        let id = h.run_at(0).id;
+        say(&mut h, 0, "line one\nline two\n");
+        h.poll_at(Instant::now());
+        let target = h.root.path().join("out.txt");
+        h.app.dialogs = Box::new(PickPath(None));
+        h.app.execute(Command::SaveTaskOutput(id), &h.ctx);
+        assert!(!target.exists(), "cancelling writes nothing");
+        h.app.dialogs = Box::new(PickPath(Some(target.clone())));
+        h.app.execute(Command::SaveTaskOutput(id), &h.ctx);
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "line one\nline two\n"
+        );
+        assert!(h.app.view.status.contains("Saved task output"));
+        // An unwritable destination is reported, not swallowed.
+        h.app.dialogs = Box::new(PickPath(Some(h.root.path().join("missing-dir/out.txt"))));
+        h.app.execute(Command::SaveTaskOutput(id), &h.ctx);
+        assert!(
+            h.app.view.status.contains("Could not save task output"),
+            "{}",
+            h.app.view.status
+        );
+    }
+
+    #[test]
+    fn recently_started_tasks_are_remembered_newest_first_and_bounded() {
+        let mut h = Harness::new();
+        h.trust_everything();
+        h.run("build");
+        h.finish(0, 0);
+        h.poll_at(Instant::now());
+        h.run("multi");
+        h.finish(1, 0);
+        h.poll_at(Instant::now());
+        h.run("build");
+        let recent: Vec<_> = h
+            .app
+            .view
+            .task_runs
+            .recent
+            .iter()
+            .map(|k| k.id.as_str())
+            .collect();
+        assert_eq!(
+            recent,
+            ["build", "multi"],
+            "a repeat moves to the front without duplicating"
+        );
+        let mut runs = TaskRuns::default();
+        for n in 0..25 {
+            runs.note_started(&TaskKey::new(Scope::Workspace, format!("t{n}")));
+        }
+        assert_eq!(runs.recent.len(), 10);
+        assert_eq!(runs.recent[0].id, "t24");
+    }
+}
+
+#[cfg(test)]
+mod problem_location_tests {
+    use super::*;
+
+    #[test]
+    fn a_printed_path_falls_back_to_the_workspace_root_when_the_cwd_has_no_such_file() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("src")).unwrap();
+        std::fs::create_dir_all(root.path().join("crate_a/src")).unwrap();
+        std::fs::write(root.path().join("src/lib.rs"), "").unwrap();
+        std::fs::write(root.path().join("crate_a/src/own.rs"), "").unwrap();
+        let cwd = root.path().join("crate_a");
+        let at = |printed: &str| locate_problem_file(printed, &cwd, Some(root.path()));
+        assert_eq!(
+            at("src/own.rs"),
+            cwd.join("src/own.rs").display().to_string()
+        );
+        assert_eq!(
+            at("src/lib.rs"),
+            root.path().join("src/lib.rs").display().to_string()
+        );
+        assert_eq!(
+            at("src/gone.rs"),
+            cwd.join("src/gone.rs").display().to_string()
+        );
+        assert_eq!(at("/abs/x.rs"), "/abs/x.rs");
     }
 }

@@ -69,6 +69,8 @@ pub(crate) enum Command {
     /// The task terminal was measured at this many rows and columns.
     ResizeTaskTerminal(super::task_runs::RunId, u16, u16),
     CopyTaskOutput(super::task_runs::RunId),
+    /// Save the retained output to a file chosen in a Save dialog.
+    SaveTaskOutput(super::task_runs::RunId),
     /// Answer the run review prompt; `true` saves dirty files first.
     ConfirmTaskRun(bool),
     CancelTaskRun,
@@ -143,6 +145,9 @@ pub(crate) enum Command {
     CloseTerminal,
     CloseProblems,
     OpenProblem(DocumentId, Range<usize>),
+    /// Open a task problem's file at line and column (1-based).
+    OpenTaskProblem(PathBuf, usize, usize),
+    ClearTaskProblems,
     ClearTerminal,
     PullSourceControl,
     PushSourceControl,

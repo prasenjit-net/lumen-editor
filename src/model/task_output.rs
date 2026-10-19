@@ -158,6 +158,12 @@ impl RunLog {
 
     /// Feed bytes from one stream.
     pub(crate) fn push(&mut self, stream: Stream, bytes: &[u8]) {
+        self.push_lines(stream, bytes);
+    }
+
+    /// Feed bytes from one stream and return the lines this completed, so a caller
+    /// can scan each exactly once (problem matching).
+    pub(crate) fn push_lines(&mut self, stream: Stream, bytes: &[u8]) -> Vec<String> {
         let mut state = std::mem::take(match stream {
             Stream::Stdout => &mut self.stdout,
             Stream::Stderr => &mut self.stderr,
@@ -168,9 +174,12 @@ impl RunLog {
             Stream::Stdout => &mut self.stdout,
             Stream::Stderr => &mut self.stderr,
         } = state;
+        let mut lines = Vec::with_capacity(completed.len());
         for text in completed {
+            lines.push(text.clone());
             self.add_line(stream, text);
         }
+        lines
     }
 
     /// Flush unfinished lines and incomplete UTF-8 once both streams have closed.
@@ -475,5 +484,17 @@ mod tests {
         }
         let tail = log.tail_text(256);
         assert!(tail.contains("noise 1999") && !tail.contains("noise 0\n") && tail.len() < 600);
+    }
+
+    #[test]
+    fn push_lines_returns_each_completed_line_once() {
+        let mut log = log();
+        assert!(log.push_lines(Stream::Stdout, b"par").is_empty());
+        assert_eq!(
+            log.push_lines(Stream::Stdout, b"tial\nnext\r\nrest"),
+            ["partial", "next"]
+        );
+        assert_eq!(log.push_lines(Stream::Stdout, b"\n"), ["rest"]);
+        assert_eq!(log.lines().len(), 3, "the lines are retained as before");
     }
 }

@@ -678,6 +678,21 @@ starvation, and correct service-death behavior.
 
 ### 6. Diagnostics and polish
 
+**Status (2026-10-18): implemented except accessibility announcements and extra
+templates.** Problem matchers (`task-core/matcher.rs`): built-ins `cargo` (a header
+pairs with its ` --> path:line:col`, with an expiring pending state), `gcc`, `go`,
+`tsc`, and single-line custom regexes with named groups; patterns are size-limited,
+overlong lines ignored, positions clamped. They run on completed output lines (a
+plain-text shadow for terminal runs, so colour codes do not matter) and fill each run's
+problem list (500 per run, overflow counted). The Problems panel merges them with
+language-server rows, labelled with the task; the newest run of each task wins so a
+rerun replaces only its own problems; clicking opens the file at line/column; a header
+action clears finished runs' problems. Palette: `Run Task: <label>` per task with recent
+ones first. New-task templates (blank process/shell, Cargo build/test/clippy, npm
+script) and a problem-matcher selector in the form. Save Output writes the retained
+text. Not done: screen-reader announcements for run state, multi-line custom matchers,
+clickable file links inside the output text, further package-manager templates.
+
 Add tested problem matchers/file links, task-scoped Problems integration, search,
 recent task picker, output export, and accessible state announcements. Add further
 package-manager templates only after verifying their command/quoting assumptions.
