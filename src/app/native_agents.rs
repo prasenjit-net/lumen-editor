@@ -425,17 +425,7 @@ mod tests {
             assert!(has_text(&output, "Codex"), "agent label at {width}");
             assert!(has_text(&output, "Permission needed"), "{width}");
             assert!(has_text(&output, "Needs your answer"), "status at {width}");
-            if !has_text(&output, "Send") {
-                let all: Vec<String> = output
-                    .shapes
-                    .iter()
-                    .filter_map(|s| match &s.shape {
-                        egui::Shape::Text(t) => Some(t.galley.job.text.clone()),
-                        _ => None,
-                    })
-                    .collect();
-                panic!("composer at {width}: {all:?}");
-            }
+            assert!(has_text(&output, "Send"), "composer at {width}");
             assert!(
                 has_text(&output, "Model"),
                 "settings above the composer at {width}"
