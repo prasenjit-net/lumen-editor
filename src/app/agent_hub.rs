@@ -86,6 +86,10 @@ pub(crate) struct Live {
     had_turn: bool,
     /// When the session last became idle (seconds); drives releasing idle sessions.
     idle_since: u64,
+    /// The saved conversation was looked up (whether or not one existed).
+    transcript_loaded: bool,
+    /// The conversation changed since it was last saved.
+    transcript_dirty: bool,
 }
 
 enum HeldReply {
@@ -110,6 +114,8 @@ impl Live {
             reattached: false,
             had_turn: false,
             idle_since: 0,
+            transcript_loaded: false,
+            transcript_dirty: false,
         }
     }
 }
@@ -172,6 +178,45 @@ impl AgentHub {
 
     pub(crate) fn set_slots(&mut self, slots: usize) {
         self.scheduler.set_slots(slots);
+    }
+
+    /// Conversations that changed since they were saved, with the provider
+    /// identity they are stored under. Sessions without one have nothing to save to.
+    pub(crate) fn take_dirty_transcripts(
+        &mut self,
+    ) -> Vec<(
+        ProviderId,
+        String,
+        Vec<lumen_agent_core::model::TranscriptItem>,
+    )> {
+        let mut out = Vec::new();
+        for (id, live) in &mut self.live {
+            if !live.transcript_dirty {
+                continue;
+            }
+            live.transcript_dirty = false;
+            if let Some(record) = self.registry.get(*id)
+                && let Some(native) = &record.native
+            {
+                out.push((record.provider, native.clone(), live.model.items.clone()));
+            }
+        }
+        out
+    }
+
+    pub(crate) fn transcript_loaded(&self, session: SessionId) -> bool {
+        self.live.get(&session).is_some_and(|l| l.transcript_loaded)
+    }
+
+    /// Show a saved conversation in a session that has none yet.
+    pub(crate) fn restore_transcript(
+        &mut self,
+        session: SessionId,
+        items: Vec<lumen_agent_core::model::TranscriptItem>,
+    ) {
+        let live = self.live_mut(session);
+        live.transcript_loaded = true;
+        live.model.restore_items(items);
     }
 
     pub(crate) fn live(&self, session: SessionId) -> Option<&Live> {
@@ -563,7 +608,10 @@ impl AgentHub {
         let expected_revision = live.model.config.as_ref().map(|c| c.revision);
         debug_assert_eq!(prompt.ticket, ticket);
         let shown: Vec<String> = prompt.input.iter().map(describe_block).collect();
-        let (item, shown) = (ItemId(format!("user-{}", ticket.0)), shown.join("\n"));
+        let (item, shown) = (
+            ItemId(format!("user-{}-{}", (self.now)(), ticket.0)),
+            shown.join("\n"),
+        );
         let operation = AgentOperation::StartTurn {
             session,
             client_turn: ClientTurnId(format!("t{}", ticket.0)),
@@ -596,6 +644,7 @@ impl AgentHub {
             live.reattached = false;
             live.had_turn = true;
             live.idle_since = now;
+            live.transcript_dirty = true;
             live.preparing = false;
             live.held_reply = None;
             live.error = error;
@@ -799,6 +848,9 @@ impl AgentHub {
     pub(crate) fn begin_shutdown(&mut self) {
         if self.shutdown_ops.is_some() {
             return;
+        }
+        for live in self.live.values_mut().filter(|l| !l.model.items.is_empty()) {
+            live.transcript_dirty = true;
         }
         let mut open = Vec::new();
         for (provider, backend) in &mut self.backends {

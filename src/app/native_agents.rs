@@ -59,6 +59,7 @@ impl LumenApp {
             None => (crate::model::agent_registry::Registry::new(), None),
         };
         self.native_agents_store = store;
+        self.native_transcripts_dir = crate::services::agent_transcripts_store::user_dir();
         let backends: Vec<(ProviderId, Box<dyn AgentBackend>)> = vec![
             (
                 ProviderId::Codex,
@@ -114,6 +115,15 @@ impl LumenApp {
             return;
         };
         hub.tick();
+        if let Some(dir) = &self.native_transcripts_dir {
+            for (provider, native, items) in hub.take_dirty_transcripts() {
+                if let Err(error) =
+                    crate::services::agent_transcripts_store::save(dir, provider, &native, &items)
+                {
+                    self.view.status = error;
+                }
+            }
+        }
         if self.view.native_quit_deadline.is_some() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
@@ -173,6 +183,7 @@ impl LumenApp {
         if !known {
             return;
         }
+        self.load_cached_transcript(id);
         if let Some(hub) = self.view.native_agents.as_mut() {
             hub.ensure_ready(id);
         }
@@ -183,6 +194,33 @@ impl LumenApp {
             diff.active = false;
         }
         self.enter_page_tab(ctx);
+    }
+
+    /// Show what was said in this chat the last time, read from the cache. Done
+    /// once per session per run, and only into an empty conversation.
+    fn load_cached_transcript(&mut self, id: SessionId) {
+        let Some(hub) = self.view.native_agents.as_mut() else {
+            return;
+        };
+        if hub.transcript_loaded(id) {
+            return;
+        }
+        let key = hub
+            .registry
+            .get(id)
+            .and_then(|r| r.native.clone().map(|native| (r.provider, native)));
+        let (Some(dir), Some((provider, native))) = (&self.native_transcripts_dir, key) else {
+            hub.restore_transcript(id, Vec::new());
+            return;
+        };
+        match crate::services::agent_transcripts_store::load(dir, provider, &native) {
+            Ok(items) => hub.restore_transcript(id, items),
+            Err(error) => {
+                // Leave the file alone and start this chat's view empty.
+                hub.restore_transcript(id, Vec::new());
+                self.view.status = error;
+            }
+        }
     }
 
     pub(super) fn chat_send(&mut self, id: SessionId) {
@@ -536,5 +574,59 @@ mod tests {
         assert!(!app.native_agents_need_shutdown());
         app.close_window(&ctx);
         assert!(app.view.allow_quit);
+    }
+
+    #[test]
+    fn a_conversation_is_still_there_after_the_app_is_closed_and_reopened() {
+        let dir = std::env::temp_dir().join(format!("lumen-reopen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (mut app, ctx) = fixture();
+        app.native_transcripts_dir = Some(dir.clone());
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        let id = app.view.chats.active().unwrap();
+        app.view
+            .chats
+            .draft_mut(id)
+            .push_str("remember the tangerine");
+        app.execute(Command::ChatSend(id), &ctx);
+        // Wait for the turn to finish and the cache file to be written.
+        for _ in 0..1000 {
+            app.poll_native_agents(&ctx);
+            let finished = app.view.native_agents.as_ref().unwrap().status(id)
+                == crate::app::agent_hub::SessionStatus::Idle
+                && dir.exists()
+                && std::fs::read_dir(&dir).is_ok_and(|mut d| d.next().is_some());
+            if finished {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let registry = app.view.native_agents.as_ref().unwrap().registry.to_json();
+
+        // A new run: same index file, same cache folder, fresh agents.
+        let (mut app, ctx) = fixture();
+        app.native_transcripts_dir = Some(dir.clone());
+        app.view.native_agents.as_mut().unwrap().registry =
+            crate::model::agent_registry::Registry::from_json(&registry).unwrap();
+        assert!(app.view.native_agents.as_ref().unwrap().live(id).is_none());
+        app.execute(Command::OpenChat(id), &ctx);
+        frame(&mut app, &ctx, 1000.0);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(
+            has_text(&output, "remember the tangerine"),
+            "the user's message"
+        );
+        let live = app.view.native_agents.as_ref().unwrap().live(id).unwrap();
+        assert!(
+            live.model.items.len() >= 2,
+            "the answer too: {:?}",
+            live.model.items
+        );
+        // Opening again does not duplicate anything.
+        let count = live.model.items.len();
+        app.execute(Command::OpenChat(id), &ctx);
+        let live = app.view.native_agents.as_ref().unwrap().live(id).unwrap();
+        assert_eq!(live.model.items.len(), count);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
