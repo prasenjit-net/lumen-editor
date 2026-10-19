@@ -20,6 +20,7 @@ mod editor_viewport;
 mod explorer;
 mod explorer_actions;
 mod explorer_edit;
+mod file_icons;
 mod language_edit;
 mod language_navigation;
 mod navigation;

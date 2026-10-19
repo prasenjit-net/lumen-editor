@@ -11,6 +11,14 @@ pub(crate) fn configure(ctx: &egui::Context) -> egui::FontDefinitions {
         .entry(egui::FontFamily::Proportional)
         .or_default()
         .push("lumen-icons".into());
+    fonts.font_data.insert(
+        "file-icons".into(),
+        egui::FontData::from_static(include_bytes!("../../assets/file-icons.ttf")).into(),
+    );
+    fonts.families.insert(
+        egui::FontFamily::Name("file-icons".into()),
+        vec!["file-icons".into()],
+    );
     // Use platform fonts when available, retaining embedded fallbacks.
     #[cfg(not(target_os = "windows"))]
     let platform_fonts = [
