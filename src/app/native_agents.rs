@@ -409,4 +409,69 @@ mod tests {
         let config = hub.live(id).unwrap().model.config.as_ref().unwrap();
         assert_eq!(config.get("model").unwrap().current, "smart");
     }
+
+    #[test]
+    fn messages_are_told_apart_and_permissions_and_working_state_are_clear() {
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        let id = app.view.chats.active().unwrap();
+        app.view.chats.draft_mut(id).push_str("approve: touch file");
+        app.execute(Command::ChatSend(id), &ctx);
+        settle(&mut app, &ctx);
+        for width in [620.0, 1000.0, 1800.0] {
+            frame(&mut app, &ctx, width);
+            let output = frame(&mut app, &ctx, width);
+            assert!(has_text(&output, "You"), "user label at {width}");
+            assert!(has_text(&output, "Codex"), "agent label at {width}");
+            assert!(has_text(&output, "Permission needed"), "{width}");
+            assert!(has_text(&output, "Needs your answer"), "status at {width}");
+            if !has_text(&output, "Send") {
+                let all: Vec<String> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::Shape::Text(t) => Some(t.galley.job.text.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                panic!("composer at {width}: {all:?}");
+            }
+            assert!(
+                has_text(&output, "Model"),
+                "settings above the composer at {width}"
+            );
+        }
+        let request = app
+            .view
+            .native_agents
+            .as_ref()
+            .unwrap()
+            .live(id)
+            .unwrap()
+            .model
+            .pending_approvals[0]
+            .clone();
+        let allow = request
+            .choices
+            .iter()
+            .find(|c| c.allows)
+            .unwrap()
+            .id
+            .clone();
+        app.execute(Command::ChatApproval(id, request.token, allow), &ctx);
+        app.view.chats.draft_mut(id).push_str("slow: keep going");
+        app.execute(Command::ChatSend(id), &ctx);
+        settle(&mut app, &ctx);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "Working"), "a clear working state");
+        assert!(
+            has_text(&output, "Stop"),
+            "stop replaces nothing but is offered"
+        );
+        app.execute(Command::ChatStop(id), &ctx);
+        settle(&mut app, &ctx);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(!has_text(&output, "Working"));
+        assert!(!has_text(&output, "Stop"));
+    }
 }
