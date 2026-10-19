@@ -1,0 +1,12 @@
+[package]
+name = "lumen-agent-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+# Scriptable fake backend, fake child launcher and the shared contract tests that
+# every provider crate runs against its own implementation.
+testing = []
+
+[dependencies]
