@@ -7,8 +7,8 @@
     <key>CFBundleExecutable</key><string>lumen-editor</string>
     <key>CFBundleIconFile</key><string>Lumen.icns</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.2.1</string>
-    <key>CFBundleVersion</key><string>0.2.1</string>
+    <key>CFBundleShortVersionString</key><string>0.3.0</string>
+    <key>CFBundleVersion</key><string>0.3.0</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>LSMinimumSystemVersion</key><string>10.15</string>
