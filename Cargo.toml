@@ -24,7 +24,7 @@ assets = [
 ]
 
 [workspace]
-members = ["xtask", "crates/agent-codex", "crates/agent-core", "crates/agent-protocol", "crates/editor-core", "crates/editor-surface", "crates/language-services", "crates/settings-core", "crates/task-core", "crates/terminal-core"]
+members = ["xtask", "crates/agent-claude", "crates/agent-codex", "crates/agent-core", "crates/agent-protocol", "crates/editor-core", "crates/editor-surface", "crates/language-services", "crates/settings-core", "crates/task-core", "crates/terminal-core"]
 default-members = ["."]
 resolver = "3"
 
