@@ -3,6 +3,7 @@ mod activity_bar;
 mod agent_panel;
 mod bottom_tabs;
 mod breadcrumbs;
+mod chat;
 mod chrome;
 #[cfg(feature = "shared-editor")]
 mod completion;
@@ -27,6 +28,7 @@ mod palette;
 #[cfg(feature = "shared-editor")]
 mod popup_place;
 mod problems;
+mod session_list;
 mod settings;
 pub(crate) mod shortcut;
 mod source_control;

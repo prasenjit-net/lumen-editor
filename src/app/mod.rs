@@ -5,6 +5,7 @@ pub(crate) mod agent_context;
 pub(crate) mod agent_history;
 pub(crate) mod agent_hub;
 pub(crate) mod agent_permission;
+pub(crate) mod chat_tabs;
 mod cli_open;
 mod clipboard;
 pub(crate) mod command;
@@ -20,6 +21,7 @@ pub(crate) mod find;
 mod folding;
 mod language_edits;
 mod language_services;
+pub(crate) mod native_agents;
 mod navigation;
 pub(crate) mod output;
 mod safety;
@@ -95,6 +97,8 @@ pub(crate) struct LumenApp {
     pub(crate) logged_status: String,
     pub(crate) logged_terminal_error: Option<String>,
     pub(crate) agent_runtime: agent::AgentRuntime,
+    /// Where the native-agent session index is saved; `None` in tests.
+    pub(crate) native_agents_store: Option<std::path::PathBuf>,
     pub(crate) terminal_session: Option<crate::services::terminal::TerminalSession>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
@@ -140,6 +144,7 @@ impl Default for LumenApp {
             logged_status: String::new(),
             logged_terminal_error: None,
             agent_runtime: Default::default(),
+            native_agents_store: None,
             terminal_session: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
@@ -199,6 +204,7 @@ impl eframe::App for LumenApp {
         self.poll_source_control(ctx);
         self.poll_terminal(ctx);
         self.poll_agents(ctx);
+        self.poll_native_agents(ctx);
         self.log_status_changes();
         self.sync_output();
     }

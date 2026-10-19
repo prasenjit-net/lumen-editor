@@ -34,6 +34,9 @@ pub(crate) struct Palette {
     pub(crate) warning: Color32,
     pub(crate) success: Color32,
     pub(crate) info: Color32,
+    /// Subtle per-provider identity colours for session rows and chat tabs.
+    pub(crate) codex: Color32,
+    pub(crate) claude: Color32,
 }
 impl Theme {
     pub(crate) fn resolve(choice: &str, system: Option<egui::Theme>) -> Self {
@@ -79,6 +82,8 @@ impl Theme {
             warning: Color32::from_rgb(204, 167, 0),
             success: Color32::from_rgb(35, 209, 139),
             info: Color32::from_rgb(117, 190, 255),
+            codex: Color32::from_rgb(78, 190, 160),
+            claude: Color32::from_rgb(217, 140, 98),
         };
         match self {
             Self::Dark => dark,
@@ -101,6 +106,8 @@ impl Theme {
                 warning: Color32::from_rgb(125, 88, 0),
                 success: Color32::from_rgb(0, 112, 64),
                 info: Color32::from_rgb(0, 95, 160),
+                codex: Color32::from_rgb(0, 120, 100),
+                claude: Color32::from_rgb(168, 84, 40),
                 diff_removed_bg: Color32::from_rgb(255, 225, 225),
                 diff_added_bg: Color32::from_rgb(219, 242, 219),
                 diff_removed_text: Color32::from_rgb(165, 25, 25),
@@ -128,6 +135,8 @@ impl Theme {
                 warning: Color32::YELLOW,
                 success: Color32::GREEN,
                 info: Color32::from_rgb(0, 255, 255),
+                codex: Color32::from_rgb(0, 255, 190),
+                claude: Color32::from_rgb(255, 170, 90),
                 ..dark
             },
         }

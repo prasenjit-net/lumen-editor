@@ -70,6 +70,12 @@ pub(crate) fn run() -> eframe::Result<()> {
                 app.reopen_last_folder_if_enabled();
             }
             app.restore_recovery();
+            if std::env::var_os("LUMEN_NATIVE_AGENTS").is_some_and(|v| v != "0") {
+                app.enable_native_agents(
+                    &cc.egui_ctx,
+                    crate::services::agent_sessions_store::user_path(),
+                );
+            }
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             {
                 let menu = platform::native_menu::NativeMenu::new(&cc.egui_ctx)?;

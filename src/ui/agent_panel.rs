@@ -40,6 +40,10 @@ impl Workbench<'_> {
         if !self.view.agents.open || !self.view.settings.boolean("agent.enabled") {
             return;
         }
+        if self.view.native_agents.is_some() {
+            self.session_list_panel(ctx);
+            return;
+        }
         let active = self.view.agents.active;
         SidePanel::right("agent_panel")
             .default_width(DEFAULT_WIDTH)
@@ -1177,7 +1181,7 @@ fn plan(ui: &mut egui::Ui, session: &AgentSessionView) {
     ui.separator();
 }
 
-fn user_message(ui: &mut egui::Ui, text: &str) {
+pub(super) fn user_message(ui: &mut egui::Ui, text: &str) {
     let colors = crate::ui::theme::palette(ui.visuals());
     Frame::default()
         .fill(colors.input)
@@ -1192,7 +1196,7 @@ fn user_message(ui: &mut egui::Ui, text: &str) {
         });
 }
 
-fn agent_message(ui: &mut egui::Ui, text: &str) {
+pub(super) fn agent_message(ui: &mut egui::Ui, text: &str) {
     let colors = crate::ui::theme::palette(ui.visuals());
     for block in markdown_lite::parse(text) {
         match block {

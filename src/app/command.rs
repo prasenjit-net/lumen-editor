@@ -12,6 +12,24 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
     Settings,
+    /// Start a new native agent chat in the current workspace.
+    NativeNewSession(lumen_agent_core::ProviderId),
+    OpenChat(lumen_agent_core::SessionId),
+    CloseChat(lumen_agent_core::SessionId),
+    /// Send the session's composer text.
+    ChatSend(lumen_agent_core::SessionId),
+    ChatStop(lumen_agent_core::SessionId),
+    ChatCancelQueued(
+        lumen_agent_core::SessionId,
+        crate::model::agent_scheduler::Ticket,
+    ),
+    ChatApproval(
+        lumen_agent_core::SessionId,
+        lumen_agent_core::RequestToken,
+        lumen_agent_core::api::ApprovalDecisionId,
+    ),
+    ArchiveChat(lumen_agent_core::SessionId),
+    PinChat(lumen_agent_core::SessionId, bool),
     /// Open a blank task editor tab in the given scope.
     NewTaskEditor(lumen_task_core::Scope),
     /// Open (or focus) an existing task for editing.

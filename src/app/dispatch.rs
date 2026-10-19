@@ -25,8 +25,18 @@ impl LumenApp {
                 self.view.settings.open = true;
                 self.view.settings.focus_search = true;
                 self.view.task_editors.deactivate();
+                self.view.chats.deactivate();
                 self.enter_page_tab(ctx);
             }
+            Command::NativeNewSession(provider) => self.native_new_session(provider, ctx),
+            Command::OpenChat(id) => self.open_chat(id, ctx),
+            Command::CloseChat(id) => self.view.chats.close(id),
+            Command::ChatSend(id) => self.chat_send(id),
+            Command::ChatStop(id) => self.chat_stop(id),
+            Command::ChatCancelQueued(id, ticket) => self.chat_cancel_queued(id, ticket),
+            Command::ChatApproval(id, token, decision) => self.chat_approval(id, token, decision),
+            Command::ArchiveChat(id) => self.archive_chat(id),
+            Command::PinChat(id, pinned) => self.pin_chat(id, pinned),
             Command::NewTaskEditor(scope) => {
                 self.new_task_editor(scope);
                 if self.view.task_editors.active().is_some() {
@@ -336,6 +346,10 @@ impl LumenApp {
             }
             Command::FocusGroup(group) => self.focus_group_command(group),
             Command::CloseEditor => {
+                if let Some(id) = self.view.chats.active() {
+                    self.view.chats.close(id);
+                    return;
+                }
                 if let Some(id) = self.view.task_editors.active() {
                     self.request_close_task_editor(id);
                     return;
@@ -439,7 +453,7 @@ impl LumenApp {
 
     /// Common prelude for showing a non-document page: it takes over from the
     /// explorer and from any text widget that held keyboard focus.
-    fn enter_page_tab(&mut self, ctx: &egui::Context) {
+    pub(super) fn enter_page_tab(&mut self, ctx: &egui::Context) {
         self.view.explorer_focused = false;
         super::editor_input::cancel_input(&mut self.view);
         self.view.pending_editor_action = None;
@@ -453,6 +467,7 @@ impl LumenApp {
     /// the diff view as the page the editor area shows.
     fn show_task_editor_page(&mut self, ctx: &egui::Context) {
         self.view.settings.open = false;
+        self.view.chats.deactivate();
         if let Some(diff) = &mut self.view.source_control.diff {
             diff.active = false;
         }
