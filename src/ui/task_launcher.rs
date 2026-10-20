@@ -106,31 +106,42 @@ impl Workbench<'_> {
                 .as_ref()
                 .and_then(|key| self.view.task_runs.active_for(key))
                 .map(|run| run.id);
-            let stop = ui
-                .add_enabled(
-                    active.is_some(),
-                    egui::Button::new(RichText::new(icon::STOP).size(12.0).color(colors.error))
-                        .frame(false),
-                )
-                .on_hover_text("Stop the selected task")
-                .on_disabled_hover_text("The selected task is not running");
-            if let (true, Some(run_id)) = (stop.clicked(), active) {
-                commands.push(Command::StopTaskRun(run_id));
-            }
-            let run = ui
-                .add_enabled(
-                    selected_label.is_some(),
-                    egui::Button::new(RichText::new(icon::PLAY).size(12.0).color(colors.success))
-                        .frame(false),
-                )
-                .on_hover_text(match &selected_label {
-                    Some(name) => format!("Run task '{name}'"),
-                    None => "Choose a task to run first".into(),
-                })
-                .on_disabled_hover_text("Choose a task to run first");
-            if run.clicked() {
-                commands.push(Command::RunSelectedTask);
-            }
+            ui.scope(|ui| {
+                ui.spacing_mut().item_spacing.x = TOGGLE_SPACING;
+                let stop = ui
+                    .add_enabled(
+                        active.is_some(),
+                        egui::Button::new(RichText::new(icon::STOP).size(14.0).color(colors.error))
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::NONE)
+                            .corner_radius(3)
+                            .min_size(egui::vec2(TOGGLE_SIZE.0, TOGGLE_SIZE.1)),
+                    )
+                    .on_hover_text("Stop the selected task")
+                    .on_disabled_hover_text("The selected task is not running");
+                if let (true, Some(run_id)) = (stop.clicked(), active) {
+                    commands.push(Command::StopTaskRun(run_id));
+                }
+                let run = ui
+                    .add_enabled(
+                        selected_label.is_some(),
+                        egui::Button::new(
+                            RichText::new(icon::PLAY).size(14.0).color(colors.success),
+                        )
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::NONE)
+                        .corner_radius(3)
+                        .min_size(egui::vec2(TOGGLE_SIZE.0, TOGGLE_SIZE.1)),
+                    )
+                    .on_hover_text(match &selected_label {
+                        Some(name) => format!("Run task '{name}'"),
+                        None => "Choose a task to run first".into(),
+                    })
+                    .on_disabled_hover_text("Choose a task to run first");
+                if run.clicked() {
+                    commands.push(Command::RunSelectedTask);
+                }
+            });
             let menu = ui.menu_button(
                 RichText::new(format!("{label}  {}", icon::CARET_DOWN))
                     .size(11.0)
