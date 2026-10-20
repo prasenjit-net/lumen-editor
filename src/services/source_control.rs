@@ -180,6 +180,22 @@ pub(crate) struct GitHunk {
     pub(crate) patch: String,
 }
 
+/// `fs::canonicalize` without Windows' `\\?\` verbatim prefix, so paths compare
+/// equal to the ones Git reports (`C:/dir`) and display normally.
+pub(crate) fn canonical_path(path: &Path) -> Option<PathBuf> {
+    let canonical = fs::canonicalize(path).ok()?;
+    #[cfg(windows)]
+    {
+        let text = canonical.to_string_lossy();
+        if let Some(plain) = text.strip_prefix(r"\\?\")
+            && plain.as_bytes().get(1) == Some(&b':')
+        {
+            return Some(PathBuf::from(plain));
+        }
+    }
+    Some(canonical)
+}
+
 /// Directory names never searched for nested repositories.
 const SKIPPED_DIRECTORIES: &[&str] = &["node_modules", "target", "vendor", "dist", "build"];
 const MAX_DISCOVERY_DEPTH: usize = 4;
@@ -243,7 +259,7 @@ impl SourceControlService for LocalGit {
                 let name = name.to_string_lossy();
                 if name == ".git" {
                     // A `.git` directory or file marks a worktree root.
-                    if let Ok(top) = fs::canonicalize(&directory)
+                    if let Some(top) = canonical_path(&directory)
                         && directory != workspace
                     {
                         roots.push(top);
@@ -874,9 +890,9 @@ fn git_directories(root: &Path) -> (PathBuf, PathBuf) {
                 root.join(path)
             }
         })
-        .and_then(|path| fs::canonicalize(path).ok())
+        .and_then(|path| canonical_path(&path))
         .unwrap_or_else(|| git_dir.clone());
-    let git_dir = fs::canonicalize(&git_dir).unwrap_or(git_dir);
+    let git_dir = canonical_path(&git_dir).unwrap_or(git_dir);
     (git_dir, common)
 }
 
@@ -1415,7 +1431,7 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
     #[test]
     fn discovery_finds_enclosing_sibling_and_nested_repositories_but_skips_generated_trees() {
         let directory = tempfile::tempdir().unwrap();
-        let top = fs::canonicalize(directory.path()).unwrap();
+        let top = canonical_path(directory.path()).unwrap();
         init_repo(&top);
         for name in [
             "libs/a",
@@ -1446,7 +1462,7 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
     #[test]
     fn a_folder_without_a_repository_has_no_roots_unless_repositories_are_nested() {
         let directory = tempfile::tempdir().unwrap();
-        let top = fs::canonicalize(directory.path()).unwrap();
+        let top = canonical_path(directory.path()).unwrap();
         assert!(LocalGit.discover(&top).unwrap().is_empty());
         fs::create_dir_all(top.join("one")).unwrap();
         init_repo(&top.join("one"));
@@ -1476,7 +1492,7 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
     #[test]
     fn linked_worktrees_share_storage_but_have_their_own_state() {
         let directory = tempfile::tempdir().unwrap();
-        let top = fs::canonicalize(directory.path()).unwrap();
+        let top = canonical_path(directory.path()).unwrap();
         let main = top.join("main");
         fs::create_dir_all(&main).unwrap();
         init_repo(&main);
@@ -1534,7 +1550,7 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
     #[test]
     fn a_real_submodule_is_discovered_and_reported_in_its_parent() {
         let directory = tempfile::tempdir().unwrap();
-        let top = fs::canonicalize(directory.path()).unwrap();
+        let top = canonical_path(directory.path()).unwrap();
         let child = top.join("child_src");
         let parent = top.join("parent");
         fs::create_dir_all(&child).unwrap();
@@ -1581,7 +1597,7 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
     #[test]
     fn a_repository_above_the_opened_folder_owns_it() {
         let directory = tempfile::tempdir().unwrap();
-        let top = fs::canonicalize(directory.path()).unwrap();
+        let top = canonical_path(directory.path()).unwrap();
         init_repo(&top);
         let inner = top.join("a/b");
         fs::create_dir_all(&inner).unwrap();

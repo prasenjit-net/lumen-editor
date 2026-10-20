@@ -139,7 +139,7 @@ impl LumenApp {
             .filter(|root| view.repositories.iter().any(|repo| &repo.root == *root))
             .cloned();
         let chosen = keep.or_else(|| {
-            let canonical = std::fs::canonicalize(workspace).ok();
+            let canonical = crate::services::source_control::canonical_path(workspace);
             view.repositories
                 .iter()
                 .filter(|repo| {
