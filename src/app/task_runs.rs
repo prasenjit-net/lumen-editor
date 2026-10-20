@@ -3641,6 +3641,7 @@ mod problem_location_tests {
             at("src/gone.rs"),
             cwd.join("src/gone.rs").display().to_string()
         );
-        assert_eq!(at("/abs/x.rs"), "/abs/x.rs");
+        let absolute = std::env::temp_dir().join("abs_x.rs").display().to_string();
+        assert_eq!(at(&absolute), absolute);
     }
 }
