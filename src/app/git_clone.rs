@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn a_successful_clone_opens_the_new_folder() {
         let directory = tempfile::tempdir().unwrap();
-        let top = std::fs::canonicalize(directory.path()).unwrap();
+        let top = crate::services::source_control::canonical_path(directory.path()).unwrap();
         let source = source_repo(&top);
         let mut app = LumenApp::default();
         app.open_clone_dialog();
@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn a_failed_clone_keeps_the_dialog_with_the_error_and_leaves_no_folder() {
         let directory = tempfile::tempdir().unwrap();
-        let top = std::fs::canonicalize(directory.path()).unwrap();
+        let top = crate::services::source_control::canonical_path(directory.path()).unwrap();
         let mut app = LumenApp::default();
         app.open_clone_dialog();
         {
@@ -347,7 +347,7 @@ mod tests {
     fn a_cancelled_clone_never_overwrites_or_leaves_partial_output() {
         use crate::services::source_control::{LocalGit, SourceControlService};
         let directory = tempfile::tempdir().unwrap();
-        let top = std::fs::canonicalize(directory.path()).unwrap();
+        let top = crate::services::source_control::canonical_path(directory.path()).unwrap();
         let source = source_repo(&top);
         let cancel = AtomicBool::new(true);
         let target = top.join("cancelled");

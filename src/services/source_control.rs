@@ -1926,7 +1926,7 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
     #[test]
     fn publish_and_fetch_work_against_a_local_bare_remote() {
         let directory = tempfile::tempdir().unwrap();
-        let top = fs::canonicalize(directory.path()).unwrap();
+        let top = canonical_path(directory.path()).unwrap();
         let bare = top.join("remote.git");
         fs::create_dir_all(&bare).unwrap();
         git_ok(&bare, &["init", "--quiet", "--bare"]);
@@ -1983,7 +1983,7 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
     #[test]
     fn init_uses_the_chosen_branch_and_refuses_bad_names_and_existing_repositories() {
         let directory = tempfile::tempdir().unwrap();
-        let root = fs::canonicalize(directory.path()).unwrap();
+        let root = canonical_path(directory.path()).unwrap();
         assert!(LocalGit.init(&root, "bad name").is_err());
         assert!(LocalGit.init(&root, "--bare").is_err());
         assert!(!root.join(".git").exists());
