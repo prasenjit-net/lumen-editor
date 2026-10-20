@@ -6,3 +6,12 @@ label = "Build"
 type = "process"
 command = "cargo"
 args = ["build", "--release"]
+
+[[tasks]]
+id = "run"
+label = "Run"
+type = "process"
+command = "cargo"
+args = ["run"]
+group = "build"
+problem_matcher = "cargo"
