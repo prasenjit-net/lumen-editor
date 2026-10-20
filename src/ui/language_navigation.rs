@@ -1,7 +1,7 @@
 //! Searchable language-server location picker.
 use super::Workbench;
 use crate::app::command::Command;
-use eframe::egui::{self, CornerRadius, Frame, RichText, Stroke, TextEdit, Vec2};
+use eframe::egui::{self, RichText, TextEdit, Vec2};
 
 impl Workbench<'_> {
     pub(crate) fn language_navigation(&mut self, ctx: &egui::Context) {
@@ -55,12 +55,7 @@ impl Workbench<'_> {
             .default_width(560.0)
             .default_height(320.0)
             .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 72.0))
-            .frame(
-                Frame::window(&ctx.style())
-                    .fill(colors.panel)
-                    .corner_radius(CornerRadius::same(6))
-                    .stroke(Stroke::new(1.0_f32, colors.border)),
-            )
+            .frame(super::widgets::floating_frame(ctx))
             .show(ctx, |ui| {
                 let search = ui.add(
                     TextEdit::singleline(&mut self.view.language_navigation.query)

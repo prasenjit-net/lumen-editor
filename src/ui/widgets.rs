@@ -460,6 +460,15 @@ pub(crate) fn surface(fill: Color32) -> Frame {
         .fill(fill)
         .corner_radius(CornerRadius::same(5))
 }
+/// Frame shared by every surface that floats above the editor: quick inputs,
+/// prompts and dialogs. The drop shadow comes from the theme's window shadow.
+pub(crate) fn floating_frame(ctx: &egui::Context) -> Frame {
+    let colors = crate::ui::theme::palette(&ctx.style().visuals);
+    Frame::window(&ctx.style())
+        .fill(colors.panel)
+        .corner_radius(CornerRadius::same(6))
+        .stroke(Stroke::new(1.0_f32, colors.float_border))
+}
 pub(crate) fn canvas(ctx: &egui::Context) -> Frame {
     Frame::default()
         .fill(crate::ui::theme::palette(&ctx.style().visuals).canvas)

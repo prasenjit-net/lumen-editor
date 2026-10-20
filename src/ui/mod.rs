@@ -24,6 +24,7 @@ mod file_icons;
 mod git_history_tab;
 mod language_edit;
 mod language_navigation;
+mod match_highlight;
 mod navigation;
 mod output;
 mod palette;
