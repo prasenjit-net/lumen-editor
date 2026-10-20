@@ -19,6 +19,36 @@ pub struct Diagnostic {
     pub code: Option<String>,
 }
 
+impl Diagnostic {
+    /// The span to underline in `text`. Servers report many syntax errors as
+    /// zero-width positions (rust-analyzer's "expected expression"); those are
+    /// widened to the character after the position, or the one before it at the
+    /// end of a line, so they stay visible. A position with no neighbour on its
+    /// line (an empty line) stays empty.
+    #[must_use]
+    pub fn display_range(&self, text: &str) -> Range<usize> {
+        let at = self.range.start;
+        if self.range.end > at || at > text.len() || !text.is_char_boundary(at) {
+            return self.range.clone();
+        }
+        if let Some(next) = text[at..]
+            .chars()
+            .next()
+            .filter(|c| *c != '\n' && *c != '\r')
+        {
+            return at..at + next.len_utf8();
+        }
+        if let Some(previous) = text[..at]
+            .chars()
+            .next_back()
+            .filter(|c| *c != '\n' && *c != '\r')
+        {
+            return at - previous.len_utf8()..at;
+        }
+        self.range.clone()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiagnosticError {
     InvalidBoundary,
@@ -104,6 +134,48 @@ mod tests {
                 }],
             ),
             Err(DiagnosticError::InvalidBoundary)
+        );
+    }
+
+    fn at(range: Range<usize>) -> Diagnostic {
+        Diagnostic {
+            range,
+            severity: DiagnosticSeverity::Error,
+            message: "expected expression".into(),
+            source: None,
+            code: None,
+        }
+    }
+
+    #[test]
+    fn zero_width_diagnostics_are_widened_to_a_visible_character() {
+        let text = "let x = ;\nfoo(\nlet é";
+        assert_eq!(at(4..4).display_range(text), 4..5, "next character");
+        assert_eq!(
+            at(9..9).display_range(text),
+            8..9,
+            "end of line uses previous"
+        );
+        assert_eq!(
+            at(text.len()..text.len()).display_range(text),
+            text.len() - 2..text.len(),
+            "multibyte at EOF"
+        );
+        assert_eq!(
+            at(2..6).display_range(text),
+            2..6,
+            "real ranges are untouched"
+        );
+        assert_eq!(at(0..0).display_range(""), 0..0, "empty document");
+        assert_eq!(
+            at(9..9).display_range("a\n\nb"),
+            9..9,
+            "out of range is untouched"
+        );
+        assert_eq!(
+            at(2..2).display_range("a\n\nb"),
+            2..2,
+            "empty line stays empty"
         );
     }
 }

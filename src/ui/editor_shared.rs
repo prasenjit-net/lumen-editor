@@ -202,7 +202,18 @@ impl Workbench<'_> {
                     }
                     _ => colors.info,
                 };
-                for rect in output.geometry.selection_rects(diagnostic.range.clone()) {
+                let text = &self.editor.files[index].text;
+                let range = diagnostic.display_range(text);
+                let mut rects = output.geometry.selection_rects(range.clone());
+                if rects.is_empty() {
+                    // Nothing to widen onto (an empty line): mark the position.
+                    let caret = output.geometry.caret_rect(range.start);
+                    rects.push(egui::Rect::from_min_size(
+                        caret.left_top(),
+                        egui::vec2(6.0, caret.height()),
+                    ));
+                }
+                for rect in rects {
                     painter.line_segment(
                         [
                             egui::pos2(rect.left(), rect.bottom() - 1.0),

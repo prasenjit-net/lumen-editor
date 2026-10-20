@@ -1597,6 +1597,7 @@ mod tests {
         (app, messages, events)
     }
 
+    #[cfg(feature = "language-server")]
     #[test]
     fn active_server_language_gets_a_cached_snapshot_and_parser_only_language_does_not() {
         let mut app = LumenApp::default();
@@ -1863,6 +1864,163 @@ mod tests {
         assert_eq!(
             app.view.language_navigation.locations[0].position.character,
             7
+        );
+    }
+
+    /// Drives the real app against a real rust-analyzer; run with
+    /// `cargo test live_app_diagnostics -- --ignored --nocapture`.
+    #[test]
+    #[cfg(feature = "language-server")]
+    #[ignore = "requires rust-analyzer and a Rust toolchain on PATH"]
+    fn live_app_diagnostics_reach_the_problem_list_for_a_syntax_error() {
+        let root = std::env::temp_dir().join(format!("lumen-live-app-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"live\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let file = root.join("src/main.rs");
+        let text = "fn main() {\n    let x = ;\n    foo(\n}\n";
+        std::fs::write(&file, text).unwrap();
+        let mut app = LumenApp::default();
+        app.editor.workspace = Some(root.clone());
+        app.editor
+            .files
+            .push(crate::model::Document::from_path(file, text.into()));
+        app.editor.set_active_index(Some(0));
+        let ctx = eframe::egui::Context::default();
+        let id = app.editor.files[0].id;
+        let deadline = Instant::now() + Duration::from_secs(90);
+        while Instant::now() < deadline
+            && app
+                .view
+                .language_server_diagnostics
+                .get(&id)
+                .is_none_or(|found| found.is_empty())
+        {
+            app.refresh_language_server_status(&ctx);
+            app.poll_language_server(&ctx);
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let found = app.view.language_server_diagnostics.get(&id).cloned();
+        println!("status: {:?}", app.view.language_server_status);
+        println!("diagnostics: {found:#?}");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(found.is_some_and(|found| !found.is_empty()));
+    }
+
+    #[test]
+    #[cfg(feature = "language-server")]
+    #[ignore = "requires rust-analyzer and a Rust toolchain on PATH"]
+    fn live_app_diagnostics_follow_an_edit_that_breaks_a_valid_file() {
+        let root = std::env::temp_dir().join(format!("lumen-live-edit-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"live\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let file = root.join("src/main.rs");
+        let valid = "fn main() {\n\n\n\n\n\n\n\n    let x = 1;\n}\n";
+        std::fs::write(&file, valid).unwrap();
+        let mut app = LumenApp::default();
+        app.editor.workspace = Some(root.clone());
+        app.editor
+            .files
+            .push(crate::model::Document::from_path(file, valid.into()));
+        app.editor.set_active_index(Some(0));
+        app.editor.files[0].enable_shared_editing();
+        let ctx = eframe::egui::Context::default();
+        let id = app.editor.files[0].id;
+        let pump = |app: &mut LumenApp, seconds: u64, until_error: bool| {
+            let deadline = Instant::now() + Duration::from_secs(seconds);
+            while Instant::now() < deadline {
+                app.refresh_language_server_status(&ctx);
+                app.poll_language_server(&ctx);
+                if until_error
+                    && app
+                        .view
+                        .language_server_diagnostics
+                        .get(&id)
+                        .is_some_and(|found| {
+                            found.iter().any(|d| d.message.contains("Syntax Error"))
+                        })
+                {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        pump(&mut app, 8, false);
+        println!(
+            "after open: {:?}",
+            app.view.language_server_diagnostics.get(&id)
+        );
+        app.editor.files[0]
+            .editing
+            .as_mut()
+            .unwrap()
+            .replace_document("fn main() {\n    let x = ;\n}\n")
+            .unwrap();
+        app.editor.files[0].sync_shared_editing();
+        println!("revision now {}", app.editor.files[0].revision);
+        pump(&mut app, 60, true);
+        let found = app.view.language_server_diagnostics.get(&id).cloned();
+        println!(
+            "after edit: {:#?}",
+            found.as_ref().map(|f| f
+                .iter()
+                .map(|d| (d.range.clone(), d.message.clone()))
+                .collect::<Vec<_>>())
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(found.is_some_and(|f| f.iter().any(|d| d.message.contains("Syntax Error"))));
+    }
+
+    #[test]
+    #[cfg(feature = "language-server")]
+    #[ignore = "opens this repository in rust-analyzer; slow"]
+    fn live_app_diagnostics_in_this_repository() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let file = root.join("src/ui/shortcut.rs");
+        let mut text = std::fs::read_to_string(&file).unwrap();
+        text.push_str("\nfn broken() { let x = ; }\n");
+        let mut app = LumenApp::default();
+        app.editor.workspace = Some(root.clone());
+        app.editor
+            .files
+            .push(crate::model::Document::from_path(file, text));
+        app.editor.set_active_index(Some(0));
+        let ctx = eframe::egui::Context::default();
+        let id = app.editor.files[0].id;
+        let start = Instant::now();
+        let deadline = start + Duration::from_secs(240);
+        let mut seen = 0;
+        while Instant::now() < deadline {
+            app.refresh_language_server_status(&ctx);
+            app.poll_language_server(&ctx);
+            let found = app.view.language_server_diagnostics.get(&id);
+            let count = found.map_or(0, Vec::len);
+            if count != seen {
+                seen = count;
+                println!("{:?}: {count} diagnostics", start.elapsed());
+            }
+            if found.is_some_and(|f| f.iter().any(|d| d.message.contains("Syntax Error"))) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        println!(
+            "status {:?} elapsed {:?}",
+            app.view.language_server_status,
+            start.elapsed()
+        );
+        assert!(
+            app.view
+                .language_server_diagnostics
+                .get(&id)
+                .is_some_and(|f| { f.iter().any(|d| d.message.contains("Syntax Error")) })
         );
     }
 
