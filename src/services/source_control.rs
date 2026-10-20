@@ -233,9 +233,26 @@ pub(crate) struct GitCommitDetails {
     pub(crate) message: String,
     pub(crate) committer: String,
     pub(crate) committed: i64,
-    /// `(status, path)`; renames read `R100 old -> new`. For a merge this is
-    /// the diff against the first parent.
-    pub(crate) files: Vec<(String, String)>,
+    /// Changed files against the chosen parent (the first by default).
+    pub(crate) files: Vec<GitCommitFile>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GitCommitFile {
+    /// Git's status letter, with a similarity score for renames (`R100`).
+    pub(crate) status: String,
+    pub(crate) path: String,
+    /// The previous path of a rename or copy.
+    pub(crate) old_path: Option<String>,
+}
+
+impl GitCommitFile {
+    pub(crate) fn label(&self) -> String {
+        match &self.old_path {
+            Some(old) => format!("{}  {old} -> {}", self.status, self.path),
+            None => format!("{}  {}", self.status, self.path),
+        }
+    }
 }
 
 /// A configured remote. Fetch and push URLs are kept apart because they may
@@ -339,7 +356,23 @@ pub(crate) trait SourceControlService: Send + Sync {
         skip: usize,
         limit: usize,
     ) -> Result<GitLogPage, String>;
-    fn commit_details(&self, root: &Path, id: &str) -> Result<GitCommitDetails, String>;
+    /// Details of commit `id`, with files compared against parent number
+    /// `parent` (0-based; ignored for a root commit).
+    fn commit_details(
+        &self,
+        root: &Path,
+        id: &str,
+        parent: usize,
+    ) -> Result<GitCommitDetails, String>;
+    /// A read-only before/after comparison of one file of a commit, against the
+    /// same parent that `commit_details` used. Never touches the worktree.
+    fn commit_comparison(
+        &self,
+        root: &Path,
+        id: &str,
+        parent: usize,
+        file: &GitCommitFile,
+    ) -> Result<GitComparison, String>;
     fn stashes(&self, root: &Path) -> Result<Vec<GitStash>, String>;
     /// Changed files of a stash as `(status, path)` pairs.
     fn stash_files(&self, root: &Path, id: &str) -> Result<Vec<(String, String)>, String>;
@@ -894,7 +927,12 @@ impl SourceControlService for LocalGit {
         })
     }
 
-    fn commit_details(&self, root: &Path, id: &str) -> Result<GitCommitDetails, String> {
+    fn commit_details(
+        &self,
+        root: &Path,
+        id: &str,
+        parent: usize,
+    ) -> Result<GitCommitDetails, String> {
         check_object_id(id)?;
         let meta = git_command(root)
             .args([
@@ -934,7 +972,7 @@ impl SourceControlService for LocalGit {
                 "rev-parse",
                 "--verify",
                 "--quiet",
-                &format!("{id}^1"),
+                &format!("{id}^{}", parent + 1),
             ])
             .output()
             .ok()
@@ -965,9 +1003,17 @@ impl SourceControlService for LocalGit {
             let Some(path) = parts.next() else { break };
             if status.starts_with('R') || status.starts_with('C') {
                 let Some(new) = parts.next() else { break };
-                files.push((status.to_owned(), format!("{path} -> {new}")));
+                files.push(GitCommitFile {
+                    status: status.to_owned(),
+                    path: new.to_owned(),
+                    old_path: Some(path.to_owned()),
+                });
             } else {
-                files.push((status.to_owned(), path.to_owned()));
+                files.push(GitCommitFile {
+                    status: status.to_owned(),
+                    path: path.to_owned(),
+                    old_path: None,
+                });
             }
         }
         Ok(GitCommitDetails {
@@ -975,6 +1021,103 @@ impl SourceControlService for LocalGit {
             committer,
             committed,
             files,
+        })
+    }
+
+    fn commit_comparison(
+        &self,
+        root: &Path,
+        id: &str,
+        parent: usize,
+        file: &GitCommitFile,
+    ) -> Result<GitComparison, String> {
+        check_object_id(id)?;
+        let relative_ok = |path: &str| {
+            !path.is_empty()
+                && Path::new(path)
+                    .components()
+                    .all(|component| matches!(component, Component::Normal(_)))
+        };
+        if !relative_ok(&file.path) || file.old_path.as_deref().is_some_and(|p| !relative_ok(p)) {
+            return Err("Comparison target is not a repository file".into());
+        }
+        let parent_id = git_command(root)
+            .args([
+                "--no-optional-locks",
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{id}^{}", parent + 1),
+            ])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+        let old_path = file.old_path.as_deref().unwrap_or(&file.path);
+        let added = file.status.starts_with('A');
+        let deleted = file.status.starts_with('D');
+        let base = match &parent_id {
+            Some(parent_id) if !added => read_git_blob(root, &format!("{parent_id}:{old_path}"))?,
+            _ => String::new(),
+        };
+        let changed = if deleted {
+            String::new()
+        } else {
+            read_git_blob(root, &format!("{id}:{}", file.path))?
+        };
+        let patch = match &parent_id {
+            Some(parent_id) => {
+                let mut command = git_command(root);
+                command
+                    .args([
+                        "--no-optional-locks",
+                        "diff",
+                        "--no-color",
+                        "--no-ext-diff",
+                        "-M",
+                    ])
+                    .arg(parent_id)
+                    .arg(id)
+                    .arg("--")
+                    .arg(old_path);
+                if old_path != file.path {
+                    command.arg(&file.path);
+                }
+                let output = command
+                    .output()
+                    .map_err(|error| format!("Could not compare commit: {error}"))?;
+                if !output.status.success() {
+                    return Err(git_failure("Could not compare commit", &output.stderr));
+                }
+                String::from_utf8_lossy(&output.stdout).into_owned()
+            }
+            None => {
+                // A root commit is compared with the empty tree.
+                let empty = git_command(root)
+                    .args(["hash-object", "-t", "tree", "--stdin"])
+                    .output()
+                    .ok()
+                    .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                    .filter(|hash| !hash.is_empty())
+                    .ok_or_else(|| "Could not read the empty tree".to_owned())?;
+                let output = git_command(root)
+                    .args(["--no-optional-locks", "diff", "--no-color", "--no-ext-diff"])
+                    .arg(&empty)
+                    .arg(id)
+                    .arg("--")
+                    .arg(&file.path)
+                    .output()
+                    .map_err(|error| format!("Could not compare commit: {error}"))?;
+                String::from_utf8_lossy(&output.stdout).into_owned()
+            }
+        };
+        let (old_lines, new_lines) = changed_lines(&patch);
+        Ok(GitComparison {
+            base,
+            changed: Some(changed),
+            old_lines,
+            new_lines,
+            hunks: Vec::new(),
         })
     }
 
@@ -3121,15 +3264,14 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         let page = LocalGit.log(&root, None, 0, 5).unwrap();
         let root_commit = &page.commits[0];
         assert!(root_commit.parents.is_empty());
-        let details = LocalGit.commit_details(&root, &root_commit.id).unwrap();
-        assert_eq!(details.files, vec![("A".to_owned(), "f.txt".to_owned())]);
+        let details = LocalGit.commit_details(&root, &root_commit.id, 0).unwrap();
+        assert_eq!(details.files[0].label(), "A  f.txt");
         assert_eq!(details.message, "base");
         git_ok(&root, &["mv", "f.txt", "g.txt"]);
         git_ok(&root, &["commit", "-q", "-m", "rename\n\nBody text."]);
         let renamed = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
-        let details = LocalGit.commit_details(&root, &renamed.id).unwrap();
-        assert_eq!(details.files[0].0, "R100");
-        assert_eq!(details.files[0].1, "f.txt -> g.txt");
+        let details = LocalGit.commit_details(&root, &renamed.id, 0).unwrap();
+        assert_eq!(details.files[0].label(), "R100  f.txt -> g.txt");
         assert_eq!(details.message, "rename\n\nBody text.");
         // A merge reports its changes against the first parent.
         git_ok(&root, &["checkout", "-q", "-b", "side"]);
@@ -3146,9 +3288,129 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         );
         let merge = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
         assert_eq!(merge.parents.len(), 2);
-        let details = LocalGit.commit_details(&root, &merge.id).unwrap();
-        assert_eq!(details.files, vec![("A".to_owned(), "side.txt".to_owned())]);
-        assert!(LocalGit.commit_details(&root, "HEAD").is_err());
+        let details = LocalGit.commit_details(&root, &merge.id, 0).unwrap();
+        assert_eq!(details.files[0].label(), "A  side.txt");
+        // Against the second parent the merge instead brings in main's file.
+        let second = LocalGit.commit_details(&root, &merge.id, 1).unwrap();
+        assert_eq!(second.files[0].label(), "A  main.txt");
+        assert!(LocalGit.commit_details(&root, "HEAD", 0).is_err());
+    }
+
+    #[test]
+    fn commit_comparisons_are_read_only_and_cover_modify_add_delete_rename_and_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        let first = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
+        let details = LocalGit.commit_details(&root, &first.id, 0).unwrap();
+        let cmp = LocalGit
+            .commit_comparison(&root, &first.id, 0, &details.files[0])
+            .unwrap();
+        assert_eq!(cmp.base, "");
+        assert_eq!(cmp.changed.as_deref(), Some("base\n"));
+        assert!(cmp.new_lines.contains(&1));
+        fs::write(root.join("f.txt"), "base\nmore\n").unwrap();
+        fs::write(root.join("keep.txt"), "k\n").unwrap();
+        git_ok(&root, &["add", "--", "keep.txt"]);
+        git_ok(&root, &["commit", "-q", "-am", "modify and add"]);
+        let second = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
+        let details = LocalGit.commit_details(&root, &second.id, 0).unwrap();
+        let modified = details.files.iter().find(|f| f.path == "f.txt").unwrap();
+        let cmp = LocalGit
+            .commit_comparison(&root, &second.id, 0, modified)
+            .unwrap();
+        assert_eq!(cmp.base, "base\n");
+        assert_eq!(cmp.changed.as_deref(), Some("base\nmore\n"));
+        assert!(cmp.new_lines.contains(&2) && cmp.old_lines.is_empty());
+        git_ok(&root, &["mv", "keep.txt", "moved.txt"]);
+        git_ok(&root, &["rm", "-q", "--", "f.txt"]);
+        git_ok(&root, &["commit", "-q", "-m", "rename and delete"]);
+        let third = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
+        let details = LocalGit.commit_details(&root, &third.id, 0).unwrap();
+        let renamed = details
+            .files
+            .iter()
+            .find(|f| f.path == "moved.txt")
+            .unwrap();
+        assert_eq!(renamed.old_path.as_deref(), Some("keep.txt"));
+        let cmp = LocalGit
+            .commit_comparison(&root, &third.id, 0, renamed)
+            .unwrap();
+        assert_eq!(
+            (cmp.base.as_str(), cmp.changed.as_deref()),
+            ("k\n", Some("k\n"))
+        );
+        let deleted = details.files.iter().find(|f| f.path == "f.txt").unwrap();
+        let cmp = LocalGit
+            .commit_comparison(&root, &third.id, 0, deleted)
+            .unwrap();
+        assert_eq!(cmp.changed.as_deref(), Some(""));
+        assert!(cmp.old_lines.contains(&1));
+        // Reading history never changes the worktree or index.
+        assert!(
+            LocalGit
+                .snapshot(&root)
+                .unwrap()
+                .unwrap()
+                .changes
+                .is_empty()
+        );
+        // Paths cannot leave the repository.
+        let escape = GitCommitFile {
+            status: "M".into(),
+            path: "../outside".into(),
+            old_path: None,
+        };
+        assert!(
+            LocalGit
+                .commit_comparison(&root, &third.id, 0, &escape)
+                .is_err()
+        );
+        assert!(
+            LocalGit
+                .commit_comparison(&root, "HEAD", 0, deleted)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn merge_comparisons_follow_the_chosen_parent_and_binary_files_are_not_previewed() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        git_ok(&root, &["checkout", "-q", "-b", "side"]);
+        fs::write(root.join("f.txt"), "side\n").unwrap();
+        fs::write(root.join("bin.dat"), [0u8, 1, 2, 0, 255]).unwrap();
+        git_ok(&root, &["add", "--", "bin.dat"]);
+        git_ok(&root, &["commit", "-q", "-am", "side change"]);
+        git_ok(&root, &["checkout", "-q", "main"]);
+        fs::write(root.join("other.txt"), "o\n").unwrap();
+        git_ok(&root, &["add", "--", "other.txt"]);
+        git_ok(&root, &["commit", "-q", "-m", "main change"]);
+        git_ok(&root, &["merge", "-q", "--no-ff", "-m", "merge", "side"]);
+        let merge = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
+        let first = LocalGit.commit_details(&root, &merge.id, 0).unwrap();
+        let f_vs_main = first.files.iter().find(|f| f.path == "f.txt").unwrap();
+        let cmp = LocalGit
+            .commit_comparison(&root, &merge.id, 0, f_vs_main)
+            .unwrap();
+        assert_eq!(
+            (cmp.base.as_str(), cmp.changed.as_deref()),
+            ("base\n", Some("side\n"))
+        );
+        let second = LocalGit.commit_details(&root, &merge.id, 1).unwrap();
+        assert!(second.files.iter().all(|f| f.path != "f.txt"));
+        let other = second.files.iter().find(|f| f.path == "other.txt").unwrap();
+        let cmp = LocalGit
+            .commit_comparison(&root, &merge.id, 1, other)
+            .unwrap();
+        assert_eq!(cmp.changed.as_deref(), Some("o\n"));
+        let binary = first.files.iter().find(|f| f.path == "bin.dat").unwrap();
+        assert!(
+            LocalGit
+                .commit_comparison(&root, &merge.id, 0, binary)
+                .is_err()
+        );
     }
 
     #[test]

@@ -65,6 +65,77 @@ fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
     rows
 }
 
+/// Side-by-side, read-only before/after for one file of a commit.
+fn history_comparison(
+    ui: &mut egui::Ui,
+    compare: &mut crate::app::git_history::CommitCompare,
+    font: &FontId,
+    line_height: f32,
+    actions: &mut Vec<Command>,
+) {
+    let colors = crate::ui::theme::palette(ui.visuals());
+    ui.horizontal(|ui| {
+        if ui.button("Back").clicked() {
+            actions.push(Command::CloseCommitFile);
+        }
+        ui.label(RichText::new(compare.file.label()).color(colors.muted));
+    });
+    match &compare.result {
+        None => {
+            ui.label(RichText::new("Reading file…").color(colors.muted));
+        }
+        Some(Err(error)) => {
+            ui.label(RichText::new(error).color(colors.error));
+        }
+        Some(Ok(comparison)) => {
+            let comparison = comparison.clone();
+            let mut sync = compare.scroll;
+            ui.columns(2, |columns| {
+                columns[0].label(
+                    RichText::new("Parent · read-only")
+                        .small()
+                        .color(colors.muted),
+                );
+                let observed = read_only_source(
+                    &mut columns[0],
+                    &ReadOnlySource {
+                        text: &comparison.base,
+                        changed: &comparison.old_lines,
+                        changed_background: colors.diff_removed_bg,
+                        id: "git_history_base",
+                        font,
+                        line_height,
+                    },
+                    sync.take_pending(0),
+                );
+                sync.observe(0, observed);
+                columns[1].label(
+                    RichText::new("Commit · read-only")
+                        .small()
+                        .color(colors.muted),
+                );
+                let observed = read_only_source(
+                    &mut columns[1],
+                    &ReadOnlySource {
+                        text: comparison.changed.as_deref().unwrap_or_default(),
+                        changed: &comparison.new_lines,
+                        changed_background: colors.diff_added_bg,
+                        id: "git_history_changed",
+                        font,
+                        line_height,
+                    },
+                    sync.take_pending(1),
+                );
+                sync.observe(1, observed);
+            });
+            if sync.finish_frame() {
+                ui.ctx().request_repaint();
+            }
+            compare.scroll = sync;
+        }
+    }
+}
+
 fn commit_date(seconds: i64) -> String {
     chrono::DateTime::from_timestamp(seconds, 0)
         .map(|time| {
@@ -654,14 +725,25 @@ impl Workbench<'_> {
 
     pub(crate) fn history_dialog(&mut self, ctx: &egui::Context) {
         let colors = crate::ui::theme::palette(&ctx.style().visuals);
-        let Some(dialog) = &self.view.history_dialog else {
+        let font_size = self.view.settings.number("editor.font_size", None);
+        let line_height = self.view.settings.number("editor.line_height", None);
+        let font = FontId::monospace(font_size);
+        let Some(dialog) = &mut self.view.history_dialog else {
             return;
         };
         let mut actions: Vec<Command> = Vec::new();
+        let comparing = dialog.compare.is_some();
         let modal = egui::Modal::new(egui::Id::new("git_history_dialog")).show(ctx, |ui| {
-            ui.set_width(520.0);
+            ui.set_width(if comparing { 900.0 } else { 520.0 });
             ui.heading("History");
             ui.add_space(4.0);
+            if let Some(compare) = &mut dialog.compare {
+                history_comparison(ui, compare, &font, line_height, &mut actions);
+                if let Some(error) = &dialog.error {
+                    ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+                }
+                return;
+            }
             let selected = dialog.selected.clone();
             ScrollArea::vertical()
                 .id_salt("git_history_list")
@@ -713,7 +795,26 @@ impl Workbench<'_> {
                         .color(colors.muted),
                 );
                 ui.label(format!("{}  {}", commit.author, commit_date(commit.time)));
-                if !commit.parents.is_empty() {
+                if commit.parents.len() > 1 {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("Compare with").small().color(colors.muted));
+                        for (index, parent) in commit.parents.iter().enumerate() {
+                            if ui
+                                .selectable_label(
+                                    dialog.parent == index,
+                                    format!(
+                                        "parent {} ({})",
+                                        index + 1,
+                                        &parent[..parent.len().min(7)]
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                actions.push(Command::ChooseHistoryParent(index));
+                            }
+                        }
+                    });
+                } else if !commit.parents.is_empty() {
                     let parents: Vec<_> = commit
                         .parents
                         .iter()
@@ -745,17 +846,16 @@ impl Workbench<'_> {
                             .show(ui, |ui| {
                                 ui.label(&details.message);
                                 ui.add_space(4.0);
-                                if commit.parents.len() > 1 {
-                                    ui.label(
-                                        RichText::new(
-                                            "Merge commit: files differ from the first parent",
+                                for (index, file) in details.files.iter().enumerate() {
+                                    if explorer_row(ui, file.label(), 4, false)
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .on_hover_text(
+                                            "Compare this file with its parent (read-only)",
                                         )
-                                        .small()
-                                        .color(colors.muted),
-                                    );
-                                }
-                                for (status, path) in &details.files {
-                                    ui.label(RichText::new(format!("{status}  {path}")).small());
+                                        .clicked()
+                                    {
+                                        actions.push(Command::OpenCommitFile(index));
+                                    }
                                 }
                             });
                     }
