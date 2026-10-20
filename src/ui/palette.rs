@@ -1,7 +1,10 @@
-use super::Workbench;
-use crate::app::command::Command;
+use super::{
+    Workbench,
+    match_highlight::{append_highlighted, match_color},
+};
+use crate::app::{command::Command, settings::ThemeChoice};
 use crate::icon;
-use eframe::egui::{self, CornerRadius, Frame, Stroke, TextEdit, Vec2};
+use eframe::egui::{self, FontId, TextEdit, Vec2};
 impl Workbench<'_> {
     /// One `Run Task` entry per defined task, recently started ones first.
     fn task_palette_entries(&self) -> Vec<(String, Command)> {
@@ -303,12 +306,7 @@ impl Workbench<'_> {
             .min_width(width)
             .max_width(width)
             .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 48.0))
-            .frame(
-                Frame::window(&ctx.style())
-                    .fill(colors.panel)
-                    .corner_radius(CornerRadius::same(6))
-                    .stroke(Stroke::new(1.0_f32, colors.border)),
-            )
+            .frame(super::widgets::floating_frame(ctx))
             .show(ctx, |ui| {
                 let query = ui.add(
                     TextEdit::singleline(&mut self.view.palette_query)
@@ -349,9 +347,18 @@ impl Workbench<'_> {
                             let reason = self.palette_disabled_reason(command);
                             let selected = index == self.view.palette_selected;
                             let shortcut = command_shortcut(command);
+                            let mut job = egui::text::LayoutJob::default();
+                            append_highlighted(
+                                &mut job,
+                                label,
+                                &self.view.palette_query,
+                                FontId::proportional(12.5),
+                                colors.text,
+                                match_color(ctx),
+                            );
                             let response = ui.add_enabled(
                                 reason.is_none(),
-                                egui::Button::new(egui::RichText::new(label).color(colors.text))
+                                egui::Button::new(job)
                                     .selected(selected)
                                     .shortcut_text(shortcut)
                                     .truncate()
@@ -427,15 +434,15 @@ fn command_shortcut(command: &Command) -> String {
         }
         MoveActiveTabLeft => return super::shortcut::primary("Shift+Alt+Left"),
         MoveActiveTabRight => return super::shortcut::primary("Shift+Alt+Right"),
-        NextTab => return "Ctrl+Tab".into(),
-        PreviousTab => return "Ctrl+Shift+Tab".into(),
-        GoToDefinition => return "F12".into(),
-        FindReferences => return "Shift+F12".into(),
-        RenameSymbol => return "F2".into(),
-        FormatDocument => return "Shift+Alt+F".into(),
-        TriggerCompletion => return "Ctrl+Space".into(),
-        ShowSignatureHelp => return "Ctrl+Shift+Space".into(),
-        ToggleTerminal => return "Ctrl+`".into(),
+        NextTab => return super::shortcut::explicit("Ctrl+Tab"),
+        PreviousTab => return super::shortcut::explicit("Ctrl+Shift+Tab"),
+        GoToDefinition => return super::shortcut::explicit("F12"),
+        FindReferences => return super::shortcut::explicit("Shift+F12"),
+        RenameSymbol => return super::shortcut::explicit("F2"),
+        FormatDocument => return super::shortcut::explicit("Shift+Alt+F"),
+        TriggerCompletion => return super::shortcut::explicit("Ctrl+Space"),
+        ShowSignatureHelp => return super::shortcut::explicit("Ctrl+Shift+Space"),
+        ToggleTerminal => return super::shortcut::explicit("Ctrl+`"),
         _ => return String::new(),
     };
     super::shortcut::primary(suffix)
@@ -617,12 +624,18 @@ fn palette_commands() -> Vec<(String, Command)> {
             format!("{}  View: Output", icon::OUTPUT),
             Command::ToggleOutput,
         ),
-        (
-            format!("{}  View: Problems", icon::WARNING),
-            Command::ToggleProblems,
-        ),
     ]
     .into_iter()
+    .chain(ThemeChoice::ALL.map(|choice| {
+        (
+            format!("{}  Color Theme: {}", icon::GEAR, choice.label()),
+            Command::SetColorTheme(choice),
+        )
+    }))
+    .chain([(
+        format!("{}  View: Problems", icon::WARNING),
+        Command::ToggleProblems,
+    )])
     .collect()
 }
 #[cfg(test)]

@@ -21,7 +21,6 @@ impl Workbench<'_> {
                             (Activity::Search, icon::MAGNIFYING_GLASS),
                             (Activity::SourceControl, icon::GIT_BRANCH),
                             (Activity::RunDebug, icon::DEBUG),
-                            (Activity::Extensions, icon::PUZZLE_PIECE),
                         ] {
                             let selected =
                                 self.view.sidebar_visible && self.view.activity == activity;
@@ -42,9 +41,9 @@ impl Workbench<'_> {
                                 self.command(Command::ActivateActivity(activity));
                             }
                         }
-                        // Bottom-aligned group: Agent, Terminal, Output, Settings.
+                        // Bottom-aligned group: Agent, Terminal, Output, Problems, Settings.
                         let agents_enabled = self.view.settings.boolean("agent.enabled");
-                        let buttons = if agents_enabled { 4.0 } else { 3.0 };
+                        let buttons = if agents_enabled { 5.0 } else { 4.0 };
                         ui.add_space((ui.available_height() - 50.0 * buttons).max(0.0));
                         for (glyph, selected, tooltip, command) in [
                             (
@@ -64,6 +63,12 @@ impl Workbench<'_> {
                                 self.view.output.open,
                                 "Output".into(),
                                 Command::ToggleOutput,
+                            ),
+                            (
+                                icon::WARNING,
+                                self.view.problems.open,
+                                "Problems".into(),
+                                Command::ToggleProblems,
                             ),
                         ]
                         .into_iter()
@@ -195,7 +200,6 @@ mod tests {
                 (Activity::Search, icon::MAGNIFYING_GLASS),
                 (Activity::SourceControl, icon::GIT_BRANCH),
                 (Activity::RunDebug, icon::DEBUG),
-                (Activity::Extensions, icon::PUZZLE_PIECE),
             ] {
                 app.view.activity = Activity::Explorer;
                 app.view.sidebar_visible = false;
@@ -273,7 +277,7 @@ mod tests {
                 "settings stays bottom-aligned at {height}"
             );
             assert!(
-                terminal > glyph_y(&output, icon::PUZZLE_PIECE),
+                terminal > glyph_y(&output, icon::DEBUG),
                 "below the activities"
             );
         }

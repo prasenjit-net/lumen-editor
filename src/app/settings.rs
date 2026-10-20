@@ -8,6 +8,41 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const THEME_SETTING: &str = "workbench.theme";
+/// Repository-level settings that would hide a freshly chosen theme.
+const REPO_THEME_SETTINGS: [&str; 2] = [THEME_SETTING, "editor.color_scheme"];
+
+/// The choices offered by the quick theme menu, matching `workbench.theme`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ThemeChoice {
+    Dark,
+    Light,
+    HighContrast,
+    System,
+}
+
+impl ThemeChoice {
+    pub(crate) const ALL: [Self; 4] = [Self::Dark, Self::Light, Self::HighContrast, Self::System];
+
+    /// The stored `workbench.theme` value.
+    pub(crate) fn value(self) -> &'static str {
+        match self {
+            Self::Dark => "dark",
+            Self::Light => "light",
+            Self::HighContrast => "high-contrast",
+            Self::System => "system",
+        }
+    }
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Dark => "Dark",
+            Self::Light => "Light",
+            Self::HighContrast => "High Contrast",
+            Self::System => "Follow System",
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct ConfigDraft {
     pub(crate) path: Option<PathBuf>,
@@ -236,31 +271,7 @@ impl LumenApp {
                     settings::validate_layers(&state.user.persisted, Some(&config.draft))?
                 }
             }
-            let path = config
-                .path
-                .as_ref()
-                .ok_or("No settings path is available for this scope.")?;
-            // Avoid overwriting an unsaved config document through a second surface.
-            if self
-                .editor
-                .files
-                .iter()
-                .any(|file| file.path.as_ref() == Some(path))
-            {
-                return Err("The config file is open in the editor. Edit and save it there, or close its tab before applying settings here. Its text and history have been preserved.".into());
-            }
-            let content = serialize(config.original.as_deref(), &config.draft)?;
-            self.settings_store.write(
-                path,
-                if scope == Scope::Project {
-                    state.root.as_deref()
-                } else {
-                    None
-                },
-                config.original.as_deref(),
-                &content,
-            )?;
-            Ok(content)
+            self.write_config_layer(scope, &config.draft)
         })();
         let config = self.view.settings.selected_mut();
         match result {
@@ -271,6 +282,100 @@ impl LumenApp {
                 self.view.status = format!("{} settings saved", scope.label());
             }
             Err(error) => config.error = Some(error),
+        }
+    }
+    /// Serialize `layer` into the scope's config file, keeping comments and
+    /// unknown keys. Returns the new file content.
+    fn write_config_layer(&self, scope: Scope, layer: &Layer) -> Result<String, String> {
+        let state = &self.view.settings;
+        let config = match scope {
+            Scope::User => &state.user,
+            Scope::Project => &state.project,
+        };
+        let path = config
+            .path
+            .as_ref()
+            .ok_or("No settings path is available for this scope.")?;
+        // Avoid overwriting an unsaved config document through a second surface.
+        if self
+            .editor
+            .files
+            .iter()
+            .any(|file| file.path.as_ref() == Some(path))
+        {
+            return Err("The config file is open in the editor. Edit and save it there, or close its tab before applying settings here. Its text and history have been preserved.".into());
+        }
+        let content = serialize(config.original.as_deref(), layer)?;
+        self.settings_store.write(
+            path,
+            if scope == Scope::Project {
+                state.root.as_deref()
+            } else {
+                None
+            },
+            config.original.as_deref(),
+            &content,
+        )?;
+        Ok(content)
+    }
+    /// Quick theme switch: sets the theme in the user config and clears the
+    /// open repository's own theme overrides, which would otherwise win. Other
+    /// pending edits in the settings form are left alone.
+    pub(crate) fn set_color_theme(&mut self, choice: ThemeChoice) {
+        if !self.view.settings.initialized {
+            return;
+        }
+        let state = &self.view.settings;
+        let mut user = state.user.persisted.clone();
+        user.insert(THEME_SETTING.into(), Value::Choice(choice.value().into()));
+        let mut project = state.project.persisted.clone();
+        let cleared = REPO_THEME_SETTINGS
+            .iter()
+            .filter(|id| project.remove(**id).is_some())
+            .count();
+        let project_layer = state.root.as_ref().map(|_| &project);
+        let result = settings::validate_layers(&user, project_layer)
+            .and_then(|()| self.write_config_layer(Scope::User, &user));
+        let content = match result {
+            Ok(content) => content,
+            Err(error) => {
+                self.view.settings.user.error = Some(error.clone());
+                self.view.status = format!("Could not set theme: {error}");
+                return;
+            }
+        };
+        let config = &mut self.view.settings.user;
+        config.original = Some(content);
+        config.persisted = user;
+        config.error = None;
+        config
+            .draft
+            .insert(THEME_SETTING.into(), Value::Choice(choice.value().into()));
+        self.view.status = format!("Color theme: {}", choice.label());
+        if cleared == 0 || self.view.settings.root.is_none() {
+            return;
+        }
+        match self.write_config_layer(Scope::Project, &project) {
+            Ok(content) => {
+                let config = &mut self.view.settings.project;
+                config.original = Some(content);
+                config.persisted = project;
+                config.error = None;
+                for id in REPO_THEME_SETTINGS {
+                    config.draft.remove(id);
+                }
+                self.view.status = format!(
+                    "Color theme: {} (repository theme overrides removed)",
+                    choice.label()
+                );
+            }
+            Err(error) => {
+                self.view.settings.project.error = Some(error.clone());
+                self.view.status = format!(
+                    "Color theme: {}, but the repository override remains: {error}",
+                    choice.label()
+                );
+            }
         }
     }
     pub(crate) fn reload_settings(&mut self) {
@@ -459,6 +564,50 @@ mod tests {
                 .document_choice("editor.color_scheme", Some(Path::new("/other/main.rs"))),
             "workbench"
         );
+    }
+
+    #[test]
+    fn quick_theme_sets_the_user_theme_and_clears_only_the_repository_overrides() {
+        let (mut app, store) = fixture();
+        store.0.borrow_mut().files.insert(
+            "/project/.lumen/settings.toml".into(),
+            "# repo\n[workbench]\ntheme = 'high-contrast'\n[editor]\ncolor_scheme = 'lumen-light'\nfont_size = 15\n".into(),
+        );
+        app.editor.workspace = Some("/project".into());
+        app.sync_project_settings();
+        let ctx = eframe::egui::Context::default();
+        app.set_color_theme(ThemeChoice::Light);
+        app.apply_workbench_settings(&ctx);
+        assert_eq!(
+            crate::ui::theme::current(&ctx.style().visuals),
+            crate::ui::theme::Theme::Light
+        );
+        let files = store.0.borrow().files.clone();
+        assert!(files[Path::new("/user/.lumen/settings.toml")].contains("theme = \"light\""));
+        let project = &files[Path::new("/project/.lumen/settings.toml")];
+        assert!(!project.contains("theme") && !project.contains("color_scheme"));
+        assert!(project.contains("# repo") && project.contains("font_size = 15"));
+        assert!(!app.view.settings.has_drafts());
+    }
+
+    #[test]
+    fn quick_theme_leaves_a_repository_without_overrides_untouched_and_reports_failures() {
+        let (mut app, store) = fixture();
+        app.editor.workspace = Some("/project".into());
+        app.sync_project_settings();
+        app.set_color_theme(ThemeChoice::HighContrast);
+        assert_eq!(store.0.borrow().writes, 1, "no project file is created");
+        assert!(
+            !store
+                .0
+                .borrow()
+                .files
+                .contains_key(Path::new("/project/.lumen/settings.toml"))
+        );
+        store.0.borrow_mut().fail = true;
+        app.set_color_theme(ThemeChoice::Dark);
+        assert_eq!(app.view.settings.choice("workbench.theme"), "high-contrast");
+        assert!(app.view.status.contains("Could not set theme"));
     }
 
     #[test]

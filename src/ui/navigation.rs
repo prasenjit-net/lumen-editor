@@ -1,5 +1,8 @@
 //! Compact Quick Open and Go to Line overlays.
-use super::Workbench;
+use super::{
+    Workbench,
+    match_highlight::{append_highlighted, match_color},
+};
 use crate::{
     app::{
         command::Command,
@@ -7,7 +10,7 @@ use crate::{
     },
     icon,
 };
-use eframe::egui::{self, CornerRadius, Frame, RichText, Stroke, TextEdit, Vec2};
+use eframe::egui::{self, RichText, TextEdit, Vec2};
 
 impl Workbench<'_> {
     pub(crate) fn navigation_palette(&mut self, ctx: &egui::Context) {
@@ -31,10 +34,7 @@ impl Workbench<'_> {
             .default_width(width)
             .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 48.0))
             .frame(
-                Frame::window(&ctx.style())
-                    .fill(colors.panel)
-                    .corner_radius(CornerRadius::same(6))
-                    .stroke(Stroke::new(1.0_f32, colors.border)),
+                super::widgets::floating_frame(ctx),
             )
             .show(ctx, |ui| {
                 ui.set_width(width - 16.0);
@@ -174,8 +174,8 @@ fn show_quick_results(
                     .parent()
                     .map(|parent| parent.display().to_string())
                     .unwrap_or_default();
-                let label = format!("{}  {}    {}", icon::FILE, name, directory);
-                let row = quick_result_row(ui, label, index == nav.selected);
+                let job = result_job(ui, icon::FILE, &name, &directory, &nav.query);
+                let row = quick_result_row(ui, job, index == nav.selected);
                 if index == nav.selected && selection_moved {
                     row.scroll_to_me(Some(egui::Align::Center));
                 }
@@ -235,8 +235,8 @@ fn show_folder_results(
                     .parent()
                     .map(|parent| parent.display().to_string())
                     .unwrap_or_default();
-                let label = format!("{}  {}    {}", icon::FOLDER, name, parent);
-                let row = quick_result_row(ui, label, index == nav.selected);
+                let job = result_job(ui, icon::FOLDER, &name, &parent, &nav.query);
+                let row = quick_result_row(ui, job, index == nav.selected);
                 if index == nav.selected && selection_moved {
                     row.scroll_to_me(Some(egui::Align::Center));
                 }
@@ -258,11 +258,52 @@ fn show_folder_results(
     action
 }
 
-fn quick_result_row(ui: &mut egui::Ui, label: String, selected: bool) -> egui::Response {
+/// Icon, name with matched characters colored, then the muted containing folder.
+fn result_job(
+    ui: &egui::Ui,
+    glyph: &str,
+    name: &str,
+    directory: &str,
+    query: &str,
+) -> egui::text::LayoutJob {
     let colors = crate::ui::theme::palette(ui.visuals());
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::default();
+    let plain = |job: &mut egui::text::LayoutJob, text: &str, color, leading| {
+        job.append(
+            text,
+            leading,
+            egui::text::TextFormat {
+                font_id: font.clone(),
+                color,
+                ..Default::default()
+            },
+        );
+    };
+    plain(&mut job, glyph, colors.muted, 0.0);
+    job.append("", 6.0, Default::default());
+    append_highlighted(
+        &mut job,
+        name,
+        query,
+        font.clone(),
+        colors.text,
+        match_color(ui.ctx()),
+    );
+    if !directory.is_empty() {
+        plain(&mut job, directory, colors.muted, 12.0);
+    }
+    job
+}
+
+fn quick_result_row(
+    ui: &mut egui::Ui,
+    label: egui::text::LayoutJob,
+    selected: bool,
+) -> egui::Response {
     ui.add_sized(
         [ui.available_width(), 22.0],
-        egui::Button::new((RichText::new(label).color(colors.text), egui::Atom::grow()))
+        egui::Button::new((label, egui::Atom::grow()))
             .selected(selected)
             .truncate(),
     )
@@ -300,7 +341,16 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        row_rect = quick_result_row(ui, "sample.rs".into(), true).rect;
+                        row_rect = quick_result_row(
+                            ui,
+                            egui::text::LayoutJob::simple_singleline(
+                                "sample.rs".into(),
+                                egui::FontId::proportional(12.5),
+                                egui::Color32::WHITE,
+                            ),
+                            true,
+                        )
+                        .rect;
                     });
                 },
             );

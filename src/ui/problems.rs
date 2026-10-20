@@ -1,6 +1,7 @@
 use super::{
     Workbench,
-    widgets::{HeaderAction, panel_header},
+    bottom_tabs::{ActiveBottom, as_panel_tabs},
+    widgets::{HeaderAction, tabbed_panel_header},
 };
 use crate::{app::command::Command, icon};
 use eframe::egui::{self, RichText, ScrollArea, TopBottomPanel};
@@ -47,7 +48,7 @@ impl Workbench<'_> {
             .iter()
             .filter(|row| row.severity == DiagnosticSeverity::Warning)
             .count();
-        TopBottomPanel::bottom("problems")
+        TopBottomPanel::bottom("terminal")
             .default_height(DEFAULT_HEIGHT)
             .height_range(120.0..=520.0)
             .resizable(true)
@@ -73,7 +74,9 @@ impl Workbench<'_> {
                             enabled: true,
                         },
                     ];
-                    if let Some(command) = panel_header(ui, "PROBLEMS", &actions) {
+                    let entries = self.bottom_tab_entries(ActiveBottom::Problems);
+                    let tabs = as_panel_tabs(&entries);
+                    if let Some(command) = tabbed_panel_header(ui, &tabs, &actions) {
                         self.command(command);
                     }
                     // Same horizontal inset as the panel header's content.

@@ -1,16 +1,12 @@
 //! Rename prompt and the review dialog for language-server edits.
 use super::Workbench;
 use crate::app::command::Command;
-use eframe::egui::{self, CornerRadius, Frame, RichText, ScrollArea, Stroke, TextEdit, Vec2};
+use eframe::egui::{self, Frame, RichText, ScrollArea, TextEdit, Vec2};
 
 const MAX_PREVIEW_ROWS: usize = 400;
 
 fn window_frame(ctx: &egui::Context) -> Frame {
-    let colors = crate::ui::theme::palette(&ctx.style().visuals);
-    Frame::window(&ctx.style())
-        .fill(colors.panel)
-        .corner_radius(CornerRadius::same(6))
-        .stroke(Stroke::new(1.0_f32, colors.border))
+    super::widgets::floating_frame(ctx)
 }
 
 impl Workbench<'_> {

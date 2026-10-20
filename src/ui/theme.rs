@@ -13,13 +13,14 @@ pub(crate) struct Palette {
     pub(crate) panel: Color32,
     pub(crate) sidebar: Color32,
     pub(crate) tab: Color32,
-    #[cfg(not(target_os = "windows"))]
     pub(crate) title: Color32,
     pub(crate) status: Color32,
     pub(crate) active: Color32,
     pub(crate) text: Color32,
     pub(crate) muted: Color32,
     pub(crate) border: Color32,
+    /// Edge of surfaces that float above the workbench (popups, dialogs, menus).
+    pub(crate) float_border: Color32,
     pub(crate) accent: Color32,
     pub(crate) hover: Color32,
     pub(crate) input: Color32,
@@ -61,13 +62,13 @@ impl Theme {
             panel: Color32::from_rgb(37, 37, 38),
             sidebar: Color32::from_rgb(51, 51, 51),
             tab: Color32::from_rgb(45, 45, 45),
-            #[cfg(not(target_os = "windows"))]
             title: Color32::from_rgb(60, 60, 60),
             status: Color32::from_rgb(0, 122, 204),
             active: Color32::from_rgb(4, 57, 94),
             text: Color32::from_rgb(204, 204, 204),
             muted: Color32::from_rgb(157, 157, 157),
             border: Color32::from_rgb(43, 43, 43),
+            float_border: Color32::from_rgb(69, 69, 69),
             accent: Color32::from_rgb(0, 122, 204),
             hover: Color32::from_rgb(43, 43, 43),
             input: Color32::from_rgb(49, 49, 49),
@@ -92,13 +93,13 @@ impl Theme {
                 panel: Color32::from_gray(243),
                 sidebar: Color32::from_gray(230),
                 tab: Color32::from_gray(236),
-                #[cfg(not(target_os = "windows"))]
                 title: Color32::from_gray(221),
                 canvas: Color32::from_gray(218),
                 text: Color32::from_gray(40),
                 muted: Color32::from_gray(96),
                 input: Color32::WHITE,
                 border: Color32::from_gray(190),
+                float_border: Color32::from_gray(160),
                 hover: Color32::from_gray(224),
                 active: Color32::from_rgb(190, 220, 245),
                 accent: Color32::from_rgb(0, 95, 160),
@@ -121,13 +122,13 @@ impl Theme {
                 panel: Color32::BLACK,
                 sidebar: Color32::BLACK,
                 tab: Color32::BLACK,
-                #[cfg(not(target_os = "windows"))]
                 title: Color32::BLACK,
                 canvas: Color32::WHITE,
                 text: Color32::WHITE,
                 muted: Color32::from_gray(220),
                 input: Color32::BLACK,
                 border: Color32::WHITE,
+                float_border: Color32::WHITE,
                 hover: Color32::from_gray(55),
                 active: Color32::from_rgb(0, 65, 100),
                 accent: Color32::YELLOW,
@@ -372,11 +373,19 @@ pub(crate) fn visuals(theme: Theme) -> egui::Visuals {
     let visuals = &mut result;
     visuals.panel_fill = colors.bg;
     visuals.window_fill = colors.panel;
-    visuals.window_stroke = Stroke::new(1.0_f32, colors.border);
+    visuals.window_stroke = Stroke::new(1.0_f32, colors.float_border);
     visuals.window_corner_radius = CornerRadius::same(6);
     visuals.menu_corner_radius = CornerRadius::same(5);
-    visuals.window_shadow = Shadow::NONE;
-    visuals.popup_shadow = Shadow::NONE;
+    // Floating surfaces read as raised above the workbench through a soft drop
+    // shadow; the light theme needs a gentler one.
+    let float_shadow = Shadow {
+        offset: [0, 8],
+        blur: 24,
+        spread: 0,
+        color: Color32::from_black_alpha(if theme == Theme::Light { 70 } else { 140 }),
+    };
+    visuals.window_shadow = float_shadow;
+    visuals.popup_shadow = float_shadow;
     visuals.selection.bg_fill = colors.active;
     visuals.selection.stroke = Stroke::new(1.0_f32, colors.text);
     visuals.text_edit_bg_color = Some(colors.input);

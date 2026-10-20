@@ -368,7 +368,6 @@ pub(crate) enum Activity {
     Search,
     SourceControl,
     RunDebug,
-    Extensions,
 }
 
 impl Activity {
@@ -378,7 +377,6 @@ impl Activity {
             Self::Search => "SEARCH",
             Self::SourceControl => "SOURCE CONTROL",
             Self::RunDebug => "RUN AND DEBUG",
-            Self::Extensions => "EXTENSIONS",
         }
     }
 }
@@ -463,6 +461,8 @@ pub(crate) struct ViewState {
     pub(crate) source_control: SourceControlView,
     pub(crate) terminal: TerminalView,
     pub(crate) problems: ProblemsView,
+    /// What the bottom panel showed when it was last hidden with its toggle.
+    pub(crate) bottom_restore: Option<super::output::BottomView>,
     pub(crate) output: OutputView,
     pub(crate) agents: super::agent::AgentsView,
     pub(crate) language_server_document: Option<crate::model::DocumentId>,
@@ -638,6 +638,7 @@ impl Default for ViewState {
             source_control: SourceControlView::default(),
             terminal: TerminalView::default(),
             problems: ProblemsView::default(),
+            bottom_restore: None,
             output: OutputView::default(),
             agents: Default::default(),
             language_server_document: None,

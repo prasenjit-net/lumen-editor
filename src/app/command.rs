@@ -12,6 +12,8 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
     Settings,
+    /// Set the user theme and clear the repository's theme overrides.
+    SetColorTheme(super::settings::ThemeChoice),
     /// Start a new native agent chat in the current workspace.
     NativeNewSession(lumen_agent_core::ProviderId),
     OpenChat(lumen_agent_core::SessionId),
@@ -104,6 +106,8 @@ pub(crate) enum Command {
     RefreshSourceControl,
     ToggleTerminal,
     ToggleProblems,
+    /// Hide the bottom panel, or bring back what it last showed.
+    ToggleBottomPanel,
     ToggleOutput,
     ToggleAgentPanel,
     SelectAgent(AgentKind),
@@ -137,6 +141,7 @@ pub(crate) enum Command {
     /// Review, revert or dismiss what the agent changed.
     AgentChanges(AgentKind, super::agent_changes::ChangeAction),
     ShowOutput,
+    ShowProblems,
     ShowTerminal,
     CloseOutput,
     ClearOutput,
@@ -453,6 +458,12 @@ impl Command {
             Self::Undo => Some("undo"),
             Self::Redo => Some("redo"),
             Self::SelectAll => Some("select_all"),
+            Self::SetColorTheme(choice) => Some(match choice {
+                super::settings::ThemeChoice::Dark => "theme_dark",
+                super::settings::ThemeChoice::Light => "theme_light",
+                super::settings::ThemeChoice::HighContrast => "theme_high_contrast",
+                super::settings::ThemeChoice::System => "theme_system",
+            }),
             _ => None,
         }
     }
@@ -489,6 +500,12 @@ impl Command {
             "undo" => Self::Undo,
             "redo" => Self::Redo,
             "select_all" => Self::SelectAll,
+            "theme_dark" => Self::SetColorTheme(super::settings::ThemeChoice::Dark),
+            "theme_light" => Self::SetColorTheme(super::settings::ThemeChoice::Light),
+            "theme_high_contrast" => {
+                Self::SetColorTheme(super::settings::ThemeChoice::HighContrast)
+            }
+            "theme_system" => Self::SetColorTheme(super::settings::ThemeChoice::System),
             _ => return None,
         })
     }

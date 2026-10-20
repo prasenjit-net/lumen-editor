@@ -287,11 +287,29 @@ def _(g):
 def _(g): g.poly([(4.5, 2.5), (13, 8), (4.5, 13.5)])
 
 
-@icon("PUZZLE_PIECE")
+def panel_frame(g):
+    g.line([(2, 3), (14, 3), (14, 13), (2, 13)], closed=True)
+
+
+@icon("SIDEBAR_LEFT")
 def _(g):
-    g.rect(2.5, 5, 10, 9.5)
-    g.circ((7.5, 3.8), 2.1); g.circ((13, 9.7), 2.1)
-    g.circ((2.5, 9.7), 1.9, cut=True)
+    panel_frame(g)
+    g.rect(2.5, 3.5, 3.5, 9)
+    g.seg((6.5, 3), (6.5, 13))
+
+
+@icon("SIDEBAR_RIGHT")
+def _(g):
+    panel_frame(g)
+    g.rect(10, 3.5, 3.5, 9)
+    g.seg((9.5, 3), (9.5, 13))
+
+
+@icon("PANEL_BOTTOM")
+def _(g):
+    panel_frame(g)
+    g.rect(2.5, 9, 11, 3.5)
+    g.seg((2, 8.5), (14, 8.5))
 
 
 @icon("ERROR")

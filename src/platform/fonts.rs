@@ -58,6 +58,16 @@ pub(crate) fn configure(ctx: &egui::Context) -> egui::FontDefinitions {
                 .insert(0, name.into());
         }
     }
+    // Menlo carries the macOS modifier glyphs (shift, option, control) that the
+    // proportional fonts lack; use it only as a last-resort fallback.
+    #[cfg(target_os = "macos")]
+    if fonts.font_data.contains_key("editor-mono") {
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .push("editor-mono".into());
+    }
     let hack = egui::FontDefinitions::default().families[&egui::FontFamily::Monospace].clone();
     fonts
         .families

@@ -34,9 +34,11 @@ pub const GEAR: &str = "\u{e01d}";
 pub const GIT_BRANCH: &str = "\u{e01e}";
 pub const MAGNIFYING_GLASS: &str = "\u{e01f}";
 pub const PLAY: &str = "\u{e020}";
-pub const PUZZLE_PIECE: &str = "\u{e021}";
-pub const ERROR: &str = "\u{e022}";
-pub const WARNING: &str = "\u{e023}";
-pub const DEBUG: &str = "\u{e024}";
+pub const SIDEBAR_LEFT: &str = "\u{e021}";
+pub const SIDEBAR_RIGHT: &str = "\u{e022}";
+pub const PANEL_BOTTOM: &str = "\u{e023}";
+pub const ERROR: &str = "\u{e024}";
+pub const WARNING: &str = "\u{e025}";
+pub const DEBUG: &str = "\u{e026}";
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub const BRACKETS_CURLY: &str = "\u{e025}";
+pub const BRACKETS_CURLY: &str = "\u{e027}";
