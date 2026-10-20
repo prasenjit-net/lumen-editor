@@ -168,6 +168,7 @@ mod tests {
         git(&["config", "user.name", "T"]);
         git(&["config", "user.email", "t@example.invalid"]);
         git(&["config", "commit.gpgsign", "false"]);
+        git(&["config", "core.autocrlf", "false"]);
         for n in 0..(HISTORY_PAGE + 5) {
             std::fs::write(root.join("f.txt"), format!("{n}\n")).unwrap();
             git(&["add", "--", "f.txt"]);

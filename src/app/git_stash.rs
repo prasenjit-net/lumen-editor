@@ -295,6 +295,7 @@ mod tests {
         git(&["config", "user.name", "T"]);
         git(&["config", "user.email", "t@example.invalid"]);
         git(&["config", "commit.gpgsign", "false"]);
+        git(&["config", "core.autocrlf", "false"]);
         std::fs::write(root.join("f.txt"), "base\n").unwrap();
         git(&["add", "--", "f.txt"]);
         git(&["commit", "-q", "-m", "init"]);
