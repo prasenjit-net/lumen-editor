@@ -233,6 +233,17 @@ pub(crate) trait SourceControlService: Send + Sync {
     fn fetch(&self, root: &Path) -> Result<(), String>;
     /// Pushes `branch` to `remote` and records it as the upstream.
     fn publish(&self, root: &Path, remote: &str, branch: &str) -> Result<(), String>;
+    /// Clones `url` into the not-yet-existing `target`, reporting Git's progress
+    /// lines. Setting `cancel` stops it. On cancellation or failure the
+    /// partially created `target` is removed; it is only ever removed because
+    /// this call verified it did not exist beforehand.
+    fn clone_repository(
+        &self,
+        url: &str,
+        target: &Path,
+        cancel: &std::sync::atomic::AtomicBool,
+        progress: &dyn Fn(String),
+    ) -> Result<(), String>;
     /// Creates a repository in `directory` with an explicit initial branch.
     fn init(&self, directory: &Path, initial_branch: &str) -> Result<(), String>;
     fn stage_hunk(
@@ -530,6 +541,102 @@ impl SourceControlService for LocalGit {
             }
         }
         git_remote_command(root, ["push", "--set-upstream", remote, branch], "publish")
+    }
+
+    fn clone_repository(
+        &self,
+        url: &str,
+        target: &Path,
+        cancel: &std::sync::atomic::AtomicBool,
+        progress: &dyn Fn(String),
+    ) -> Result<(), String> {
+        use std::sync::{atomic::Ordering, mpsc};
+        let url = url.trim();
+        if url.is_empty() || url.starts_with('-') {
+            return Err("Enter a repository URL or path".into());
+        }
+        if fs::symlink_metadata(target).is_ok() {
+            return Err(format!("{} already exists", target.display()));
+        }
+        let mut command = Command::new("git");
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .args(["clone", "--progress", "--", url])
+            .arg(target);
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("Could not start Git clone: {error}"))?;
+        let mut stderr = child.stderr.take().expect("piped stderr");
+        let (sender, receiver) = mpsc::channel::<String>();
+        let reader = std::thread::spawn(move || {
+            // Progress rewrites one line with carriage returns.
+            let mut line = Vec::new();
+            let mut byte = [0u8; 1];
+            while stderr.read(&mut byte).is_ok_and(|n| n == 1) {
+                if byte[0] == b'\r' || byte[0] == b'\n' {
+                    if !line.is_empty() {
+                        let _ = sender.send(String::from_utf8_lossy(&line).into_owned());
+                        line.clear();
+                    }
+                } else {
+                    line.push(byte[0]);
+                }
+            }
+            if !line.is_empty() {
+                let _ = sender.send(String::from_utf8_lossy(&line).into_owned());
+            }
+        });
+        let mut last_lines: Vec<String> = Vec::new();
+        let status = loop {
+            if cancel.load(Ordering::SeqCst) {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                let _ = fs::remove_dir_all(target);
+                return Err("Clone cancelled".into());
+            }
+            match receiver.recv_timeout(Duration::from_millis(50)) {
+                Ok(line) => {
+                    let line = redact_credentials(&line);
+                    progress(line.clone());
+                    last_lines.push(line);
+                    if last_lines.len() > 6 {
+                        last_lines.remove(0);
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    break child
+                        .wait()
+                        .map_err(|error| format!("Could not finish Git clone: {error}"))?;
+                }
+            }
+        };
+        let _ = reader.join();
+        if status.success() {
+            Ok(())
+        } else {
+            let _ = fs::remove_dir_all(target);
+            let detail = last_lines
+                .iter()
+                .rev()
+                .find(|line| line.starts_with("fatal:") || line.starts_with("error:"))
+                .or(last_lines.last())
+                .cloned()
+                .unwrap_or_default();
+            Err(if detail.is_empty() {
+                "Git clone failed".into()
+            } else {
+                format!("Git clone failed: {detail}")
+            })
+        }
     }
 
     fn init(&self, directory: &Path, initial_branch: &str) -> Result<(), String> {

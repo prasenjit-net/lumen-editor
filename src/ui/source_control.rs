@@ -240,6 +240,13 @@ impl Workbench<'_> {
             {
                 self.command(Command::InitSourceRepository);
             }
+            if ui
+                .button("Clone Repository…")
+                .on_hover_text("Clone a repository into a new folder and open it")
+                .clicked()
+            {
+                self.command(Command::OpenCloneDialog);
+            }
             return;
         };
         self.repository_list(ui, &snapshot.root);
@@ -552,6 +559,91 @@ impl Workbench<'_> {
             );
             source_label(ui, &format!("{name}: {error}"), colors.error)
                 .on_hover_text(format!("{}\n{error}", root.display()));
+        }
+    }
+
+    pub(crate) fn clone_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(dialog) = &mut self.view.clone_dialog else {
+            return;
+        };
+        let running = dialog.run.is_some();
+        let progress = dialog.run.as_ref().map(|run| run.progress.clone());
+        let error = dialog.error.clone();
+        let target = dialog.target();
+        let (mut browse, mut start, mut cancel) = (false, false, false);
+        let modal = egui::Modal::new(egui::Id::new("git_clone_dialog")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.heading("Clone Repository");
+            ui.add_space(4.0);
+            ui.label(RichText::new("Repository URL or path").color(colors.muted));
+            let url = ui.add_enabled(
+                !running,
+                TextEdit::singleline(&mut dialog.url)
+                    .id_salt("git_clone_url")
+                    .desired_width(f32::INFINITY)
+                    .hint_text("https://host/team/project.git"),
+            );
+            if url.changed() {
+                dialog.sync_name();
+            }
+            ui.label(RichText::new("Destination folder").color(colors.muted));
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 80.0).max(40.0);
+                ui.add_enabled(
+                    !running,
+                    TextEdit::singleline(&mut dialog.parent)
+                        .id_salt("git_clone_parent")
+                        .desired_width(width),
+                );
+                browse = ui
+                    .add_enabled(!running, egui::Button::new("Browse…"))
+                    .clicked();
+            });
+            ui.label(RichText::new("Folder name").color(colors.muted));
+            let name = ui.add_enabled(
+                !running,
+                TextEdit::singleline(&mut dialog.name)
+                    .id_salt("git_clone_name")
+                    .desired_width(f32::INFINITY),
+            );
+            if name.changed() {
+                dialog.name_edited = true;
+            }
+            ui.add_space(4.0);
+            match (&progress, &error, &target) {
+                (Some(progress), _, _) => {
+                    ui.label(RichText::new(progress).color(colors.muted));
+                }
+                (None, Some(error), _) => {
+                    ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+                }
+                (None, None, Ok(target)) => {
+                    ui.label(
+                        RichText::new(format!("Creates {}", target.display())).color(colors.muted),
+                    );
+                }
+                (None, None, Err(reason)) if !dialog.url.is_empty() => {
+                    ui.label(RichText::new(reason).color(colors.muted));
+                }
+                _ => {}
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                start = ui
+                    .add_enabled(!running && target.is_ok(), egui::Button::new("Clone"))
+                    .clicked();
+                cancel = ui
+                    .button(if running { "Cancel Clone" } else { "Cancel" })
+                    .clicked();
+            });
+        });
+        if browse {
+            self.command(Command::PickCloneDestination);
+        } else if start {
+            self.command(Command::StartClone);
+        } else if cancel || modal.should_close() {
+            self.command(Command::CancelClone);
         }
     }
 

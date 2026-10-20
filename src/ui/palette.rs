@@ -444,6 +444,10 @@ fn command_shortcut(command: &Command) -> String {
 fn palette_commands() -> Vec<(String, Command)> {
     [
         (
+            format!("{}  Git: Clone Repository", icon::GIT_BRANCH),
+            Command::OpenCloneDialog,
+        ),
+        (
             format!("{}  Preferences: Open Settings", icon::GEAR),
             Command::Settings,
         ),
