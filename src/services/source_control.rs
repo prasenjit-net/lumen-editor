@@ -1951,6 +1951,8 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
             &[
                 "clone",
                 "-q",
+                "-b",
+                "main",
                 bare.to_str().unwrap(),
                 other.to_str().unwrap(),
             ],
@@ -1961,7 +1963,7 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         fs::write(other.join("g.txt"), "two\n").unwrap();
         git_ok(&other, &["add", "--", "g.txt"]);
         git_ok(&other, &["commit", "-q", "-m", "second"]);
-        git_ok(&other, &["push", "-q"]);
+        git_ok(&other, &["push", "-q", "origin", "main"]);
         LocalGit.fetch(&work).unwrap();
         let fetched = LocalGit.snapshot(&work).unwrap().unwrap();
         assert_eq!(fetched.upstream.unwrap().ahead_behind, Some((0, 1)));
