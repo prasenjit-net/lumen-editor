@@ -13,11 +13,26 @@ enum SourceRow<'a> {
 }
 
 fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
-    let mut rows = Vec::with_capacity(snapshot.changes.len() * 2 + 2);
+    let mut rows = Vec::with_capacity(snapshot.changes.len() * 2 + 3);
+    // Unresolved conflicts get their own group and never appear as ordinary
+    // staged or working rows.
+    let conflicts: Vec<_> = snapshot
+        .changes
+        .iter()
+        .filter(|change| change.is_conflict())
+        .collect();
+    if !conflicts.is_empty() {
+        rows.push(SourceRow::Heading("MERGE CONFLICTS", conflicts.len()));
+        rows.extend(
+            conflicts
+                .into_iter()
+                .map(|change| SourceRow::Change(change, DiffSide::Working)),
+        );
+    }
     let staged: Vec<_> = snapshot
         .changes
         .iter()
-        .filter(|change| change.index != ' ' && change.index != '?')
+        .filter(|change| !change.is_conflict() && change.index != ' ' && change.index != '?')
         .collect();
     if !staged.is_empty() {
         rows.push(SourceRow::Heading("STAGED CHANGES", staged.len()));
@@ -30,7 +45,7 @@ fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
     let working: Vec<_> = snapshot
         .changes
         .iter()
-        .filter(|change| change.worktree != ' ')
+        .filter(|change| !change.is_conflict() && change.worktree != ' ')
         .collect();
     if !working.is_empty() {
         rows.push(SourceRow::Heading("CHANGES", working.len()));
@@ -46,6 +61,51 @@ fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
         }));
     }
     rows
+}
+
+/// One-line header: branch, ahead/behind counts and any operation in progress.
+fn branch_summary(snapshot: &GitSnapshot) -> String {
+    let mut text = format!("{}  {}", crate::icon::GIT_BRANCH, snapshot.branch);
+    if let Some((ahead, behind)) = snapshot
+        .upstream
+        .as_ref()
+        .and_then(|upstream| upstream.ahead_behind)
+        .filter(|counts| *counts != (0, 0))
+    {
+        text.push_str(&format!("  +{ahead} -{behind}"));
+    }
+    if let Some(state) = snapshot.state.label() {
+        text.push_str(&format!("  ({state})"));
+    }
+    text
+}
+
+fn branch_details(snapshot: &GitSnapshot) -> String {
+    let mut lines = vec![snapshot.root.display().to_string()];
+    match &snapshot.upstream {
+        Some(upstream) => match upstream.ahead_behind {
+            Some((ahead, behind)) => lines.push(format!(
+                "Tracking {}: {ahead} ahead, {behind} behind (as of the last fetch)",
+                upstream.name
+            )),
+            None => lines.push(format!(
+                "Tracking {}, which no longer exists on the remote",
+                upstream.name
+            )),
+        },
+        None if matches!(
+            snapshot.head,
+            crate::services::source_control::GitHead::Attached(_)
+        ) =>
+        {
+            lines.push("No upstream branch is configured".into())
+        }
+        None => {}
+    }
+    if let Some(state) = snapshot.state.label() {
+        lines.push(format!("{state} is in progress"));
+    }
+    lines.join("\n")
 }
 
 fn source_heading(ui: &mut egui::Ui, title: &str, count: usize) {
@@ -111,25 +171,25 @@ impl Workbench<'_> {
             source_label(ui, &workspace.display().to_string(), colors.muted);
             return;
         };
-        let branch_text = format!("{}  {}", crate::icon::GIT_BRANCH, snapshot.branch);
+        let branch_text = branch_summary(&snapshot);
         let branch = source_label(ui, &branch_text, colors.text);
-        branch.on_hover_text(snapshot.root.display().to_string());
+        branch.on_hover_text(branch_details(&snapshot));
         let staged_paths: Vec<_> = snapshot
             .changes
             .iter()
-            .filter(|change| change.index != ' ' && change.index != '?')
+            .filter(|change| !change.is_conflict() && change.index != ' ' && change.index != '?')
             .map(|change| change.path.clone())
             .collect();
         let working_paths: Vec<_> = snapshot
             .changes
             .iter()
-            .filter(|change| change.worktree != ' ')
+            .filter(|change| !change.is_conflict() && change.worktree != ' ')
             .map(|change| change.path.clone())
             .collect();
         let revertible_paths: Vec<_> = snapshot
             .changes
             .iter()
-            .filter(|change| change.index != '?' && change.index != 'A')
+            .filter(|change| !change.is_conflict() && change.index != '?' && change.index != 'A')
             .map(|change| change.path.clone())
             .collect();
         ui.horizontal(|ui| {
@@ -211,6 +271,7 @@ impl Workbench<'_> {
         }
         let rows = source_rows(&snapshot);
         let mut requested = None;
+        let mut open_conflict = None;
         ScrollArea::vertical()
             .id_salt("source_control_changes")
             .show_rows(ui, 22.0, rows.len(), |ui, visible| {
@@ -221,7 +282,9 @@ impl Workbench<'_> {
                         }
                         continue;
                     };
-                    let marker = if side == DiffSide::Untracked {
+                    let marker = if change.is_conflict() {
+                        '!'
+                    } else if side == DiffSide::Untracked {
                         'U'
                     } else if side == DiffSide::Staged {
                         change.index
@@ -243,7 +306,8 @@ impl Workbench<'_> {
                     } else {
                         crate::icon::PLUS
                     };
-                    let revertible = change.index != '?' && change.index != 'A';
+                    let revertible =
+                        !change.is_conflict() && change.index != '?' && change.index != 'A';
                     let revert_clicked = revertible
                         && ui
                             .put(
@@ -265,6 +329,8 @@ impl Workbench<'_> {
                         )
                         .on_hover_text(if side == DiffSide::Staged {
                             "Unstage change"
+                        } else if change.is_conflict() {
+                            "Mark resolved (stage the file as it is on disk)"
                         } else {
                             "Stage change"
                         })
@@ -273,11 +339,18 @@ impl Workbench<'_> {
                         self.command(action);
                     } else if revert_clicked {
                         self.command(Command::RequestSourceRevert(vec![change.path.clone()]));
+                    } else if response.clicked() && change.is_conflict() {
+                        // A comparison of a conflicted file is not meaningful;
+                        // open it so the markers can be resolved in the editor.
+                        open_conflict = Some(snapshot.root.join(&change.path));
                     } else if response.clicked() {
                         requested = Some((change.path.clone(), side));
                     }
                 }
             });
+        if let Some(path) = open_conflict {
+            self.command(Command::OpenPath(path));
+        }
         if let Some((path, side)) = requested {
             self.command(Command::ShowSourceDiff(path, side));
         }
@@ -643,11 +716,8 @@ mod tests {
         app.view.source_control.snapshot = Some(GitSnapshot {
             root: PathBuf::from("/workspace"),
             branch: "feature/a-branch-name-long-enough-to-previously-grow-the-sidebar".into(),
-            changes: vec![GitChange {
-                path: PathBuf::from("src/long-file.rs"),
-                index: 'M',
-                worktree: 'M',
-            }],
+            changes: vec![GitChange::new(PathBuf::from("src/long-file.rs"), 'M', 'M')],
+            ..Default::default()
         });
         for point in [
             egui::pos2(850.0, 400.0),
@@ -720,11 +790,8 @@ mod tests {
         app.view.source_control.snapshot = Some(GitSnapshot {
             root: PathBuf::from("/workspace"),
             branch: "main".into(),
-            changes: vec![GitChange {
-                path: PathBuf::from("src/main.rs"),
-                index: 'M',
-                worktree: ' ',
-            }],
+            changes: vec![GitChange::new(PathBuf::from("src/main.rs"), 'M', ' ')],
+            ..Default::default()
         });
         let ctx = egui::Context::default();
         theme::configure_ui(&ctx);
@@ -764,11 +831,12 @@ mod tests {
         app.view.source_control.snapshot = Some(GitSnapshot {
             root: PathBuf::from("/workspace"),
             branch: "feature/a-branch-name-long-enough-to-previously-grow-the-sidebar".into(),
-            changes: vec![GitChange {
-                path: PathBuf::from("src/a-very-long-file-name-that-must-stay-clipped.rs"),
-                index: ' ',
-                worktree: 'M',
-            }],
+            changes: vec![GitChange::new(
+                PathBuf::from("src/a-very-long-file-name-that-must-stay-clipped.rs"),
+                ' ',
+                'M',
+            )],
+            ..Default::default()
         });
         let ctx = egui::Context::default();
         theme::configure_ui(&ctx);
@@ -804,11 +872,8 @@ mod tests {
             view.source_control.snapshot = Some(GitSnapshot {
                 root: PathBuf::from("/workspace"),
                 branch: "main".into(),
-                changes: vec![GitChange {
-                    path: PathBuf::from("src/file.rs"),
-                    index: ' ',
-                    worktree: 'M',
-                }],
+                changes: vec![GitChange::new(PathBuf::from("src/file.rs"), ' ', 'M')],
+                ..Default::default()
             });
             let output = ctx.run(
                 egui::RawInput {
@@ -846,17 +911,10 @@ mod tests {
             root: PathBuf::from("/workspace"),
             branch: "main".into(),
             changes: vec![
-                GitChange {
-                    path: PathBuf::from("both.rs"),
-                    index: 'M',
-                    worktree: 'M',
-                },
-                GitChange {
-                    path: PathBuf::from("new.rs"),
-                    index: '?',
-                    worktree: '?',
-                },
+                GitChange::new(PathBuf::from("both.rs"), 'M', 'M'),
+                GitChange::new(PathBuf::from("new.rs"), '?', '?'),
             ],
+            ..Default::default()
         };
         let rows = source_rows(&snapshot);
         assert!(matches!(rows[0], SourceRow::Heading("STAGED CHANGES", 1)));
@@ -932,6 +990,46 @@ mod tests {
                 "{width}: {positions:?}"
             );
         }
+    }
+
+    #[test]
+    fn conflicts_form_their_own_group_and_leave_staged_and_working_lists() {
+        use crate::services::source_control::ChangeKind;
+        let mut conflict = GitChange::new("both.rs", 'U', 'U');
+        conflict.kind = ChangeKind::Conflict;
+        let snapshot = GitSnapshot {
+            changes: vec![conflict, GitChange::new("ok.rs", 'M', ' ')],
+            ..Default::default()
+        };
+        let rows = source_rows(&snapshot);
+        let headings: Vec<_> = rows
+            .iter()
+            .filter_map(|row| match row {
+                SourceRow::Heading(title, count) => Some((*title, *count)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(headings, [("MERGE CONFLICTS", 1), ("STAGED CHANGES", 1)]);
+    }
+
+    #[test]
+    fn header_shows_ahead_behind_and_operation_state() {
+        use crate::services::source_control::{GitUpstream, RepoState};
+        let snapshot = GitSnapshot {
+            branch: "main".into(),
+            upstream: Some(GitUpstream {
+                name: "origin/main".into(),
+                ahead_behind: Some((2, 1)),
+            }),
+            state: RepoState::Merge,
+            ..Default::default()
+        };
+        let text = branch_summary(&snapshot);
+        assert!(
+            text.contains("+2 -1") && text.contains("(Merging)"),
+            "{text}"
+        );
+        assert!(branch_details(&snapshot).contains("2 ahead, 1 behind"));
     }
 
     #[test]

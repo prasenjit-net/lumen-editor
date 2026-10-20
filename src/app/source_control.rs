@@ -726,11 +726,8 @@ mod tests {
         app.view.source_control.snapshot = Some(GitSnapshot {
             root: root.to_path_buf(),
             branch: "main".into(),
-            changes: vec![GitChange {
-                path: path.to_path_buf(),
-                index: 'M',
-                worktree: 'M',
-            }],
+            changes: vec![GitChange::new(path.to_path_buf(), 'M', 'M')],
+            ..Default::default()
         });
         app
     }
@@ -949,27 +946,12 @@ mod tests {
             root: root.path().to_path_buf(),
             branch: "main".into(),
             changes: vec![
-                GitChange {
-                    path: "modified.rs".into(),
-                    index: ' ',
-                    worktree: 'M',
-                },
-                GitChange {
-                    path: "staged.rs".into(),
-                    index: 'M',
-                    worktree: ' ',
-                },
-                GitChange {
-                    path: "added.rs".into(),
-                    index: 'A',
-                    worktree: ' ',
-                },
-                GitChange {
-                    path: "new.rs".into(),
-                    index: '?',
-                    worktree: '?',
-                },
+                GitChange::new("modified.rs", ' ', 'M'),
+                GitChange::new("staged.rs", 'M', ' '),
+                GitChange::new("added.rs", 'A', ' '),
+                GitChange::new("new.rs", '?', '?'),
             ],
+            ..Default::default()
         };
         assert!(source_path_is_revertible(
             &snapshot,

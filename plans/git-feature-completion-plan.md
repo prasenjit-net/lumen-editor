@@ -118,6 +118,8 @@ Gate: no Git action silently changes the wrong content, loses its outcome, or by
 
 ### 1. Repository discovery, rich status and independent state
 
+Progress (branch `f-git-repo-state`, stacked on milestone 0): done — porcelain v2 parsing with typed HEAD (attached/unborn/detached), upstream with ahead/behind, renames with source path, unmerged conflicts shown in their own group, in-progress merge/rebase/cherry-pick/revert state read from the real git directory, header shows counts and operation. Remaining — repository identity and keyed per-repository state, nested/sibling discovery and rescan, submodule status, per-repository drafts, routing of badges/diffs/actions by owning repository.
+
 - Adopt typed porcelain v2 parsing and branch/upstream metadata. Represent rename source/destination, unmerged index stages, submodule dirtiness, detached/unborn HEAD and ahead/behind counts; provide conflict inspection immediately, even before resolution controls ship.
 - Discover worktree roots under the workspace with bounded traversal and `.git` file support; account for nested repos and submodules. Define and test traversal limits and a manual refresh/rescan command.
 - Show one compact repository section per repo, with a stable selection, branch label, counts, and path tooltip. Persist section expansion and commit drafts by repository for the session. Keep action buttons at the panel's fixed edge via the shared header widget.

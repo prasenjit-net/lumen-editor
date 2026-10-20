@@ -21,12 +21,86 @@ pub(crate) struct GitChange {
     pub(crate) path: PathBuf,
     pub(crate) index: char,
     pub(crate) worktree: char,
+    pub(crate) kind: ChangeKind,
 }
 
-#[derive(Clone, Debug)]
+impl GitChange {
+    /// An ordinary tracked or untracked change, as most callers and tests need.
+    pub(crate) fn new(path: impl Into<PathBuf>, index: char, worktree: char) -> Self {
+        Self {
+            path: path.into(),
+            index,
+            worktree,
+            kind: ChangeKind::Ordinary,
+        }
+    }
+
+    pub(crate) fn is_conflict(&self) -> bool {
+        matches!(self.kind, ChangeKind::Conflict)
+    }
+}
+
+/// What kind of status record produced a change. Conflicts are never folded
+/// into ordinary modified rows, and a rename keeps its source path.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ChangeKind {
+    #[default]
+    Ordinary,
+    Renamed {
+        from: PathBuf,
+    },
+    Conflict,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum GitHead {
+    /// A branch without commits yet.
+    Unborn(String),
+    Attached(String),
+    Detached(String),
+    #[default]
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GitUpstream {
+    pub(crate) name: String,
+    /// `None` when Git does not report counts (for example, a deleted upstream).
+    pub(crate) ahead_behind: Option<(u32, u32)>,
+}
+
+/// An operation Git is part-way through, discovered from the repository's
+/// state files so operations started outside Lumen are visible too.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RepoState {
+    #[default]
+    Clean,
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
+}
+
+impl RepoState {
+    pub(crate) fn label(self) -> Option<&'static str> {
+        match self {
+            Self::Clean => None,
+            Self::Merge => Some("Merging"),
+            Self::Rebase => Some("Rebasing"),
+            Self::CherryPick => Some("Cherry-picking"),
+            Self::Revert => Some("Reverting"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub(crate) struct GitSnapshot {
     pub(crate) root: PathBuf,
+    /// Display label for the header; derived from `head`.
     pub(crate) branch: String,
+    pub(crate) head: GitHead,
+    pub(crate) upstream: Option<GitUpstream>,
+    pub(crate) state: RepoState,
     pub(crate) changes: Vec<GitChange>,
 }
 
@@ -94,9 +168,9 @@ impl SourceControlService for LocalGit {
             .args([
                 "--no-optional-locks",
                 "status",
-                "--porcelain=v1",
+                "--porcelain=v2",
+                "--branch",
                 "-z",
-                "--no-renames",
                 "--ignore-submodules=all",
                 "--untracked-files=normal",
             ])
@@ -105,18 +179,20 @@ impl SourceControlService for LocalGit {
         if !status.status.success() {
             return Err("Git status failed; check repository access".into());
         }
-        let branch = git_command(&root)
-            .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| String::from_utf8(output.stdout).ok())
-            .map(|branch| branch.trim_end_matches(['\r', '\n']).to_owned())
-            .unwrap_or_else(|| "Detached HEAD".into());
+        let parsed = parse_status(&status.stdout)?;
+        let branch = match &parsed.head {
+            GitHead::Attached(name) => name.clone(),
+            GitHead::Unborn(name) => format!("{name} (no commits yet)"),
+            GitHead::Detached(oid) => format!("Detached HEAD at {}", &oid[..oid.len().min(7)]),
+            GitHead::Unknown => "Detached HEAD".into(),
+        };
         Ok(Some(GitSnapshot {
+            state: repo_state(&root),
             root,
             branch,
-            changes: parse_status(&status.stdout)?,
+            head: parsed.head,
+            upstream: parsed.upstream,
+            changes: parsed.changes,
         }))
     }
 
@@ -646,24 +722,139 @@ fn git_command(root: &Path) -> Command {
     command
 }
 
-fn parse_status(bytes: &[u8]) -> Result<Vec<GitChange>, String> {
-    let mut changes = Vec::new();
-    for record in bytes
-        .split(|byte| *byte == 0)
-        .filter(|record| !record.is_empty())
-    {
-        if record.len() < 4 || record[2] != b' ' {
-            return Err("Unrecognized Git status record".into());
-        }
-        let path =
-            std::str::from_utf8(&record[3..]).map_err(|_| "A Git path is not UTF-8".to_owned())?;
-        changes.push(GitChange {
-            path: PathBuf::from(path),
-            index: record[0] as char,
-            worktree: record[1] as char,
-        });
+struct ParsedStatus {
+    head: GitHead,
+    upstream: Option<GitUpstream>,
+    changes: Vec<GitChange>,
+}
+
+/// Reads the in-progress operation from state files in the real git directory
+/// (which for a linked worktree is not `<root>/.git`).
+fn repo_state(root: &Path) -> RepoState {
+    let Ok(output) = git_command(root)
+        .args(["rev-parse", "--absolute-git-dir"])
+        .output()
+    else {
+        return RepoState::Clean;
+    };
+    let Ok(dir) = String::from_utf8(output.stdout) else {
+        return RepoState::Clean;
+    };
+    let dir = PathBuf::from(dir.trim_end_matches(['\r', '\n']));
+    let has = |name: &str| dir.join(name).exists();
+    if has("rebase-merge") || has("rebase-apply") {
+        RepoState::Rebase
+    } else if has("MERGE_HEAD") {
+        RepoState::Merge
+    } else if has("CHERRY_PICK_HEAD") {
+        RepoState::CherryPick
+    } else if has("REVERT_HEAD") {
+        RepoState::Revert
+    } else {
+        RepoState::Clean
     }
-    Ok(changes)
+}
+
+/// Parses `git status --porcelain=v2 --branch -z`. Header records start with
+/// `# `; `1`/`2`/`u`/`?` records carry changes. Paths follow a fixed number of
+/// space-separated fields, so they may contain spaces.
+fn parse_status(bytes: &[u8]) -> Result<ParsedStatus, String> {
+    let bad = || "Unrecognized Git status record".to_owned();
+    let text = |bytes: &[u8]| {
+        std::str::from_utf8(bytes)
+            .map(str::to_owned)
+            .map_err(|_| "A Git path is not UTF-8".to_owned())
+    };
+    let mut head = GitHead::Unknown;
+    let mut oid = String::new();
+    let mut upstream: Option<GitUpstream> = None;
+    let mut changes = Vec::new();
+    let mut records = bytes
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty());
+    while let Some(record) = records.next() {
+        let line = text(record)?;
+        if let Some(header) = line.strip_prefix("# ") {
+            let (key, value) = header.split_once(' ').ok_or_else(bad)?;
+            match key {
+                "branch.oid" => oid = value.to_owned(),
+                "branch.head" => {
+                    head = if value == "(detached)" {
+                        GitHead::Detached(String::new())
+                    } else if oid == "(initial)" {
+                        GitHead::Unborn(value.to_owned())
+                    } else {
+                        GitHead::Attached(value.to_owned())
+                    };
+                }
+                "branch.upstream" => {
+                    upstream = Some(GitUpstream {
+                        name: value.to_owned(),
+                        ahead_behind: None,
+                    });
+                }
+                "branch.ab" => {
+                    let (ahead, behind) = value.split_once(' ').ok_or_else(bad)?;
+                    let ahead = ahead.strip_prefix('+').and_then(|n| n.parse().ok());
+                    let behind = behind.strip_prefix('-').and_then(|n| n.parse().ok());
+                    if let (Some(upstream), Some(ahead), Some(behind)) =
+                        (&mut upstream, ahead, behind)
+                    {
+                        upstream.ahead_behind = Some((ahead, behind));
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        let kind = line.as_bytes()[0];
+        let xy = || {
+            let xy = line.as_bytes().get(2..4).ok_or_else(bad)?;
+            // v2 marks an unchanged side with '.'; the rest of Lumen uses ' '.
+            let side = |byte: u8| if byte == b'.' { ' ' } else { byte as char };
+            Ok::<_, String>((side(xy[0]), side(xy[1])))
+        };
+        match kind {
+            b'?' => {
+                let path = line.get(2..).ok_or_else(bad)?;
+                changes.push(GitChange::new(path, '?', '?'));
+            }
+            b'1' => {
+                let (index, worktree) = xy()?;
+                // 1 XY sub mH mI mW hH hI path
+                let path = line.splitn(9, ' ').nth(8).ok_or_else(bad)?;
+                changes.push(GitChange::new(path, index, worktree));
+            }
+            b'2' => {
+                let (index, worktree) = xy()?;
+                // 2 XY sub mH mI mW hH hI Xscore path, then the source path.
+                let path = line.splitn(10, ' ').nth(9).ok_or_else(bad)?;
+                let from = text(records.next().ok_or_else(bad)?)?;
+                let mut change = GitChange::new(path, index, worktree);
+                change.kind = ChangeKind::Renamed {
+                    from: PathBuf::from(from),
+                };
+                changes.push(change);
+            }
+            b'u' => {
+                let (index, worktree) = xy()?;
+                // u XY sub m1 m2 m3 mW h1 h2 h3 path
+                let path = line.splitn(11, ' ').nth(10).ok_or_else(bad)?;
+                let mut change = GitChange::new(path, index, worktree);
+                change.kind = ChangeKind::Conflict;
+                changes.push(change);
+            }
+            _ => return Err(bad()),
+        }
+    }
+    if let GitHead::Detached(name) = &mut head {
+        *name = oid.clone();
+    }
+    Ok(ParsedStatus {
+        head,
+        upstream,
+        changes,
+    })
 }
 
 #[cfg(test)]
@@ -673,10 +864,59 @@ mod tests {
 
     #[test]
     fn nul_status_preserves_spaces_and_newlines() {
-        let changes = parse_status(b" M with space.rs\0?? line\nbreak.rs\0").unwrap();
+        let parsed =
+            parse_status(b"1 .M N... 100644 100644 100644 a b with space.rs\0? line\nbreak.rs\0")
+                .unwrap();
+        let changes = parsed.changes;
         assert_eq!(changes[0].path, PathBuf::from("with space.rs"));
-        assert_eq!(changes[0].worktree, 'M');
+        assert_eq!((changes[0].index, changes[0].worktree), (' ', 'M'));
         assert_eq!(changes[1].path, PathBuf::from("line\nbreak.rs"));
+        assert_eq!(changes[1].index, '?');
+    }
+
+    #[test]
+    fn porcelain_v2_headers_renames_and_conflicts_are_typed() {
+        let parsed = parse_status(
+            b"# branch.oid abcdef0123\0# branch.head main\0# branch.upstream origin/main\0# branch.ab +2 -1\0\
+2 R. N... 100644 100644 100644 a b R100 new name.rs\0old name.rs\0\
+u UU N... 100644 100644 100644 100644 a b c both.rs\0",
+        )
+        .unwrap();
+        assert_eq!(parsed.head, GitHead::Attached("main".into()));
+        let upstream = parsed.upstream.unwrap();
+        assert_eq!(upstream.name, "origin/main");
+        assert_eq!(upstream.ahead_behind, Some((2, 1)));
+        assert_eq!(parsed.changes[0].path, PathBuf::from("new name.rs"));
+        assert_eq!(
+            parsed.changes[0].kind,
+            ChangeKind::Renamed {
+                from: PathBuf::from("old name.rs")
+            }
+        );
+        assert!(parsed.changes[1].is_conflict());
+        assert_eq!(parsed.changes[1].path, PathBuf::from("both.rs"));
+        assert_eq!(
+            (parsed.changes[1].index, parsed.changes[1].worktree),
+            ('U', 'U')
+        );
+    }
+
+    #[test]
+    fn unborn_and_detached_heads_are_distinct_states() {
+        let unborn = parse_status(b"# branch.oid (initial)\0# branch.head trunk\0").unwrap();
+        assert_eq!(unborn.head, GitHead::Unborn("trunk".into()));
+        assert!(unborn.upstream.is_none());
+        let detached =
+            parse_status(b"# branch.oid 1234567890\0# branch.head (detached)\0").unwrap();
+        assert_eq!(detached.head, GitHead::Detached("1234567890".into()));
+    }
+
+    #[test]
+    fn a_missing_upstream_count_leaves_the_upstream_without_numbers() {
+        let parsed =
+            parse_status(b"# branch.oid abc\0# branch.head main\0# branch.upstream origin/gone\0")
+                .unwrap();
+        assert_eq!(parsed.upstream.unwrap().ahead_behind, None);
     }
 
     #[test]
@@ -1024,6 +1264,69 @@ mod tests {
         git(&["config", "user.name", "Test"]);
         git(&["config", "user.email", "test@example.invalid"]);
         git(&["config", "commit.gpgsign", "false"]);
+    }
+
+    #[test]
+    fn a_real_merge_conflict_is_reported_as_a_conflict_in_a_merge_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        init_repo(root);
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        git(&["checkout", "-q", "-b", "main"]);
+        fs::write(root.join("f.txt"), "base\n").unwrap();
+        git(&["add", "--", "f.txt"]);
+        git(&["commit", "-q", "-m", "base"]);
+        git(&["checkout", "-q", "-b", "other"]);
+        fs::write(root.join("f.txt"), "other\n").unwrap();
+        git(&["commit", "-q", "-am", "other"]);
+        git(&["checkout", "-q", "main"]);
+        fs::write(root.join("f.txt"), "main\n").unwrap();
+        git(&["commit", "-q", "-am", "main"]);
+        assert!(!git(&["merge", "other"]).status.success());
+        let snapshot = LocalGit.snapshot(root).unwrap().unwrap();
+        assert_eq!(snapshot.state, RepoState::Merge);
+        assert_eq!(snapshot.head, GitHead::Attached("main".into()));
+        let change = &snapshot.changes[0];
+        assert!(change.is_conflict());
+        assert_eq!((change.index, change.worktree), ('U', 'U'));
+    }
+
+    #[test]
+    fn a_staged_rename_is_reported_with_its_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        init_repo(root);
+        fs::write(
+            root.join("old.txt"),
+            "content that is long enough to match\n",
+        )
+        .unwrap();
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        git(&["add", "--", "old.txt"]);
+        git(&["commit", "-q", "-m", "init"]);
+        git(&["mv", "old.txt", "new.txt"]);
+        let snapshot = LocalGit.snapshot(root).unwrap().unwrap();
+        assert_eq!(snapshot.changes[0].path, Path::new("new.txt"));
+        assert_eq!(
+            snapshot.changes[0].kind,
+            ChangeKind::Renamed {
+                from: PathBuf::from("old.txt")
+            }
+        );
     }
 
     #[cfg(unix)]

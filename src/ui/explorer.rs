@@ -23,7 +23,9 @@ impl Workbench<'_> {
                 }
             })
             .map(|change| {
-                if change.index == '?' {
+                if change.is_conflict() {
+                    '!'
+                } else if change.index == '?' {
                     'U'
                 } else if change.worktree == 'D' || change.index == 'D' {
                     'D'
