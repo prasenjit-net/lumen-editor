@@ -63,6 +63,27 @@ fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
     rows
 }
 
+/// Row text for the repository list: path relative to the opened folder,
+/// branch and change count.
+fn repository_label(repo: &GitSnapshot, workspace: Option<&std::path::Path>) -> String {
+    let name = workspace
+        .and_then(|workspace| repo.root.strip_prefix(workspace).ok())
+        .filter(|relative| !relative.as_os_str().is_empty())
+        .map(|relative| relative.display().to_string())
+        .or_else(|| {
+            repo.root
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| repo.root.display().to_string());
+    let changes = repo.changes.len();
+    if changes == 0 {
+        format!("{name}  {}", repo.branch)
+    } else {
+        format!("{name}  {}  {changes}", repo.branch)
+    }
+}
+
 /// One-line header: branch, ahead/behind counts and any operation in progress.
 fn branch_summary(snapshot: &GitSnapshot) -> String {
     let mut text = format!("{}  {}", crate::icon::GIT_BRANCH, snapshot.branch);
@@ -166,11 +187,13 @@ impl Workbench<'_> {
                 return;
             }
         }
+        self.repository_errors(ui);
         let Some(snapshot) = self.view.source_control.snapshot.clone() else {
             source_label(ui, "No Git repository found", colors.muted);
             source_label(ui, &workspace.display().to_string(), colors.muted);
             return;
         };
+        self.repository_list(ui, &snapshot.root);
         let branch_text = branch_summary(&snapshot);
         let branch = source_label(ui, &branch_text, colors.text);
         branch.on_hover_text(branch_details(&snapshot));
@@ -353,6 +376,54 @@ impl Workbench<'_> {
         }
         if let Some((path, side)) = requested {
             self.command(Command::ShowSourceDiff(path, side));
+        }
+    }
+
+    /// Lists every repository found under the folder; hidden for a single one.
+    fn repository_list(&mut self, ui: &mut egui::Ui, selected: &std::path::Path) {
+        let workspace = self.editor.workspace.clone();
+        let rows: Vec<_> = self
+            .view
+            .source_control
+            .repositories
+            .iter()
+            .map(|repo| {
+                let label = repository_label(repo, workspace.as_deref());
+                (repo.root.clone(), label)
+            })
+            .collect();
+        if rows.len() < 2 {
+            return;
+        }
+        let mut chosen = None;
+        ScrollArea::vertical()
+            .id_salt("source_control_repositories")
+            .max_height(22.0 * 5.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for (root, label) in &rows {
+                    let response = explorer_row(ui, label.clone(), 4, root == selected)
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(root.display().to_string());
+                    if response.clicked() {
+                        chosen = Some(root.clone());
+                    }
+                }
+            });
+        if let Some(root) = chosen {
+            self.command(Command::SelectRepository(root));
+        }
+    }
+
+    fn repository_errors(&self, ui: &mut egui::Ui) {
+        let colors = crate::ui::theme::palette(ui.visuals());
+        for (root, error) in &self.view.source_control.repository_errors {
+            let name = root.file_name().map_or_else(
+                || root.display().to_string(),
+                |n| n.to_string_lossy().into(),
+            );
+            source_label(ui, &format!("{name}: {error}"), colors.error)
+                .on_hover_text(format!("{}\n{error}", root.display()));
         }
     }
 
@@ -851,6 +922,29 @@ mod tests {
                 "source content widened sidebar {requested}: {widths:?}"
             );
         }
+        let long_repo = |name: &str| GitSnapshot {
+            root: PathBuf::from(format!("/workspace/{name}")),
+            branch: "feature/a-branch-name-long-enough-to-previously-grow-the-sidebar".into(),
+            ..Default::default()
+        };
+        app.editor.workspace = Some(PathBuf::from("/workspace"));
+        app.view.source_control.repositories = vec![
+            long_repo("a-very-long-repository-directory-name"),
+            long_repo("another-quite-long-nested-repository"),
+        ];
+        app.view.source_control.repository_errors = vec![(
+            PathBuf::from("/workspace/broken-repository-with-a-long-name"),
+            "could not read status because of an unusually long failure".into(),
+        )];
+        for requested in [180.0, 240.0, 600.0] {
+            let width = source_sidebar_width(&mut app, &ctx, requested, egui::pos2(850.0, 400.0));
+            assert!(
+                (width - requested).abs() < 2.0,
+                "repository list widened sidebar {requested}: {width}"
+            );
+        }
+        app.view.source_control.repositories.clear();
+        app.view.source_control.repository_errors.clear();
         app.view.source_control.snapshot = None;
         app.view.source_control.error = Some(
             "Git status failed because an unusually long error must remain inside the pane".into(),

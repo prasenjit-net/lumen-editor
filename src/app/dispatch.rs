@@ -213,6 +213,7 @@ impl LumenApp {
             Command::PullSourceControl => self.pull_source_control(ctx),
             Command::PushSourceControl => self.push_source_control(ctx),
             Command::ShowSourceDiff(path, side) => self.show_source_diff(path, side, ctx),
+            Command::SelectRepository(root) => self.select_repository(root),
             Command::StagePaths(paths) => self.stage_source_paths(paths, ctx),
             Command::UnstagePaths(paths) => self.unstage_source_paths(paths, ctx),
             Command::RequestSourceRevert(paths) => self.request_source_revert(paths),

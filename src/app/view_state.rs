@@ -180,9 +180,37 @@ pub(crate) struct WorkspaceSearchView {
 }
 
 #[derive(Default)]
+pub(crate) struct CommitDraft {
+    pub(crate) message: String,
+    pub(crate) amend: bool,
+}
+
+impl SourceControlView {
+    /// The repository owning `path`: the deepest discovered root containing it,
+    /// never an outer repository when a nested one claims the file.
+    pub(crate) fn owning_snapshot(
+        &self,
+        path: &std::path::Path,
+    ) -> Option<&crate::services::source_control::GitSnapshot> {
+        self.repositories
+            .iter()
+            .chain(self.snapshot.as_ref())
+            .filter(|snapshot| path.starts_with(&snapshot.root))
+            .max_by_key(|snapshot| snapshot.root.components().count())
+    }
+}
+
+#[derive(Default)]
 pub(crate) struct SourceControlView {
     pub(crate) workspace: Option<PathBuf>,
+    /// The selected repository's snapshot; every action targets this one.
     pub(crate) snapshot: Option<crate::services::source_control::GitSnapshot>,
+    /// Every discovered repository, including the selected one.
+    pub(crate) repositories: Vec<crate::services::source_control::GitSnapshot>,
+    /// Repositories whose status could not be read, with the reason.
+    pub(crate) repository_errors: Vec<(PathBuf, String)>,
+    /// Commit drafts of repositories that are not currently selected.
+    pub(crate) parked_drafts: std::collections::BTreeMap<PathBuf, CommitDraft>,
     pub(crate) loading: bool,
     pub(crate) error: Option<String>,
     pub(crate) diff: Option<SourceDiffView>,

@@ -128,7 +128,15 @@ pub(crate) struct GitHunk {
     pub(crate) patch: String,
 }
 
+/// Directory names never searched for nested repositories.
+const SKIPPED_DIRECTORIES: &[&str] = &["node_modules", "target", "vendor", "dist", "build"];
+const MAX_DISCOVERY_DEPTH: usize = 4;
+const MAX_DISCOVERY_DIRECTORIES: usize = 5000;
+
 pub(crate) trait SourceControlService: Send + Sync {
+    /// Every repository root relevant to the opened folder: the repository that
+    /// contains it (if any) plus nested repositories found by a bounded walk.
+    fn discover(&self, workspace: &Path) -> Result<Vec<PathBuf>, String>;
     fn snapshot(&self, workspace: &Path) -> Result<Option<GitSnapshot>, String>;
     fn diff(&self, root: &Path, path: &Path, side: DiffSide) -> Result<String, String>;
     fn comparison(&self, root: &Path, path: &Path, side: DiffSide)
@@ -153,6 +161,55 @@ pub(crate) trait SourceControlService: Send + Sync {
 pub(crate) struct LocalGit;
 
 impl SourceControlService for LocalGit {
+    fn discover(&self, workspace: &Path) -> Result<Vec<PathBuf>, String> {
+        let mut roots = Vec::new();
+        let enclosing = git_command(workspace)
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .map_err(|error| format!("Could not start Git: {error}"))?;
+        if enclosing.status.success() {
+            let path = String::from_utf8(enclosing.stdout)
+                .map_err(|_| "Git repository path is not UTF-8".to_owned())?;
+            roots.push(PathBuf::from(path.trim_end_matches(['\r', '\n'])));
+        }
+        // Nested repositories never traverse symlinks and skip generated trees.
+        let mut pending = vec![(workspace.to_path_buf(), 0usize)];
+        let mut visited = 0;
+        while let Some((directory, depth)) = pending.pop() {
+            visited += 1;
+            if visited > MAX_DISCOVERY_DIRECTORIES {
+                break;
+            }
+            let Ok(entries) = fs::read_dir(&directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name == ".git" {
+                    // A `.git` directory or file marks a worktree root.
+                    if let Ok(top) = fs::canonicalize(&directory)
+                        && directory != workspace
+                    {
+                        roots.push(top);
+                    }
+                } else if kind.is_dir()
+                    && depth < MAX_DISCOVERY_DEPTH
+                    && !name.starts_with('.')
+                    && !SKIPPED_DIRECTORIES.contains(&name.as_ref())
+                {
+                    pending.push((entry.path(), depth + 1));
+                }
+            }
+        }
+        roots.sort();
+        roots.dedup();
+        Ok(roots)
+    }
+
     fn snapshot(&self, workspace: &Path) -> Result<Option<GitSnapshot>, String> {
         let root = git_command(workspace)
             .args(["rev-parse", "--show-toplevel"])
@@ -1264,6 +1321,47 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         git(&["config", "user.name", "Test"]);
         git(&["config", "user.email", "test@example.invalid"]);
         git(&["config", "commit.gpgsign", "false"]);
+    }
+
+    #[test]
+    fn discovery_finds_enclosing_sibling_and_nested_repositories_but_skips_generated_trees() {
+        let directory = tempfile::tempdir().unwrap();
+        let top = fs::canonicalize(directory.path()).unwrap();
+        init_repo(&top);
+        for name in [
+            "libs/a",
+            "libs/b",
+            "node_modules/pkg",
+            "deep/x/y/z/w/too_deep",
+        ] {
+            fs::create_dir_all(top.join(name)).unwrap();
+            init_repo(&top.join(name));
+        }
+        // A subfolder opened inside the outer repository sees only what is below it.
+        let found = LocalGit.discover(&top.join("libs")).unwrap();
+        assert_eq!(
+            found,
+            vec![top.clone(), top.join("libs/a"), top.join("libs/b")]
+        );
+        // Opening the root also reports the skipped-depth/generated trees as absent.
+        let found = LocalGit.discover(&top).unwrap();
+        assert!(found.contains(&top.join("libs/a")));
+        assert!(
+            !found
+                .iter()
+                .any(|root| root.starts_with(top.join("node_modules")))
+        );
+        assert!(!found.iter().any(|root| root.ends_with("too_deep")));
+    }
+
+    #[test]
+    fn a_folder_without_a_repository_has_no_roots_unless_repositories_are_nested() {
+        let directory = tempfile::tempdir().unwrap();
+        let top = fs::canonicalize(directory.path()).unwrap();
+        assert!(LocalGit.discover(&top).unwrap().is_empty());
+        fs::create_dir_all(top.join("one")).unwrap();
+        init_repo(&top.join("one"));
+        assert_eq!(LocalGit.discover(&top).unwrap(), vec![top.join("one")]);
     }
 
     #[test]

@@ -1,6 +1,9 @@
 //! Asynchronous, read-only Git status and diff requests.
-use super::{LumenApp, view_state::Activity};
-use crate::services::source_control::{DiffSide, GitComparison, GitSnapshot};
+use super::{
+    LumenApp,
+    view_state::{Activity, CommitDraft},
+};
+use crate::services::source_control::{DiffSide, GitComparison, GitSnapshot, SourceControlService};
 use crate::{app::view_state::ViewState, model::EditorState};
 use eframe::egui;
 use std::{
@@ -38,8 +41,33 @@ pub(crate) fn close_diff_preview(editor: &mut EditorState, view: &mut ViewState)
     }
 }
 
+/// Every repository found for the opened folder, with per-repository failures
+/// kept apart so one broken repository never blanks the others.
+struct RepositoryScan {
+    snapshots: Vec<GitSnapshot>,
+    errors: Vec<(PathBuf, String)>,
+}
+
+fn scan_repositories(
+    service: &dyn SourceControlService,
+    workspace: &std::path::Path,
+) -> Result<RepositoryScan, String> {
+    let mut scan = RepositoryScan {
+        snapshots: Vec::new(),
+        errors: Vec::new(),
+    };
+    for root in service.discover(workspace)? {
+        match service.snapshot(&root) {
+            Ok(Some(snapshot)) => scan.snapshots.push(snapshot),
+            Ok(None) => {}
+            Err(error) => scan.errors.push((root, error)),
+        }
+    }
+    Ok(scan)
+}
+
 enum GitResult {
-    Snapshot(PathBuf, Result<Option<GitSnapshot>, String>),
+    Repositories(PathBuf, Result<RepositoryScan, String>),
     Diff {
         root: PathBuf,
         path: PathBuf,
@@ -99,6 +127,92 @@ impl LumenApp {
         false
     }
 
+    /// Installs a fresh scan, keeping the selected repository when it still
+    /// exists and otherwise choosing the one that encloses the opened folder.
+    fn apply_repository_scan(&mut self, workspace: &std::path::Path, scan: RepositoryScan) {
+        let view = &mut self.view.source_control;
+        let previous = view.snapshot.as_ref().map(|snapshot| snapshot.root.clone());
+        view.repositories = scan.snapshots;
+        view.repository_errors = scan.errors;
+        let keep = previous
+            .as_ref()
+            .filter(|root| view.repositories.iter().any(|repo| &repo.root == *root))
+            .cloned();
+        let chosen = keep.or_else(|| {
+            let canonical = std::fs::canonicalize(workspace).ok();
+            view.repositories
+                .iter()
+                .filter(|repo| {
+                    workspace.starts_with(&repo.root)
+                        || canonical
+                            .as_ref()
+                            .is_some_and(|path| path.starts_with(&repo.root))
+                })
+                .max_by_key(|repo| repo.root.components().count())
+                .or(view.repositories.first())
+                .map(|repo| repo.root.clone())
+        });
+        match chosen {
+            Some(root) if previous.as_ref() == Some(&root) => {
+                view.snapshot = view.repositories.iter().find(|r| r.root == root).cloned();
+            }
+            Some(root) => self.select_repository(root),
+            None => {
+                // Nothing left to act on; keep the draft for if it returns.
+                if let (Some(previous), true) = (previous, !view.commit_message.is_empty()) {
+                    view.parked_drafts.insert(
+                        previous,
+                        CommitDraft {
+                            message: std::mem::take(&mut view.commit_message),
+                            amend: std::mem::take(&mut view.amend_commit),
+                        },
+                    );
+                }
+                view.snapshot = None;
+            }
+        }
+    }
+
+    /// Makes `root` the repository every Source Control action targets, parking
+    /// the current commit draft and restoring the draft parked for `root`.
+    pub(crate) fn select_repository(&mut self, root: PathBuf) {
+        if self.source_mutation_in_flight() {
+            self.view.status = "Wait for the current Git operation to finish".into();
+            return;
+        }
+        let Some(snapshot) = self
+            .view
+            .source_control
+            .repositories
+            .iter()
+            .find(|repo| repo.root == root)
+            .cloned()
+        else {
+            return;
+        };
+        if self.view.source_control.snapshot.as_ref().map(|s| &s.root) == Some(&root) {
+            return;
+        }
+        close_diff_preview(&mut self.editor, &mut self.view);
+        let view = &mut self.view.source_control;
+        if let Some(previous) = view.snapshot.as_ref().map(|s| s.root.clone()) {
+            let draft = CommitDraft {
+                message: std::mem::take(&mut view.commit_message),
+                amend: std::mem::take(&mut view.amend_commit),
+            };
+            if !draft.message.is_empty() || draft.amend {
+                view.parked_drafts.insert(previous, draft);
+            }
+        }
+        if let Some(draft) = view.parked_drafts.remove(&root) {
+            view.commit_message = draft.message;
+            view.amend_commit = draft.amend;
+        }
+        view.commit_error = None;
+        view.error = None;
+        view.snapshot = Some(snapshot);
+    }
+
     /// Claims the single mutation slot, or explains why the action is refused.
     fn begin_source_mutation(&mut self) -> bool {
         if self.source_mutation_in_flight() {
@@ -137,8 +251,8 @@ impl LumenApp {
         let worker_ctx = ctx.clone();
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
-            let result = service.snapshot(&workspace);
-            let _ = sender.send(GitResult::Snapshot(workspace, result));
+            let result = scan_repositories(service.as_ref(), &workspace);
+            let _ = sender.send(GitResult::Repositories(workspace, result));
             worker_ctx.request_repaint();
         });
         self.source_control_job = Some(SourceControlJob {
@@ -481,10 +595,10 @@ impl LumenApp {
             return;
         };
         match job.receiver.try_recv() {
-            Ok(GitResult::Snapshot(workspace, result)) => {
+            Ok(GitResult::Repositories(workspace, result)) => {
                 if self.view.source_control.workspace.as_ref() == Some(&workspace) {
                     match result {
-                        Ok(snapshot) => self.view.source_control.snapshot = snapshot,
+                        Ok(scan) => self.apply_repository_scan(&workspace, scan),
                         Err(error) => self.view.source_control.error = Some(error),
                     }
                     self.view.source_control.loading = false;
@@ -771,6 +885,127 @@ mod tests {
         app.view.source_control.commit_focused = false;
         app.ensure_source_control(&ctx);
         assert!(app.source_control_job.is_some());
+    }
+
+    fn repo(root: &str, branch: &str) -> GitSnapshot {
+        GitSnapshot {
+            root: root.into(),
+            branch: branch.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn scan_selects_the_enclosing_repository_and_keeps_failures_separate() {
+        let mut app = LumenApp::default();
+        let workspace = std::path::Path::new("/w/app");
+        app.apply_repository_scan(
+            workspace,
+            RepositoryScan {
+                snapshots: vec![repo("/w", "outer"), repo("/w/app/inner", "inner")],
+                errors: vec![("/w/broken".into(), "boom".into())],
+            },
+        );
+        let view = &app.view.source_control;
+        assert_eq!(
+            view.snapshot.as_ref().unwrap().root,
+            std::path::Path::new("/w")
+        );
+        assert_eq!(view.repositories.len(), 2);
+        assert_eq!(view.repository_errors.len(), 1);
+    }
+
+    #[test]
+    fn switching_repository_parks_and_restores_each_commit_draft() {
+        let mut app = LumenApp::default();
+        app.apply_repository_scan(
+            std::path::Path::new("/w"),
+            RepositoryScan {
+                snapshots: vec![repo("/w/a", "main"), repo("/w/b", "dev")],
+                errors: Vec::new(),
+            },
+        );
+        assert_eq!(
+            app.view.source_control.snapshot.as_ref().unwrap().root,
+            std::path::Path::new("/w/a")
+        );
+        app.view.source_control.commit_message = "draft for a".into();
+        app.select_repository("/w/b".into());
+        assert_eq!(app.view.source_control.commit_message, "");
+        app.view.source_control.commit_message = "draft for b".into();
+        app.select_repository("/w/a".into());
+        assert_eq!(app.view.source_control.commit_message, "draft for a");
+        // A refresh keeps the selection and its draft.
+        app.apply_repository_scan(
+            std::path::Path::new("/w"),
+            RepositoryScan {
+                snapshots: vec![repo("/w/a", "main"), repo("/w/b", "dev")],
+                errors: Vec::new(),
+            },
+        );
+        assert_eq!(app.view.source_control.commit_message, "draft for a");
+        app.select_repository("/w/b".into());
+        assert_eq!(app.view.source_control.commit_message, "draft for b");
+    }
+
+    #[test]
+    fn a_vanished_repository_parks_its_draft_and_falls_back() {
+        let mut app = LumenApp::default();
+        let workspace = std::path::Path::new("/w");
+        app.apply_repository_scan(
+            workspace,
+            RepositoryScan {
+                snapshots: vec![repo("/w/a", "main"), repo("/w/b", "dev")],
+                errors: Vec::new(),
+            },
+        );
+        app.view.source_control.commit_message = "keep".into();
+        app.apply_repository_scan(
+            workspace,
+            RepositoryScan {
+                snapshots: vec![repo("/w/b", "dev")],
+                errors: Vec::new(),
+            },
+        );
+        assert_eq!(
+            app.view.source_control.snapshot.as_ref().unwrap().root,
+            std::path::Path::new("/w/b")
+        );
+        assert_eq!(app.view.source_control.commit_message, "");
+        app.apply_repository_scan(
+            workspace,
+            RepositoryScan {
+                snapshots: vec![repo("/w/a", "main"), repo("/w/b", "dev")],
+                errors: Vec::new(),
+            },
+        );
+        app.select_repository("/w/a".into());
+        assert_eq!(app.view.source_control.commit_message, "keep");
+    }
+
+    #[test]
+    fn a_file_is_owned_by_the_deepest_repository_never_the_outer_one() {
+        let mut app = LumenApp::default();
+        app.apply_repository_scan(
+            std::path::Path::new("/w"),
+            RepositoryScan {
+                snapshots: vec![repo("/w", "outer"), repo("/w/inner", "inner")],
+                errors: Vec::new(),
+            },
+        );
+        let view = &app.view.source_control;
+        let owner = |path: &str| {
+            view.owning_snapshot(std::path::Path::new(path))
+                .unwrap()
+                .branch
+                .clone()
+        };
+        assert_eq!(owner("/w/inner/src/a.rs"), "inner");
+        assert_eq!(owner("/w/top.rs"), "outer");
+        assert!(
+            view.owning_snapshot(std::path::Path::new("/elsewhere/a.rs"))
+                .is_none()
+        );
     }
 
     #[test]

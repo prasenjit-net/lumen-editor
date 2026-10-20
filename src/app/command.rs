@@ -152,6 +152,7 @@ pub(crate) enum Command {
     PullSourceControl,
     PushSourceControl,
     ShowSourceDiff(PathBuf, DiffSide),
+    SelectRepository(PathBuf),
     StagePaths(Vec<PathBuf>),
     UnstagePaths(Vec<PathBuf>),
     RequestSourceRevert(Vec<PathBuf>),

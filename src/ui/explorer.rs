@@ -10,7 +10,7 @@ use eframe::egui::{self, RichText, ScrollArea};
 use std::path::Path;
 impl Workbench<'_> {
     fn git_badge(&self, path: &Path, directory: bool) -> Option<char> {
-        let snapshot = self.view.source_control.snapshot.as_ref()?;
+        let snapshot = self.view.source_control.owning_snapshot(path)?;
         let relative = path.strip_prefix(&snapshot.root).ok()?;
         snapshot
             .changes
