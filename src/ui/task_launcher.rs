@@ -104,7 +104,7 @@ impl Workbench<'_> {
             let run = ui
                 .add_enabled(
                     selected_label.is_some(),
-                    egui::Button::new(RichText::new(icon::PLAY).size(12.0).color(colors.text))
+                    egui::Button::new(RichText::new(icon::PLAY).size(12.0).color(colors.success))
                         .frame(false),
                 )
                 .on_hover_text(match &selected_label {
@@ -114,6 +114,28 @@ impl Workbench<'_> {
                 .on_disabled_hover_text("Choose a task to run first");
             if run.clicked() {
                 commands.push(Command::RunSelectedTask);
+            }
+            // Stop the selected task's active run, else the run shown in the panel.
+            let active = selected
+                .as_ref()
+                .and_then(|key| self.view.task_runs.active_for(key))
+                .or_else(|| {
+                    self.view
+                        .task_runs
+                        .selected_run()
+                        .filter(|run| run.is_active())
+                })
+                .map(|run| run.id);
+            if let Some(run_id) = active
+                && ui
+                    .add(
+                        egui::Button::new(RichText::new(icon::STOP).size(12.0).color(colors.error))
+                            .frame(false),
+                    )
+                    .on_hover_text("Stop the running task")
+                    .clicked()
+            {
+                commands.push(Command::StopTaskRun(run_id));
             }
             let menu = ui.menu_button(
                 RichText::new(format!("{label}  {}", icon::CARET_DOWN))
