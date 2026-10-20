@@ -13,7 +13,7 @@ pub(crate) struct Palette {
     pub(crate) panel: Color32,
     pub(crate) sidebar: Color32,
     pub(crate) tab: Color32,
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) title: Color32,
     pub(crate) status: Color32,
     pub(crate) active: Color32,
@@ -63,7 +63,7 @@ impl Theme {
             panel: Color32::from_rgb(37, 37, 38),
             sidebar: Color32::from_rgb(51, 51, 51),
             tab: Color32::from_rgb(45, 45, 45),
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             title: Color32::from_rgb(60, 60, 60),
             status: Color32::from_rgb(0, 122, 204),
             active: Color32::from_rgb(4, 57, 94),
@@ -95,7 +95,7 @@ impl Theme {
                 panel: Color32::from_gray(243),
                 sidebar: Color32::from_gray(230),
                 tab: Color32::from_gray(236),
-                #[cfg(not(target_os = "windows"))]
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
                 title: Color32::from_gray(221),
                 canvas: Color32::from_gray(218),
                 text: Color32::from_gray(40),
@@ -125,7 +125,7 @@ impl Theme {
                 panel: Color32::BLACK,
                 sidebar: Color32::BLACK,
                 tab: Color32::BLACK,
-                #[cfg(not(target_os = "windows"))]
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
                 title: Color32::BLACK,
                 canvas: Color32::WHITE,
                 text: Color32::WHITE,

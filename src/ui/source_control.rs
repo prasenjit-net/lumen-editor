@@ -164,8 +164,7 @@ pub(super) fn history_comparison(
             let language = lumen_editor_core::syntax::Language::from_path(std::path::Path::new(
                 &compare.key.path,
             ));
-            let palette =
-                crate::ui::theme::syntax_palette(crate::ui::theme::current(ui.visuals()).scheme());
+            let palette = diff_palette(ui.visuals());
             let base_syntax = diff_syntax(
                 ui.ctx(),
                 "git_history_base",
@@ -2145,9 +2144,7 @@ impl Workbench<'_> {
                     .settings
                     .document_boolean("editor.syntax_highlighting", Some(&path));
                 let language = lumen_editor_core::syntax::Language::from_path(&path);
-                let palette = crate::ui::theme::syntax_palette(
-                    crate::ui::theme::current(ui.visuals()).scheme(),
-                );
+                let palette = diff_palette(ui.visuals());
                 let base_syntax = diff_syntax(
                     ui.ctx(),
                     "git_diff_base",
@@ -2250,16 +2247,45 @@ impl Workbench<'_> {
 
 type SyntaxColors = std::sync::Arc<Vec<(std::ops::Range<usize>, egui::Color32)>>;
 
+#[cfg(feature = "shared-editor")]
+type DiffPalette = lumen_editor_surface::SyntaxPalette;
+/// The legacy editor has no syntax engine; diff sides stay plain text.
+#[cfg(not(feature = "shared-editor"))]
+type DiffPalette = ();
+
+#[cfg(feature = "shared-editor")]
+fn diff_palette(visuals: &egui::Visuals) -> DiffPalette {
+    crate::ui::theme::syntax_palette(crate::ui::theme::current(visuals).scheme())
+}
+
+#[cfg(not(feature = "shared-editor"))]
+fn diff_palette(_: &egui::Visuals) -> DiffPalette {}
+
 /// Highlight colors for one read-only side, recomputed only when its text,
 /// language or palette changes rather than every frame.
 fn diff_syntax(
     ctx: &egui::Context,
     id: &str,
     text: &str,
-    syntax: Option<(
-        lumen_editor_core::syntax::Language,
-        lumen_editor_surface::SyntaxPalette,
-    )>,
+    syntax: Option<(lumen_editor_core::syntax::Language, DiffPalette)>,
+) -> SyntaxColors {
+    #[cfg(not(feature = "shared-editor"))]
+    {
+        let _ = (ctx, id, text, syntax);
+        SyntaxColors::default()
+    }
+    #[cfg(feature = "shared-editor")]
+    {
+        shared_diff_syntax(ctx, id, text, syntax)
+    }
+}
+
+#[cfg(feature = "shared-editor")]
+fn shared_diff_syntax(
+    ctx: &egui::Context,
+    id: &str,
+    text: &str,
+    syntax: Option<(lumen_editor_core::syntax::Language, DiffPalette)>,
 ) -> SyntaxColors {
     use std::hash::{Hash, Hasher};
     let Some((language, palette)) = syntax else {
@@ -2454,6 +2480,7 @@ mod tests {
         assert!(text.is_char_boundary(11));
     }
 
+    #[cfg(feature = "shared-editor")]
     #[test]
     fn both_diff_sides_are_highlighted_for_a_known_language() {
         let ctx = egui::Context::default();

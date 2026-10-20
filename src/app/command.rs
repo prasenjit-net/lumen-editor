@@ -1,6 +1,5 @@
 use super::agent::AgentKind;
 use super::editor_action::EditorAction;
-use super::settings::ThemeChoice;
 use super::tab_commands::TabMove;
 use super::view_state::{Activity, ClosedTab, ExplorerEdit, MAX_CLOSED_TABS, ViewState};
 use super::workspace_search::ReplaceScope;
@@ -460,10 +459,10 @@ impl Command {
             Self::Redo => Some("redo"),
             Self::SelectAll => Some("select_all"),
             Self::SetColorTheme(choice) => Some(match choice {
-                ThemeChoice::Dark => "theme_dark",
-                ThemeChoice::Light => "theme_light",
-                ThemeChoice::HighContrast => "theme_high_contrast",
-                ThemeChoice::System => "theme_system",
+                super::settings::ThemeChoice::Dark => "theme_dark",
+                super::settings::ThemeChoice::Light => "theme_light",
+                super::settings::ThemeChoice::HighContrast => "theme_high_contrast",
+                super::settings::ThemeChoice::System => "theme_system",
             }),
             _ => None,
         }
@@ -501,10 +500,12 @@ impl Command {
             "undo" => Self::Undo,
             "redo" => Self::Redo,
             "select_all" => Self::SelectAll,
-            "theme_dark" => Self::SetColorTheme(ThemeChoice::Dark),
-            "theme_light" => Self::SetColorTheme(ThemeChoice::Light),
-            "theme_high_contrast" => Self::SetColorTheme(ThemeChoice::HighContrast),
-            "theme_system" => Self::SetColorTheme(ThemeChoice::System),
+            "theme_dark" => Self::SetColorTheme(super::settings::ThemeChoice::Dark),
+            "theme_light" => Self::SetColorTheme(super::settings::ThemeChoice::Light),
+            "theme_high_contrast" => {
+                Self::SetColorTheme(super::settings::ThemeChoice::HighContrast)
+            }
+            "theme_system" => Self::SetColorTheme(super::settings::ThemeChoice::System),
             _ => return None,
         })
     }
