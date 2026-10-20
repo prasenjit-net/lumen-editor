@@ -88,6 +88,10 @@ impl Workbench<'_> {
             self.settings_page(ui);
             return;
         }
+        if !hide_virtual && self.view.history_active && self.view.history_dialog.is_some() {
+            self.history_page(ui);
+            return;
+        }
         if !hide_virtual && let Some(chat) = self.view.chats.active() {
             self.chat_page(ui, chat);
             return;

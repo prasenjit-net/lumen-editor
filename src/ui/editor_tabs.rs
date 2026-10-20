@@ -25,6 +25,7 @@ enum TabTarget {
     Document(DocumentId),
     Diff,
     Settings,
+    History,
     TaskEditor(TaskEditorId),
     Chat(lumen_agent_core::SessionId),
 }
@@ -103,6 +104,15 @@ impl Workbench<'_> {
         let diff_tab = !hide_virtual && self.view.source_control.diff.is_some();
         let settings_open = !hide_virtual && self.view.settings.open;
         let settings_tab = !hide_virtual && self.view.settings.tab_open;
+        let history_tab = !hide_virtual && self.view.history_dialog.is_some();
+        let history_open = history_tab && self.view.history_active;
+        let history_title = self.view.history_dialog.as_ref().map(|dialog| {
+            let name = dialog
+                .root
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+            format!("{} History · {name}", icon::HISTORY)
+        });
         let task_tabs: Vec<(TaskEditorId, String)> = if hide_virtual {
             Vec::new()
         } else {
@@ -173,6 +183,7 @@ impl Workbench<'_> {
                     }),
             )
             .chain(settings_tab.then(|| format!("{} Settings", icon::GEAR)))
+            .chain(history_title.clone().filter(|_| history_tab))
             .chain(task_tabs.iter().map(|(_, title)| title.clone()))
             .chain(chat_tabs.iter().map(|(_, title)| title.clone()))
             .collect();
@@ -197,7 +208,8 @@ impl Workbench<'_> {
                 .diff
                 .as_ref()
                 .is_some_and(|diff| diff.active);
-        let task_base = visible_files.len() + usize::from(diff_tab) + usize::from(settings_tab);
+        let history_index = visible_files.len() + usize::from(diff_tab) + usize::from(settings_tab);
+        let task_base = history_index + usize::from(history_tab);
         let chat_base = task_base + task_tabs.len();
         let active_index = if let Some(id) = chat_active {
             chat_tabs
@@ -209,6 +221,8 @@ impl Workbench<'_> {
                 .iter()
                 .position(|(tab, _)| *tab == id)
                 .map(|position| task_base + position)
+        } else if history_open {
+            Some(history_index)
         } else if settings_open {
             settings_tab.then_some(visible_files.len() + usize::from(diff_tab))
         } else if diff_active {
@@ -223,6 +237,8 @@ impl Workbench<'_> {
             Some(TabTarget::Chat(id))
         } else if let Some(id) = task_active {
             Some(TabTarget::TaskEditor(id))
+        } else if history_open {
+            Some(TabTarget::History)
         } else if settings_open {
             Some(TabTarget::Settings)
         } else if diff_active {
@@ -261,6 +277,8 @@ impl Workbench<'_> {
         let mut open_task: Option<TaskEditorId> = None;
         let mut close_task: Option<TaskEditorId> = None;
         let mut close_settings = false;
+        let mut open_history = false;
+        let mut close_history = false;
         let mut open_chat: Option<lumen_agent_core::SessionId> = None;
         let mut close_chat: Option<lumen_agent_core::SessionId> = None;
         let mut open_diff = false;
@@ -420,6 +438,23 @@ impl Workbench<'_> {
                                         ui.scroll_to_rect(response.rect, None);
                                     }
                                 }
+                                if history_tab {
+                                    let selected = active == Some(TabTarget::History);
+                                    let response = tab(
+                                        ui,
+                                        &titles[history_index],
+                                        sizing.widths[history_index],
+                                        selected,
+                                        "Commit history of the repository",
+                                        "Close History",
+                                        false,
+                                    );
+                                    open_history = response.select;
+                                    close_history = response.close;
+                                    if selected && reveal {
+                                        ui.scroll_to_rect(response.rect, None);
+                                    }
+                                }
                                 for (position, (id, _)) in task_tabs.iter().enumerate() {
                                     let index = task_base + position;
                                     let selected = active == Some(TabTarget::TaskEditor(*id));
@@ -527,6 +562,14 @@ impl Workbench<'_> {
                             open_settings = true;
                             ui.close();
                         }
+                        if let Some(title) = history_title.as_ref().filter(|_| history_tab)
+                            && ui
+                                .selectable_label(active == Some(TabTarget::History), title)
+                                .clicked()
+                        {
+                            open_history = true;
+                            ui.close();
+                        }
                         for (id, title) in &task_tabs {
                             if ui
                                 .selectable_label(active == Some(TabTarget::TaskEditor(*id)), title)
@@ -619,6 +662,11 @@ impl Workbench<'_> {
             self.command(Command::CloseChat(id));
         } else if let Some(id) = open_chat {
             self.command(Command::OpenChat(id));
+        }
+        if close_history {
+            self.command(Command::CloseHistoryDialog);
+        } else if open_history {
+            self.command(Command::ShowHistoryTab);
         }
         if close_settings {
             self.view.settings.tab_open = false;

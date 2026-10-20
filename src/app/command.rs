@@ -180,6 +180,10 @@ pub(crate) enum Command {
     PushTag(String),
     OpenHistoryDialog,
     CloseHistoryDialog,
+    /// Show the already open History tab.
+    ShowHistoryTab,
+    /// Show the History tab with this commit selected.
+    OpenHistoryAt(String),
     LoadMoreHistory,
     SelectCommit(String),
     ApplyHistoryFilter,
@@ -193,6 +197,8 @@ pub(crate) enum Command {
     OpenCommitFile(usize),
     CloseCommitFile,
     OpenBranchDialog,
+    /// Toggle the quick branch switcher under the branch chip.
+    OpenBranchPicker,
     CloseBranchDialog,
     SwitchBranch(String, bool),
     CreateBranch,

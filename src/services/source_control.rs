@@ -220,6 +220,16 @@ pub(crate) struct GitCommit {
     pub(crate) subject: String,
 }
 
+/// Most commits listed per direction in the sidebar's Outgoing/Incoming lists.
+pub(crate) const SYNC_LIMIT: usize = 50;
+
+/// Commits that differ between a branch and its upstream.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SyncCommits {
+    pub(crate) outgoing: Vec<GitCommit>,
+    pub(crate) incoming: Vec<GitCommit>,
+}
+
 /// What the history list is filtered by. Empty fields mean "no filter".
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct GitLogQuery {
@@ -507,6 +517,9 @@ pub(crate) trait SourceControlService: Send + Sync {
         file: &GitCommitFile,
     ) -> Result<GitComparison, String>;
     fn stashes(&self, root: &Path) -> Result<Vec<GitStash>, String>;
+    /// Commits only on this branch (`outgoing`) and only on its upstream
+    /// (`incoming`), newest first and bounded; empty without an upstream.
+    fn sync_commits(&self, root: &Path) -> Result<SyncCommits, String>;
     /// Changed files of a stash as `(status, path)` pairs.
     fn stash_files(&self, root: &Path, id: &str) -> Result<Vec<(String, String)>, String>;
     fn stash_push(&self, root: &Path, message: &str, include_untracked: bool)
@@ -548,6 +561,39 @@ pub(crate) trait SourceControlService: Send + Sync {
 }
 
 pub(crate) struct LocalGit;
+
+/// Parses `git log -z --format=%H %P %an %at %D %s` (fields joined by 0x1f).
+fn parse_commits(text: &str) -> Vec<GitCommit> {
+    text.split('\0')
+        .filter(|record| !record.is_empty())
+        .filter_map(|record| {
+            let mut fields = record.split('\x1f');
+            let id = fields.next()?.to_owned();
+            let parents = fields
+                .next()?
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect();
+            let author = fields.next()?.to_owned();
+            let time = fields.next()?.parse().ok()?;
+            let refs = fields
+                .next()?
+                .split(", ")
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect();
+            let subject = fields.next()?.to_owned();
+            Some(GitCommit {
+                id,
+                parents,
+                author,
+                time,
+                refs,
+                subject,
+            })
+        })
+        .collect()
+}
 
 impl SourceControlService for LocalGit {
     fn discover(&self, workspace: &Path) -> Result<Vec<PathBuf>, String> {
@@ -1458,37 +1504,7 @@ impl SourceControlService for LocalGit {
         if !output.status.success() {
             return Err(git_failure("Could not read history", &output.stderr));
         }
-        let text = String::from_utf8_lossy(&output.stdout);
-        let mut commits: Vec<GitCommit> = text
-            .split('\0')
-            .filter(|record| !record.is_empty())
-            .filter_map(|record| {
-                let mut fields = record.split('\x1f');
-                let id = fields.next()?.to_owned();
-                let parents = fields
-                    .next()?
-                    .split_whitespace()
-                    .map(str::to_owned)
-                    .collect();
-                let author = fields.next()?.to_owned();
-                let time = fields.next()?.parse().ok()?;
-                let refs = fields
-                    .next()?
-                    .split(", ")
-                    .filter(|name| !name.is_empty())
-                    .map(str::to_owned)
-                    .collect();
-                let subject = fields.next()?.to_owned();
-                Some(GitCommit {
-                    id,
-                    parents,
-                    author,
-                    time,
-                    refs,
-                    subject,
-                })
-            })
-            .collect();
+        let mut commits = parse_commits(&String::from_utf8_lossy(&output.stdout));
         let has_more = commits.len() > limit;
         commits.truncate(limit);
         Ok(GitLogPage {
@@ -1689,6 +1705,41 @@ impl SourceControlService for LocalGit {
             old_lines,
             new_lines,
             hunks: Vec::new(),
+        })
+    }
+
+    fn sync_commits(&self, root: &Path) -> Result<SyncCommits, String> {
+        let read = |range: &str| -> Result<Vec<GitCommit>, String> {
+            let output = git_command(root)
+                .args(["--no-optional-locks", "log", "--decorate=short", "-z"])
+                .arg(format!("-n{SYNC_LIMIT}"))
+                .arg("--format=%H%x1f%P%x1f%an%x1f%at%x1f%D%x1f%s")
+                .arg(range)
+                .arg("--")
+                .output()
+                .map_err(|error| format!("Could not read commits: {error}"))?;
+            if !output.status.success() {
+                return Err(git_failure("Could not read commits", &output.stderr));
+            }
+            Ok(parse_commits(&String::from_utf8_lossy(&output.stdout)))
+        };
+        // A branch without an upstream has nothing to compare against.
+        let has_upstream = git_command(root)
+            .args([
+                "--no-optional-locks",
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "@{upstream}",
+            ])
+            .output()
+            .is_ok_and(|output| output.status.success());
+        if !has_upstream {
+            return Ok(SyncCommits::default());
+        }
+        Ok(SyncCommits {
+            outgoing: read("@{upstream}..HEAD")?,
+            incoming: read("HEAD..@{upstream}")?,
         })
     }
 
@@ -3500,6 +3551,67 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         assert_eq!(fetched.upstream.unwrap().ahead_behind, Some((0, 1)));
         assert_eq!(fetched.last_commit.as_deref(), Some("first"));
         assert!(!work.join("g.txt").exists());
+    }
+
+    #[test]
+    fn sync_commits_lists_what_is_only_local_and_only_upstream() {
+        let directory = tempfile::tempdir().unwrap();
+        let top = canonical_path(directory.path()).unwrap();
+        let bare = top.join("remote.git");
+        fs::create_dir_all(&bare).unwrap();
+        git_ok(&bare, &["init", "--quiet", "--bare"]);
+        let work = top.join("work");
+        fs::create_dir_all(&work).unwrap();
+        init_repo(&work);
+        git_ok(&work, &["checkout", "-q", "-b", "main"]);
+        fs::write(work.join("f.txt"), "one\n").unwrap();
+        git_ok(&work, &["add", "--", "f.txt"]);
+        git_ok(&work, &["commit", "-q", "-m", "first"]);
+        // No upstream yet: nothing to compare against, and no error.
+        assert_eq!(
+            LocalGit.sync_commits(&work).unwrap(),
+            SyncCommits::default()
+        );
+        git_ok(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        LocalGit.publish(&work, "origin", "main").unwrap();
+        assert_eq!(
+            LocalGit.sync_commits(&work).unwrap(),
+            SyncCommits::default()
+        );
+
+        fs::write(work.join("f.txt"), "two\n").unwrap();
+        git_ok(&work, &["commit", "-q", "-am", "local only"]);
+        let other = top.join("other");
+        git_ok(
+            &top,
+            &[
+                "clone",
+                "-q",
+                "-b",
+                "main",
+                bare.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
+        );
+        git_ok(&other, &["config", "user.name", "T"]);
+        git_ok(&other, &["config", "user.email", "t@example.invalid"]);
+        git_ok(&other, &["config", "commit.gpgsign", "false"]);
+        fs::write(other.join("g.txt"), "x\n").unwrap();
+        git_ok(&other, &["add", "--", "g.txt"]);
+        git_ok(&other, &["commit", "-q", "-m", "remote only"]);
+        git_ok(&other, &["push", "-q", "origin", "main"]);
+        LocalGit.fetch(&work).unwrap();
+
+        let sync = LocalGit.sync_commits(&work).unwrap();
+        let subjects = |commits: &[GitCommit]| {
+            commits
+                .iter()
+                .map(|c| c.subject.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(subjects(&sync.outgoing), ["local only"]);
+        assert_eq!(subjects(&sync.incoming), ["remote only"]);
+        assert_eq!(sync.outgoing[0].id.len(), 40);
     }
 
     #[test]

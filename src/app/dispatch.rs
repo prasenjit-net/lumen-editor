@@ -23,6 +23,7 @@ impl LumenApp {
             Command::Settings => {
                 self.view.settings.tab_open = true;
                 self.view.settings.open = true;
+                self.view.history_active = false;
                 self.view.settings.focus_search = true;
                 self.view.task_editors.deactivate();
                 self.view.chats.deactivate();
@@ -144,7 +145,10 @@ impl LumenApp {
             Command::StartWorkspaceSearch => self.start_workspace_search(ctx),
             Command::CancelWorkspaceSearch => self.cancel_workspace_search(),
             Command::ClearWorkspaceSearch => self.clear_workspace_search(),
-            Command::RefreshSourceControl => self.refresh_source_control(ctx),
+            Command::RefreshSourceControl => {
+                self.invalidate_repo_extras();
+                self.refresh_source_control(ctx);
+            }
             Command::ToggleTerminal => {
                 super::output::clear_text_selection(ctx);
                 self.toggle_terminal(ctx);
@@ -250,6 +254,11 @@ impl LumenApp {
             Command::PushTag(name) => self.push_tag(name, ctx),
             Command::OpenHistoryDialog => self.open_history_dialog(ctx),
             Command::CloseHistoryDialog => self.close_history_dialog(),
+            Command::ShowHistoryTab => self.activate_history_tab(ctx),
+            Command::OpenHistoryAt(id) => {
+                self.open_history_tab(ctx, false);
+                self.show_blamed_commit(id, ctx);
+            }
             Command::LoadMoreHistory => self.load_history_page(ctx),
             Command::SelectCommit(id) => self.select_commit(id, ctx),
             Command::ApplyHistoryFilter => self.apply_history_filter(ctx),
@@ -262,6 +271,7 @@ impl LumenApp {
             Command::ChooseHistoryParent(parent) => self.choose_history_parent(parent, ctx),
             Command::OpenCommitFile(index) => self.open_commit_file(index, ctx),
             Command::CloseCommitFile => self.close_commit_file(),
+            Command::OpenBranchPicker => self.toggle_branch_picker(ctx),
             Command::OpenBranchDialog => self.open_branch_dialog(ctx),
             Command::CloseBranchDialog => self.close_branch_dialog(),
             Command::SwitchBranch(name, remote) => self.switch_to_branch(name, remote, ctx),
@@ -425,6 +435,10 @@ impl LumenApp {
                     self.request_close_task_editor(id);
                     return;
                 }
+                if self.view.history_active && self.view.history_dialog.is_some() {
+                    self.close_history_dialog();
+                    return;
+                }
                 if self.view.settings.open {
                     self.view.settings.tab_open = false;
                     self.view.settings.open = false;
@@ -538,8 +552,9 @@ impl LumenApp {
 
     /// The task editor was just opened or activated: it replaces Settings and
     /// the diff view as the page the editor area shows.
-    fn show_task_editor_page(&mut self, ctx: &egui::Context) {
+    pub(super) fn show_task_editor_page(&mut self, ctx: &egui::Context) {
         self.view.settings.open = false;
+        self.view.history_active = false;
         self.view.chats.deactivate();
         if let Some(diff) = &mut self.view.source_control.diff {
             diff.active = false;

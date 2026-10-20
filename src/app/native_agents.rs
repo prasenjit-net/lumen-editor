@@ -189,6 +189,7 @@ impl LumenApp {
         }
         self.view.chats.open(id);
         self.view.settings.open = false;
+        self.view.history_active = false;
         self.view.task_editors.deactivate();
         if let Some(diff) = &mut self.view.source_control.diff {
             diff.active = false;
