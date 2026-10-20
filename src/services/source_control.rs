@@ -196,6 +196,15 @@ pub(crate) struct GitBranch {
     pub(crate) checked_out_at: Option<PathBuf>,
 }
 
+/// One entry of the stash list, identified by its commit so an index shift
+/// from another stash operation cannot redirect an action.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GitStash {
+    pub(crate) id: String,
+    pub(crate) index: usize,
+    pub(crate) message: String,
+}
+
 /// A configured remote. Fetch and push URLs are kept apart because they may
 /// differ; both have embedded credentials removed for display.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -288,6 +297,21 @@ pub(crate) trait SourceControlService: Send + Sync {
         change: &GitChange,
         side: ConflictSide,
     ) -> Result<(), String>;
+    fn stashes(&self, root: &Path) -> Result<Vec<GitStash>, String>;
+    /// Changed files of a stash as `(status, path)` pairs.
+    fn stash_files(&self, root: &Path, id: &str) -> Result<Vec<(String, String)>, String>;
+    fn stash_push(&self, root: &Path, message: &str, include_untracked: bool)
+    -> Result<(), String>;
+    /// Applies (and with `pop` removes after success) the stash with commit `id`.
+    /// A stash that conflicts stays in the list.
+    fn stash_apply(
+        &self,
+        root: &Path,
+        id: &str,
+        restore_index: bool,
+        pop: bool,
+    ) -> Result<(), String>;
+    fn stash_drop(&self, root: &Path, id: &str) -> Result<(), String>;
     /// Fetches every remote and prunes deleted remote branches.
     fn fetch(&self, root: &Path) -> Result<(), String>;
     /// Pushes `branch` to `remote` and records it as the upstream.
@@ -744,6 +768,144 @@ impl SourceControlService for LocalGit {
         git_paths(root, ["add", "--"], &paths, "stage")
     }
 
+    fn stashes(&self, root: &Path) -> Result<Vec<GitStash>, String> {
+        let output = git_command(root)
+            .args(["--no-optional-locks", "stash", "list", "--format=%H%x00%s"])
+            .output()
+            .map_err(|error| format!("Could not list stashes: {error}"))?;
+        if !output.status.success() {
+            return Err(git_failure("Could not list stashes", &output.stderr));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                let (id, message) = line.split_once('\0')?;
+                Some(GitStash {
+                    id: id.to_owned(),
+                    index,
+                    message: message.to_owned(),
+                })
+            })
+            .collect())
+    }
+
+    fn stash_files(&self, root: &Path, id: &str) -> Result<Vec<(String, String)>, String> {
+        let id = stash_commit(root, id)?;
+        // Untracked files live in the stash's third parent, so list both.
+        let tracked = git_command(root)
+            .args([
+                "--no-optional-locks",
+                "stash",
+                "show",
+                "--name-status",
+                "-z",
+                &id,
+            ])
+            .output()
+            .map_err(|error| format!("Could not read stash: {error}"))?;
+        if !tracked.status.success() {
+            return Err(git_failure("Could not read stash", &tracked.stderr));
+        }
+        let text = String::from_utf8_lossy(&tracked.stdout).into_owned();
+        let mut parts = text.split('\0').filter(|part| !part.is_empty());
+        let mut files = Vec::new();
+        while let Some(status) = parts.next() {
+            let Some(path) = parts.next() else { break };
+            files.push((status.to_owned(), path.to_owned()));
+        }
+        let untracked = git_command(root)
+            .args([
+                "--no-optional-locks",
+                "ls-tree",
+                "-r",
+                "--name-only",
+                "-z",
+                &format!("{id}^3"),
+            ])
+            .output();
+        if let Ok(output) = untracked
+            && output.status.success()
+        {
+            for path in String::from_utf8_lossy(&output.stdout)
+                .split('\0')
+                .filter(|path| !path.is_empty())
+            {
+                files.push(("U".to_owned(), path.to_owned()));
+            }
+        }
+        Ok(files)
+    }
+
+    fn stash_push(
+        &self,
+        root: &Path,
+        message: &str,
+        include_untracked: bool,
+    ) -> Result<(), String> {
+        let before = self.stashes(root)?.len();
+        let message = message.trim();
+        let mut command = git_command_internal_pathspecs(root);
+        command.args(["--no-optional-locks", "stash", "push"]);
+        if include_untracked {
+            command.arg("--include-untracked");
+        }
+        if !message.is_empty() {
+            command.args(["--message", message]);
+        }
+        let output = command
+            .output()
+            .map_err(|error| format!("Could not start Git stash: {error}"))?;
+        if !output.status.success() {
+            return Err(git_failure("Git stash failed", &output.stderr));
+        }
+        // Git exits successfully when there was nothing to save.
+        if self.stashes(root)?.len() == before {
+            return Err("There are no local changes to stash".into());
+        }
+        Ok(())
+    }
+
+    fn stash_apply(
+        &self,
+        root: &Path,
+        id: &str,
+        restore_index: bool,
+        pop: bool,
+    ) -> Result<(), String> {
+        let id = stash_commit(root, id)?;
+        let mut args = vec![if pop { "pop" } else { "apply" }];
+        if restore_index {
+            args.push("--index");
+        }
+        // `pop` only accepts a stash reference, so resolve the commit to its
+        // current position right before running.
+        let reference = if pop { stash_reference(root, &id)? } else { id };
+        args.push(&reference);
+        let mut command = git_command_internal_pathspecs(root);
+        command.args(["--no-optional-locks", "stash"]).args(&args);
+        let output = command
+            .output()
+            .map_err(|error| format!("Could not start Git stash: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let mut detail = output.stderr;
+            detail.extend_from_slice(&output.stdout);
+            let kept = if pop { " The stash was kept." } else { "" };
+            Err(format!(
+                "{}{kept}",
+                git_failure("Git stash apply failed", &detail)
+            ))
+        }
+    }
+
+    fn stash_drop(&self, root: &Path, id: &str) -> Result<(), String> {
+        let id = stash_commit(root, id)?;
+        let reference = stash_reference(root, &id)?;
+        git_run(root, ["stash", "drop", &reference], "stash drop")
+    }
+
     fn fetch(&self, root: &Path) -> Result<(), String> {
         git_run(root, ["fetch", "--all", "--prune"], "fetch")
     }
@@ -1045,6 +1207,27 @@ fn run_remote(command: &mut Command, action: &str, timeout: Duration) -> Result<
     }
 }
 
+/// Accepts only a full commit id that is still in the stash list.
+fn stash_commit(root: &Path, id: &str) -> Result<String, String> {
+    if id.len() < 40 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid stash".into());
+    }
+    stash_reference(root, id).map(|_| id.to_owned())
+}
+
+/// `stash@{n}` for the stash whose commit is `id`, or an error if it is gone.
+fn stash_reference(root: &Path, id: &str) -> Result<String, String> {
+    let output = git_command(root)
+        .args(["--no-optional-locks", "stash", "list", "--format=%H"])
+        .output()
+        .map_err(|error| format!("Could not list stashes: {error}"))?;
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .position(|line| line == id)
+        .map(|index| format!("stash@{{{index}}}"))
+        .ok_or_else(|| "That stash no longer exists; refresh the list".to_owned())
+}
+
 /// Rejects names Git would parse as options or that are not valid ref names.
 /// Remote-tracking names are validated as `refs/remotes/<name>`.
 fn check_branch_name(root: &Path, name: &str, remote: bool) -> Result<(), String> {
@@ -1258,14 +1441,28 @@ fn untracked_preview(root: &Path, path: &Path, relative: &Path) -> Result<String
 }
 
 fn git_command(root: &Path) -> Command {
+    git_command_with(root, true)
+}
+
+/// For Git commands that receive no user-supplied paths but build their own
+/// pathspecs internally (`stash --include-untracked` does). `--literal-pathspecs`
+/// would make those internal pathspecs match nothing.
+fn git_command_internal_pathspecs(root: &Path) -> Command {
+    git_command_with(root, false)
+}
+
+fn git_command_with(root: &Path, literal_pathspecs: bool) -> Command {
     let mut command = Command::new("git");
     command
         .stdin(Stdio::null())
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
-        .args(["--literal-pathspecs", "-c", "core.fsmonitor=false", "-C"])
-        .arg(root);
+        .env_remove("GIT_LITERAL_PATHSPECS");
+    if literal_pathspecs {
+        command.arg("--literal-pathspecs");
+    }
+    command.args(["-c", "core.fsmonitor=false", "-C"]).arg(root);
     // A GUI process has no console of its own on Windows. Without this flag,
     // each background Git invocation can briefly create a visible console
     // window. Keep all Git transport centralized here so refresh, diff, index
@@ -2579,6 +2776,78 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
                 .resolve_conflict(Path::new("."), &plain, ConflictSide::Ours)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn stash_push_list_inspect_apply_pop_and_drop_work_by_commit_id() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        assert!(
+            LocalGit
+                .stash_push(&root, "", false)
+                .unwrap_err()
+                .contains("no local changes")
+        );
+        fs::write(root.join("f.txt"), "tracked edit\n").unwrap();
+        fs::write(root.join("new.txt"), "untracked\n").unwrap();
+        // Untracked files are only stashed when explicitly requested.
+        LocalGit.stash_push(&root, "first", false).unwrap();
+        assert!(root.join("new.txt").exists());
+        assert_eq!(fs::read_to_string(root.join("f.txt")).unwrap(), "base\n");
+        fs::write(root.join("f.txt"), "second edit\n").unwrap();
+        LocalGit.stash_push(&root, "with untracked", true).unwrap();
+        assert!(!root.join("new.txt").exists());
+        let stashes = LocalGit.stashes(&root).unwrap();
+        assert_eq!(stashes.len(), 2);
+        assert!(stashes[0].message.contains("with untracked"));
+        let files = LocalGit.stash_files(&root, &stashes[0].id).unwrap();
+        assert!(
+            files
+                .iter()
+                .any(|(status, path)| status == "M" && path == "f.txt")
+        );
+        assert!(
+            files
+                .iter()
+                .any(|(status, path)| status == "U" && path == "new.txt")
+        );
+        // Apply keeps the stash; pop removes it.
+        LocalGit
+            .stash_apply(&root, &stashes[0].id, false, false)
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("f.txt")).unwrap(),
+            "second edit\n"
+        );
+        assert_eq!(LocalGit.stashes(&root).unwrap().len(), 2);
+        git_ok(&root, &["checkout", "-q", "--", "f.txt"]);
+        fs::remove_file(root.join("new.txt")).unwrap();
+        LocalGit
+            .stash_apply(&root, &stashes[0].id, false, true)
+            .unwrap();
+        assert_eq!(LocalGit.stashes(&root).unwrap().len(), 1);
+        // The remaining entry shifted to index 0; the old id still finds it.
+        LocalGit.stash_drop(&root, &stashes[1].id).unwrap();
+        assert!(LocalGit.stashes(&root).unwrap().is_empty());
+        let error = LocalGit.stash_drop(&root, &stashes[1].id).unwrap_err();
+        assert!(error.contains("no longer exists"), "{error}");
+        assert!(LocalGit.stash_drop(&root, "stash@{0}").is_err());
+    }
+
+    #[test]
+    fn a_conflicting_pop_keeps_the_stash() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        fs::write(root.join("f.txt"), "stashed\n").unwrap();
+        LocalGit.stash_push(&root, "work", false).unwrap();
+        fs::write(root.join("f.txt"), "committed elsewhere\n").unwrap();
+        git_ok(&root, &["commit", "-q", "-am", "diverge"]);
+        let id = LocalGit.stashes(&root).unwrap()[0].id.clone();
+        let error = LocalGit.stash_apply(&root, &id, false, true).unwrap_err();
+        assert!(error.contains("The stash was kept"), "{error}");
+        assert_eq!(LocalGit.stashes(&root).unwrap().len(), 1);
     }
 
     #[test]

@@ -303,6 +303,13 @@ impl Workbench<'_> {
                 self.command(Command::OpenBranchDialog);
             }
             if ui
+                .add_enabled(idle, egui::Button::new("Stash…"))
+                .on_hover_text("Save, inspect and restore stashed changes")
+                .clicked()
+            {
+                self.command(Command::OpenStashDialog);
+            }
+            if ui
                 .add_enabled(
                     idle && !snapshot.remotes.is_empty(),
                     egui::Button::new("Fetch"),
@@ -625,6 +632,141 @@ impl Workbench<'_> {
             );
             source_label(ui, &format!("{name}: {error}"), colors.error)
                 .on_hover_text(format!("{}\n{error}", root.display()));
+        }
+    }
+
+    pub(crate) fn stash_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(dialog) = &mut self.view.stash_dialog else {
+            return;
+        };
+        let mut actions: Vec<Command> = Vec::new();
+        let modal = egui::Modal::new(egui::Id::new("git_stash_dialog")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.heading("Stashes");
+            ui.label(
+                RichText::new(
+                    "A stash saves what is on disk. Unsaved editor text is not included.",
+                )
+                .color(colors.muted),
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 70.0).max(40.0);
+                ui.add(
+                    TextEdit::singleline(&mut dialog.message)
+                        .id_salt("git_stash_message")
+                        .desired_width(width)
+                        .hint_text("Message (optional)"),
+                );
+                if ui
+                    .button("Stash")
+                    .on_hover_text("Stash tracked changes and reset them")
+                    .clicked()
+                {
+                    actions.push(Command::CreateStash);
+                }
+            });
+            ui.checkbox(&mut dialog.include_untracked, "Include untracked files");
+            ui.checkbox(
+                &mut dialog.restore_index,
+                "Restore staged state when applying",
+            );
+            ui.add_space(4.0);
+            let selected = dialog.selected.clone();
+            let confirming = dialog.confirm_drop.clone();
+            ScrollArea::vertical()
+                .id_salt("git_stash_list")
+                .max_height(180.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    if dialog.stashes.is_empty() {
+                        let text = if dialog.loading {
+                            "Reading stashes…"
+                        } else {
+                            "No stashes"
+                        };
+                        ui.label(RichText::new(text).color(colors.muted));
+                    }
+                    for stash in &dialog.stashes {
+                        let label = format!("{{{}}}  {}", stash.index, stash.message);
+                        let response =
+                            explorer_row(ui, label, 4, selected.as_deref() == Some(&stash.id))
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text("Show the files in this stash");
+                        if response.clicked() {
+                            actions.push(Command::SelectStash(stash.id.clone()));
+                        }
+                    }
+                });
+            if let Some(id) = &selected {
+                if !dialog.files.is_empty() {
+                    ui.add_space(2.0);
+                    ScrollArea::vertical()
+                        .id_salt("git_stash_files")
+                        .max_height(90.0)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            for (status, path) in &dialog.files {
+                                ui.label(RichText::new(format!("{status}  {path}")).small());
+                            }
+                        });
+                }
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .button("Apply")
+                        .on_hover_text("Restore the changes and keep the stash")
+                        .clicked()
+                    {
+                        actions.push(Command::ApplyStash(id.clone(), false));
+                    }
+                    if ui
+                        .button("Pop")
+                        .on_hover_text(
+                            "Restore the changes and remove the stash (kept if it conflicts)",
+                        )
+                        .clicked()
+                    {
+                        actions.push(Command::ApplyStash(id.clone(), true));
+                    }
+                    if ui
+                        .button("Drop…")
+                        .on_hover_text("Delete this stash")
+                        .clicked()
+                    {
+                        actions.push(Command::RequestStashDrop(id.clone()));
+                    }
+                });
+            }
+            if confirming.is_some() {
+                ui.label(
+                    RichText::new("Delete this stash? Its changes cannot be recovered afterwards.")
+                        .color(colors.muted),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Delete Stash").clicked() {
+                        actions.push(Command::ConfirmStashDrop);
+                    }
+                    if ui.button("Keep").clicked() {
+                        actions.push(Command::CancelStashDrop);
+                    }
+                });
+            }
+            if let Some(error) = &dialog.error {
+                ui.add_space(4.0);
+                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(8.0);
+            if ui.button("Close").clicked() {
+                actions.push(Command::CloseStashDialog);
+            }
+        });
+        if modal.should_close() {
+            actions.push(Command::CloseStashDialog);
+        }
+        for action in actions {
+            self.command(action);
         }
     }
 

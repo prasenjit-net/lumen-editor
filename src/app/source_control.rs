@@ -827,12 +827,20 @@ impl LumenApp {
                 self.reconcile_clean_documents();
                 // An open branch picker must show the branches as they are now.
                 self.request_branches(ctx);
+                self.request_stashes(ctx);
                 match result {
                     Ok(status) => {
                         self.view.status = status;
                         self.refresh_source_control(ctx);
                     }
                     Err(error) => {
+                        // A modal dialog hides the panel, so show the failure there too.
+                        if let Some(dialog) = &mut self.view.stash_dialog {
+                            dialog.error = Some(error.clone());
+                        }
+                        if let Some(dialog) = &mut self.view.branch_dialog {
+                            dialog.error = Some(error.clone());
+                        }
                         self.view.source_control.error = Some(error);
                     }
                 }

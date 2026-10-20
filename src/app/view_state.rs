@@ -352,6 +352,7 @@ impl Activity {
 pub(crate) struct ViewState {
     pub(crate) clone_dialog: Option<super::git_clone::CloneDialog>,
     pub(crate) branch_dialog: Option<super::git_branches::BranchDialog>,
+    pub(crate) stash_dialog: Option<super::git_stash::StashDialog>,
     pub(crate) settings: super::settings::SettingsState,
     pub(crate) task_editors: super::task_editor::TaskEditorState,
     pub(crate) chats: super::chat_tabs::ChatTabs,
@@ -521,6 +522,7 @@ impl Default for ViewState {
         Self {
             clone_dialog: None,
             branch_dialog: None,
+            stash_dialog: None,
             settings: Default::default(),
             #[cfg(feature = "shared-editor")]
             shared_editor: true,

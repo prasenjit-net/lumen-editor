@@ -217,6 +217,18 @@ impl LumenApp {
             Command::ConfirmOperationAbort => self.confirm_operation_abort(ctx),
             Command::CancelOperationAbort => self.view.source_control.abort_prompt = false,
             Command::ResolveConflict(path, side) => self.resolve_source_conflict(path, side, ctx),
+            Command::OpenStashDialog => self.open_stash_dialog(ctx),
+            Command::CloseStashDialog => self.close_stash_dialog(),
+            Command::CreateStash => self.create_stash(ctx),
+            Command::SelectStash(id) => self.select_stash(id, ctx),
+            Command::ApplyStash(id, pop) => self.apply_stash(id, pop, ctx),
+            Command::RequestStashDrop(id) => self.request_stash_drop(id),
+            Command::ConfirmStashDrop => self.confirm_stash_drop(ctx),
+            Command::CancelStashDrop => {
+                if let Some(dialog) = &mut self.view.stash_dialog {
+                    dialog.confirm_drop = None;
+                }
+            }
             Command::OpenBranchDialog => self.open_branch_dialog(ctx),
             Command::CloseBranchDialog => self.close_branch_dialog(),
             Command::SwitchBranch(name, remote) => self.switch_to_branch(name, remote, ctx),
