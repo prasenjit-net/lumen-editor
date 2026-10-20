@@ -194,6 +194,8 @@ pub(crate) struct GitBranch {
     pub(crate) upstream: Option<String>,
     /// Another worktree that has this branch checked out, if any.
     pub(crate) checked_out_at: Option<PathBuf>,
+    /// The commit the branch points at.
+    pub(crate) commit: String,
 }
 
 /// One entry of the stash list, identified by its commit so an index shift
@@ -825,7 +827,7 @@ impl SourceControlService for LocalGit {
             .args([
                 "--no-optional-locks",
                 "for-each-ref",
-                "--format=%(refname)%00%(upstream:short)%00%(HEAD)%00%(worktreepath)",
+                "--format=%(refname)%00%(upstream:short)%00%(HEAD)%00%(worktreepath)%00%(objectname)",
                 "refs/heads",
                 "refs/remotes",
             ])
@@ -838,9 +840,13 @@ impl SourceControlService for LocalGit {
         let mut branches = Vec::new();
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             let mut fields = line.split('\0');
-            let (Some(refname), Some(upstream), Some(head), Some(worktree)) =
-                (fields.next(), fields.next(), fields.next(), fields.next())
-            else {
+            let (Some(refname), Some(upstream), Some(head), Some(worktree), Some(commit)) = (
+                fields.next(),
+                fields.next(),
+                fields.next(),
+                fields.next(),
+                fields.next(),
+            ) else {
                 continue;
             };
             let (name, remote) = if let Some(name) = refname.strip_prefix("refs/heads/") {
@@ -863,6 +869,7 @@ impl SourceControlService for LocalGit {
                 current: head == "*",
                 upstream: (!upstream.is_empty()).then(|| upstream.to_owned()),
                 checked_out_at: worktree,
+                commit: commit.to_owned(),
             });
         }
         Ok(branches)
@@ -3563,6 +3570,10 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         LocalGit.create_branch(&root, "feature/a").unwrap();
         let listed = LocalGit.branches(&root).unwrap();
         assert!(listed.iter().any(|b| b.name == "feature/a" && b.current));
+        assert!(
+            listed.iter().all(|b| b.commit.len() == 40),
+            "branches carry their commit id"
+        );
         assert!(listed.iter().any(|b| b.name == "main" && !b.current));
         // Unmerged work is protected from deletion.
         fs::write(root.join("f.txt"), "feature\n").unwrap();

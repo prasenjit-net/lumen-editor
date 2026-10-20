@@ -354,6 +354,8 @@ pub(crate) struct ViewState {
     pub(crate) branch_dialog: Option<super::git_branches::BranchDialog>,
     pub(crate) stash_dialog: Option<super::git_stash::StashDialog>,
     pub(crate) history_dialog: Option<super::git_history::HistoryDialog>,
+    pub(crate) history_op_dialog: Option<super::git_history_ops::HistoryOpDialog>,
+    pub(crate) tags_dialog: Option<super::git_tags::TagsDialog>,
     pub(crate) settings: super::settings::SettingsState,
     pub(crate) task_editors: super::task_editor::TaskEditorState,
     pub(crate) chats: super::chat_tabs::ChatTabs,
@@ -525,6 +527,8 @@ impl Default for ViewState {
             branch_dialog: None,
             stash_dialog: None,
             history_dialog: None,
+            history_op_dialog: None,
+            tags_dialog: None,
             settings: Default::default(),
             #[cfg(feature = "shared-editor")]
             shared_editor: true,

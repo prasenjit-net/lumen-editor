@@ -229,6 +229,25 @@ impl LumenApp {
                     dialog.confirm_drop = None;
                 }
             }
+            Command::PlanHistoryAction(action, title) => {
+                self.plan_history_action(action, title, ctx)
+            }
+            Command::PlanForcePush => self.plan_force_push(ctx),
+            Command::SetHistoryOption(option) => self.set_history_option(option, ctx),
+            Command::ConfirmHistoryAction => self.confirm_history_action(ctx),
+            Command::CancelHistoryAction => self.cancel_history_op(),
+            Command::OpenTagsDialog(target) => self.open_tags_dialog(target, ctx),
+            Command::CloseTagsDialog => self.close_tags_dialog(),
+            Command::CreateTag => self.create_tag(ctx),
+            Command::RequestTagDelete(name) => self.request_tag_delete(name),
+            Command::ConfirmTagDelete => self.confirm_tag_delete(ctx),
+            Command::CancelTagDelete => {
+                if let Some(dialog) = &mut self.view.tags_dialog {
+                    dialog.confirm_delete = None;
+                }
+            }
+            Command::ChooseTagRemote(remote) => self.choose_tag_remote(remote),
+            Command::PushTag(name) => self.push_tag(name, ctx),
             Command::OpenHistoryDialog => self.open_history_dialog(ctx),
             Command::CloseHistoryDialog => self.close_history_dialog(),
             Command::LoadMoreHistory => self.load_history_page(ctx),

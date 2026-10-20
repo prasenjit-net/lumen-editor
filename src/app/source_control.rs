@@ -131,7 +131,7 @@ impl LumenApp {
 
     /// True while a Git mutation is running. Reads must wait for its result
     /// (which refreshes the view itself) instead of replacing the job.
-    fn source_mutation_in_flight(&self) -> bool {
+    pub(crate) fn source_mutation_in_flight(&self) -> bool {
         self.source_control_job
             .as_ref()
             .is_some_and(|job| job.mutating)
@@ -326,7 +326,7 @@ impl LumenApp {
 
     /// Unsaved editor text under the repository would be silently overridden by
     /// (or committed stale into) an operation that rewrites or commits files.
-    fn source_has_dirty_documents(&self) -> bool {
+    pub(crate) fn source_has_dirty_documents(&self) -> bool {
         let Some(snapshot) = &self.view.source_control.snapshot else {
             return false;
         };
@@ -828,6 +828,7 @@ impl LumenApp {
                 // An open branch picker must show the branches as they are now.
                 self.request_branches(ctx);
                 self.request_stashes(ctx);
+                self.request_tags(ctx);
                 match result {
                     Ok(status) => {
                         self.view.status = status;
@@ -843,6 +844,9 @@ impl LumenApp {
                             dialog.error = Some(error.clone());
                         }
                         if let Some(dialog) = &mut self.view.branch_dialog {
+                            dialog.error = Some(error.clone());
+                        }
+                        if let Some(dialog) = &mut self.view.tags_dialog {
                             dialog.error = Some(error.clone());
                         }
                         self.view.source_control.error = Some(error);

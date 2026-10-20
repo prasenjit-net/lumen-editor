@@ -2,7 +2,8 @@ use super::{Workbench, widgets::explorer_row};
 use crate::{
     app::command::Command,
     services::source_control::{
-        ChangeKind, ConflictSide, DiffSide, GitChange, GitSnapshot, OperationAction, RepoState,
+        ChangeKind, ConflictSide, DiffSide, GitChange, GitSnapshot, HistoryAction, OperationAction,
+        RepoState, ResetMode,
     },
 };
 use eframe::egui::{self, FontId, RichText, ScrollArea, TextEdit};
@@ -452,6 +453,13 @@ impl Workbench<'_> {
                 self.command(Command::OpenStashDialog);
             }
             if ui
+                .add_enabled(idle, egui::Button::new("Tags…"))
+                .on_hover_text("Create, push and delete tags")
+                .clicked()
+            {
+                self.command(Command::OpenTagsDialog(None));
+            }
+            if ui
                 .button("History…")
                 .on_hover_text("Browse recent commits")
                 .clicked()
@@ -467,6 +475,16 @@ impl Workbench<'_> {
                 .clicked()
             {
                 self.command(Command::FetchSourceControl);
+            }
+            if snapshot.upstream.is_some()
+                && ui
+                    .add_enabled(idle, egui::Button::new("Force Push…"))
+                    .on_hover_text(
+                        "Overwrite the remote branch, but only if it still has the commit you reviewed",
+                    )
+                    .clicked()
+            {
+                self.command(Command::PlanForcePush);
             }
             match crate::app::source_control::publish_target(&snapshot) {
                 Ok((remote, branch)) => {
@@ -948,6 +966,57 @@ impl Workbench<'_> {
                             .color(colors.muted),
                     );
                 }
+                ui.horizontal_wrapped(|ui| {
+                    let short = &commit.id[..commit.id.len().min(7)];
+                    let parent = (commit.parents.len() > 1).then_some(dialog.parent);
+                    if ui
+                        .button("Cherry-pick…")
+                        .on_hover_text("Apply this commit's changes on top of the current branch")
+                        .clicked()
+                    {
+                        actions.push(Command::PlanHistoryAction(
+                            HistoryAction::CherryPick {
+                                commit: commit.id.clone(),
+                                parent,
+                            },
+                            format!("Cherry-pick {short}"),
+                        ));
+                    }
+                    if ui
+                        .button("Revert…")
+                        .on_hover_text("Create a commit that undoes this commit")
+                        .clicked()
+                    {
+                        actions.push(Command::PlanHistoryAction(
+                            HistoryAction::Revert {
+                                commit: commit.id.clone(),
+                                parent,
+                            },
+                            format!("Revert {short}"),
+                        ));
+                    }
+                    if ui
+                        .button("Tag…")
+                        .on_hover_text("Create a tag on this commit")
+                        .clicked()
+                    {
+                        actions.push(Command::OpenTagsDialog(Some(commit.id.clone())));
+                    }
+                    if ui
+                        .button("Reset to here…")
+                        .on_hover_text("Move the current branch to this commit")
+                        .clicked()
+                    {
+                        actions.push(Command::PlanHistoryAction(
+                            HistoryAction::Reset {
+                                target: commit.id.clone(),
+                                mode: ResetMode::Mixed,
+                                backup: true,
+                            },
+                            format!("Reset to {short}"),
+                        ));
+                    }
+                });
                 match &dialog.details {
                     Some(details) => {
                         if details.committer != commit.author || details.committed != commit.time {
@@ -997,6 +1066,275 @@ impl Workbench<'_> {
         });
         if modal.should_close() {
             actions.push(Command::CloseHistoryDialog);
+        }
+        for action in actions {
+            self.command(action);
+        }
+    }
+
+    pub(crate) fn history_op_dialog(&mut self, ctx: &egui::Context) {
+        use crate::app::git_history_ops::HistoryOption;
+        use crate::services::source_control::{HistoryAction, ResetMode};
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(dialog) = &self.view.history_op_dialog else {
+            return;
+        };
+        let mut actions: Vec<Command> = Vec::new();
+        let modal = egui::Modal::new(egui::Id::new("git_history_op_dialog")).show(ctx, |ui| {
+            ui.set_width(460.0);
+            ui.heading(&dialog.title);
+            ui.add_space(4.0);
+            match &dialog.action {
+                HistoryAction::Merge { no_ff, .. } => {
+                    let mut value = *no_ff;
+                    if ui
+                        .checkbox(&mut value, "Always create a merge commit")
+                        .changed()
+                    {
+                        actions.push(Command::SetHistoryOption(HistoryOption::NoFastForward(
+                            value,
+                        )));
+                    }
+                }
+                HistoryAction::Reset { mode, backup, .. } => {
+                    ui.horizontal(|ui| {
+                        for (label, value) in [
+                            ("Soft", ResetMode::Soft),
+                            ("Mixed", ResetMode::Mixed),
+                            ("Hard", ResetMode::Hard),
+                        ] {
+                            if ui.selectable_label(*mode == value, label).clicked()
+                                && *mode != value
+                            {
+                                actions.push(Command::SetHistoryOption(HistoryOption::ResetMode(
+                                    value,
+                                )));
+                            }
+                        }
+                    });
+                    let mut value = *backup;
+                    if ui
+                        .checkbox(&mut value, "Keep the current tip on a backup branch")
+                        .changed()
+                    {
+                        actions.push(Command::SetHistoryOption(HistoryOption::Backup(value)));
+                    }
+                }
+                HistoryAction::CherryPick { parent, .. } | HistoryAction::Revert { parent, .. }
+                    if dialog.parent_count > 1 =>
+                {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Merge commit: use parent").color(colors.muted));
+                        for index in 0..dialog.parent_count {
+                            if ui
+                                .selectable_label(*parent == Some(index), format!("{}", index + 1))
+                                .clicked()
+                            {
+                                actions
+                                    .push(Command::SetHistoryOption(HistoryOption::Parent(index)));
+                            }
+                        }
+                    });
+                }
+                _ => {}
+            }
+            ui.add_space(4.0);
+            match &dialog.plan {
+                None if dialog.loading => {
+                    ui.label(RichText::new("Checking the repository…").color(colors.muted));
+                }
+                None => {}
+                Some(plan) => {
+                    for line in &plan.lines {
+                        ui.label(line);
+                    }
+                    for warning in &plan.warnings {
+                        ui.label(RichText::new(warning).color(colors.warning));
+                    }
+                    if let Some(reason) = &plan.blocked {
+                        ui.label(RichText::new(reason).color(colors.error));
+                    }
+                }
+            }
+            if let Some(error) = &dialog.error {
+                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let ready = dialog
+                    .plan
+                    .as_ref()
+                    .is_some_and(|plan| plan.blocked.is_none())
+                    && !dialog.loading;
+                let label = match &dialog.action {
+                    HistoryAction::Merge { .. } => "Merge",
+                    HistoryAction::CherryPick { .. } => "Cherry-pick",
+                    HistoryAction::Revert { .. } => "Revert",
+                    HistoryAction::Reset {
+                        mode: ResetMode::Hard,
+                        ..
+                    } => "Reset (discards changes)",
+                    HistoryAction::Reset { .. } => "Reset",
+                    HistoryAction::ForcePush { .. } => "Force push",
+                };
+                if ui.add_enabled(ready, egui::Button::new(label)).clicked() {
+                    actions.push(Command::ConfirmHistoryAction);
+                }
+                if ui.button("Cancel").clicked() {
+                    actions.push(Command::CancelHistoryAction);
+                }
+            });
+        });
+        if modal.should_close() {
+            actions.push(Command::CancelHistoryAction);
+        }
+        for action in actions {
+            self.command(action);
+        }
+    }
+
+    pub(crate) fn tags_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(dialog) = &mut self.view.tags_dialog else {
+            return;
+        };
+        let mut actions: Vec<Command> = Vec::new();
+        let modal = egui::Modal::new(egui::Id::new("git_tags_dialog")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.heading("Tags");
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 70.0).max(40.0);
+                ui.add(
+                    TextEdit::singleline(&mut dialog.name)
+                        .id_salt("git_tag_name")
+                        .desired_width(width)
+                        .hint_text("v1.0.0"),
+                );
+                if ui
+                    .add_enabled(!dialog.name.trim().is_empty(), egui::Button::new("Create"))
+                    .clicked()
+                {
+                    actions.push(Command::CreateTag);
+                }
+            });
+            ui.add(
+                TextEdit::singleline(&mut dialog.message)
+                    .id_salt("git_tag_message")
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Message (makes it an annotated tag)"),
+            );
+            ui.label(
+                RichText::new(match &dialog.target {
+                    Some(id) => format!("On commit {}", &id[..id.len().min(7)]),
+                    None => "On the current commit".to_owned(),
+                })
+                .small()
+                .color(colors.muted),
+            );
+            ui.add_space(4.0);
+            let confirming = dialog.confirm_delete.clone();
+            ScrollArea::vertical()
+                .id_salt("git_tags_list")
+                .max_height(180.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    if dialog.tags.is_empty() {
+                        let text = if dialog.loading {
+                            "Reading tags…"
+                        } else {
+                            "No tags"
+                        };
+                        ui.label(RichText::new(text).color(colors.muted));
+                    }
+                    for tag in &dialog.tags {
+                        let kind = if tag.annotated {
+                            "annotated"
+                        } else {
+                            "lightweight"
+                        };
+                        let mut label = format!(
+                            "{}  {}  {kind}",
+                            tag.name,
+                            &tag.commit[..tag.commit.len().min(7)]
+                        );
+                        if !tag.message.is_empty() {
+                            label.push_str(&format!("  {}", tag.message));
+                        }
+                        let response = explorer_row(ui, label, 4, false)
+                            .on_hover_text(format!("{}\n{}", tag.name, tag.commit));
+                        if ui
+                            .put(
+                                egui::Rect::from_min_size(
+                                    response.rect.right_top() - egui::vec2(22.0, 0.0),
+                                    egui::vec2(22.0, response.rect.height()),
+                                ),
+                                egui::Button::new(crate::icon::X).frame(false),
+                            )
+                            .on_hover_text("Delete this tag locally")
+                            .clicked()
+                        {
+                            actions.push(Command::RequestTagDelete(tag.name.clone()));
+                        } else if ui
+                            .put(
+                                egui::Rect::from_min_size(
+                                    response.rect.right_top() - egui::vec2(44.0, 0.0),
+                                    egui::vec2(22.0, response.rect.height()),
+                                ),
+                                egui::Button::new(crate::icon::REPO_PUSH).frame(false),
+                            )
+                            .on_hover_text("Push this tag to the chosen remote")
+                            .clicked()
+                        {
+                            actions.push(Command::PushTag(tag.name.clone()));
+                        }
+                    }
+                });
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Push to").small().color(colors.muted));
+                if dialog.remotes.is_empty() {
+                    ui.label(
+                        RichText::new("no remote configured")
+                            .small()
+                            .color(colors.muted),
+                    );
+                }
+                for remote in &dialog.remotes {
+                    if ui
+                        .selectable_label(dialog.remote.as_deref() == Some(remote.as_str()), remote)
+                        .clicked()
+                    {
+                        actions.push(Command::ChooseTagRemote(remote.clone()));
+                    }
+                }
+            });
+            if let Some(name) = &confirming {
+                ui.label(
+                    RichText::new(format!(
+                        "Delete tag {name}? Copies on remotes are not removed."
+                    ))
+                    .color(colors.muted),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Delete Tag").clicked() {
+                        actions.push(Command::ConfirmTagDelete);
+                    }
+                    if ui.button("Keep").clicked() {
+                        actions.push(Command::CancelTagDelete);
+                    }
+                });
+            }
+            if let Some(error) = &dialog.error {
+                ui.add_space(4.0);
+                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(8.0);
+            if ui.button("Close").clicked() {
+                actions.push(Command::CloseTagsDialog);
+            }
+        });
+        if modal.should_close() {
+            actions.push(Command::CloseTagsDialog);
         }
         for action in actions {
             self.command(action);
@@ -1193,6 +1531,22 @@ impl Workbench<'_> {
                                     ),
                                     None => format!("Switch to {}", branch.name),
                                 });
+                            if !branch.current {
+                                let name = branch.name.clone();
+                                let commit = branch.commit.clone();
+                                response.context_menu(|ui| {
+                                    if ui.button("Merge into current branch…").clicked() {
+                                        actions.push(Command::PlanHistoryAction(
+                                            HistoryAction::Merge {
+                                                target: commit.clone(),
+                                                no_ff: false,
+                                            },
+                                            format!("Merge {name}"),
+                                        ));
+                                        ui.close();
+                                    }
+                                });
+                            }
                             let deletable =
                                 !remote && !branch.current && branch.checked_out_at.is_none();
                             let delete_clicked = deletable

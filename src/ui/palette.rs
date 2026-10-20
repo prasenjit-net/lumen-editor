@@ -452,6 +452,10 @@ fn palette_commands() -> Vec<(String, Command)> {
             Command::OpenStashDialog,
         ),
         (
+            format!("{}  Git: Manage Tags", icon::GIT_BRANCH),
+            Command::OpenTagsDialog(None),
+        ),
+        (
             format!("{}  Git: Show History", icon::HISTORY),
             Command::OpenHistoryDialog,
         ),
