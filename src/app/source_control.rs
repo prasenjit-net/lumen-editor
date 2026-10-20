@@ -1,6 +1,9 @@
 //! Asynchronous, read-only Git status and diff requests.
-use super::{LumenApp, view_state::Activity};
-use crate::services::source_control::{DiffSide, GitComparison, GitSnapshot};
+use super::{
+    LumenApp,
+    view_state::{Activity, CommitDraft},
+};
+use crate::services::source_control::{DiffSide, GitComparison, GitSnapshot, SourceControlService};
 use crate::{app::view_state::ViewState, model::EditorState};
 use eframe::egui;
 use std::{
@@ -11,6 +14,9 @@ use std::{
 
 pub(crate) struct SourceControlJob {
     receiver: Receiver<GitResult>,
+    /// Mutations are never replaced or overlapped: dropping the receiver would
+    /// hide the outcome of work that is still running.
+    mutating: bool,
 }
 
 const SOURCE_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
@@ -35,8 +41,53 @@ pub(crate) fn close_diff_preview(editor: &mut EditorState, view: &mut ViewState)
     }
 }
 
+/// Every repository found for the opened folder, with per-repository failures
+/// kept apart so one broken repository never blanks the others.
+struct RepositoryScan {
+    snapshots: Vec<GitSnapshot>,
+    errors: Vec<(PathBuf, String)>,
+}
+
+/// The remote and branch a "Publish Branch" action would use, or why it cannot.
+pub(crate) fn publish_target(snapshot: &GitSnapshot) -> Result<(String, String), String> {
+    use crate::services::source_control::GitHead;
+    let branch = match &snapshot.head {
+        GitHead::Attached(branch) => branch.clone(),
+        GitHead::Unborn(_) => return Err("Make a first commit before publishing".into()),
+        _ => return Err("Check out a branch before publishing".into()),
+    };
+    if snapshot.upstream.is_some() {
+        return Err("This branch already tracks an upstream; use Push".into());
+    }
+    match snapshot.remotes.as_slice() {
+        [] => Err("No remote is configured; add one with `git remote add` first".into()),
+        [remote] => Ok((remote.name.clone(), branch)),
+        _ => Err(
+            "Several remotes are configured; publish with `git push -u <remote> <branch>`".into(),
+        ),
+    }
+}
+
+fn scan_repositories(
+    service: &dyn SourceControlService,
+    workspace: &std::path::Path,
+) -> Result<RepositoryScan, String> {
+    let mut scan = RepositoryScan {
+        snapshots: Vec::new(),
+        errors: Vec::new(),
+    };
+    for root in service.discover(workspace)? {
+        match service.snapshot(&root) {
+            Ok(Some(snapshot)) => scan.snapshots.push(snapshot),
+            Ok(None) => {}
+            Err(error) => scan.errors.push((root, error)),
+        }
+    }
+    Ok(scan)
+}
+
 enum GitResult {
-    Snapshot(PathBuf, Result<Option<GitSnapshot>, String>),
+    Repositories(PathBuf, Result<RepositoryScan, String>),
     Diff {
         root: PathBuf,
         path: PathBuf,
@@ -78,7 +129,125 @@ impl LumenApp {
         }
     }
 
+    /// True while a Git mutation is running. Reads must wait for its result
+    /// (which refreshes the view itself) instead of replacing the job.
+    pub(crate) fn source_mutation_in_flight(&self) -> bool {
+        self.source_control_job
+            .as_ref()
+            .is_some_and(|job| job.mutating)
+    }
+
+    /// Switching or closing the workspace would drop a running mutation's
+    /// outcome, so it waits until Git finishes.
+    pub(crate) fn workspace_change_blocked_by_git(&mut self) -> bool {
+        if self.source_mutation_in_flight() {
+            self.view.status = "Wait for the current Git operation to finish".into();
+            return true;
+        }
+        false
+    }
+
+    /// Installs a fresh scan, keeping the selected repository when it still
+    /// exists and otherwise choosing the one that encloses the opened folder.
+    fn apply_repository_scan(&mut self, workspace: &std::path::Path, scan: RepositoryScan) {
+        let view = &mut self.view.source_control;
+        let previous = view.snapshot.as_ref().map(|snapshot| snapshot.root.clone());
+        view.repositories = scan.snapshots;
+        view.repository_errors = scan.errors;
+        let keep = previous
+            .as_ref()
+            .filter(|root| view.repositories.iter().any(|repo| &repo.root == *root))
+            .cloned();
+        let chosen = keep.or_else(|| {
+            let canonical = crate::services::source_control::canonical_path(workspace);
+            view.repositories
+                .iter()
+                .filter(|repo| {
+                    workspace.starts_with(&repo.root)
+                        || canonical
+                            .as_ref()
+                            .is_some_and(|path| path.starts_with(&repo.root))
+                })
+                .max_by_key(|repo| repo.root.components().count())
+                .or(view.repositories.first())
+                .map(|repo| repo.root.clone())
+        });
+        match chosen {
+            Some(root) if previous.as_ref() == Some(&root) => {
+                view.snapshot = view.repositories.iter().find(|r| r.root == root).cloned();
+            }
+            Some(root) => self.select_repository(root),
+            None => {
+                // Nothing left to act on; keep the draft for if it returns.
+                if let (Some(previous), true) = (previous, !view.commit_message.is_empty()) {
+                    view.parked_drafts.insert(
+                        previous,
+                        CommitDraft {
+                            message: std::mem::take(&mut view.commit_message),
+                            amend: std::mem::take(&mut view.amend_commit),
+                        },
+                    );
+                }
+                view.snapshot = None;
+            }
+        }
+    }
+
+    /// Makes `root` the repository every Source Control action targets, parking
+    /// the current commit draft and restoring the draft parked for `root`.
+    pub(crate) fn select_repository(&mut self, root: PathBuf) {
+        if self.source_mutation_in_flight() {
+            self.view.status = "Wait for the current Git operation to finish".into();
+            return;
+        }
+        let Some(snapshot) = self
+            .view
+            .source_control
+            .repositories
+            .iter()
+            .find(|repo| repo.root == root)
+            .cloned()
+        else {
+            return;
+        };
+        if self.view.source_control.snapshot.as_ref().map(|s| &s.root) == Some(&root) {
+            return;
+        }
+        close_diff_preview(&mut self.editor, &mut self.view);
+        let view = &mut self.view.source_control;
+        if let Some(previous) = view.snapshot.as_ref().map(|s| s.root.clone()) {
+            let draft = CommitDraft {
+                message: std::mem::take(&mut view.commit_message),
+                amend: std::mem::take(&mut view.amend_commit),
+            };
+            if !draft.message.is_empty() || draft.amend {
+                view.parked_drafts.insert(previous, draft);
+            }
+        }
+        if let Some(draft) = view.parked_drafts.remove(&root) {
+            view.commit_message = draft.message;
+            view.amend_commit = draft.amend;
+        }
+        view.commit_error = None;
+        view.error = None;
+        view.snapshot = Some(snapshot);
+    }
+
+    /// Claims the single mutation slot, or explains why the action is refused.
+    fn begin_source_mutation(&mut self) -> bool {
+        if self.source_mutation_in_flight() {
+            self.view.status = "Wait for the current Git operation to finish".into();
+            return false;
+        }
+        self.source_control_job = None;
+        self.view.source_control.loading = true;
+        true
+    }
+
     pub(crate) fn refresh_source_control(&mut self, ctx: &egui::Context) {
+        if self.source_mutation_in_flight() {
+            return;
+        }
         self.source_control_job = None;
         let workspace_changed = self.view.source_control.workspace != self.editor.workspace;
         if workspace_changed {
@@ -102,11 +271,14 @@ impl LumenApp {
         let worker_ctx = ctx.clone();
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
-            let result = service.snapshot(&workspace);
-            let _ = sender.send(GitResult::Snapshot(workspace, result));
+            let result = scan_repositories(service.as_ref(), &workspace);
+            let _ = sender.send(GitResult::Repositories(workspace, result));
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: false,
+        });
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 
@@ -147,13 +319,199 @@ impl LumenApp {
             );
             return;
         }
-        self.run_source_remote_operation(ctx, "Pulled latest changes", |service, root| {
+        self.run_source_repo_operation(ctx, "Pulled latest changes", |service, root| {
             service.pull(root)
         });
     }
 
+    /// Unsaved editor text under the repository would be silently overridden by
+    /// (or committed stale into) an operation that rewrites or commits files.
+    pub(crate) fn source_has_dirty_documents(&self) -> bool {
+        let Some(snapshot) = &self.view.source_control.snapshot else {
+            return false;
+        };
+        self.editor.files.iter().any(|file| {
+            file.dirty
+                && file
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| path.starts_with(&snapshot.root))
+        })
+    }
+
+    /// Continue and skip run immediately; abort asks first because Git may be
+    /// unable to restore everything it touched.
+    pub(crate) fn request_source_operation(
+        &mut self,
+        action: crate::services::source_control::OperationAction,
+        ctx: &egui::Context,
+    ) {
+        use crate::services::source_control::OperationAction;
+        let Some(snapshot) = &self.view.source_control.snapshot else {
+            return;
+        };
+        let state = snapshot.state;
+        let Some(label) = state.label() else {
+            self.view.source_control.error = Some("Nothing is in progress".into());
+            return;
+        };
+        if self.source_has_dirty_documents() {
+            self.view.source_control.error = Some(format!(
+                "Save or discard unsaved edits in this repository before changing how {} ends",
+                label.to_lowercase()
+            ));
+            return;
+        }
+        match action {
+            OperationAction::Abort => self.view.source_control.abort_prompt = true,
+            OperationAction::Continue
+                if snapshot.changes.iter().any(|change| change.is_conflict()) =>
+            {
+                self.view.source_control.error =
+                    Some("Resolve every conflict (and stage it) before continuing".into());
+            }
+            _ => self.run_source_operation_action(action, ctx),
+        }
+    }
+
+    pub(crate) fn confirm_operation_abort(&mut self, ctx: &egui::Context) {
+        self.view.source_control.abort_prompt = false;
+        self.run_source_operation_action(
+            crate::services::source_control::OperationAction::Abort,
+            ctx,
+        );
+    }
+
+    fn run_source_operation_action(
+        &mut self,
+        action: crate::services::source_control::OperationAction,
+        ctx: &egui::Context,
+    ) {
+        use crate::services::source_control::OperationAction;
+        let Some(state) = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.state)
+        else {
+            return;
+        };
+        let word = match action {
+            OperationAction::Continue => "Continued",
+            OperationAction::Skip => "Skipped step of",
+            OperationAction::Abort => "Aborted",
+        };
+        let label = format!(
+            "{word} {}",
+            state.label().unwrap_or("operation").to_lowercase()
+        );
+        self.run_source_repo_operation(ctx, label, move |service, root| {
+            service.operation(root, state, action)
+        });
+    }
+
+    /// Keeps one side of a conflicted file and stages the result.
+    pub(crate) fn resolve_source_conflict(
+        &mut self,
+        path: PathBuf,
+        side: crate::services::source_control::ConflictSide,
+        ctx: &egui::Context,
+    ) {
+        let Some(change) = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .changes
+                    .iter()
+                    .find(|change| change.path == path && change.is_conflict())
+                    .cloned()
+            })
+        else {
+            return;
+        };
+        let full_path = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.root.join(&change.path));
+        if self
+            .editor
+            .files
+            .iter()
+            .any(|file| file.dirty && file.path.is_some() && file.path == full_path)
+        {
+            self.view.source_control.error =
+                Some("Save or discard this file's editor changes before choosing a side".into());
+            return;
+        }
+        self.run_source_repo_operation(ctx, "Resolved conflict", move |service, root| {
+            service.resolve_conflict(root, &change, side)
+        });
+    }
+
+    pub(crate) fn fetch_source_control(&mut self, ctx: &egui::Context) {
+        self.run_source_repo_operation(ctx, "Fetched remote changes", |service, root| {
+            service.fetch(root)
+        });
+    }
+
+    /// Publishes the current branch to its only configured remote and records
+    /// it as the upstream. Lumen never picks between several remotes itself.
+    pub(crate) fn publish_source_branch(&mut self, ctx: &egui::Context) {
+        let Some(snapshot) = &self.view.source_control.snapshot else {
+            return;
+        };
+        let (remote, branch) = match publish_target(snapshot) {
+            Ok(target) => target,
+            Err(error) => {
+                self.view.source_control.error = Some(error);
+                return;
+            }
+        };
+        self.run_source_repo_operation(ctx, "Published branch", move |service, root| {
+            service.publish(root, &remote, &branch)
+        });
+    }
+
+    /// Creates a repository in the opened folder with the chosen initial branch.
+    pub(crate) fn init_source_repository(&mut self, ctx: &egui::Context) {
+        let Some(workspace) = self.editor.workspace.clone() else {
+            return;
+        };
+        if self.view.source_control.snapshot.is_some() {
+            return;
+        }
+        if !self.begin_source_mutation() {
+            return;
+        }
+        self.view.source_control.error = None;
+        let branch = match self.view.source_control.init_branch.trim() {
+            "" => "main".to_owned(),
+            branch => branch.to_owned(),
+        };
+        let service = self.source_control_service.clone();
+        let worker_ctx = ctx.clone();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = service
+                .init(&workspace, &branch)
+                .map(|_| format!("Initialized repository on branch {branch}"));
+            let _ = sender.send(GitResult::Operation(result));
+            worker_ctx.request_repaint();
+        });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
+    }
+
     pub(crate) fn push_source_control(&mut self, ctx: &egui::Context) {
-        self.run_source_remote_operation(ctx, "Pushed local commits", |service, root| {
+        self.run_source_repo_operation(ctx, "Pushed local commits", |service, root| {
             service.push(root)
         });
     }
@@ -178,6 +536,7 @@ impl LumenApp {
     }
 
     pub(crate) fn confirm_source_revert(&mut self, ctx: &egui::Context) {
+        let in_flight = self.source_mutation_in_flight();
         let Some(prompt) = &mut self.view.source_control.revert_prompt else {
             return;
         };
@@ -199,6 +558,10 @@ impl LumenApp {
             return;
         }
         let root = snapshot.root.clone();
+        if in_flight {
+            prompt.error = Some("Wait for the current Git operation to finish".into());
+            return;
+        }
         self.source_control_job = None;
         self.view.source_control.loading = true;
         let service = self.source_control_service.clone();
@@ -211,7 +574,10 @@ impl LumenApp {
             let _ = sender.send(GitResult::Revert { paths, result });
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
     }
 
     pub(crate) fn stage_source_hunk(&mut self, path: PathBuf, hunk: usize, ctx: &egui::Context) {
@@ -239,19 +605,32 @@ impl LumenApp {
             self.view.status = "Save or discard editor edits before staging a hunk".into();
             return;
         }
-        self.source_control_job = None;
-        self.view.source_control.loading = true;
+        let Some(expected) = diff
+            .comparison
+            .as_ref()
+            .ok()
+            .and_then(|comparison| comparison.hunks.get(hunk))
+            .map(|hunk| hunk.patch.clone())
+        else {
+            return;
+        };
+        if !self.begin_source_mutation() {
+            return;
+        }
         let service = self.source_control_service.clone();
         let worker_ctx = ctx.clone();
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let result = service
-                .stage_hunk(&root, &root.join(&path), hunk)
+                .stage_hunk(&root, &root.join(&path), hunk, &expected)
                 .map(|_| "Staged hunk".into());
             let _ = sender.send(GitResult::Operation(result));
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
     }
 
     pub(crate) fn commit_source_control(&mut self, ctx: &egui::Context) {
@@ -271,8 +650,9 @@ impl LumenApp {
         else {
             return;
         };
-        self.source_control_job = None;
-        self.view.source_control.loading = true;
+        if !self.begin_source_mutation() {
+            return;
+        }
         self.view.source_control.commit_error = None;
         let service = self.source_control_service.clone();
         let worker_ctx = ctx.clone();
@@ -288,7 +668,10 @@ impl LumenApp {
             let _ = sender.send(GitResult::Commit { result, message });
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
     }
 
     fn run_source_operation<F>(
@@ -315,8 +698,9 @@ impl LumenApp {
         else {
             return;
         };
-        self.source_control_job = None;
-        self.view.source_control.loading = true;
+        if !self.begin_source_mutation() {
+            return;
+        }
         self.view.source_control.error = None;
         let service = self.source_control_service.clone();
         let worker_ctx = ctx.clone();
@@ -326,13 +710,16 @@ impl LumenApp {
             let _ = sender.send(GitResult::Operation(result));
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
     }
 
-    fn run_source_remote_operation<F>(
+    pub(crate) fn run_source_repo_operation<F>(
         &mut self,
         ctx: &egui::Context,
-        success: &'static str,
+        success: impl Into<String>,
         operation: F,
     ) where
         F: FnOnce(
@@ -351,18 +738,23 @@ impl LumenApp {
         else {
             return;
         };
-        self.source_control_job = None;
-        self.view.source_control.loading = true;
+        if !self.begin_source_mutation() {
+            return;
+        }
         self.view.source_control.error = None;
+        let success: String = success.into();
         let service = self.source_control_service.clone();
         let worker_ctx = ctx.clone();
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
-            let result = operation(service.as_ref(), &root).map(|_| success.into());
+            let result = operation(service.as_ref(), &root).map(|_| success);
             let _ = sender.send(GitResult::Operation(result));
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
     }
 
     pub(crate) fn show_source_diff(&mut self, path: PathBuf, side: DiffSide, ctx: &egui::Context) {
@@ -377,6 +769,9 @@ impl LumenApp {
                     DiffSide::Untracked => change.index == '?' && change.worktree == '?',
                 }
         }) {
+            return;
+        }
+        if self.source_mutation_in_flight() {
             return;
         }
         let root = snapshot.root.clone();
@@ -395,7 +790,10 @@ impl LumenApp {
             });
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: false,
+        });
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 
@@ -404,10 +802,10 @@ impl LumenApp {
             return;
         };
         match job.receiver.try_recv() {
-            Ok(GitResult::Snapshot(workspace, result)) => {
+            Ok(GitResult::Repositories(workspace, result)) => {
                 if self.view.source_control.workspace.as_ref() == Some(&workspace) {
                     match result {
-                        Ok(snapshot) => self.view.source_control.snapshot = snapshot,
+                        Ok(scan) => self.apply_repository_scan(&workspace, scan),
                         Err(error) => self.view.source_control.error = Some(error),
                     }
                     self.view.source_control.loading = false;
@@ -426,12 +824,31 @@ impl LumenApp {
             Ok(GitResult::Operation(result)) => {
                 self.view.source_control.loading = false;
                 self.source_control_job = None;
+                self.reconcile_clean_documents();
+                // An open branch picker must show the branches as they are now.
+                self.request_branches(ctx);
+                self.request_stashes(ctx);
+                self.request_tags(ctx);
                 match result {
                     Ok(status) => {
                         self.view.status = status;
                         self.refresh_source_control(ctx);
                     }
                     Err(error) => {
+                        // A failure can still leave a merge, rebase or partial
+                        // change behind, so look at the repository again; the
+                        // refresh clears the error, so set it afterwards.
+                        self.refresh_source_control(ctx);
+                        // A modal dialog hides the panel, so show the failure there too.
+                        if let Some(dialog) = &mut self.view.stash_dialog {
+                            dialog.error = Some(error.clone());
+                        }
+                        if let Some(dialog) = &mut self.view.branch_dialog {
+                            dialog.error = Some(error.clone());
+                        }
+                        if let Some(dialog) = &mut self.view.tags_dialog {
+                            dialog.error = Some(error.clone());
+                        }
                         self.view.source_control.error = Some(error);
                     }
                 }
@@ -439,6 +856,7 @@ impl LumenApp {
             Ok(GitResult::Commit { result, message }) => {
                 self.view.source_control.loading = false;
                 self.source_control_job = None;
+                self.reconcile_clean_documents();
                 match result {
                     Ok(status) => {
                         self.view.status = status;
@@ -449,7 +867,11 @@ impl LumenApp {
                         self.view.source_control.commit_error = None;
                         self.refresh_source_control(ctx);
                     }
-                    Err(error) => self.view.source_control.commit_error = Some(error),
+                    Err(error) => {
+                        // Hooks may have changed files or the index before failing.
+                        self.refresh_source_control(ctx);
+                        self.view.source_control.commit_error = Some(error);
+                    }
                 }
             }
             Ok(GitResult::Revert { paths, result }) => {
@@ -555,6 +977,32 @@ impl LumenApp {
         self.view.source_control.loading = false;
     }
 
+    /// Brings clean open documents in line with the disk after a Git operation
+    /// (pull, hook rewrites, partial failures). Dirty buffers are never touched;
+    /// the regular changed-on-disk check flags them.
+    fn reconcile_clean_documents(&mut self) {
+        let Some(root) = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.root.clone())
+        else {
+            return;
+        };
+        for file in &mut self.editor.files {
+            let Some(path) = &file.path else { continue };
+            if file.dirty || !path.starts_with(&root) {
+                continue;
+            }
+            if let Ok(text) = self.file_system.read_text(path)
+                && text != file.text
+            {
+                file.reload_from_disk(text);
+            }
+        }
+    }
+
     fn reload_reverted_documents(&mut self, paths: &[PathBuf]) {
         let Some(root) = self
             .view
@@ -621,11 +1069,8 @@ mod tests {
         app.view.source_control.snapshot = Some(GitSnapshot {
             root: root.to_path_buf(),
             branch: "main".into(),
-            changes: vec![GitChange {
-                path: path.to_path_buf(),
-                index: 'M',
-                worktree: 'M',
-            }],
+            changes: vec![GitChange::new(path.to_path_buf(), 'M', 'M')],
+            ..Default::default()
         });
         app
     }
@@ -642,7 +1087,10 @@ mod tests {
         sender
             .send(GitResult::Operation(Ok("Staged changes".into())))
             .unwrap();
-        app.source_control_job = Some(SourceControlJob { receiver });
+        app.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: false,
+        });
         app.poll_source_control(&egui::Context::default());
         assert_eq!(app.view.source_control.commit_message, "Keep this draft");
         assert!(app.view.source_control.amend_commit);
@@ -666,6 +1114,316 @@ mod tests {
         app.view.source_control.commit_focused = false;
         app.ensure_source_control(&ctx);
         assert!(app.source_control_job.is_some());
+    }
+
+    fn repo(root: &str, branch: &str) -> GitSnapshot {
+        GitSnapshot {
+            root: root.into(),
+            branch: branch.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn scan_selects_the_enclosing_repository_and_keeps_failures_separate() {
+        let mut app = LumenApp::default();
+        let workspace = std::path::Path::new("/w/app");
+        app.apply_repository_scan(
+            workspace,
+            RepositoryScan {
+                snapshots: vec![repo("/w", "outer"), repo("/w/app/inner", "inner")],
+                errors: vec![("/w/broken".into(), "boom".into())],
+            },
+        );
+        let view = &app.view.source_control;
+        assert_eq!(
+            view.snapshot.as_ref().unwrap().root,
+            std::path::Path::new("/w")
+        );
+        assert_eq!(view.repositories.len(), 2);
+        assert_eq!(view.repository_errors.len(), 1);
+    }
+
+    #[test]
+    fn switching_repository_parks_and_restores_each_commit_draft() {
+        let mut app = LumenApp::default();
+        app.apply_repository_scan(
+            std::path::Path::new("/w"),
+            RepositoryScan {
+                snapshots: vec![repo("/w/a", "main"), repo("/w/b", "dev")],
+                errors: Vec::new(),
+            },
+        );
+        assert_eq!(
+            app.view.source_control.snapshot.as_ref().unwrap().root,
+            std::path::Path::new("/w/a")
+        );
+        app.view.source_control.commit_message = "draft for a".into();
+        app.select_repository("/w/b".into());
+        assert_eq!(app.view.source_control.commit_message, "");
+        app.view.source_control.commit_message = "draft for b".into();
+        app.select_repository("/w/a".into());
+        assert_eq!(app.view.source_control.commit_message, "draft for a");
+        // A refresh keeps the selection and its draft.
+        app.apply_repository_scan(
+            std::path::Path::new("/w"),
+            RepositoryScan {
+                snapshots: vec![repo("/w/a", "main"), repo("/w/b", "dev")],
+                errors: Vec::new(),
+            },
+        );
+        assert_eq!(app.view.source_control.commit_message, "draft for a");
+        app.select_repository("/w/b".into());
+        assert_eq!(app.view.source_control.commit_message, "draft for b");
+    }
+
+    #[test]
+    fn a_vanished_repository_parks_its_draft_and_falls_back() {
+        let mut app = LumenApp::default();
+        let workspace = std::path::Path::new("/w");
+        app.apply_repository_scan(
+            workspace,
+            RepositoryScan {
+                snapshots: vec![repo("/w/a", "main"), repo("/w/b", "dev")],
+                errors: Vec::new(),
+            },
+        );
+        app.view.source_control.commit_message = "keep".into();
+        app.apply_repository_scan(
+            workspace,
+            RepositoryScan {
+                snapshots: vec![repo("/w/b", "dev")],
+                errors: Vec::new(),
+            },
+        );
+        assert_eq!(
+            app.view.source_control.snapshot.as_ref().unwrap().root,
+            std::path::Path::new("/w/b")
+        );
+        assert_eq!(app.view.source_control.commit_message, "");
+        app.apply_repository_scan(
+            workspace,
+            RepositoryScan {
+                snapshots: vec![repo("/w/a", "main"), repo("/w/b", "dev")],
+                errors: Vec::new(),
+            },
+        );
+        app.select_repository("/w/a".into());
+        assert_eq!(app.view.source_control.commit_message, "keep");
+    }
+
+    #[test]
+    fn a_file_is_owned_by_the_deepest_repository_never_the_outer_one() {
+        let mut app = LumenApp::default();
+        app.apply_repository_scan(
+            std::path::Path::new("/w"),
+            RepositoryScan {
+                snapshots: vec![repo("/w", "outer"), repo("/w/inner", "inner")],
+                errors: Vec::new(),
+            },
+        );
+        let view = &app.view.source_control;
+        let owner = |path: &str| {
+            view.owning_snapshot(std::path::Path::new(path))
+                .unwrap()
+                .branch
+                .clone()
+        };
+        assert_eq!(owner("/w/inner/src/a.rs"), "inner");
+        assert_eq!(owner("/w/top.rs"), "outer");
+        assert!(
+            view.owning_snapshot(std::path::Path::new("/elsewhere/a.rs"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn publish_target_requires_a_branch_without_upstream_and_exactly_one_remote() {
+        use crate::services::source_control::{GitHead, GitRemote, GitUpstream};
+        let remote = |name: &str| GitRemote {
+            name: name.into(),
+            fetch_url: format!("https://example.com/{name}.git"),
+            push_url: None,
+        };
+        let base = GitSnapshot {
+            head: GitHead::Attached("feature".into()),
+            remotes: vec![remote("origin")],
+            ..Default::default()
+        };
+        assert_eq!(
+            publish_target(&base).unwrap(),
+            ("origin".to_owned(), "feature".to_owned())
+        );
+        let mut two = base.clone();
+        two.remotes.push(remote("backup"));
+        assert!(
+            publish_target(&two)
+                .unwrap_err()
+                .contains("Several remotes")
+        );
+        let mut none = base.clone();
+        none.remotes.clear();
+        assert!(publish_target(&none).unwrap_err().contains("No remote"));
+        let mut tracked = base.clone();
+        tracked.upstream = Some(GitUpstream {
+            name: "origin/feature".into(),
+            ahead_behind: Some((0, 0)),
+        });
+        assert!(publish_target(&tracked).unwrap_err().contains("already"));
+        let mut unborn = base.clone();
+        unborn.head = GitHead::Unborn("main".into());
+        assert!(
+            publish_target(&unborn)
+                .unwrap_err()
+                .contains("first commit")
+        );
+        let mut detached = base;
+        detached.head = GitHead::Detached("abc".into());
+        assert!(publish_target(&detached).unwrap_err().contains("Check out"));
+    }
+
+    fn conflicted_app(state: crate::services::source_control::RepoState) -> LumenApp {
+        use crate::services::source_control::ChangeKind;
+        let mut conflict = GitChange::new("both.rs", 'U', 'U');
+        conflict.kind = ChangeKind::Conflict;
+        let mut app = LumenApp::default();
+        app.view.source_control.snapshot = Some(GitSnapshot {
+            root: "/repo".into(),
+            state,
+            changes: vec![conflict],
+            ..Default::default()
+        });
+        app
+    }
+
+    #[test]
+    fn continue_waits_for_conflicts_abort_asks_and_unsaved_edits_block_everything() {
+        use crate::services::source_control::{OperationAction, RepoState};
+        let ctx = egui::Context::default();
+        let mut app = conflicted_app(RepoState::Rebase);
+        app.request_source_operation(OperationAction::Continue, &ctx);
+        assert!(app.source_control_job.is_none());
+        assert!(
+            app.view
+                .source_control
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("Resolve every conflict")
+        );
+        app.request_source_operation(OperationAction::Abort, &ctx);
+        assert!(app.view.source_control.abort_prompt, "abort asks first");
+        assert!(app.source_control_job.is_none());
+        let mut clean = conflicted_app(RepoState::Clean);
+        clean.request_source_operation(OperationAction::Abort, &ctx);
+        assert!(!clean.view.source_control.abort_prompt);
+        assert_eq!(
+            clean.view.source_control.error.as_deref(),
+            Some("Nothing is in progress")
+        );
+        let mut dirty = conflicted_app(RepoState::Merge);
+        let mut document = Document::from_path("/repo/both.rs".into(), "saved".into());
+        document.text = "edited".into();
+        document.record_text_change();
+        dirty.editor.files.push(document);
+        dirty.request_source_operation(OperationAction::Abort, &ctx);
+        assert!(!dirty.view.source_control.abort_prompt);
+        assert!(
+            dirty
+                .view
+                .source_control
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("unsaved")
+        );
+        dirty.resolve_source_conflict(
+            "both.rs".into(),
+            crate::services::source_control::ConflictSide::Ours,
+            &ctx,
+        );
+        assert!(dirty.source_control_job.is_none());
+        assert!(
+            dirty
+                .view
+                .source_control
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("editor changes")
+        );
+    }
+
+    #[test]
+    fn a_running_mutation_is_not_replaced_by_refresh_diff_or_another_mutation() {
+        let root = std::path::Path::new("/workspace");
+        let mut app = app_with_change(root, std::path::Path::new("src/main.rs"));
+        let (sender, receiver) = mpsc::channel();
+        app.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
+        let ctx = egui::Context::default();
+        app.refresh_source_control(&ctx);
+        app.show_source_diff("src/main.rs".into(), DiffSide::Working, &ctx);
+        app.stage_source_paths(vec!["src/main.rs".into()], &ctx);
+        assert_eq!(
+            app.view.status,
+            "Wait for the current Git operation to finish"
+        );
+        // The original job is still the one polled, so its result is not lost.
+        sender
+            .send(GitResult::Operation(Ok("Committed changes".into())))
+            .unwrap();
+        app.poll_source_control(&ctx);
+        assert_eq!(app.view.status, "Committed changes");
+    }
+
+    #[test]
+    fn switching_or_closing_the_workspace_waits_for_a_running_mutation() {
+        let root = std::path::Path::new("/workspace");
+        let mut app = app_with_change(root, std::path::Path::new("src/main.rs"));
+        let (_sender, receiver) = mpsc::channel();
+        app.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
+        app.close_folder();
+        assert_eq!(app.editor.workspace.as_deref(), Some(root));
+        assert!(app.source_control_job.is_some());
+        assert_eq!(
+            app.view.status,
+            "Wait for the current Git operation to finish"
+        );
+    }
+
+    #[test]
+    fn clean_documents_reload_after_an_operation_but_dirty_ones_are_kept() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
+        std::fs::write(root.join("clean.txt"), "new from pull\n").unwrap();
+        std::fs::write(root.join("dirty.txt"), "new from pull\n").unwrap();
+        let mut app = app_with_change(&root, std::path::Path::new("clean.txt"));
+        app.editor
+            .files
+            .push(Document::from_path(root.join("clean.txt"), "old\n".into()));
+        let mut dirty = Document::from_path(root.join("dirty.txt"), "old\n".into());
+        dirty.text = "my edit\n".into();
+        dirty.record_text_change();
+        app.editor.files.push(dirty);
+        let (sender, receiver) = mpsc::channel();
+        app.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
+        sender
+            .send(GitResult::Operation(Err("partial failure".into())))
+            .unwrap();
+        app.poll_source_control(&egui::Context::default());
+        assert_eq!(app.editor.files[0].text, "new from pull\n");
+        assert!(!app.editor.files[0].dirty);
+        assert_eq!(app.editor.files[1].text, "my edit\n");
+        assert!(app.editor.files[1].dirty);
     }
 
     #[test]
@@ -769,27 +1527,12 @@ mod tests {
             root: root.path().to_path_buf(),
             branch: "main".into(),
             changes: vec![
-                GitChange {
-                    path: "modified.rs".into(),
-                    index: ' ',
-                    worktree: 'M',
-                },
-                GitChange {
-                    path: "staged.rs".into(),
-                    index: 'M',
-                    worktree: ' ',
-                },
-                GitChange {
-                    path: "added.rs".into(),
-                    index: 'A',
-                    worktree: ' ',
-                },
-                GitChange {
-                    path: "new.rs".into(),
-                    index: '?',
-                    worktree: '?',
-                },
+                GitChange::new("modified.rs", ' ', 'M'),
+                GitChange::new("staged.rs", 'M', ' '),
+                GitChange::new("added.rs", 'A', ' '),
+                GitChange::new("new.rs", '?', '?'),
             ],
+            ..Default::default()
         };
         assert!(source_path_is_revertible(
             &snapshot,

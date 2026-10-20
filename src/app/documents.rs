@@ -53,6 +53,9 @@ impl LumenApp {
             self.view.status = format!("Folder not found: {}", folder.display());
             return;
         }
+        if self.workspace_change_blocked_by_git() {
+            return;
+        }
         if self.guard_workspace_change(Some(folder.clone())) {
             return;
         }
@@ -90,6 +93,9 @@ impl LumenApp {
     pub(crate) fn close_folder(&mut self) {
         if self.editor.workspace.is_none() {
             self.view.status = "No folder is open".into();
+            return;
+        }
+        if self.workspace_change_blocked_by_git() {
             return;
         }
         if self.guard_workspace_change(None) {

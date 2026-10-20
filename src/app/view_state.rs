@@ -180,11 +180,41 @@ pub(crate) struct WorkspaceSearchView {
 }
 
 #[derive(Default)]
+pub(crate) struct CommitDraft {
+    pub(crate) message: String,
+    pub(crate) amend: bool,
+}
+
+impl SourceControlView {
+    /// The repository owning `path`: the deepest discovered root containing it,
+    /// never an outer repository when a nested one claims the file.
+    pub(crate) fn owning_snapshot(
+        &self,
+        path: &std::path::Path,
+    ) -> Option<&crate::services::source_control::GitSnapshot> {
+        self.repositories
+            .iter()
+            .chain(self.snapshot.as_ref())
+            .filter(|snapshot| path.starts_with(&snapshot.root))
+            .max_by_key(|snapshot| snapshot.root.components().count())
+    }
+}
+
+#[derive(Default)]
 pub(crate) struct SourceControlView {
     pub(crate) workspace: Option<PathBuf>,
+    /// The selected repository's snapshot; every action targets this one.
     pub(crate) snapshot: Option<crate::services::source_control::GitSnapshot>,
+    /// Every discovered repository, including the selected one.
+    pub(crate) repositories: Vec<crate::services::source_control::GitSnapshot>,
+    /// Repositories whose status could not be read, with the reason.
+    pub(crate) repository_errors: Vec<(PathBuf, String)>,
+    /// Commit drafts of repositories that are not currently selected.
+    pub(crate) parked_drafts: std::collections::BTreeMap<PathBuf, CommitDraft>,
     pub(crate) loading: bool,
     pub(crate) error: Option<String>,
+    /// Initial branch typed for "Initialize Repository"; empty means `main`.
+    pub(crate) init_branch: String,
     pub(crate) diff: Option<SourceDiffView>,
     /// Keeps the two diff panes on the same line; reset when the diff changes.
     pub(crate) diff_scroll: super::scroll_sync::ScrollSync,
@@ -197,6 +227,8 @@ pub(crate) struct SourceControlView {
     pub(crate) commit_focus: bool,
     pub(crate) commit_focused: bool,
     pub(crate) revert_prompt: Option<SourceRevertPrompt>,
+    /// A confirmation waiting for the user before aborting an operation.
+    pub(crate) abort_prompt: bool,
     pub(crate) last_refresh: Option<std::time::Instant>,
 }
 
@@ -318,6 +350,12 @@ impl Activity {
 }
 
 pub(crate) struct ViewState {
+    pub(crate) clone_dialog: Option<super::git_clone::CloneDialog>,
+    pub(crate) branch_dialog: Option<super::git_branches::BranchDialog>,
+    pub(crate) stash_dialog: Option<super::git_stash::StashDialog>,
+    pub(crate) history_dialog: Option<super::git_history::HistoryDialog>,
+    pub(crate) history_op_dialog: Option<super::git_history_ops::HistoryOpDialog>,
+    pub(crate) tags_dialog: Option<super::git_tags::TagsDialog>,
     pub(crate) settings: super::settings::SettingsState,
     pub(crate) task_editors: super::task_editor::TaskEditorState,
     pub(crate) chats: super::chat_tabs::ChatTabs,
@@ -485,6 +523,12 @@ impl ViewState {
 impl Default for ViewState {
     fn default() -> Self {
         Self {
+            clone_dialog: None,
+            branch_dialog: None,
+            stash_dialog: None,
+            history_dialog: None,
+            history_op_dialog: None,
+            tags_dialog: None,
             settings: Default::default(),
             #[cfg(feature = "shared-editor")]
             shared_editor: true,

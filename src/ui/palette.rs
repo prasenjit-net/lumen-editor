@@ -444,6 +444,34 @@ fn command_shortcut(command: &Command) -> String {
 fn palette_commands() -> Vec<(String, Command)> {
     [
         (
+            format!("{}  Git: Switch or Manage Branches", icon::GIT_BRANCH),
+            Command::OpenBranchDialog,
+        ),
+        (
+            format!("{}  Git: Stash Changes", icon::GIT_BRANCH),
+            Command::OpenStashDialog,
+        ),
+        (
+            format!("{}  Git: Manage Tags", icon::GIT_BRANCH),
+            Command::OpenTagsDialog(None),
+        ),
+        (
+            format!("{}  Git: Show History", icon::HISTORY),
+            Command::OpenHistoryDialog,
+        ),
+        (
+            format!("{}  Git: Show File History", icon::HISTORY),
+            Command::OpenFileHistory,
+        ),
+        (
+            format!("{}  Git: Blame Current File", icon::HISTORY),
+            Command::OpenBlame,
+        ),
+        (
+            format!("{}  Git: Clone Repository", icon::GIT_BRANCH),
+            Command::OpenCloneDialog,
+        ),
+        (
             format!("{}  Preferences: Open Settings", icon::GEAR),
             Command::Settings,
         ),

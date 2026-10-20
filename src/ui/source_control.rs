@@ -1,7 +1,10 @@
 use super::{Workbench, widgets::explorer_row};
 use crate::{
     app::command::Command,
-    services::source_control::{DiffSide, GitChange, GitSnapshot},
+    services::source_control::{
+        ChangeKind, ConflictSide, DiffSide, GitChange, GitSnapshot, HistoryAction, OperationAction,
+        RepoState, ResetMode,
+    },
 };
 use eframe::egui::{self, FontId, RichText, ScrollArea, TextEdit};
 use std::collections::BTreeSet;
@@ -13,11 +16,26 @@ enum SourceRow<'a> {
 }
 
 fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
-    let mut rows = Vec::with_capacity(snapshot.changes.len() * 2 + 2);
+    let mut rows = Vec::with_capacity(snapshot.changes.len() * 2 + 3);
+    // Unresolved conflicts get their own group and never appear as ordinary
+    // staged or working rows.
+    let conflicts: Vec<_> = snapshot
+        .changes
+        .iter()
+        .filter(|change| change.is_conflict())
+        .collect();
+    if !conflicts.is_empty() {
+        rows.push(SourceRow::Heading("MERGE CONFLICTS", conflicts.len()));
+        rows.extend(
+            conflicts
+                .into_iter()
+                .map(|change| SourceRow::Change(change, DiffSide::Working)),
+        );
+    }
     let staged: Vec<_> = snapshot
         .changes
         .iter()
-        .filter(|change| change.index != ' ' && change.index != '?')
+        .filter(|change| !change.is_conflict() && change.index != ' ' && change.index != '?')
         .collect();
     if !staged.is_empty() {
         rows.push(SourceRow::Heading("STAGED CHANGES", staged.len()));
@@ -30,7 +48,7 @@ fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
     let working: Vec<_> = snapshot
         .changes
         .iter()
-        .filter(|change| change.worktree != ' ')
+        .filter(|change| !change.is_conflict() && change.worktree != ' ')
         .collect();
     if !working.is_empty() {
         rows.push(SourceRow::Heading("CHANGES", working.len()));
@@ -48,6 +66,243 @@ fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
     rows
 }
 
+/// Blame of the saved file; a line leads to its commit.
+fn history_blame(
+    ui: &mut egui::Ui,
+    blame: &crate::app::git_history::BlameView,
+    actions: &mut Vec<Command>,
+) {
+    let colors = crate::ui::theme::palette(ui.visuals());
+    ui.horizontal(|ui| {
+        if ui.button("Back").clicked() {
+            actions.push(Command::CloseBlame);
+        }
+        ui.label(RichText::new(format!("Blame · {}", blame.path)).color(colors.muted));
+    });
+    ui.label(
+        RichText::new("Based on the saved file; unsaved editor text is not included.")
+            .small()
+            .color(colors.muted),
+    );
+    match &blame.lines {
+        None => {
+            ui.label(RichText::new("Reading blame…").color(colors.muted));
+        }
+        Some(Err(error)) => {
+            ui.label(RichText::new(error).color(colors.error));
+        }
+        Some(Ok(lines)) => {
+            ScrollArea::vertical()
+                .id_salt("git_history_blame")
+                .max_height(360.0)
+                .auto_shrink([false, true])
+                .show_rows(ui, 22.0, lines.len(), |ui, visible| {
+                    for index in visible {
+                        let line = &lines[index];
+                        let label = if line.is_uncommitted() {
+                            format!("{:>4}  Not committed yet  {}", index + 1, line.text)
+                        } else {
+                            format!(
+                                "{:>4}  {}  {}  {}  {}",
+                                index + 1,
+                                &line.commit[..line.commit.len().min(7)],
+                                line.author,
+                                commit_date(line.time),
+                                line.text
+                            )
+                        };
+                        let response = explorer_row(ui, label, 4, false);
+                        if line.is_uncommitted() {
+                            response.on_hover_text("This line is not in any commit yet");
+                        } else if response
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(format!("{}\n{}", line.commit, line.summary))
+                            .clicked()
+                        {
+                            actions.push(Command::ShowBlamedCommit(line.commit.clone()));
+                        }
+                    }
+                });
+        }
+    }
+}
+
+/// Side-by-side, read-only before/after for one file of a commit.
+fn history_comparison(
+    ui: &mut egui::Ui,
+    compare: &mut crate::app::git_history::CommitCompare,
+    font: &FontId,
+    line_height: f32,
+    actions: &mut Vec<Command>,
+) {
+    let colors = crate::ui::theme::palette(ui.visuals());
+    ui.horizontal(|ui| {
+        if ui.button("Back").clicked() {
+            actions.push(Command::CloseCommitFile);
+        }
+        ui.label(RichText::new(compare.file.label()).color(colors.muted));
+    });
+    match &compare.result {
+        None => {
+            ui.label(RichText::new("Reading file…").color(colors.muted));
+        }
+        Some(Err(error)) => {
+            ui.label(RichText::new(error).color(colors.error));
+        }
+        Some(Ok(comparison)) => {
+            let comparison = comparison.clone();
+            let mut sync = compare.scroll;
+            ui.columns(2, |columns| {
+                columns[0].label(
+                    RichText::new("Parent · read-only")
+                        .small()
+                        .color(colors.muted),
+                );
+                let observed = read_only_source(
+                    &mut columns[0],
+                    &ReadOnlySource {
+                        text: &comparison.base,
+                        changed: &comparison.old_lines,
+                        changed_background: colors.diff_removed_bg,
+                        id: "git_history_base",
+                        font,
+                        line_height,
+                    },
+                    sync.take_pending(0),
+                );
+                sync.observe(0, observed);
+                columns[1].label(
+                    RichText::new("Commit · read-only")
+                        .small()
+                        .color(colors.muted),
+                );
+                let observed = read_only_source(
+                    &mut columns[1],
+                    &ReadOnlySource {
+                        text: comparison.changed.as_deref().unwrap_or_default(),
+                        changed: &comparison.new_lines,
+                        changed_background: colors.diff_added_bg,
+                        id: "git_history_changed",
+                        font,
+                        line_height,
+                    },
+                    sync.take_pending(1),
+                );
+                sync.observe(1, observed);
+            });
+            if sync.finish_frame() {
+                ui.ctx().request_repaint();
+            }
+            compare.scroll = sync;
+        }
+    }
+}
+
+fn commit_date(seconds: i64) -> String {
+    chrono::DateTime::from_timestamp(seconds, 0)
+        .map(|time| {
+            time.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// Row text for the repository list: path relative to the opened folder,
+/// branch and change count.
+fn repository_label(repo: &GitSnapshot, workspace: Option<&std::path::Path>) -> String {
+    let name = workspace
+        .and_then(|workspace| repo.root.strip_prefix(workspace).ok())
+        .filter(|relative| !relative.as_os_str().is_empty())
+        .map(|relative| relative.display().to_string())
+        .or_else(|| {
+            repo.root
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| repo.root.display().to_string());
+    let changes = repo.changes.len();
+    let kind = if repo.is_linked_worktree() {
+        "  (worktree)"
+    } else {
+        ""
+    };
+    if changes == 0 {
+        format!("{name}{kind}  {}", repo.branch)
+    } else {
+        format!("{name}{kind}  {}  {changes}", repo.branch)
+    }
+}
+
+/// Muted line under the branch: the sole remote's URL, or what is missing.
+fn remote_summary(snapshot: &GitSnapshot) -> String {
+    match snapshot.remotes.as_slice() {
+        [] => "No remote configured".into(),
+        [remote] => format!("{}  {}", remote.name, remote.fetch_url),
+        [first, rest @ ..] => format!("{}  {}  +{} more", first.name, first.fetch_url, rest.len()),
+    }
+}
+
+fn remote_details(snapshot: &GitSnapshot) -> String {
+    if snapshot.remotes.is_empty() {
+        return "Add a remote with `git remote add <name> <url>`".into();
+    }
+    snapshot
+        .remotes
+        .iter()
+        .map(|remote| match &remote.push_url {
+            Some(push) => format!("{}\nfetch {}\npush  {push}", remote.name, remote.fetch_url),
+            None => format!("{}\n{}", remote.name, remote.fetch_url),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// One-line header: branch, ahead/behind counts and any operation in progress.
+fn branch_summary(snapshot: &GitSnapshot) -> String {
+    let mut text = format!("{}  {}", crate::icon::GIT_BRANCH, snapshot.branch);
+    if let Some((ahead, behind)) = snapshot
+        .upstream
+        .as_ref()
+        .and_then(|upstream| upstream.ahead_behind)
+        .filter(|counts| *counts != (0, 0))
+    {
+        text.push_str(&format!("  +{ahead} -{behind}"));
+    }
+    if let Some(state) = snapshot.state.label() {
+        text.push_str(&format!("  ({state})"));
+    }
+    text
+}
+
+fn branch_details(snapshot: &GitSnapshot) -> String {
+    let mut lines = vec![snapshot.root.display().to_string()];
+    match &snapshot.upstream {
+        Some(upstream) => match upstream.ahead_behind {
+            Some((ahead, behind)) => lines.push(format!(
+                "Tracking {}: {ahead} ahead, {behind} behind (as of the last fetch)",
+                upstream.name
+            )),
+            None => lines.push(format!(
+                "Tracking {}, which no longer exists on the remote",
+                upstream.name
+            )),
+        },
+        None if matches!(
+            snapshot.head,
+            crate::services::source_control::GitHead::Attached(_)
+        ) =>
+        {
+            lines.push("No upstream branch is configured".into())
+        }
+        None => {}
+    }
+    if let Some(state) = snapshot.state.label() {
+        lines.push(format!("{state} is in progress"));
+    }
+    lines.join("\n")
+}
+
 fn source_heading(ui: &mut egui::Ui, title: &str, count: usize) {
     let colors = crate::ui::theme::palette(ui.visuals());
     let (rect, _) =
@@ -55,7 +310,11 @@ fn source_heading(ui: &mut egui::Ui, title: &str, count: usize) {
     ui.painter().text(
         rect.left_center() + egui::vec2(4.0, 0.0),
         egui::Align2::LEFT_CENTER,
-        format!("{title}  {count}"),
+        if count == 0 {
+            title.to_owned()
+        } else {
+            format!("{title}  {count}")
+        },
         FontId::proportional(11.5),
         colors.muted,
     );
@@ -69,16 +328,23 @@ fn source_label(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> egui::Re
         egui::vec2(ui.available_width().max(0.0), 22.0),
         egui::Sense::hover(),
     );
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), FontId::proportional(13.0), color);
+    let clipped = galley.size().x > rect.width();
     ui.painter()
         .with_clip_rect(rect.intersect(ui.clip_rect()))
-        .text(
-            rect.left_center(),
-            egui::Align2::LEFT_CENTER,
-            text,
-            FontId::proportional(13.0),
+        .galley(
+            egui::pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
+            galley,
             color,
         );
-    response
+    // Clipped Git errors must stay reachable at narrow sidebar widths.
+    if clipped {
+        response.on_hover_text(text)
+    } else {
+        response
+    }
 }
 
 impl Workbench<'_> {
@@ -99,30 +365,160 @@ impl Workbench<'_> {
                 return;
             }
         }
+        self.repository_errors(ui);
         let Some(snapshot) = self.view.source_control.snapshot.clone() else {
             source_label(ui, "No Git repository found", colors.muted);
             source_label(ui, &workspace.display().to_string(), colors.muted);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Initial branch").small().color(colors.muted));
+                let width = (ui.available_width() - 4.0).max(24.0);
+                ui.add_sized(
+                    [width, 22.0],
+                    TextEdit::singleline(&mut self.view.source_control.init_branch)
+                        .id_salt("source_control_init_branch")
+                        .hint_text("main"),
+                );
+            });
+            if ui
+                .add_enabled(
+                    !self.view.source_control.loading,
+                    egui::Button::new("Initialize Repository"),
+                )
+                .on_hover_text("Run git init in the opened folder")
+                .clicked()
+            {
+                self.command(Command::InitSourceRepository);
+            }
+            if ui
+                .button("Clone Repository…")
+                .on_hover_text("Clone a repository into a new folder and open it")
+                .clicked()
+            {
+                self.command(Command::OpenCloneDialog);
+            }
             return;
         };
-        let branch_text = format!("{}  {}", crate::icon::GIT_BRANCH, snapshot.branch);
+        self.repository_list(ui, &snapshot.root);
+        let branch_text = branch_summary(&snapshot);
         let branch = source_label(ui, &branch_text, colors.text);
-        branch.on_hover_text(snapshot.root.display().to_string());
+        branch.on_hover_text(branch_details(&snapshot));
+        source_label(ui, &remote_summary(&snapshot), colors.muted)
+            .on_hover_text(remote_details(&snapshot));
+        if let Some(label) = snapshot.state.label() {
+            let has_conflicts = snapshot.changes.iter().any(|change| change.is_conflict());
+            ui.horizontal_wrapped(|ui| {
+                let idle = !self.view.source_control.loading;
+                ui.label(RichText::new(label).small().color(colors.muted));
+                let continue_button =
+                    ui.add_enabled(idle && !has_conflicts, egui::Button::new("Continue"));
+                let continue_button = if has_conflicts {
+                    continue_button.on_disabled_hover_text("Resolve and stage every conflict first")
+                } else {
+                    continue_button.on_hover_text(format!("Continue {}", label.to_lowercase()))
+                };
+                if continue_button.clicked() {
+                    self.command(Command::SourceOperation(OperationAction::Continue));
+                }
+                if snapshot.state != RepoState::Merge
+                    && ui
+                        .add_enabled(idle, egui::Button::new("Skip"))
+                        .on_hover_text("Skip the current step")
+                        .clicked()
+                {
+                    self.command(Command::SourceOperation(OperationAction::Skip));
+                }
+                if ui
+                    .add_enabled(idle, egui::Button::new("Abort…"))
+                    .on_hover_text("Stop and return to where you started")
+                    .clicked()
+                {
+                    self.command(Command::SourceOperation(OperationAction::Abort));
+                }
+            });
+        }
+        ui.horizontal_wrapped(|ui| {
+            let idle = !self.view.source_control.loading;
+            if ui
+                .add_enabled(idle, egui::Button::new("Branches…"))
+                .on_hover_text("Switch, create, rename or delete branches")
+                .clicked()
+            {
+                self.command(Command::OpenBranchDialog);
+            }
+            if ui
+                .add_enabled(idle, egui::Button::new("Stash…"))
+                .on_hover_text("Save, inspect and restore stashed changes")
+                .clicked()
+            {
+                self.command(Command::OpenStashDialog);
+            }
+            if ui
+                .add_enabled(idle, egui::Button::new("Tags…"))
+                .on_hover_text("Create, push and delete tags")
+                .clicked()
+            {
+                self.command(Command::OpenTagsDialog(None));
+            }
+            if ui
+                .button("History…")
+                .on_hover_text("Browse recent commits")
+                .clicked()
+            {
+                self.command(Command::OpenHistoryDialog);
+            }
+            if ui
+                .add_enabled(
+                    idle && !snapshot.remotes.is_empty(),
+                    egui::Button::new("Fetch"),
+                )
+                .on_hover_text("Fetch all remotes and prune deleted remote branches")
+                .clicked()
+            {
+                self.command(Command::FetchSourceControl);
+            }
+            if snapshot.upstream.is_some()
+                && ui
+                    .add_enabled(idle, egui::Button::new("Force Push…"))
+                    .on_hover_text(
+                        "Overwrite the remote branch, but only if it still has the commit you reviewed",
+                    )
+                    .clicked()
+            {
+                self.command(Command::PlanForcePush);
+            }
+            match crate::app::source_control::publish_target(&snapshot) {
+                Ok((remote, branch)) => {
+                    if ui
+                        .add_enabled(idle, egui::Button::new("Publish Branch"))
+                        .on_hover_text(format!("Push {branch} to {remote} and track it"))
+                        .clicked()
+                    {
+                        self.command(Command::PublishSourceBranch);
+                    }
+                }
+                Err(reason) if snapshot.upstream.is_none() => {
+                    ui.add_enabled(false, egui::Button::new("Publish Branch"))
+                        .on_disabled_hover_text(reason);
+                }
+                Err(_) => {}
+            }
+        });
         let staged_paths: Vec<_> = snapshot
             .changes
             .iter()
-            .filter(|change| change.index != ' ' && change.index != '?')
+            .filter(|change| !change.is_conflict() && change.index != ' ' && change.index != '?')
             .map(|change| change.path.clone())
             .collect();
         let working_paths: Vec<_> = snapshot
             .changes
             .iter()
-            .filter(|change| change.worktree != ' ')
+            .filter(|change| !change.is_conflict() && change.worktree != ' ')
             .map(|change| change.path.clone())
             .collect();
         let revertible_paths: Vec<_> = snapshot
             .changes
             .iter()
-            .filter(|change| change.index != '?' && change.index != 'A')
+            .filter(|change| !change.is_conflict() && change.index != '?' && change.index != 'A')
             .map(|change| change.path.clone())
             .collect();
         ui.horizontal(|ui| {
@@ -158,6 +554,25 @@ impl Workbench<'_> {
             });
         });
         let has_staged = !staged_paths.is_empty();
+        // The previous frame's focus decides whether Cmd/Ctrl+Enter commits;
+        // consume it before the multiline editor can turn it into a newline.
+        let commit_shortcut = self.view.source_control.commit_focused
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter));
+        let message_width = ui.available_width().max(24.0);
+        let response = ui.add_sized(
+            [message_width, 56.0],
+            TextEdit::multiline(&mut self.view.source_control.commit_message)
+                .id_salt("source_control_commit_message")
+                .desired_rows(3)
+                .hint_text("Message (Cmd/Ctrl+Enter to commit)"),
+        );
+        if self.view.source_control.commit_focus {
+            response.request_focus();
+            self.view.source_control.commit_focus = false;
+        }
+        self.view.source_control.commit_focused = response.has_focus();
+        let can_commit = (has_staged || self.view.source_control.amend_commit)
+            && !self.view.source_control.loading;
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.view.source_control.amend_commit, "Amend")
                 .on_hover_text(
@@ -168,33 +583,19 @@ impl Workbench<'_> {
             } else {
                 "Commit"
             };
-            // Reserve the full Commit/Amend button and row spacing. Reserving
-            // only the button's text width makes the row a few pixels too wide;
-            // SidePanel then persists that overflow as its next frame's width.
-            const COMMIT_BUTTON_AND_SPACING: f32 = 70.0;
-            let message_width = (ui.available_width() - COMMIT_BUTTON_AND_SPACING).max(24.0);
-            let response = ui.add_sized(
-                [message_width, 22.0],
-                TextEdit::singleline(&mut self.view.source_control.commit_message)
-                    .id_salt("source_control_commit_message")
-                    .hint_text("Message"),
-            );
-            if self.view.source_control.commit_focus {
-                response.request_focus();
-                self.view.source_control.commit_focus = false;
-            }
-            self.view.source_control.commit_focused = response.has_focus();
             if ui
-                .add_enabled(
-                    (has_staged || self.view.source_control.amend_commit)
-                        && !self.view.source_control.loading,
-                    egui::Button::new(commit_label),
-                )
+                .add_enabled(can_commit, egui::Button::new(commit_label))
                 .clicked()
+                || (commit_shortcut && can_commit)
             {
                 self.command(Command::CommitSourceControl);
             }
         });
+        if self.view.source_control.amend_commit
+            && let Some(subject) = &snapshot.last_commit
+        {
+            source_label(ui, &format!("Amending: {subject}"), colors.muted);
+        }
         if let Some(error) = &self.view.source_control.commit_error {
             source_label(ui, error, colors.error);
         }
@@ -204,6 +605,9 @@ impl Workbench<'_> {
         }
         let rows = source_rows(&snapshot);
         let mut requested = None;
+        let mut open_conflict = None;
+        let mut open_repository = None;
+        let mut chosen_side = None;
         ScrollArea::vertical()
             .id_salt("source_control_changes")
             .show_rows(ui, 22.0, rows.len(), |ui, visible| {
@@ -214,17 +618,47 @@ impl Workbench<'_> {
                         }
                         continue;
                     };
-                    let marker = if side == DiffSide::Untracked {
+                    let marker = if change.is_conflict() {
+                        '!'
+                    } else if side == DiffSide::Untracked {
                         'U'
                     } else if side == DiffSide::Staged {
                         change.index
                     } else {
                         change.worktree
                     };
-                    let label = format!("{marker}  {}", change.path.display());
+                    let submodule = match &change.kind {
+                        ChangeKind::Submodule(sub) => Some(*sub),
+                        _ => None,
+                    };
+                    let label = match submodule {
+                        Some(_) => format!("{marker}  {}  (submodule)", change.path.display()),
+                        None => format!("{marker}  {}", change.path.display()),
+                    };
+                    let hover = match submodule {
+                        Some(sub) => format!("{}\n{}", change.path.display(), sub.describe()),
+                        None => change.path.display().to_string(),
+                    };
                     let response = explorer_row(ui, label, 4, false)
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(change.path.display().to_string());
+                        .on_hover_text(if change.is_conflict() {
+                            format!("{hover}\nRight-click to choose a side")
+                        } else {
+                            hover
+                        });
+                    if change.is_conflict() {
+                        let (ours, theirs) = snapshot.state.side_labels();
+                        response.context_menu(|ui| {
+                            if ui.button(ours).clicked() {
+                                chosen_side = Some((change.path.clone(), ConflictSide::Ours));
+                                ui.close();
+                            }
+                            if ui.button(theirs).clicked() {
+                                chosen_side = Some((change.path.clone(), ConflictSide::Theirs));
+                                ui.close();
+                            }
+                        });
+                    }
                     let action = match side {
                         DiffSide::Staged => Command::UnstagePaths(vec![change.path.clone()]),
                         DiffSide::Working | DiffSide::Untracked => {
@@ -236,7 +670,10 @@ impl Workbench<'_> {
                     } else {
                         crate::icon::PLUS
                     };
-                    let revertible = change.index != '?' && change.index != 'A';
+                    let revertible = !change.is_conflict()
+                        && !change.is_submodule()
+                        && change.index != '?'
+                        && change.index != 'A';
                     let revert_clicked = revertible
                         && ui
                             .put(
@@ -258,6 +695,8 @@ impl Workbench<'_> {
                         )
                         .on_hover_text(if side == DiffSide::Staged {
                             "Unstage change"
+                        } else if change.is_conflict() {
+                            "Mark resolved (stage the file as it is on disk)"
                         } else {
                             "Stage change"
                         })
@@ -266,13 +705,1060 @@ impl Workbench<'_> {
                         self.command(action);
                     } else if revert_clicked {
                         self.command(Command::RequestSourceRevert(vec![change.path.clone()]));
+                    } else if response.clicked() && change.is_submodule() {
+                        // A gitlink has no text comparison; jump to the child
+                        // repository when it was discovered.
+                        let child = snapshot.root.join(&change.path);
+                        if self
+                            .view
+                            .source_control
+                            .repositories
+                            .iter()
+                            .any(|repo| repo.root == child)
+                        {
+                            open_repository = Some(child);
+                        }
+                    } else if response.clicked() && change.is_conflict() {
+                        // A comparison of a conflicted file is not meaningful;
+                        // open it so the markers can be resolved in the editor.
+                        open_conflict = Some(snapshot.root.join(&change.path));
                     } else if response.clicked() {
                         requested = Some((change.path.clone(), side));
                     }
                 }
             });
+        if let Some((path, side)) = chosen_side {
+            self.command(Command::ResolveConflict(path, side));
+        }
+        if let Some(root) = open_repository {
+            self.command(Command::SelectRepository(root));
+        }
+        if let Some(path) = open_conflict {
+            self.command(Command::OpenPath(path));
+        }
         if let Some((path, side)) = requested {
             self.command(Command::ShowSourceDiff(path, side));
+        }
+    }
+
+    /// Lists every repository found under the folder; hidden for a single one.
+    fn repository_list(&mut self, ui: &mut egui::Ui, selected: &std::path::Path) {
+        let workspace = self.editor.workspace.clone();
+        let rows: Vec<_> = self
+            .view
+            .source_control
+            .repositories
+            .iter()
+            .map(|repo| {
+                let label = repository_label(repo, workspace.as_deref());
+                let siblings = self
+                    .view
+                    .source_control
+                    .repositories
+                    .iter()
+                    .filter(|other| other.root != repo.root && other.shares_storage_with(repo))
+                    .count();
+                let mut tooltip = repo.root.display().to_string();
+                if siblings > 0 {
+                    tooltip.push_str(&format!(
+                        "\nShares branches and objects with {siblings} other listed worktree(s)"
+                    ));
+                }
+                (repo.root.clone(), label, tooltip)
+            })
+            .collect();
+        if rows.len() < 2 {
+            return;
+        }
+        let mut chosen = None;
+        ScrollArea::vertical()
+            .id_salt("source_control_repositories")
+            .max_height(22.0 * 5.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for (root, label, tooltip) in &rows {
+                    let response = explorer_row(ui, label.clone(), 4, root == selected)
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(tooltip.clone());
+                    if response.clicked() {
+                        chosen = Some(root.clone());
+                    }
+                }
+            });
+        if let Some(root) = chosen {
+            self.command(Command::SelectRepository(root));
+        }
+    }
+
+    fn repository_errors(&self, ui: &mut egui::Ui) {
+        let colors = crate::ui::theme::palette(ui.visuals());
+        for (root, error) in &self.view.source_control.repository_errors {
+            let name = root.file_name().map_or_else(
+                || root.display().to_string(),
+                |n| n.to_string_lossy().into(),
+            );
+            source_label(ui, &format!("{name}: {error}"), colors.error)
+                .on_hover_text(format!("{}\n{error}", root.display()));
+        }
+    }
+
+    pub(crate) fn history_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let font_size = self.view.settings.number("editor.font_size", None);
+        let line_height = self.view.settings.number("editor.line_height", None);
+        let font = FontId::monospace(font_size);
+        let Some(dialog) = &mut self.view.history_dialog else {
+            return;
+        };
+        let mut actions: Vec<Command> = Vec::new();
+        let comparing = dialog.compare.is_some();
+        let modal = egui::Modal::new(egui::Id::new("git_history_dialog")).show(ctx, |ui| {
+            ui.set_width(if comparing { 900.0 } else { 520.0 });
+            ui.heading("History");
+            ui.add_space(4.0);
+            if let Some(compare) = &mut dialog.compare {
+                history_comparison(ui, compare, &font, line_height, &mut actions);
+                if let Some(error) = &dialog.error {
+                    ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+                }
+                return;
+            }
+            if let Some(blame) = &dialog.blame {
+                history_blame(ui, blame, &mut actions);
+                return;
+            }
+            let (mut apply, mut clear) = (false, false);
+            let enter_pressed = |response: &egui::Response| {
+                response.lost_focus() && response.ctx.input(|i| i.key_pressed(egui::Key::Enter))
+            };
+            let text = ui.add(
+                TextEdit::singleline(&mut dialog.filter_text)
+                    .id_salt("git_history_text")
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Search messages, or paste a commit id"),
+            );
+            apply |= enter_pressed(&text);
+            let author = ui.add(
+                TextEdit::singleline(&mut dialog.filter_author)
+                    .id_salt("git_history_author")
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Author"),
+            );
+            apply |= enter_pressed(&author);
+            let path = ui.add(
+                TextEdit::singleline(&mut dialog.filter_path)
+                    .id_salt("git_history_path")
+                    .desired_width(f32::INFINITY)
+                    .hint_text("File path: history of one file, following renames"),
+            );
+            apply |= enter_pressed(&path);
+            ui.horizontal(|ui| {
+                let selected = dialog
+                    .filter_ref
+                    .clone()
+                    .unwrap_or_else(|| "HEAD".to_owned());
+                egui::ComboBox::from_id_salt("git_history_ref")
+                    .selected_text(selected)
+                    .width(ui.available_width() - 130.0)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(dialog.filter_ref.is_none(), "HEAD")
+                            .clicked()
+                        {
+                            actions.push(Command::SetHistoryRef(None));
+                        }
+                        for name in &dialog.refs {
+                            let current = dialog.filter_ref.as_deref() == Some(name.as_str());
+                            if ui.selectable_label(current, name).clicked() {
+                                actions.push(Command::SetHistoryRef(Some(name.clone())));
+                            }
+                        }
+                    });
+                apply |= ui.button("Search").clicked();
+                clear = ui.button("Clear").clicked();
+            });
+            if apply {
+                actions.push(Command::ApplyHistoryFilter);
+            }
+            if clear {
+                actions.push(Command::ClearHistoryFilter);
+            }
+            ui.add_space(4.0);
+            let selected = dialog.selected.clone();
+            ScrollArea::vertical()
+                .id_salt("git_history_list")
+                .max_height(260.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    if dialog.commits.is_empty() {
+                        let text = if dialog.loading {
+                            "Reading history…"
+                        } else {
+                            "No commits yet"
+                        };
+                        ui.label(RichText::new(text).color(colors.muted));
+                    }
+                    for commit in &dialog.commits {
+                        let mut label = format!(
+                            "{}  {}  {}",
+                            &commit.id[..commit.id.len().min(7)],
+                            commit_date(commit.time),
+                            commit.subject
+                        );
+                        if !commit.refs.is_empty() {
+                            label = format!("[{}]  {label}", commit.refs.join(", "));
+                        }
+                        let response =
+                            explorer_row(ui, label, 4, selected.as_deref() == Some(&commit.id))
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(format!("{}\n{}", commit.id, commit.author));
+                        if response.clicked() {
+                            actions.push(Command::SelectCommit(commit.id.clone()));
+                        }
+                    }
+                    if dialog.has_more
+                        && ui
+                            .add_enabled(!dialog.loading, egui::Button::new("Load more"))
+                            .clicked()
+                    {
+                        actions.push(Command::LoadMoreHistory);
+                    }
+                });
+            if let Some(id) = &selected
+                && let Some(commit) = dialog.commits.iter().find(|c| &c.id == id)
+            {
+                ui.separator();
+                ui.label(
+                    RichText::new(&commit.id)
+                        .small()
+                        .monospace()
+                        .color(colors.muted),
+                );
+                ui.label(format!("{}  {}", commit.author, commit_date(commit.time)));
+                if commit.parents.len() > 1 {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("Compare with").small().color(colors.muted));
+                        for (index, parent) in commit.parents.iter().enumerate() {
+                            if ui
+                                .selectable_label(
+                                    dialog.parent == index,
+                                    format!(
+                                        "parent {} ({})",
+                                        index + 1,
+                                        &parent[..parent.len().min(7)]
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                actions.push(Command::ChooseHistoryParent(index));
+                            }
+                        }
+                    });
+                } else if !commit.parents.is_empty() {
+                    let parents: Vec<_> = commit
+                        .parents
+                        .iter()
+                        .map(|parent| parent[..parent.len().min(7)].to_owned())
+                        .collect();
+                    ui.label(
+                        RichText::new(format!("Parents: {}", parents.join(", ")))
+                            .small()
+                            .color(colors.muted),
+                    );
+                }
+                ui.horizontal_wrapped(|ui| {
+                    let short = &commit.id[..commit.id.len().min(7)];
+                    let parent = (commit.parents.len() > 1).then_some(dialog.parent);
+                    if ui
+                        .button("Cherry-pick…")
+                        .on_hover_text("Apply this commit's changes on top of the current branch")
+                        .clicked()
+                    {
+                        actions.push(Command::PlanHistoryAction(
+                            HistoryAction::CherryPick {
+                                commit: commit.id.clone(),
+                                parent,
+                            },
+                            format!("Cherry-pick {short}"),
+                        ));
+                    }
+                    if ui
+                        .button("Revert…")
+                        .on_hover_text("Create a commit that undoes this commit")
+                        .clicked()
+                    {
+                        actions.push(Command::PlanHistoryAction(
+                            HistoryAction::Revert {
+                                commit: commit.id.clone(),
+                                parent,
+                            },
+                            format!("Revert {short}"),
+                        ));
+                    }
+                    if ui
+                        .button("Tag…")
+                        .on_hover_text("Create a tag on this commit")
+                        .clicked()
+                    {
+                        actions.push(Command::OpenTagsDialog(Some(commit.id.clone())));
+                    }
+                    if ui
+                        .button("Reset to here…")
+                        .on_hover_text("Move the current branch to this commit")
+                        .clicked()
+                    {
+                        actions.push(Command::PlanHistoryAction(
+                            HistoryAction::Reset {
+                                target: commit.id.clone(),
+                                mode: ResetMode::Mixed,
+                                backup: true,
+                            },
+                            format!("Reset to {short}"),
+                        ));
+                    }
+                });
+                match &dialog.details {
+                    Some(details) => {
+                        if details.committer != commit.author || details.committed != commit.time {
+                            ui.label(
+                                RichText::new(format!(
+                                    "Committed by {} on {}",
+                                    details.committer,
+                                    commit_date(details.committed)
+                                ))
+                                .small()
+                                .color(colors.muted),
+                            );
+                        }
+                        ScrollArea::vertical()
+                            .id_salt("git_history_details")
+                            .max_height(150.0)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.label(&details.message);
+                                ui.add_space(4.0);
+                                for (index, file) in details.files.iter().enumerate() {
+                                    if explorer_row(ui, file.label(), 4, false)
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .on_hover_text(
+                                            "Compare this file with its parent (read-only)",
+                                        )
+                                        .clicked()
+                                    {
+                                        actions.push(Command::OpenCommitFile(index));
+                                    }
+                                }
+                            });
+                    }
+                    None => {
+                        ui.label(RichText::new("Reading commit…").color(colors.muted));
+                    }
+                }
+            }
+            if let Some(error) = &dialog.error {
+                ui.add_space(4.0);
+                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(8.0);
+            if ui.button("Close").clicked() {
+                actions.push(Command::CloseHistoryDialog);
+            }
+        });
+        if modal.should_close() {
+            actions.push(Command::CloseHistoryDialog);
+        }
+        for action in actions {
+            self.command(action);
+        }
+    }
+
+    pub(crate) fn history_op_dialog(&mut self, ctx: &egui::Context) {
+        use crate::app::git_history_ops::HistoryOption;
+        use crate::services::source_control::{HistoryAction, ResetMode};
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(dialog) = &self.view.history_op_dialog else {
+            return;
+        };
+        let mut actions: Vec<Command> = Vec::new();
+        let modal = egui::Modal::new(egui::Id::new("git_history_op_dialog")).show(ctx, |ui| {
+            ui.set_width(460.0);
+            ui.heading(&dialog.title);
+            ui.add_space(4.0);
+            match &dialog.action {
+                HistoryAction::Merge { no_ff, .. } => {
+                    let mut value = *no_ff;
+                    if ui
+                        .checkbox(&mut value, "Always create a merge commit")
+                        .changed()
+                    {
+                        actions.push(Command::SetHistoryOption(HistoryOption::NoFastForward(
+                            value,
+                        )));
+                    }
+                }
+                HistoryAction::Reset { mode, backup, .. } => {
+                    ui.horizontal(|ui| {
+                        for (label, value) in [
+                            ("Soft", ResetMode::Soft),
+                            ("Mixed", ResetMode::Mixed),
+                            ("Hard", ResetMode::Hard),
+                        ] {
+                            if ui.selectable_label(*mode == value, label).clicked()
+                                && *mode != value
+                            {
+                                actions.push(Command::SetHistoryOption(HistoryOption::ResetMode(
+                                    value,
+                                )));
+                            }
+                        }
+                    });
+                    let mut value = *backup;
+                    if ui
+                        .checkbox(&mut value, "Keep the current tip on a backup branch")
+                        .changed()
+                    {
+                        actions.push(Command::SetHistoryOption(HistoryOption::Backup(value)));
+                    }
+                }
+                HistoryAction::CherryPick { parent, .. } | HistoryAction::Revert { parent, .. }
+                    if dialog.parent_count > 1 =>
+                {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Merge commit: use parent").color(colors.muted));
+                        for index in 0..dialog.parent_count {
+                            if ui
+                                .selectable_label(*parent == Some(index), format!("{}", index + 1))
+                                .clicked()
+                            {
+                                actions
+                                    .push(Command::SetHistoryOption(HistoryOption::Parent(index)));
+                            }
+                        }
+                    });
+                }
+                _ => {}
+            }
+            ui.add_space(4.0);
+            match &dialog.plan {
+                None if dialog.loading => {
+                    ui.label(RichText::new("Checking the repository…").color(colors.muted));
+                }
+                None => {}
+                Some(plan) => {
+                    for line in &plan.lines {
+                        ui.label(line);
+                    }
+                    for warning in &plan.warnings {
+                        ui.label(RichText::new(warning).color(colors.warning));
+                    }
+                    if let Some(reason) = &plan.blocked {
+                        ui.label(RichText::new(reason).color(colors.error));
+                    }
+                }
+            }
+            if let Some(error) = &dialog.error {
+                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let ready = dialog
+                    .plan
+                    .as_ref()
+                    .is_some_and(|plan| plan.blocked.is_none())
+                    && !dialog.loading;
+                let label = match &dialog.action {
+                    HistoryAction::Merge { .. } => "Merge",
+                    HistoryAction::CherryPick { .. } => "Cherry-pick",
+                    HistoryAction::Revert { .. } => "Revert",
+                    HistoryAction::Reset {
+                        mode: ResetMode::Hard,
+                        ..
+                    } => "Reset (discards changes)",
+                    HistoryAction::Reset { .. } => "Reset",
+                    HistoryAction::ForcePush { .. } => "Force push",
+                };
+                if ui.add_enabled(ready, egui::Button::new(label)).clicked() {
+                    actions.push(Command::ConfirmHistoryAction);
+                }
+                if ui.button("Cancel").clicked() {
+                    actions.push(Command::CancelHistoryAction);
+                }
+            });
+        });
+        if modal.should_close() {
+            actions.push(Command::CancelHistoryAction);
+        }
+        for action in actions {
+            self.command(action);
+        }
+    }
+
+    pub(crate) fn tags_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(dialog) = &mut self.view.tags_dialog else {
+            return;
+        };
+        let mut actions: Vec<Command> = Vec::new();
+        let modal = egui::Modal::new(egui::Id::new("git_tags_dialog")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.heading("Tags");
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 70.0).max(40.0);
+                ui.add(
+                    TextEdit::singleline(&mut dialog.name)
+                        .id_salt("git_tag_name")
+                        .desired_width(width)
+                        .hint_text("v1.0.0"),
+                );
+                if ui
+                    .add_enabled(!dialog.name.trim().is_empty(), egui::Button::new("Create"))
+                    .clicked()
+                {
+                    actions.push(Command::CreateTag);
+                }
+            });
+            ui.add(
+                TextEdit::singleline(&mut dialog.message)
+                    .id_salt("git_tag_message")
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Message (makes it an annotated tag)"),
+            );
+            ui.label(
+                RichText::new(match &dialog.target {
+                    Some(id) => format!("On commit {}", &id[..id.len().min(7)]),
+                    None => "On the current commit".to_owned(),
+                })
+                .small()
+                .color(colors.muted),
+            );
+            ui.add_space(4.0);
+            let confirming = dialog.confirm_delete.clone();
+            ScrollArea::vertical()
+                .id_salt("git_tags_list")
+                .max_height(180.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    if dialog.tags.is_empty() {
+                        let text = if dialog.loading {
+                            "Reading tags…"
+                        } else {
+                            "No tags"
+                        };
+                        ui.label(RichText::new(text).color(colors.muted));
+                    }
+                    for tag in &dialog.tags {
+                        let kind = if tag.annotated {
+                            "annotated"
+                        } else {
+                            "lightweight"
+                        };
+                        let mut label = format!(
+                            "{}  {}  {kind}",
+                            tag.name,
+                            &tag.commit[..tag.commit.len().min(7)]
+                        );
+                        if !tag.message.is_empty() {
+                            label.push_str(&format!("  {}", tag.message));
+                        }
+                        let response = explorer_row(ui, label, 4, false)
+                            .on_hover_text(format!("{}\n{}", tag.name, tag.commit));
+                        if ui
+                            .put(
+                                egui::Rect::from_min_size(
+                                    response.rect.right_top() - egui::vec2(22.0, 0.0),
+                                    egui::vec2(22.0, response.rect.height()),
+                                ),
+                                egui::Button::new(crate::icon::X).frame(false),
+                            )
+                            .on_hover_text("Delete this tag locally")
+                            .clicked()
+                        {
+                            actions.push(Command::RequestTagDelete(tag.name.clone()));
+                        } else if ui
+                            .put(
+                                egui::Rect::from_min_size(
+                                    response.rect.right_top() - egui::vec2(44.0, 0.0),
+                                    egui::vec2(22.0, response.rect.height()),
+                                ),
+                                egui::Button::new(crate::icon::REPO_PUSH).frame(false),
+                            )
+                            .on_hover_text("Push this tag to the chosen remote")
+                            .clicked()
+                        {
+                            actions.push(Command::PushTag(tag.name.clone()));
+                        }
+                    }
+                });
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Push to").small().color(colors.muted));
+                if dialog.remotes.is_empty() {
+                    ui.label(
+                        RichText::new("no remote configured")
+                            .small()
+                            .color(colors.muted),
+                    );
+                }
+                for remote in &dialog.remotes {
+                    if ui
+                        .selectable_label(dialog.remote.as_deref() == Some(remote.as_str()), remote)
+                        .clicked()
+                    {
+                        actions.push(Command::ChooseTagRemote(remote.clone()));
+                    }
+                }
+            });
+            if let Some(name) = &confirming {
+                ui.label(
+                    RichText::new(format!(
+                        "Delete tag {name}? Copies on remotes are not removed."
+                    ))
+                    .color(colors.muted),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Delete Tag").clicked() {
+                        actions.push(Command::ConfirmTagDelete);
+                    }
+                    if ui.button("Keep").clicked() {
+                        actions.push(Command::CancelTagDelete);
+                    }
+                });
+            }
+            if let Some(error) = &dialog.error {
+                ui.add_space(4.0);
+                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(8.0);
+            if ui.button("Close").clicked() {
+                actions.push(Command::CloseTagsDialog);
+            }
+        });
+        if modal.should_close() {
+            actions.push(Command::CloseTagsDialog);
+        }
+        for action in actions {
+            self.command(action);
+        }
+    }
+
+    pub(crate) fn stash_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(dialog) = &mut self.view.stash_dialog else {
+            return;
+        };
+        let mut actions: Vec<Command> = Vec::new();
+        let modal = egui::Modal::new(egui::Id::new("git_stash_dialog")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.heading("Stashes");
+            ui.label(
+                RichText::new(
+                    "A stash saves what is on disk. Unsaved editor text is not included.",
+                )
+                .color(colors.muted),
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 70.0).max(40.0);
+                ui.add(
+                    TextEdit::singleline(&mut dialog.message)
+                        .id_salt("git_stash_message")
+                        .desired_width(width)
+                        .hint_text("Message (optional)"),
+                );
+                if ui
+                    .button("Stash")
+                    .on_hover_text("Stash tracked changes and reset them")
+                    .clicked()
+                {
+                    actions.push(Command::CreateStash);
+                }
+            });
+            ui.checkbox(&mut dialog.include_untracked, "Include untracked files");
+            ui.checkbox(
+                &mut dialog.restore_index,
+                "Restore staged state when applying",
+            );
+            ui.add_space(4.0);
+            let selected = dialog.selected.clone();
+            let confirming = dialog.confirm_drop.clone();
+            ScrollArea::vertical()
+                .id_salt("git_stash_list")
+                .max_height(180.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    if dialog.stashes.is_empty() {
+                        let text = if dialog.loading {
+                            "Reading stashes…"
+                        } else {
+                            "No stashes"
+                        };
+                        ui.label(RichText::new(text).color(colors.muted));
+                    }
+                    for stash in &dialog.stashes {
+                        let label = format!("{{{}}}  {}", stash.index, stash.message);
+                        let response =
+                            explorer_row(ui, label, 4, selected.as_deref() == Some(&stash.id))
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text("Show the files in this stash");
+                        if response.clicked() {
+                            actions.push(Command::SelectStash(stash.id.clone()));
+                        }
+                    }
+                });
+            if let Some(id) = &selected {
+                if !dialog.files.is_empty() {
+                    ui.add_space(2.0);
+                    ScrollArea::vertical()
+                        .id_salt("git_stash_files")
+                        .max_height(90.0)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            for (status, path) in &dialog.files {
+                                ui.label(RichText::new(format!("{status}  {path}")).small());
+                            }
+                        });
+                }
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .button("Apply")
+                        .on_hover_text("Restore the changes and keep the stash")
+                        .clicked()
+                    {
+                        actions.push(Command::ApplyStash(id.clone(), false));
+                    }
+                    if ui
+                        .button("Pop")
+                        .on_hover_text(
+                            "Restore the changes and remove the stash (kept if it conflicts)",
+                        )
+                        .clicked()
+                    {
+                        actions.push(Command::ApplyStash(id.clone(), true));
+                    }
+                    if ui
+                        .button("Drop…")
+                        .on_hover_text("Delete this stash")
+                        .clicked()
+                    {
+                        actions.push(Command::RequestStashDrop(id.clone()));
+                    }
+                });
+            }
+            if confirming.is_some() {
+                ui.label(
+                    RichText::new("Delete this stash? Its changes cannot be recovered afterwards.")
+                        .color(colors.muted),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Delete Stash").clicked() {
+                        actions.push(Command::ConfirmStashDrop);
+                    }
+                    if ui.button("Keep").clicked() {
+                        actions.push(Command::CancelStashDrop);
+                    }
+                });
+            }
+            if let Some(error) = &dialog.error {
+                ui.add_space(4.0);
+                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(8.0);
+            if ui.button("Close").clicked() {
+                actions.push(Command::CloseStashDialog);
+            }
+        });
+        if modal.should_close() {
+            actions.push(Command::CloseStashDialog);
+        }
+        for action in actions {
+            self.command(action);
+        }
+    }
+
+    pub(crate) fn branch_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(dialog) = &mut self.view.branch_dialog else {
+            return;
+        };
+        let mut actions: Vec<Command> = Vec::new();
+        let modal = egui::Modal::new(egui::Id::new("git_branch_dialog")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.heading("Branches");
+            ui.add_space(4.0);
+            ui.add(
+                TextEdit::singleline(&mut dialog.filter)
+                    .id_salt("git_branch_filter")
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Filter branches"),
+            );
+            let filter = dialog.filter.to_lowercase();
+            let confirming = dialog.confirm_delete.clone();
+            ScrollArea::vertical()
+                .id_salt("git_branch_list")
+                .max_height(240.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    if dialog.loading && dialog.branches.is_empty() {
+                        ui.label(RichText::new("Reading branches…").color(colors.muted));
+                    }
+                    for remote in [false, true] {
+                        let mut heading_shown = false;
+                        for branch in dialog.branches.iter().filter(|b| {
+                            b.remote == remote && b.name.to_lowercase().contains(&filter)
+                        }) {
+                            if !heading_shown {
+                                source_heading(ui, if remote { "REMOTE" } else { "LOCAL" }, 0);
+                                heading_shown = true;
+                            }
+                            let mut label = branch.name.clone();
+                            if branch.current {
+                                label.push_str("  (current)");
+                            }
+                            if let Some(upstream) = &branch.upstream {
+                                label.push_str(&format!("  tracks {upstream}"));
+                            }
+                            if branch.checked_out_at.is_some() {
+                                label.push_str("  (in another worktree)");
+                            }
+                            let response = explorer_row(ui, label, 4, branch.current)
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(match &branch.checked_out_at {
+                                    Some(path) => format!("Checked out at {}", path.display()),
+                                    None if remote => format!(
+                                        "Create a local branch tracking {} and switch to it",
+                                        branch.name
+                                    ),
+                                    None => format!("Switch to {}", branch.name),
+                                });
+                            if !branch.current {
+                                let name = branch.name.clone();
+                                let commit = branch.commit.clone();
+                                response.context_menu(|ui| {
+                                    if ui.button("Merge into current branch…").clicked() {
+                                        actions.push(Command::PlanHistoryAction(
+                                            HistoryAction::Merge {
+                                                target: commit.clone(),
+                                                no_ff: false,
+                                            },
+                                            format!("Merge {name}"),
+                                        ));
+                                        ui.close();
+                                    }
+                                });
+                            }
+                            let deletable =
+                                !remote && !branch.current && branch.checked_out_at.is_none();
+                            let delete_clicked = deletable
+                                && ui
+                                    .put(
+                                        egui::Rect::from_min_size(
+                                            response.rect.right_top() - egui::vec2(22.0, 0.0),
+                                            egui::vec2(22.0, response.rect.height()),
+                                        ),
+                                        egui::Button::new(crate::icon::X).frame(false),
+                                    )
+                                    .on_hover_text("Delete this branch (only if fully merged)")
+                                    .clicked();
+                            if delete_clicked {
+                                actions.push(Command::RequestDeleteBranch(branch.name.clone()));
+                            } else if response.clicked() {
+                                actions.push(Command::SwitchBranch(branch.name.clone(), remote));
+                            }
+                        }
+                    }
+                });
+            if let Some(name) = &confirming {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Delete {name}? Git refuses if it has unmerged commits."
+                    ))
+                    .color(colors.muted),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Delete Branch").clicked() {
+                        actions.push(Command::ConfirmDeleteBranch);
+                    }
+                    if ui.button("Keep").clicked() {
+                        dialog.confirm_delete = None;
+                    }
+                });
+            }
+            ui.add_space(6.0);
+            ui.label(RichText::new("New branch from the current commit").color(colors.muted));
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 110.0).max(40.0);
+                ui.add(
+                    TextEdit::singleline(&mut dialog.new_name)
+                        .id_salt("git_branch_new")
+                        .desired_width(width)
+                        .hint_text("feature/name"),
+                );
+                if ui
+                    .add_enabled(
+                        !dialog.new_name.trim().is_empty(),
+                        egui::Button::new("Create"),
+                    )
+                    .on_hover_text("Create the branch and switch to it")
+                    .clicked()
+                {
+                    actions.push(Command::CreateBranch);
+                }
+            });
+            ui.label(RichText::new("Rename current branch").color(colors.muted));
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 110.0).max(40.0);
+                ui.add(
+                    TextEdit::singleline(&mut dialog.rename_to)
+                        .id_salt("git_branch_rename")
+                        .desired_width(width)
+                        .hint_text("new name"),
+                );
+                if ui
+                    .add_enabled(
+                        !dialog.rename_to.trim().is_empty(),
+                        egui::Button::new("Rename"),
+                    )
+                    .clicked()
+                {
+                    actions.push(Command::RenameBranch);
+                }
+            });
+            if let Some(error) = &dialog.error {
+                ui.add_space(4.0);
+                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(8.0);
+            if ui.button("Close").clicked() {
+                actions.push(Command::CloseBranchDialog);
+            }
+        });
+        if modal.should_close() {
+            actions.push(Command::CloseBranchDialog);
+        }
+        for action in actions {
+            self.command(action);
+        }
+    }
+
+    pub(crate) fn clone_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(dialog) = &mut self.view.clone_dialog else {
+            return;
+        };
+        let running = dialog.run.is_some();
+        let progress = dialog.run.as_ref().map(|run| run.progress.clone());
+        let error = dialog.error.clone();
+        let target = dialog.target();
+        let (mut browse, mut start, mut cancel) = (false, false, false);
+        let modal = egui::Modal::new(egui::Id::new("git_clone_dialog")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.heading("Clone Repository");
+            ui.add_space(4.0);
+            ui.label(RichText::new("Repository URL or path").color(colors.muted));
+            let url = ui.add_enabled(
+                !running,
+                TextEdit::singleline(&mut dialog.url)
+                    .id_salt("git_clone_url")
+                    .desired_width(f32::INFINITY)
+                    .hint_text("https://host/team/project.git"),
+            );
+            if url.changed() {
+                dialog.sync_name();
+            }
+            ui.label(RichText::new("Destination folder").color(colors.muted));
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 80.0).max(40.0);
+                ui.add_enabled(
+                    !running,
+                    TextEdit::singleline(&mut dialog.parent)
+                        .id_salt("git_clone_parent")
+                        .desired_width(width),
+                );
+                browse = ui
+                    .add_enabled(!running, egui::Button::new("Browse…"))
+                    .clicked();
+            });
+            ui.label(RichText::new("Folder name").color(colors.muted));
+            let name = ui.add_enabled(
+                !running,
+                TextEdit::singleline(&mut dialog.name)
+                    .id_salt("git_clone_name")
+                    .desired_width(f32::INFINITY),
+            );
+            if name.changed() {
+                dialog.name_edited = true;
+            }
+            ui.add_space(4.0);
+            match (&progress, &error, &target) {
+                (Some(progress), _, _) => {
+                    ui.label(RichText::new(progress).color(colors.muted));
+                }
+                (None, Some(error), _) => {
+                    ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+                }
+                (None, None, Ok(target)) => {
+                    ui.label(
+                        RichText::new(format!("Creates {}", target.display())).color(colors.muted),
+                    );
+                }
+                (None, None, Err(reason)) if !dialog.url.is_empty() => {
+                    ui.label(RichText::new(reason).color(colors.muted));
+                }
+                _ => {}
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                start = ui
+                    .add_enabled(!running && target.is_ok(), egui::Button::new("Clone"))
+                    .clicked();
+                cancel = ui
+                    .button(if running { "Cancel Clone" } else { "Cancel" })
+                    .clicked();
+            });
+        });
+        if browse {
+            self.command(Command::PickCloneDestination);
+        } else if start {
+            self.command(Command::StartClone);
+        } else if cancel || modal.should_close() {
+            self.command(Command::CancelClone);
+        }
+    }
+
+    pub(crate) fn source_abort_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        if !self.view.source_control.abort_prompt {
+            return;
+        }
+        let label = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.state.label())
+            .unwrap_or("The operation");
+        let (mut confirm, mut cancel) = (false, false);
+        let modal = egui::Modal::new(egui::Id::new("source_control_abort")).show(ctx, |ui| {
+            ui.set_width(400.0);
+            ui.heading("Abort and go back?");
+            ui.label(
+                RichText::new(format!(
+                    "{label} will be stopped and Git will try to return to the state before it began. Changes you made while resolving conflicts are discarded, and Git may be unable to restore uncommitted changes that existed beforehand."
+                ))
+                .color(colors.muted),
+            );
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                confirm = ui.button("Abort").clicked();
+                cancel = ui.button("Keep Going").clicked();
+            });
+        });
+        if cancel || modal.should_close() {
+            self.command(Command::CancelOperationAbort);
+        } else if confirm {
+            self.command(Command::ConfirmOperationAbort);
         }
     }
 
@@ -636,11 +2122,8 @@ mod tests {
         app.view.source_control.snapshot = Some(GitSnapshot {
             root: PathBuf::from("/workspace"),
             branch: "feature/a-branch-name-long-enough-to-previously-grow-the-sidebar".into(),
-            changes: vec![GitChange {
-                path: PathBuf::from("src/long-file.rs"),
-                index: 'M',
-                worktree: 'M',
-            }],
+            changes: vec![GitChange::new(PathBuf::from("src/long-file.rs"), 'M', 'M')],
+            ..Default::default()
         });
         for point in [
             egui::pos2(850.0, 400.0),
@@ -713,11 +2196,8 @@ mod tests {
         app.view.source_control.snapshot = Some(GitSnapshot {
             root: PathBuf::from("/workspace"),
             branch: "main".into(),
-            changes: vec![GitChange {
-                path: PathBuf::from("src/main.rs"),
-                index: 'M',
-                worktree: ' ',
-            }],
+            changes: vec![GitChange::new(PathBuf::from("src/main.rs"), 'M', ' ')],
+            ..Default::default()
         });
         let ctx = egui::Context::default();
         theme::configure_ui(&ctx);
@@ -757,12 +2237,22 @@ mod tests {
         app.view.source_control.snapshot = Some(GitSnapshot {
             root: PathBuf::from("/workspace"),
             branch: "feature/a-branch-name-long-enough-to-previously-grow-the-sidebar".into(),
-            changes: vec![GitChange {
-                path: PathBuf::from("src/a-very-long-file-name-that-must-stay-clipped.rs"),
-                index: ' ',
-                worktree: 'M',
+            remotes: vec![crate::services::source_control::GitRemote {
+                name: "origin".into(),
+                fetch_url: "https://example.com/a/remarkably/long/repository/path/that/clips.git"
+                    .into(),
+                push_url: None,
             }],
+            last_commit: Some("A very long last commit subject that must clip in the pane".into()),
+            changes: vec![GitChange::new(
+                PathBuf::from("src/a-very-long-file-name-that-must-stay-clipped.rs"),
+                ' ',
+                'M',
+            )],
+            ..Default::default()
         });
+        app.view.source_control.amend_commit = true;
+        app.view.source_control.commit_message = "line one\nline two\nline three\nfour".into();
         let ctx = egui::Context::default();
         theme::configure_ui(&ctx);
         for requested in [180.0, 240.0, 600.0] {
@@ -776,6 +2266,29 @@ mod tests {
                 "source content widened sidebar {requested}: {widths:?}"
             );
         }
+        let long_repo = |name: &str| GitSnapshot {
+            root: PathBuf::from(format!("/workspace/{name}")),
+            branch: "feature/a-branch-name-long-enough-to-previously-grow-the-sidebar".into(),
+            ..Default::default()
+        };
+        app.editor.workspace = Some(PathBuf::from("/workspace"));
+        app.view.source_control.repositories = vec![
+            long_repo("a-very-long-repository-directory-name"),
+            long_repo("another-quite-long-nested-repository"),
+        ];
+        app.view.source_control.repository_errors = vec![(
+            PathBuf::from("/workspace/broken-repository-with-a-long-name"),
+            "could not read status because of an unusually long failure".into(),
+        )];
+        for requested in [180.0, 240.0, 600.0] {
+            let width = source_sidebar_width(&mut app, &ctx, requested, egui::pos2(850.0, 400.0));
+            assert!(
+                (width - requested).abs() < 2.0,
+                "repository list widened sidebar {requested}: {width}"
+            );
+        }
+        app.view.source_control.repositories.clear();
+        app.view.source_control.repository_errors.clear();
         app.view.source_control.snapshot = None;
         app.view.source_control.error = Some(
             "Git status failed because an unusually long error must remain inside the pane".into(),
@@ -797,11 +2310,8 @@ mod tests {
             view.source_control.snapshot = Some(GitSnapshot {
                 root: PathBuf::from("/workspace"),
                 branch: "main".into(),
-                changes: vec![GitChange {
-                    path: PathBuf::from("src/file.rs"),
-                    index: ' ',
-                    worktree: 'M',
-                }],
+                changes: vec![GitChange::new(PathBuf::from("src/file.rs"), ' ', 'M')],
+                ..Default::default()
             });
             let output = ctx.run(
                 egui::RawInput {
@@ -839,17 +2349,10 @@ mod tests {
             root: PathBuf::from("/workspace"),
             branch: "main".into(),
             changes: vec![
-                GitChange {
-                    path: PathBuf::from("both.rs"),
-                    index: 'M',
-                    worktree: 'M',
-                },
-                GitChange {
-                    path: PathBuf::from("new.rs"),
-                    index: '?',
-                    worktree: '?',
-                },
+                GitChange::new(PathBuf::from("both.rs"), 'M', 'M'),
+                GitChange::new(PathBuf::from("new.rs"), '?', '?'),
             ],
+            ..Default::default()
         };
         let rows = source_rows(&snapshot);
         assert!(matches!(rows[0], SourceRow::Heading("STAGED CHANGES", 1)));
@@ -928,6 +2431,46 @@ mod tests {
     }
 
     #[test]
+    fn conflicts_form_their_own_group_and_leave_staged_and_working_lists() {
+        use crate::services::source_control::ChangeKind;
+        let mut conflict = GitChange::new("both.rs", 'U', 'U');
+        conflict.kind = ChangeKind::Conflict;
+        let snapshot = GitSnapshot {
+            changes: vec![conflict, GitChange::new("ok.rs", 'M', ' ')],
+            ..Default::default()
+        };
+        let rows = source_rows(&snapshot);
+        let headings: Vec<_> = rows
+            .iter()
+            .filter_map(|row| match row {
+                SourceRow::Heading(title, count) => Some((*title, *count)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(headings, [("MERGE CONFLICTS", 1), ("STAGED CHANGES", 1)]);
+    }
+
+    #[test]
+    fn header_shows_ahead_behind_and_operation_state() {
+        use crate::services::source_control::{GitUpstream, RepoState};
+        let snapshot = GitSnapshot {
+            branch: "main".into(),
+            upstream: Some(GitUpstream {
+                name: "origin/main".into(),
+                ahead_behind: Some((2, 1)),
+            }),
+            state: RepoState::Merge,
+            ..Default::default()
+        };
+        let text = branch_summary(&snapshot);
+        assert!(
+            text.contains("+2 -1") && text.contains("(Merging)"),
+            "{text}"
+        );
+        assert!(branch_details(&snapshot).contains("2 ahead, 1 behind"));
+    }
+
+    #[test]
     fn working_diff_exposes_compact_stage_buttons_for_each_hunk() {
         let ctx = egui::Context::default();
         theme::configure_ui(&ctx);
@@ -945,9 +2488,11 @@ mod tests {
                 hunks: vec![
                     GitHunk {
                         header: "@@ -1 +1 @@".into(),
+                        patch: String::new(),
                     },
                     GitHunk {
                         header: "@@ -8 +8 @@".into(),
+                        patch: String::new(),
                     },
                 ],
             })),

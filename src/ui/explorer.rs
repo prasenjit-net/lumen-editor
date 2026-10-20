@@ -10,7 +10,7 @@ use eframe::egui::{self, RichText, ScrollArea};
 use std::path::Path;
 impl Workbench<'_> {
     fn git_badge(&self, path: &Path, directory: bool) -> Option<char> {
-        let snapshot = self.view.source_control.snapshot.as_ref()?;
+        let snapshot = self.view.source_control.owning_snapshot(path)?;
         let relative = path.strip_prefix(&snapshot.root).ok()?;
         snapshot
             .changes
@@ -23,7 +23,9 @@ impl Workbench<'_> {
                 }
             })
             .map(|change| {
-                if change.index == '?' {
+                if change.is_conflict() {
+                    '!'
+                } else if change.index == '?' {
                     'U'
                 } else if change.worktree == 'D' || change.index == 'D' {
                     'D'
@@ -214,7 +216,7 @@ impl Workbench<'_> {
                         },
                         HeaderAction {
                             glyph: icon::REFRESH,
-                            tooltip: "Refresh source control",
+                            tooltip: "Refresh source control and rescan repositories",
                             command: Command::RefreshSourceControl,
                             enabled: self.editor.workspace.is_some(),
                         },

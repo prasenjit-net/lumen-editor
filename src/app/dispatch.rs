@@ -212,7 +212,71 @@ impl LumenApp {
             Command::ClearTerminal => self.clear_terminal(),
             Command::PullSourceControl => self.pull_source_control(ctx),
             Command::PushSourceControl => self.push_source_control(ctx),
+            Command::OpenCloneDialog => self.open_clone_dialog(),
+            Command::SourceOperation(action) => self.request_source_operation(action, ctx),
+            Command::ConfirmOperationAbort => self.confirm_operation_abort(ctx),
+            Command::CancelOperationAbort => self.view.source_control.abort_prompt = false,
+            Command::ResolveConflict(path, side) => self.resolve_source_conflict(path, side, ctx),
+            Command::OpenStashDialog => self.open_stash_dialog(ctx),
+            Command::CloseStashDialog => self.close_stash_dialog(),
+            Command::CreateStash => self.create_stash(ctx),
+            Command::SelectStash(id) => self.select_stash(id, ctx),
+            Command::ApplyStash(id, pop) => self.apply_stash(id, pop, ctx),
+            Command::RequestStashDrop(id) => self.request_stash_drop(id),
+            Command::ConfirmStashDrop => self.confirm_stash_drop(ctx),
+            Command::CancelStashDrop => {
+                if let Some(dialog) = &mut self.view.stash_dialog {
+                    dialog.confirm_drop = None;
+                }
+            }
+            Command::PlanHistoryAction(action, title) => {
+                self.plan_history_action(action, title, ctx)
+            }
+            Command::PlanForcePush => self.plan_force_push(ctx),
+            Command::SetHistoryOption(option) => self.set_history_option(option, ctx),
+            Command::ConfirmHistoryAction => self.confirm_history_action(ctx),
+            Command::CancelHistoryAction => self.cancel_history_op(),
+            Command::OpenTagsDialog(target) => self.open_tags_dialog(target, ctx),
+            Command::CloseTagsDialog => self.close_tags_dialog(),
+            Command::CreateTag => self.create_tag(ctx),
+            Command::RequestTagDelete(name) => self.request_tag_delete(name),
+            Command::ConfirmTagDelete => self.confirm_tag_delete(ctx),
+            Command::CancelTagDelete => {
+                if let Some(dialog) = &mut self.view.tags_dialog {
+                    dialog.confirm_delete = None;
+                }
+            }
+            Command::ChooseTagRemote(remote) => self.choose_tag_remote(remote),
+            Command::PushTag(name) => self.push_tag(name, ctx),
+            Command::OpenHistoryDialog => self.open_history_dialog(ctx),
+            Command::CloseHistoryDialog => self.close_history_dialog(),
+            Command::LoadMoreHistory => self.load_history_page(ctx),
+            Command::SelectCommit(id) => self.select_commit(id, ctx),
+            Command::ApplyHistoryFilter => self.apply_history_filter(ctx),
+            Command::ClearHistoryFilter => self.clear_history_filter(ctx),
+            Command::SetHistoryRef(reference) => self.set_history_ref(reference, ctx),
+            Command::OpenFileHistory => self.open_file_history(ctx),
+            Command::OpenBlame => self.open_blame(ctx),
+            Command::CloseBlame => self.close_blame(),
+            Command::ShowBlamedCommit(id) => self.show_blamed_commit(id, ctx),
+            Command::ChooseHistoryParent(parent) => self.choose_history_parent(parent, ctx),
+            Command::OpenCommitFile(index) => self.open_commit_file(index, ctx),
+            Command::CloseCommitFile => self.close_commit_file(),
+            Command::OpenBranchDialog => self.open_branch_dialog(ctx),
+            Command::CloseBranchDialog => self.close_branch_dialog(),
+            Command::SwitchBranch(name, remote) => self.switch_to_branch(name, remote, ctx),
+            Command::CreateBranch => self.create_new_branch(ctx),
+            Command::RenameBranch => self.rename_current_branch(ctx),
+            Command::RequestDeleteBranch(name) => self.request_branch_delete(name),
+            Command::ConfirmDeleteBranch => self.confirm_branch_delete(ctx),
+            Command::PickCloneDestination => self.pick_clone_destination(),
+            Command::StartClone => self.start_clone(ctx),
+            Command::CancelClone => self.cancel_clone(),
+            Command::FetchSourceControl => self.fetch_source_control(ctx),
+            Command::PublishSourceBranch => self.publish_source_branch(ctx),
+            Command::InitSourceRepository => self.init_source_repository(ctx),
             Command::ShowSourceDiff(path, side) => self.show_source_diff(path, side, ctx),
+            Command::SelectRepository(root) => self.select_repository(root),
             Command::StagePaths(paths) => self.stage_source_paths(paths, ctx),
             Command::UnstagePaths(paths) => self.unstage_source_paths(paths, ctx),
             Command::RequestSourceRevert(paths) => self.request_source_revert(paths),
