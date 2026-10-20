@@ -7,6 +7,7 @@ use std::{
     io::{Read, Write},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 
 #[cfg(windows)]
@@ -394,20 +395,70 @@ fn git_paths<const N: usize>(
     }
 }
 
+/// Remote operations can hang on a stalled network or an unanswerable prompt.
+const REMOTE_TIMEOUT: Duration = Duration::from_secs(300);
+
 fn git_remote_command<const N: usize>(
     root: &Path,
     args: [&str; N],
     action: &str,
 ) -> Result<(), String> {
-    let output = git_command(root)
-        .args(["--no-optional-locks"])
-        .args(args)
-        .output()
+    run_remote(
+        git_command(root)
+            .args(["--no-optional-locks"])
+            .args(args)
+            // No terminal exists to answer a credential prompt; fail instead
+            // of waiting. Credential helpers and agents still work.
+            .env("GIT_TERMINAL_PROMPT", "0"),
+        action,
+        REMOTE_TIMEOUT,
+    )
+}
+
+/// Runs a prepared Git command, draining its output concurrently and killing it
+/// once `timeout` passes. A timeout is reported as an uncertain outcome because
+/// the remote may have applied the change before the process was stopped.
+fn run_remote(command: &mut Command, action: &str, timeout: Duration) -> Result<(), String> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| format!("Could not start Git {action}: {error}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(git_failure(&format!("Git {action} failed"), &output.stderr))
+    let drain = |stream: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut stream) = stream {
+                let _ = stream.read_to_end(&mut bytes);
+            }
+            bytes
+        })
+    };
+    let stdout = drain(child.stdout.take().map(|s| Box::new(s) as _));
+    let stderr = drain(child.stderr.take().map(|s| Box::new(s) as _));
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(());
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+            Err(error) => {
+                return Err(format!("Could not finish Git {action}: {error}"));
+            }
+        }
+    };
+    let mut detail = stderr.join().unwrap_or_default();
+    detail.extend(stdout.join().unwrap_or_default());
+    match status {
+        Ok(status) if status.success() => Ok(()),
+        Ok(_) => Err(git_failure(&format!("Git {action} failed"), &detail)),
+        Err(()) => Err(format!(
+            "Git {action} timed out after {} seconds and was stopped; the remote may or may not have applied it. Refresh and check before retrying",
+            timeout.as_secs()
+        )),
     }
 }
 
@@ -1027,6 +1078,18 @@ mod tests {
         assert!(staged("*.txt"));
         assert!(staged(":(top)b.txt"));
         assert!(!staged("a.txt"), "a glob must not stage other files");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_commands_time_out_and_report_an_uncertain_outcome() {
+        let mut command = Command::new("sleep");
+        command.arg("30");
+        let started = Instant::now();
+        let error = run_remote(&mut command, "push", Duration::from_millis(200)).unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(error.contains("timed out"), "{error}");
+        assert!(error.contains("may or may not"), "{error}");
     }
 
     #[test]

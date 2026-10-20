@@ -211,9 +211,11 @@ Open a folder inside a Git repository and select Source Control. Lumen shows sta
 - Working comparisons have a read-only Git side and an editable working-document side. Staged comparisons are read-only.
 - An already-open dirty document is reused without replacing its text. A clean diff-only preview is dropped on close; dirty previews retain their file tab.
 - Stage/unstage individual files or groups. Independent working-tree hunks can be staged when the editor has no unsaved changes; untracked files use whole-file staging.
-- Commit staged changes with a message. **Amend** updates the latest local commit; an empty message retains its subject. Amend rewrites local history and does not push automatically.
-- Push uses Git’s configured remote/upstream. Pull uses `git pull --ff-only` and is blocked while workspace documents have unsaved edits. Authentication is provided by your Git environment.
+- Commit staged changes with a message. Repository hooks run as in the command line and their output is shown if one fails; the draft is kept. **Amend** updates the latest local commit; an empty message retains its subject. Amend rewrites local history and does not push automatically.
+- Push uses Git’s configured remote/upstream. Pull uses `git pull --ff-only` and is blocked while workspace documents have unsaved edits. Authentication is provided by your Git environment; there is no terminal prompt, so a command that needs one fails, and a remote command that does not finish within five minutes is stopped with an "outcome uncertain" message.
 - Discard asks for confirmation and restores eligible tracked files and their index state from `HEAD`. It preserves untracked files and does not run `git clean`.
+
+Only one Git change runs at a time; Lumen refuses to switch folders until it finishes, and reloads open files without unsaved edits afterwards. Hunk staging is refused if the file changed since the diff was shown. Comparisons read at most 256 KiB (128 KiB for untracked files) of UTF-8 text; larger or binary files are not previewed.
 
 The visible panel refreshes to detect external Git changes. Reopen a comparison to update its snapshot; change markers are hidden when the editable text differs from that snapshot. Merge-resolution UI and a history browser are not implemented.
 

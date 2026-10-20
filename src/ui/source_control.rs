@@ -69,16 +69,23 @@ fn source_label(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> egui::Re
         egui::vec2(ui.available_width().max(0.0), 22.0),
         egui::Sense::hover(),
     );
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), FontId::proportional(13.0), color);
+    let clipped = galley.size().x > rect.width();
     ui.painter()
         .with_clip_rect(rect.intersect(ui.clip_rect()))
-        .text(
-            rect.left_center(),
-            egui::Align2::LEFT_CENTER,
-            text,
-            FontId::proportional(13.0),
+        .galley(
+            egui::pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
+            galley,
             color,
         );
-    response
+    // Clipped Git errors must stay reachable at narrow sidebar widths.
+    if clipped {
+        response.on_hover_text(text)
+    } else {
+        response
+    }
 }
 
 impl Workbench<'_> {

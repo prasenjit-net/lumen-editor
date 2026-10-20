@@ -89,6 +89,16 @@ impl LumenApp {
             .is_some_and(|job| job.mutating)
     }
 
+    /// Switching or closing the workspace would drop a running mutation's
+    /// outcome, so it waits until Git finishes.
+    pub(crate) fn workspace_change_blocked_by_git(&mut self) -> bool {
+        if self.source_mutation_in_flight() {
+            self.view.status = "Wait for the current Git operation to finish".into();
+            return true;
+        }
+        false
+    }
+
     /// Claims the single mutation slot, or explains why the action is refused.
     fn begin_source_mutation(&mut self) -> bool {
         if self.source_mutation_in_flight() {
@@ -789,6 +799,24 @@ mod tests {
             .unwrap();
         app.poll_source_control(&ctx);
         assert_eq!(app.view.status, "Committed changes");
+    }
+
+    #[test]
+    fn switching_or_closing_the_workspace_waits_for_a_running_mutation() {
+        let root = std::path::Path::new("/workspace");
+        let mut app = app_with_change(root, std::path::Path::new("src/main.rs"));
+        let (_sender, receiver) = mpsc::channel();
+        app.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
+        app.close_folder();
+        assert_eq!(app.editor.workspace.as_deref(), Some(root));
+        assert!(app.source_control_job.is_some());
+        assert_eq!(
+            app.view.status,
+            "Wait for the current Git operation to finish"
+        );
     }
 
     #[test]
