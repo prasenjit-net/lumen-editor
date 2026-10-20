@@ -159,6 +159,18 @@ pub(crate) struct GitSnapshot {
     pub(crate) changes: Vec<GitChange>,
 }
 
+/// A local or remote-tracking branch for the branch picker.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GitBranch {
+    /// Short name: `feature/x` for a local branch, `origin/feature/x` for a remote one.
+    pub(crate) name: String,
+    pub(crate) remote: bool,
+    pub(crate) current: bool,
+    pub(crate) upstream: Option<String>,
+    /// Another worktree that has this branch checked out, if any.
+    pub(crate) checked_out_at: Option<PathBuf>,
+}
+
 /// A configured remote. Fetch and push URLs are kept apart because they may
 /// differ; both have embedded credentials removed for display.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -229,6 +241,13 @@ pub(crate) trait SourceControlService: Send + Sync {
     fn commit(&self, root: &Path, message: &str, amend: bool) -> Result<(), String>;
     fn pull(&self, root: &Path) -> Result<(), String>;
     fn push(&self, root: &Path) -> Result<(), String>;
+    fn branches(&self, root: &Path) -> Result<Vec<GitBranch>, String>;
+    /// Switches to a local branch, or creates a tracking branch for a remote one.
+    fn switch_branch(&self, root: &Path, name: &str, remote: bool) -> Result<(), String>;
+    fn create_branch(&self, root: &Path, name: &str) -> Result<(), String>;
+    fn rename_branch(&self, root: &Path, from: &str, to: &str) -> Result<(), String>;
+    /// Deletes a fully merged local branch (`git branch -d`); never forces.
+    fn delete_branch(&self, root: &Path, name: &str) -> Result<(), String>;
     /// Fetches every remote and prunes deleted remote branches.
     fn fetch(&self, root: &Path) -> Result<(), String>;
     /// Pushes `branch` to `remote` and records it as the upstream.
@@ -523,15 +542,88 @@ impl SourceControlService for LocalGit {
     }
 
     fn pull(&self, root: &Path) -> Result<(), String> {
-        git_remote_command(root, ["pull", "--ff-only"], "pull")
+        git_run(root, ["pull", "--ff-only"], "pull")
     }
 
     fn push(&self, root: &Path) -> Result<(), String> {
-        git_remote_command(root, ["push"], "push")
+        git_run(root, ["push"], "push")
+    }
+
+    fn branches(&self, root: &Path) -> Result<Vec<GitBranch>, String> {
+        let output = git_command(root)
+            .args([
+                "--no-optional-locks",
+                "for-each-ref",
+                "--format=%(refname)%00%(upstream:short)%00%(HEAD)%00%(worktreepath)",
+                "refs/heads",
+                "refs/remotes",
+            ])
+            .output()
+            .map_err(|error| format!("Could not list branches: {error}"))?;
+        if !output.status.success() {
+            return Err(git_failure("Could not list branches", &output.stderr));
+        }
+        let own_root = canonical_path(root);
+        let mut branches = Vec::new();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let mut fields = line.split('\0');
+            let (Some(refname), Some(upstream), Some(head), Some(worktree)) =
+                (fields.next(), fields.next(), fields.next(), fields.next())
+            else {
+                continue;
+            };
+            let (name, remote) = if let Some(name) = refname.strip_prefix("refs/heads/") {
+                (name, false)
+            } else if let Some(name) = refname.strip_prefix("refs/remotes/") {
+                // `origin/HEAD` is a pointer, not a branch to switch to.
+                if name.ends_with("/HEAD") {
+                    continue;
+                }
+                (name, true)
+            } else {
+                continue;
+            };
+            let worktree = (!worktree.is_empty())
+                .then(|| PathBuf::from(worktree))
+                .filter(|path| canonical_path(path) != own_root);
+            branches.push(GitBranch {
+                name: name.to_owned(),
+                remote,
+                current: head == "*",
+                upstream: (!upstream.is_empty()).then(|| upstream.to_owned()),
+                checked_out_at: worktree,
+            });
+        }
+        Ok(branches)
+    }
+
+    fn switch_branch(&self, root: &Path, name: &str, remote: bool) -> Result<(), String> {
+        check_branch_name(root, name, remote)?;
+        if remote {
+            git_run(root, ["switch", "--track", name], "switch")
+        } else {
+            git_run(root, ["switch", name], "switch")
+        }
+    }
+
+    fn create_branch(&self, root: &Path, name: &str) -> Result<(), String> {
+        check_branch_name(root, name, false)?;
+        git_run(root, ["switch", "--create", name], "create branch")
+    }
+
+    fn rename_branch(&self, root: &Path, from: &str, to: &str) -> Result<(), String> {
+        check_branch_name(root, from, false)?;
+        check_branch_name(root, to, false)?;
+        git_run(root, ["branch", "--move", from, to], "rename branch")
+    }
+
+    fn delete_branch(&self, root: &Path, name: &str) -> Result<(), String> {
+        check_branch_name(root, name, false)?;
+        git_run(root, ["branch", "--delete", name], "delete branch")
     }
 
     fn fetch(&self, root: &Path) -> Result<(), String> {
-        git_remote_command(root, ["fetch", "--all", "--prune"], "fetch")
+        git_run(root, ["fetch", "--all", "--prune"], "fetch")
     }
 
     fn publish(&self, root: &Path, remote: &str, branch: &str) -> Result<(), String> {
@@ -540,7 +632,7 @@ impl SourceControlService for LocalGit {
                 return Err(format!("Invalid remote or branch name: {name}"));
             }
         }
-        git_remote_command(root, ["push", "--set-upstream", remote, branch], "publish")
+        git_run(root, ["push", "--set-upstream", remote, branch], "publish")
     }
 
     fn clone_repository(
@@ -768,11 +860,7 @@ fn git_paths<const N: usize>(
 /// Remote operations can hang on a stalled network or an unanswerable prompt.
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(300);
 
-fn git_remote_command<const N: usize>(
-    root: &Path,
-    args: [&str; N],
-    action: &str,
-) -> Result<(), String> {
+fn git_run<const N: usize>(root: &Path, args: [&str; N], action: &str) -> Result<(), String> {
     run_remote(
         git_command(root)
             .args(["--no-optional-locks"])
@@ -829,6 +917,29 @@ fn run_remote(command: &mut Command, action: &str, timeout: Duration) -> Result<
             "Git {action} timed out after {} seconds and was stopped; the remote may or may not have applied it. Refresh and check before retrying",
             timeout.as_secs()
         )),
+    }
+}
+
+/// Rejects names Git would parse as options or that are not valid ref names.
+/// Remote-tracking names are validated as `refs/remotes/<name>`.
+fn check_branch_name(root: &Path, name: &str, remote: bool) -> Result<(), String> {
+    if name.is_empty() || name.starts_with('-') {
+        return Err(format!("\"{name}\" is not a valid branch name"));
+    }
+    let valid = if remote {
+        git_command(root)
+            .args(["check-ref-format", &format!("refs/remotes/{name}")])
+            .output()
+    } else {
+        git_command(root)
+            .args(["check-ref-format", "--branch", name])
+            .output()
+    }
+    .is_ok_and(|output| output.status.success());
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("\"{name}\" is not a valid branch name"))
     }
 }
 
@@ -2021,6 +2132,133 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
             message.starts_with("Subject line\n\nBody paragraph."),
             "{message}"
         );
+    }
+
+    fn repo_with_commit(root: &Path) {
+        init_repo(root);
+        git_ok(root, &["checkout", "-q", "-b", "main"]);
+        fs::write(root.join("f.txt"), "base\n").unwrap();
+        git_ok(root, &["add", "--", "f.txt"]);
+        git_ok(root, &["commit", "-q", "-m", "base"]);
+    }
+
+    #[test]
+    fn branches_can_be_created_listed_switched_renamed_and_safely_deleted() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        LocalGit.create_branch(&root, "feature/a").unwrap();
+        let listed = LocalGit.branches(&root).unwrap();
+        assert!(listed.iter().any(|b| b.name == "feature/a" && b.current));
+        assert!(listed.iter().any(|b| b.name == "main" && !b.current));
+        // Unmerged work is protected from deletion.
+        fs::write(root.join("f.txt"), "feature\n").unwrap();
+        git_ok(&root, &["commit", "-q", "-am", "feature work"]);
+        LocalGit.switch_branch(&root, "main", false).unwrap();
+        let error = LocalGit.delete_branch(&root, "feature/a").unwrap_err();
+        assert!(error.contains("not fully merged"), "{error}");
+        LocalGit
+            .rename_branch(&root, "feature/a", "feature/b")
+            .unwrap();
+        let names: Vec<_> = LocalGit
+            .branches(&root)
+            .unwrap()
+            .into_iter()
+            .map(|b| b.name)
+            .collect();
+        assert!(
+            names.contains(&"feature/b".to_owned()) && !names.contains(&"feature/a".to_owned())
+        );
+        git_ok(&root, &["merge", "-q", "feature/b"]);
+        LocalGit.delete_branch(&root, "feature/b").unwrap();
+    }
+
+    #[test]
+    fn option_like_and_invalid_branch_names_are_rejected_before_running_git() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        for name in ["--force", "-x", "", "bad name", "a..b", "ends.lock"] {
+            assert!(LocalGit.create_branch(&root, name).is_err(), "{name}");
+            assert!(
+                LocalGit.switch_branch(&root, name, false).is_err(),
+                "{name}"
+            );
+        }
+        assert!(LocalGit.rename_branch(&root, "main", "-bad").is_err());
+        assert!(LocalGit.delete_branch(&root, "--force").is_err());
+    }
+
+    #[test]
+    fn switching_refuses_to_overwrite_local_edits_and_keeps_them() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        LocalGit.create_branch(&root, "other").unwrap();
+        fs::write(root.join("f.txt"), "other\n").unwrap();
+        git_ok(&root, &["commit", "-q", "-am", "other"]);
+        LocalGit.switch_branch(&root, "main", false).unwrap();
+        fs::write(root.join("f.txt"), "my unsaved-on-disk edit\n").unwrap();
+        assert!(LocalGit.switch_branch(&root, "other", false).is_err());
+        assert_eq!(
+            fs::read_to_string(root.join("f.txt")).unwrap(),
+            "my unsaved-on-disk edit\n"
+        );
+        assert!(
+            LocalGit
+                .branches(&root)
+                .unwrap()
+                .iter()
+                .any(|b| b.name == "main" && b.current)
+        );
+    }
+
+    #[test]
+    fn remote_branches_create_tracking_branches_and_occupied_branches_are_reported() {
+        let directory = tempfile::tempdir().unwrap();
+        let top = canonical_path(directory.path()).unwrap();
+        let bare = top.join("remote.git");
+        fs::create_dir_all(&bare).unwrap();
+        git_ok(&bare, &["init", "--quiet", "--bare"]);
+        let work = top.join("work");
+        fs::create_dir_all(&work).unwrap();
+        repo_with_commit(&work);
+        git_ok(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        git_ok(&work, &["branch", "shared"]);
+        git_ok(&work, &["push", "-q", "origin", "main", "shared"]);
+        git_ok(&work, &["fetch", "-q"]);
+        git_ok(&work, &["branch", "--delete", "shared"]);
+        let listed = LocalGit.branches(&work).unwrap();
+        assert!(listed.iter().any(|b| b.name == "origin/shared" && b.remote));
+        assert!(!listed.iter().any(|b| b.name.ends_with("/HEAD")));
+        LocalGit
+            .switch_branch(&work, "origin/shared", true)
+            .unwrap();
+        let listed = LocalGit.branches(&work).unwrap();
+        let shared = listed.iter().find(|b| b.name == "shared").unwrap();
+        assert!(shared.current);
+        assert_eq!(shared.upstream.as_deref(), Some("origin/shared"));
+        // A second worktree sees `shared` as occupied by the first.
+        let linked = top.join("linked");
+        git_ok(
+            &work,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "side",
+                linked.to_str().unwrap(),
+            ],
+        );
+        let from_linked = LocalGit.branches(&linked).unwrap();
+        let occupied = from_linked.iter().find(|b| b.name == "shared").unwrap();
+        assert_eq!(
+            occupied.checked_out_at.as_deref().and_then(canonical_path),
+            Some(work.clone())
+        );
+        let own = from_linked.iter().find(|b| b.name == "side").unwrap();
+        assert!(own.checked_out_at.is_none() && own.current);
     }
 
     #[test]

@@ -319,13 +319,13 @@ impl LumenApp {
             );
             return;
         }
-        self.run_source_remote_operation(ctx, "Pulled latest changes", |service, root| {
+        self.run_source_repo_operation(ctx, "Pulled latest changes", |service, root| {
             service.pull(root)
         });
     }
 
     pub(crate) fn fetch_source_control(&mut self, ctx: &egui::Context) {
-        self.run_source_remote_operation(ctx, "Fetched remote changes", |service, root| {
+        self.run_source_repo_operation(ctx, "Fetched remote changes", |service, root| {
             service.fetch(root)
         });
     }
@@ -343,7 +343,7 @@ impl LumenApp {
                 return;
             }
         };
-        self.run_source_remote_operation(ctx, "Published branch", move |service, root| {
+        self.run_source_repo_operation(ctx, "Published branch", move |service, root| {
             service.publish(root, &remote, &branch)
         });
     }
@@ -381,7 +381,7 @@ impl LumenApp {
     }
 
     pub(crate) fn push_source_control(&mut self, ctx: &egui::Context) {
-        self.run_source_remote_operation(ctx, "Pushed local commits", |service, root| {
+        self.run_source_repo_operation(ctx, "Pushed local commits", |service, root| {
             service.push(root)
         });
     }
@@ -586,10 +586,10 @@ impl LumenApp {
         });
     }
 
-    fn run_source_remote_operation<F>(
+    pub(crate) fn run_source_repo_operation<F>(
         &mut self,
         ctx: &egui::Context,
-        success: &'static str,
+        success: impl Into<String>,
         operation: F,
     ) where
         F: FnOnce(
@@ -612,11 +612,12 @@ impl LumenApp {
             return;
         }
         self.view.source_control.error = None;
+        let success: String = success.into();
         let service = self.source_control_service.clone();
         let worker_ctx = ctx.clone();
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
-            let result = operation(service.as_ref(), &root).map(|_| success.into());
+            let result = operation(service.as_ref(), &root).map(|_| success);
             let _ = sender.send(GitResult::Operation(result));
             worker_ctx.request_repaint();
         });
@@ -694,6 +695,8 @@ impl LumenApp {
                 self.view.source_control.loading = false;
                 self.source_control_job = None;
                 self.reconcile_clean_documents();
+                // An open branch picker must show the branches as they are now.
+                self.request_branches(ctx);
                 match result {
                     Ok(status) => {
                         self.view.status = status;

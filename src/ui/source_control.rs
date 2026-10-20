@@ -165,7 +165,11 @@ fn source_heading(ui: &mut egui::Ui, title: &str, count: usize) {
     ui.painter().text(
         rect.left_center() + egui::vec2(4.0, 0.0),
         egui::Align2::LEFT_CENTER,
-        format!("{title}  {count}"),
+        if count == 0 {
+            title.to_owned()
+        } else {
+            format!("{title}  {count}")
+        },
         FontId::proportional(11.5),
         colors.muted,
     );
@@ -257,6 +261,13 @@ impl Workbench<'_> {
             .on_hover_text(remote_details(&snapshot));
         ui.horizontal_wrapped(|ui| {
             let idle = !self.view.source_control.loading;
+            if ui
+                .add_enabled(idle, egui::Button::new("Branches…"))
+                .on_hover_text("Switch, create, rename or delete branches")
+                .clicked()
+            {
+                self.command(Command::OpenBranchDialog);
+            }
             if ui
                 .add_enabled(
                     idle && !snapshot.remotes.is_empty(),
@@ -559,6 +570,156 @@ impl Workbench<'_> {
             );
             source_label(ui, &format!("{name}: {error}"), colors.error)
                 .on_hover_text(format!("{}\n{error}", root.display()));
+        }
+    }
+
+    pub(crate) fn branch_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(dialog) = &mut self.view.branch_dialog else {
+            return;
+        };
+        let mut actions: Vec<Command> = Vec::new();
+        let modal = egui::Modal::new(egui::Id::new("git_branch_dialog")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.heading("Branches");
+            ui.add_space(4.0);
+            ui.add(
+                TextEdit::singleline(&mut dialog.filter)
+                    .id_salt("git_branch_filter")
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Filter branches"),
+            );
+            let filter = dialog.filter.to_lowercase();
+            let confirming = dialog.confirm_delete.clone();
+            ScrollArea::vertical()
+                .id_salt("git_branch_list")
+                .max_height(240.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    if dialog.loading && dialog.branches.is_empty() {
+                        ui.label(RichText::new("Reading branches…").color(colors.muted));
+                    }
+                    for remote in [false, true] {
+                        let mut heading_shown = false;
+                        for branch in dialog.branches.iter().filter(|b| {
+                            b.remote == remote && b.name.to_lowercase().contains(&filter)
+                        }) {
+                            if !heading_shown {
+                                source_heading(ui, if remote { "REMOTE" } else { "LOCAL" }, 0);
+                                heading_shown = true;
+                            }
+                            let mut label = branch.name.clone();
+                            if branch.current {
+                                label.push_str("  (current)");
+                            }
+                            if let Some(upstream) = &branch.upstream {
+                                label.push_str(&format!("  tracks {upstream}"));
+                            }
+                            if branch.checked_out_at.is_some() {
+                                label.push_str("  (in another worktree)");
+                            }
+                            let response = explorer_row(ui, label, 4, branch.current)
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(match &branch.checked_out_at {
+                                    Some(path) => format!("Checked out at {}", path.display()),
+                                    None if remote => format!(
+                                        "Create a local branch tracking {} and switch to it",
+                                        branch.name
+                                    ),
+                                    None => format!("Switch to {}", branch.name),
+                                });
+                            let deletable =
+                                !remote && !branch.current && branch.checked_out_at.is_none();
+                            let delete_clicked = deletable
+                                && ui
+                                    .put(
+                                        egui::Rect::from_min_size(
+                                            response.rect.right_top() - egui::vec2(22.0, 0.0),
+                                            egui::vec2(22.0, response.rect.height()),
+                                        ),
+                                        egui::Button::new(crate::icon::X).frame(false),
+                                    )
+                                    .on_hover_text("Delete this branch (only if fully merged)")
+                                    .clicked();
+                            if delete_clicked {
+                                actions.push(Command::RequestDeleteBranch(branch.name.clone()));
+                            } else if response.clicked() {
+                                actions.push(Command::SwitchBranch(branch.name.clone(), remote));
+                            }
+                        }
+                    }
+                });
+            if let Some(name) = &confirming {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Delete {name}? Git refuses if it has unmerged commits."
+                    ))
+                    .color(colors.muted),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Delete Branch").clicked() {
+                        actions.push(Command::ConfirmDeleteBranch);
+                    }
+                    if ui.button("Keep").clicked() {
+                        dialog.confirm_delete = None;
+                    }
+                });
+            }
+            ui.add_space(6.0);
+            ui.label(RichText::new("New branch from the current commit").color(colors.muted));
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 110.0).max(40.0);
+                ui.add(
+                    TextEdit::singleline(&mut dialog.new_name)
+                        .id_salt("git_branch_new")
+                        .desired_width(width)
+                        .hint_text("feature/name"),
+                );
+                if ui
+                    .add_enabled(
+                        !dialog.new_name.trim().is_empty(),
+                        egui::Button::new("Create"),
+                    )
+                    .on_hover_text("Create the branch and switch to it")
+                    .clicked()
+                {
+                    actions.push(Command::CreateBranch);
+                }
+            });
+            ui.label(RichText::new("Rename current branch").color(colors.muted));
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 110.0).max(40.0);
+                ui.add(
+                    TextEdit::singleline(&mut dialog.rename_to)
+                        .id_salt("git_branch_rename")
+                        .desired_width(width)
+                        .hint_text("new name"),
+                );
+                if ui
+                    .add_enabled(
+                        !dialog.rename_to.trim().is_empty(),
+                        egui::Button::new("Rename"),
+                    )
+                    .clicked()
+                {
+                    actions.push(Command::RenameBranch);
+                }
+            });
+            if let Some(error) = &dialog.error {
+                ui.add_space(4.0);
+                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(8.0);
+            if ui.button("Close").clicked() {
+                actions.push(Command::CloseBranchDialog);
+            }
+        });
+        if modal.should_close() {
+            actions.push(Command::CloseBranchDialog);
+        }
+        for action in actions {
+            self.command(action);
         }
     }
 

@@ -19,6 +19,7 @@ mod events;
 mod explorer_ops;
 pub(crate) mod find;
 mod folding;
+pub(crate) mod git_branches;
 pub(crate) mod git_clone;
 mod language_edits;
 mod language_services;
@@ -197,6 +198,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.delete_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.source_revert_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.clone_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.branch_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.save_conflict_dialog(ctx));
         self.render_component(ctx, |workbench| {
             workbench.language_server_details_dialog(ctx)
@@ -208,6 +210,7 @@ impl eframe::App for LumenApp {
         self.poll_file_index(ctx);
         self.poll_source_control(ctx);
         self.poll_clone(ctx);
+        self.poll_branches(ctx);
         self.poll_terminal(ctx);
         self.poll_agents(ctx);
         self.poll_native_agents(ctx);
