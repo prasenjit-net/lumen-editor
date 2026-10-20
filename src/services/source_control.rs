@@ -218,6 +218,35 @@ pub(crate) struct GitCommit {
     pub(crate) subject: String,
 }
 
+/// What the history list is filtered by. Empty fields mean "no filter".
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GitLogQuery {
+    /// Matches commit messages, or a commit id when it is one.
+    pub(crate) text: String,
+    pub(crate) author: String,
+    /// A repository-relative file whose history (following renames) to show.
+    pub(crate) path: Option<String>,
+    /// A branch or tag name to start from instead of HEAD.
+    pub(crate) reference: Option<String>,
+}
+
+/// One line of `git blame`: the commit that last changed it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GitBlameLine {
+    /// Full commit id; all zeros for a line not committed yet.
+    pub(crate) commit: String,
+    pub(crate) author: String,
+    pub(crate) time: i64,
+    pub(crate) summary: String,
+    pub(crate) text: String,
+}
+
+impl GitBlameLine {
+    pub(crate) fn is_uncommitted(&self) -> bool {
+        self.commit.bytes().all(|b| b == b'0')
+    }
+}
+
 /// One page of history anchored to a fixed starting commit, so refs that move
 /// between pages cannot duplicate or skip rows.
 #[derive(Clone, Debug, Default)]
@@ -347,11 +376,16 @@ pub(crate) trait SourceControlService: Send + Sync {
         change: &GitChange,
         side: ConflictSide,
     ) -> Result<(), String>;
+    /// Blame for the saved contents of `path` (relative to `root`), line by line.
+    fn blame(&self, root: &Path, path: &str) -> Result<Vec<GitBlameLine>, String>;
+    /// Branch and tag names usable as a history starting point.
+    fn history_refs(&self, root: &Path) -> Result<Vec<String>, String>;
     /// `limit` commits starting `skip` rows after `anchor` (`None` starts at HEAD
-    /// and returns the resolved anchor for later pages).
+    /// or the query's reference and returns the resolved anchor for later pages).
     fn log(
         &self,
         root: &Path,
+        query: &GitLogQuery,
         anchor: Option<&str>,
         skip: usize,
         limit: usize,
@@ -844,44 +878,143 @@ impl SourceControlService for LocalGit {
         git_paths(root, ["add", "--"], &paths, "stage")
     }
 
+    fn blame(&self, root: &Path, path: &str) -> Result<Vec<GitBlameLine>, String> {
+        let relative = Path::new(path);
+        if path.is_empty()
+            || !relative
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+        {
+            return Err("Blame target is not a repository file".into());
+        }
+        let metadata = fs::symlink_metadata(root.join(relative))
+            .map_err(|error| format!("Could not read {path}: {error}"))?;
+        if !metadata.is_file() {
+            return Err("Blame needs a regular file".into());
+        }
+        if metadata.len() > MAX_BLAME_BYTES {
+            return Err("This file is too large to blame".into());
+        }
+        let output = git_command(root)
+            .args(["--no-optional-locks", "blame", "--porcelain", "--"])
+            .arg(path)
+            .output()
+            .map_err(|error| format!("Could not start Git blame: {error}"))?;
+        if !output.status.success() {
+            return Err(git_failure("Git blame failed", &output.stderr));
+        }
+        parse_blame(&String::from_utf8_lossy(&output.stdout))
+    }
+
+    fn history_refs(&self, root: &Path) -> Result<Vec<String>, String> {
+        let output = git_command(root)
+            .args([
+                "--no-optional-locks",
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/heads",
+                "refs/remotes",
+                "refs/tags",
+            ])
+            .output()
+            .map_err(|error| format!("Could not list references: {error}"))?;
+        if !output.status.success() {
+            return Err(git_failure("Could not list references", &output.stderr));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|name| {
+                name.strip_prefix("refs/heads/")
+                    .or_else(|| name.strip_prefix("refs/remotes/"))
+                    .or_else(|| name.strip_prefix("refs/tags/"))
+            })
+            .filter(|name| !name.ends_with("/HEAD"))
+            .map(str::to_owned)
+            .collect())
+    }
+
     fn log(
         &self,
         root: &Path,
+        query: &GitLogQuery,
         anchor: Option<&str>,
         skip: usize,
         limit: usize,
     ) -> Result<GitLogPage, String> {
-        let anchor = match anchor {
-            Some(anchor) => {
+        let resolve = |spec: &str| -> Option<String> {
+            git_command(root)
+                .args([
+                    "--no-optional-locks",
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    spec,
+                ])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        };
+        let text = query.text.trim();
+        // A pasted commit id shows just that commit.
+        let by_id = (anchor.is_none()
+            && (4..=64).contains(&text.len())
+            && text.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| resolve(&format!("{text}^{{commit}}")))
+        .flatten();
+        let anchor = match (anchor, &by_id) {
+            (Some(anchor), _) => {
                 check_object_id(anchor)?;
                 anchor.to_owned()
             }
-            None => {
-                let head = git_command(root)
-                    .args([
-                        "--no-optional-locks",
-                        "rev-parse",
-                        "--verify",
-                        "--quiet",
-                        "HEAD",
-                    ])
-                    .output()
-                    .map_err(|error| format!("Could not read history: {error}"))?;
-                if !head.status.success() {
-                    // An unborn branch has no history yet.
-                    return Ok(GitLogPage::default());
+            (None, Some(id)) => id.clone(),
+            (None, None) => {
+                match query.reference.as_deref() {
+                    Some(name) if name.starts_with('-') || name.is_empty() => {
+                        return Err("Invalid branch or tag name".into());
+                    }
+                    Some(name) => ["refs/heads/", "refs/remotes/", "refs/tags/"]
+                        .iter()
+                        .find_map(|prefix| resolve(&format!("{prefix}{name}^{{commit}}")))
+                        .ok_or_else(|| format!("{name} is not a branch or tag"))?,
+                    None => match resolve("HEAD") {
+                        Some(head) => head,
+                        // An unborn branch has no history yet.
+                        None => return Ok(GitLogPage::default()),
+                    },
                 }
-                String::from_utf8_lossy(&head.stdout).trim().to_owned()
             }
         };
-        // Ask for one extra row to learn whether another page exists.
-        let output = git_command(root)
+        let mut command = git_command(root);
+        command
             .args(["--no-optional-locks", "log", "--decorate=short", "-z"])
             .arg(format!("--skip={skip}"))
-            .arg(format!("-n{}", limit + 1))
-            .arg("--format=%H%x1f%P%x1f%an%x1f%at%x1f%D%x1f%s")
-            .arg(&anchor)
-            .arg("--")
+            .arg(format!("-n{}", if by_id.is_some() { 1 } else { limit + 1 }))
+            .arg("--format=%H%x1f%P%x1f%an%x1f%at%x1f%D%x1f%s");
+        if by_id.is_none() {
+            command.args(["--fixed-strings", "--regexp-ignore-case"]);
+            if !text.is_empty() {
+                command.arg(format!("--grep={text}"));
+            }
+            if !query.author.trim().is_empty() {
+                command.arg(format!("--author={}", query.author.trim()));
+            }
+            if query.path.is_some() {
+                command.arg("--follow");
+            }
+        }
+        command.arg(&anchor).arg("--");
+        if let (Some(path), None) = (&query.path, &by_id) {
+            let valid = !path.is_empty()
+                && Path::new(path)
+                    .components()
+                    .all(|component| matches!(component, Component::Normal(_)));
+            if !valid {
+                return Err("History path is not a repository file".into());
+            }
+            command.arg(path);
+        }
+        let output = command
             .output()
             .map_err(|error| format!("Could not read history: {error}"))?;
         if !output.status.success() {
@@ -1833,6 +1966,47 @@ fn git_command_with(root: &Path, literal_pathspecs: bool) -> Command {
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
     command
+}
+
+const MAX_BLAME_BYTES: u64 = 1024 * 1024;
+
+/// Parses `git blame --porcelain`: each source line is a `<sha> <orig> <final>`
+/// header, optional author/summary lines (only the first time a commit
+/// appears) and the line text after a tab.
+fn parse_blame(text: &str) -> Result<Vec<GitBlameLine>, String> {
+    use std::collections::HashMap;
+    let mut known: HashMap<String, (String, i64, String)> = HashMap::new();
+    let mut lines = Vec::new();
+    let mut current: Option<String> = None;
+    let mut pending = (String::new(), 0i64, String::new());
+    for line in text.lines() {
+        if let Some(content) = line.strip_prefix('\t') {
+            let commit = current.take().ok_or("Unrecognized Git blame output")?;
+            let (author, time, summary) = known
+                .entry(commit.clone())
+                .or_insert_with(|| std::mem::take(&mut pending))
+                .clone();
+            lines.push(GitBlameLine {
+                commit,
+                author,
+                time,
+                summary,
+                text: content.to_owned(),
+            });
+        } else if let Some(author) = line.strip_prefix("author ") {
+            pending.0 = author.to_owned();
+        } else if let Some(time) = line.strip_prefix("author-time ") {
+            pending.1 = time.parse().unwrap_or_default();
+        } else if let Some(summary) = line.strip_prefix("summary ") {
+            pending.2 = summary.to_owned();
+        } else if current.is_none() {
+            let first = line.split(' ').next().unwrap_or_default();
+            if first.len() >= 40 && first.bytes().all(|b| b.is_ascii_hexdigit()) {
+                current = Some(first.to_owned());
+            }
+        }
+    }
+    Ok(lines)
 }
 
 /// The `sub` field is `N...` for ordinary entries and `S<c><m><u>` for a
@@ -3218,17 +3392,32 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         let directory = tempfile::tempdir().unwrap();
         let root = canonical_path(directory.path()).unwrap();
         assert!(
-            LocalGit.log(&root, None, 0, 10).is_err()
-                || LocalGit.log(&root, None, 0, 10).unwrap().commits.is_empty()
+            LocalGit
+                .log(&root, &GitLogQuery::default(), None, 0, 10)
+                .is_err()
+                || LocalGit
+                    .log(&root, &GitLogQuery::default(), None, 0, 10)
+                    .unwrap()
+                    .commits
+                    .is_empty()
         );
         repo_with_commit(&root);
-        assert!(LocalGit.log(&root, None, 0, 10).unwrap().commits.len() == 1);
+        assert!(
+            LocalGit
+                .log(&root, &GitLogQuery::default(), None, 0, 10)
+                .unwrap()
+                .commits
+                .len()
+                == 1
+        );
         for n in 1..=5 {
             fs::write(root.join("f.txt"), format!("{n}\n")).unwrap();
             git_ok(&root, &["commit", "-q", "-am", &format!("commit {n}")]);
         }
         git_ok(&root, &["tag", "v1"]);
-        let first = LocalGit.log(&root, None, 0, 4).unwrap();
+        let first = LocalGit
+            .log(&root, &GitLogQuery::default(), None, 0, 4)
+            .unwrap();
         assert_eq!(first.commits.len(), 4);
         assert!(first.has_more);
         assert_eq!(first.commits[0].subject, "commit 5");
@@ -3238,7 +3427,9 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         // A commit made after page one must not push rows into page two.
         fs::write(root.join("f.txt"), "late\n").unwrap();
         git_ok(&root, &["commit", "-q", "-am", "late"]);
-        let second = LocalGit.log(&root, Some(&first.anchor), 4, 4).unwrap();
+        let second = LocalGit
+            .log(&root, &GitLogQuery::default(), Some(&first.anchor), 4, 4)
+            .unwrap();
         assert_eq!(second.commits.len(), 2);
         assert!(!second.has_more);
         assert_eq!(second.commits[0].subject, "commit 1");
@@ -3252,8 +3443,16 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), ids.len(), "no duplicated rows across pages");
-        assert!(LocalGit.log(&root, Some("--all"), 0, 4).is_err());
-        assert!(LocalGit.log(&root, Some("HEAD"), 0, 4).is_err());
+        assert!(
+            LocalGit
+                .log(&root, &GitLogQuery::default(), Some("--all"), 0, 4)
+                .is_err()
+        );
+        assert!(
+            LocalGit
+                .log(&root, &GitLogQuery::default(), Some("HEAD"), 0, 4)
+                .is_err()
+        );
     }
 
     #[test]
@@ -3261,7 +3460,9 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         let directory = tempfile::tempdir().unwrap();
         let root = canonical_path(directory.path()).unwrap();
         repo_with_commit(&root);
-        let page = LocalGit.log(&root, None, 0, 5).unwrap();
+        let page = LocalGit
+            .log(&root, &GitLogQuery::default(), None, 0, 5)
+            .unwrap();
         let root_commit = &page.commits[0];
         assert!(root_commit.parents.is_empty());
         let details = LocalGit.commit_details(&root, &root_commit.id, 0).unwrap();
@@ -3269,7 +3470,11 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         assert_eq!(details.message, "base");
         git_ok(&root, &["mv", "f.txt", "g.txt"]);
         git_ok(&root, &["commit", "-q", "-m", "rename\n\nBody text."]);
-        let renamed = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
+        let renamed = LocalGit
+            .log(&root, &GitLogQuery::default(), None, 0, 1)
+            .unwrap()
+            .commits
+            .remove(0);
         let details = LocalGit.commit_details(&root, &renamed.id, 0).unwrap();
         assert_eq!(details.files[0].label(), "R100  f.txt -> g.txt");
         assert_eq!(details.message, "rename\n\nBody text.");
@@ -3286,7 +3491,11 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
             &root,
             &["merge", "-q", "--no-ff", "-m", "merge side", "side"],
         );
-        let merge = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
+        let merge = LocalGit
+            .log(&root, &GitLogQuery::default(), None, 0, 1)
+            .unwrap()
+            .commits
+            .remove(0);
         assert_eq!(merge.parents.len(), 2);
         let details = LocalGit.commit_details(&root, &merge.id, 0).unwrap();
         assert_eq!(details.files[0].label(), "A  side.txt");
@@ -3301,7 +3510,11 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         let directory = tempfile::tempdir().unwrap();
         let root = canonical_path(directory.path()).unwrap();
         repo_with_commit(&root);
-        let first = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
+        let first = LocalGit
+            .log(&root, &GitLogQuery::default(), None, 0, 1)
+            .unwrap()
+            .commits
+            .remove(0);
         let details = LocalGit.commit_details(&root, &first.id, 0).unwrap();
         let cmp = LocalGit
             .commit_comparison(&root, &first.id, 0, &details.files[0])
@@ -3313,7 +3526,11 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         fs::write(root.join("keep.txt"), "k\n").unwrap();
         git_ok(&root, &["add", "--", "keep.txt"]);
         git_ok(&root, &["commit", "-q", "-am", "modify and add"]);
-        let second = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
+        let second = LocalGit
+            .log(&root, &GitLogQuery::default(), None, 0, 1)
+            .unwrap()
+            .commits
+            .remove(0);
         let details = LocalGit.commit_details(&root, &second.id, 0).unwrap();
         let modified = details.files.iter().find(|f| f.path == "f.txt").unwrap();
         let cmp = LocalGit
@@ -3325,7 +3542,11 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         git_ok(&root, &["mv", "keep.txt", "moved.txt"]);
         git_ok(&root, &["rm", "-q", "--", "f.txt"]);
         git_ok(&root, &["commit", "-q", "-m", "rename and delete"]);
-        let third = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
+        let third = LocalGit
+            .log(&root, &GitLogQuery::default(), None, 0, 1)
+            .unwrap()
+            .commits
+            .remove(0);
         let details = LocalGit.commit_details(&root, &third.id, 0).unwrap();
         let renamed = details
             .files
@@ -3388,7 +3609,11 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         git_ok(&root, &["add", "--", "other.txt"]);
         git_ok(&root, &["commit", "-q", "-m", "main change"]);
         git_ok(&root, &["merge", "-q", "--no-ff", "-m", "merge", "side"]);
-        let merge = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
+        let merge = LocalGit
+            .log(&root, &GitLogQuery::default(), None, 0, 1)
+            .unwrap()
+            .commits
+            .remove(0);
         let first = LocalGit.commit_details(&root, &merge.id, 0).unwrap();
         let f_vs_main = first.files.iter().find(|f| f.path == "f.txt").unwrap();
         let cmp = LocalGit
@@ -3411,6 +3636,192 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
                 .commit_comparison(&root, &merge.id, 0, binary)
                 .is_err()
         );
+    }
+
+    fn commit_as(root: &Path, author: &str, message: &str) {
+        git_ok(
+            root,
+            &[
+                "-c",
+                &format!("user.name={author}"),
+                "commit",
+                "-q",
+                "-am",
+                message,
+            ],
+        );
+    }
+
+    #[test]
+    fn history_filters_by_message_author_reference_path_and_commit_id() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        fs::write(root.join("f.txt"), "1\n").unwrap();
+        commit_as(&root, "Alice", "Fix the Parser bug");
+        git_ok(&root, &["tag", "v1"]);
+        git_ok(&root, &["checkout", "-q", "-b", "topic"]);
+        fs::write(root.join("f.txt"), "2\n").unwrap();
+        commit_as(&root, "Bob", "Add feature (wip)");
+        git_ok(&root, &["checkout", "-q", "main"]);
+        let query = |f: &dyn Fn(&mut GitLogQuery)| {
+            let mut query = GitLogQuery::default();
+            f(&mut query);
+            LocalGit.log(&root, &query, None, 0, 50).unwrap()
+        };
+        // Case-insensitive, literal message search (parentheses are not regex).
+        assert_eq!(query(&|q| q.text = "parser".into()).commits.len(), 1);
+        assert_eq!(
+            query(&|q| q.text = "(wip)".into()).commits.len(),
+            0,
+            "wip is on topic only"
+        );
+        assert_eq!(query(&|q| q.author = "alice".into()).commits.len(), 1);
+        // A reference changes the starting point.
+        let topic = query(&|q| q.reference = Some("topic".into()));
+        assert_eq!(topic.commits[0].subject, "Add feature (wip)");
+        assert_eq!(topic.commits.len(), 3);
+        assert_eq!(query(&|q| q.reference = Some("v1".into())).commits.len(), 2);
+        assert!(
+            LocalGit
+                .log(
+                    &root,
+                    &GitLogQuery {
+                        reference: Some("--all".into()),
+                        ..Default::default()
+                    },
+                    None,
+                    0,
+                    5
+                )
+                .is_err()
+        );
+        assert!(
+            LocalGit
+                .log(
+                    &root,
+                    &GitLogQuery {
+                        reference: Some("nope".into()),
+                        ..Default::default()
+                    },
+                    None,
+                    0,
+                    5
+                )
+                .is_err()
+        );
+        // A full or abbreviated id shows exactly that commit.
+        let head = LocalGit
+            .log(&root, &GitLogQuery::default(), None, 0, 1)
+            .unwrap()
+            .commits
+            .remove(0);
+        let by_id = query(&|q| q.text = head.id[..8].to_owned());
+        assert_eq!(by_id.commits.len(), 1);
+        assert_eq!(by_id.commits[0].id, head.id);
+        // Option-like search text is data, not a flag.
+        assert!(
+            LocalGit
+                .log(
+                    &root,
+                    &GitLogQuery {
+                        text: "--all".into(),
+                        ..Default::default()
+                    },
+                    None,
+                    0,
+                    5
+                )
+                .unwrap()
+                .commits
+                .is_empty()
+        );
+        let refs = LocalGit.history_refs(&root).unwrap();
+        assert!(refs.contains(&"topic".to_owned()) && refs.contains(&"v1".to_owned()));
+    }
+
+    #[test]
+    fn file_history_follows_renames_and_rejects_bad_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        fs::write(root.join("f.txt"), "base\nsecond line\nthird line\n").unwrap();
+        commit_as(&root, "A", "edit before rename");
+        git_ok(&root, &["mv", "f.txt", "renamed.txt"]);
+        git_ok(&root, &["commit", "-q", "-m", "rename"]);
+        fs::write(root.join("other.txt"), "x\n").unwrap();
+        git_ok(&root, &["add", "--", "other.txt"]);
+        git_ok(&root, &["commit", "-q", "-m", "unrelated"]);
+        let history = LocalGit
+            .log(
+                &root,
+                &GitLogQuery {
+                    path: Some("renamed.txt".into()),
+                    ..Default::default()
+                },
+                None,
+                0,
+                20,
+            )
+            .unwrap();
+        let subjects: Vec<_> = history.commits.iter().map(|c| c.subject.as_str()).collect();
+        assert_eq!(subjects, ["rename", "edit before rename", "base"]);
+        for bad in ["../x", "/abs", "", "a/../../b"] {
+            let query = GitLogQuery {
+                path: Some(bad.into()),
+                ..Default::default()
+            };
+            assert!(LocalGit.log(&root, &query, None, 0, 5).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn blame_attributes_lines_and_marks_uncommitted_ones() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        fs::write(root.join("f.txt"), "base\nadded by bob\n").unwrap();
+        commit_as(&root, "Bob", "bob's line");
+        fs::write(root.join("f.txt"), "base\nadded by bob\nlocal edit\n").unwrap();
+        let lines = LocalGit.blame(&root, "f.txt").unwrap();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(
+            (lines[0].author.as_str(), lines[0].summary.as_str()),
+            ("Test", "base")
+        );
+        assert_eq!(
+            (lines[1].author.as_str(), lines[1].text.as_str()),
+            ("Bob", "added by bob")
+        );
+        assert!(lines[2].is_uncommitted() && lines[2].text == "local edit");
+        assert!(!lines[0].is_uncommitted() && lines[0].commit.len() == 40);
+        assert!(LocalGit.blame(&root, "../f.txt").is_err());
+        assert!(LocalGit.blame(&root, "missing.txt").is_err());
+        fs::write(
+            root.join("big.txt"),
+            vec![b'x'; (MAX_BLAME_BYTES as usize) + 1],
+        )
+        .unwrap();
+        assert!(
+            LocalGit
+                .blame(&root, "big.txt")
+                .unwrap_err()
+                .contains("too large")
+        );
+    }
+
+    #[test]
+    fn blame_parser_reuses_commit_details_for_repeated_commits() {
+        let id = "a".repeat(40);
+        let text = format!(
+            "{id} 1 1 2\nauthor Ann\nauthor-time 100\nsummary first\nfilename f\n\tone\n{id} 2 2\n\ttwo\n"
+        );
+        let lines = parse_blame(&text).unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[1].author, "Ann");
+        assert_eq!(lines[1].time, 100);
+        assert_eq!(lines[1].text, "two");
+        assert!(parse_blame("\tstray").is_err());
     }
 
     #[test]

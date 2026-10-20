@@ -3,7 +3,8 @@
 //! runs on a worker so nothing here touches the index or worktree.
 use super::LumenApp;
 use crate::services::source_control::{
-    GitCommit, GitCommitDetails, GitCommitFile, GitComparison, GitLogPage,
+    GitBlameLine, GitCommit, GitCommitDetails, GitCommitFile, GitComparison, GitLogPage,
+    GitLogQuery,
 };
 use eframe::egui;
 use std::{
@@ -26,11 +27,30 @@ pub(crate) struct HistoryDialog {
     /// Which parent of a merge commit the files are compared against.
     pub(crate) parent: usize,
     pub(crate) compare: Option<CommitCompare>,
+    /// Filter boxes; they only take effect when applied.
+    pub(crate) filter_text: String,
+    pub(crate) filter_author: String,
+    pub(crate) filter_path: String,
+    pub(crate) filter_ref: Option<String>,
+    pub(crate) refs: Vec<String>,
+    /// The query the loaded pages belong to; later pages reuse it unchanged.
+    pub(crate) active: GitLogQuery,
+    pub(crate) blame: Option<BlameView>,
     pub(crate) error: Option<String>,
+    refs_receiver: Option<Receiver<Result<Vec<String>, String>>>,
+    blame_receiver: Option<Receiver<BlameResult>>,
     compare_receiver: Option<Receiver<CompareResult>>,
     page_receiver: Option<Receiver<Result<GitLogPage, String>>>,
     details_receiver: Option<Receiver<(String, Result<GitCommitDetails, String>)>>,
 }
+
+/// Line-by-line authorship of the saved contents of a file.
+pub(crate) struct BlameView {
+    pub(crate) path: String,
+    pub(crate) lines: Option<Result<Vec<GitBlameLine>, String>>,
+}
+
+type BlameResult = (String, Result<Vec<GitBlameLine>, String>);
 
 type CompareResult = (CommitCompareKey, Result<GitComparison, String>);
 
@@ -69,6 +89,133 @@ impl LumenApp {
             ..Default::default()
         });
         self.load_history_page(ctx);
+        self.request_history_refs(ctx);
+    }
+
+    fn request_history_refs(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.view.history_dialog else {
+            return;
+        };
+        let root = dialog.root.clone();
+        let (sender, receiver) = mpsc::channel();
+        let service = self.source_control_service.clone();
+        let worker_ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(service.history_refs(&root));
+            worker_ctx.request_repaint();
+        });
+        dialog.refs_receiver = Some(receiver);
+    }
+
+    /// Restarts the list with the filter boxes' current values.
+    pub(crate) fn apply_history_filter(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.view.history_dialog else {
+            return;
+        };
+        let path = dialog.filter_path.trim();
+        dialog.active = GitLogQuery {
+            text: dialog.filter_text.trim().to_owned(),
+            author: dialog.filter_author.trim().to_owned(),
+            path: (!path.is_empty()).then(|| path.replace('\\', "/")),
+            reference: dialog.filter_ref.clone(),
+        };
+        dialog.commits.clear();
+        dialog.anchor = None;
+        dialog.has_more = false;
+        dialog.selected = None;
+        dialog.details = None;
+        dialog.compare = None;
+        dialog.blame = None;
+        dialog.error = None;
+        // Dropping the receivers discards answers for the previous query.
+        dialog.page_receiver = None;
+        dialog.loading = false;
+        self.load_history_page(ctx);
+    }
+
+    pub(crate) fn clear_history_filter(&mut self, ctx: &egui::Context) {
+        if let Some(dialog) = &mut self.view.history_dialog {
+            dialog.filter_text.clear();
+            dialog.filter_author.clear();
+            dialog.filter_path.clear();
+            dialog.filter_ref = None;
+        }
+        self.apply_history_filter(ctx);
+    }
+
+    pub(crate) fn set_history_ref(&mut self, reference: Option<String>, ctx: &egui::Context) {
+        if let Some(dialog) = &mut self.view.history_dialog {
+            dialog.filter_ref = reference;
+        }
+        self.apply_history_filter(ctx);
+    }
+
+    /// The saved file open in the editor, relative to the selected repository.
+    fn active_repository_file(&self) -> Option<String> {
+        let root = &self.view.source_control.snapshot.as_ref()?.root;
+        let path = self.editor.active()?.path.as_ref()?;
+        let relative = path.strip_prefix(root).ok()?;
+        relative.to_str().map(|text| text.replace('\\', "/"))
+    }
+
+    /// History of the active editor file, following renames.
+    pub(crate) fn open_file_history(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.active_repository_file() else {
+            self.view.status = "Open a file inside the repository to see its history".into();
+            return;
+        };
+        self.open_history_dialog(ctx);
+        if let Some(dialog) = &mut self.view.history_dialog {
+            dialog.filter_path = path;
+        }
+        self.apply_history_filter(ctx);
+    }
+
+    /// Blame for the saved contents of the active editor file.
+    pub(crate) fn open_blame(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.active_repository_file() else {
+            self.view.status = "Open a file inside the repository to blame it".into();
+            return;
+        };
+        self.open_history_dialog(ctx);
+        self.request_blame(path, ctx);
+    }
+
+    fn request_blame(&mut self, path: String, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.view.history_dialog else {
+            return;
+        };
+        let root = dialog.root.clone();
+        let (sender, receiver) = mpsc::channel();
+        let service = self.source_control_service.clone();
+        let worker_ctx = ctx.clone();
+        let worker_path = path.clone();
+        std::thread::spawn(move || {
+            let result = service.blame(&root, &worker_path);
+            let _ = sender.send((worker_path, result));
+            worker_ctx.request_repaint();
+        });
+        dialog.blame_receiver = Some(receiver);
+        dialog.blame = Some(BlameView { path, lines: None });
+    }
+
+    pub(crate) fn close_blame(&mut self) {
+        if let Some(dialog) = &mut self.view.history_dialog {
+            dialog.blame = None;
+            dialog.blame_receiver = None;
+        }
+    }
+
+    /// Jumps from a blame line to its commit by searching for its id.
+    pub(crate) fn show_blamed_commit(&mut self, id: String, ctx: &egui::Context) {
+        if let Some(dialog) = &mut self.view.history_dialog {
+            dialog.filter_text = id.clone();
+            dialog.filter_author.clear();
+            dialog.filter_path.clear();
+            dialog.filter_ref = None;
+        }
+        self.apply_history_filter(ctx);
+        self.select_commit(id, ctx);
     }
 
     pub(crate) fn close_history_dialog(&mut self) {
@@ -85,12 +232,13 @@ impl LumenApp {
         }
         let root = dialog.root.clone();
         let anchor = dialog.anchor.clone();
+        let query = dialog.active.clone();
         let skip = dialog.commits.len();
         let (sender, receiver) = mpsc::channel();
         let service = self.source_control_service.clone();
         let worker_ctx = ctx.clone();
         std::thread::spawn(move || {
-            let _ = sender.send(service.log(&root, anchor.as_deref(), skip, HISTORY_PAGE));
+            let _ = sender.send(service.log(&root, &query, anchor.as_deref(), skip, HISTORY_PAGE));
             worker_ctx.request_repaint();
         });
         dialog.page_receiver = Some(receiver);
@@ -217,6 +365,34 @@ impl LumenApp {
                     dialog.page_receiver = None;
                     dialog.loading = false;
                 }
+            }
+        }
+        if let Some(receiver) = &dialog.refs_receiver {
+            match receiver.try_recv() {
+                Ok(result) => {
+                    dialog.refs_receiver = None;
+                    if let Ok(refs) = result {
+                        dialog.refs = refs;
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    ctx.request_repaint_after(Duration::from_millis(100));
+                }
+                Err(mpsc::TryRecvError::Disconnected) => dialog.refs_receiver = None,
+            }
+        }
+        if let Some(receiver) = &dialog.blame_receiver {
+            match receiver.try_recv() {
+                Ok((path, result)) => {
+                    dialog.blame_receiver = None;
+                    if let Some(blame) = dialog.blame.as_mut().filter(|b| b.path == path) {
+                        blame.lines = Some(result);
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    ctx.request_repaint_after(Duration::from_millis(100));
+                }
+                Err(mpsc::TryRecvError::Disconnected) => dialog.blame_receiver = None,
             }
         }
         if let Some(receiver) = &dialog.compare_receiver {
@@ -352,6 +528,111 @@ mod tests {
         // A single-parent commit offers no other parent.
         app.choose_history_parent(1, &ctx);
         assert_eq!(app.view.history_dialog.as_ref().unwrap().parent, 0);
+    }
+
+    #[test]
+    fn filters_file_history_and_blame_drive_the_dialog() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = crate::services::source_control::canonical_path(directory.path()).unwrap();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "--quiet"]);
+        git(&["checkout", "-q", "-b", "main"]);
+        git(&["config", "user.name", "T"]);
+        git(&["config", "user.email", "t@example.invalid"]);
+        git(&["config", "commit.gpgsign", "false"]);
+        git(&["config", "core.autocrlf", "false"]);
+        std::fs::write(root.join("a.txt"), "a\n").unwrap();
+        git(&["add", "--", "a.txt"]);
+        git(&["commit", "-q", "-m", "add a"]);
+        std::fs::write(root.join("b.txt"), "b\n").unwrap();
+        git(&["add", "--", "b.txt"]);
+        git(&["commit", "-q", "-m", "add b"]);
+        let mut app = LumenApp::default();
+        app.view.source_control.snapshot = Some(GitSnapshot {
+            root: root.clone(),
+            ..Default::default()
+        });
+        let ctx = egui::Context::default();
+        let wait = |app: &mut LumenApp| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while app.view.history_dialog.as_ref().is_some_and(|d| {
+                d.loading
+                    || d.details_receiver.is_some()
+                    || d.blame_receiver.is_some()
+                    || d.refs_receiver.is_some()
+            }) && std::time::Instant::now() < deadline
+            {
+                app.poll_history(&ctx);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        // No file open: friendly refusal, no dialog.
+        app.open_file_history(&ctx);
+        assert!(app.view.history_dialog.is_none());
+        assert!(app.view.status.contains("Open a file"));
+        app.open_history_dialog(&ctx);
+        wait(&mut app);
+        assert_eq!(app.view.history_dialog.as_ref().unwrap().commits.len(), 2);
+        assert!(
+            app.view
+                .history_dialog
+                .as_ref()
+                .unwrap()
+                .refs
+                .contains(&"main".to_owned())
+        );
+        app.view.history_dialog.as_mut().unwrap().filter_text = "add a".into();
+        app.apply_history_filter(&ctx);
+        wait(&mut app);
+        let dialog = app.view.history_dialog.as_ref().unwrap();
+        assert_eq!(dialog.commits.len(), 1);
+        assert_eq!(dialog.active.text, "add a");
+        app.clear_history_filter(&ctx);
+        wait(&mut app);
+        assert_eq!(app.view.history_dialog.as_ref().unwrap().commits.len(), 2);
+        // File history and blame use the active editor file.
+        app.close_history_dialog();
+        let mut document = crate::model::Document::from_path(root.join("b.txt"), "b\n".into());
+        document.dirty = false;
+        app.editor.files.push(document);
+        app.editor.set_active_index(Some(0));
+        app.open_file_history(&ctx);
+        wait(&mut app);
+        let dialog = app.view.history_dialog.as_ref().unwrap();
+        assert_eq!(dialog.active.path.as_deref(), Some("b.txt"));
+        assert_eq!(dialog.commits.len(), 1);
+        app.open_blame(&ctx);
+        wait(&mut app);
+        let blame = app
+            .view
+            .history_dialog
+            .as_ref()
+            .unwrap()
+            .blame
+            .as_ref()
+            .unwrap();
+        let lines = blame.lines.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(lines[0].summary, "add b");
+        let id = lines[0].commit.clone();
+        app.show_blamed_commit(id.clone(), &ctx);
+        wait(&mut app);
+        let dialog = app.view.history_dialog.as_ref().unwrap();
+        assert!(dialog.blame.is_none());
+        assert_eq!(dialog.commits.len(), 1);
+        assert_eq!(dialog.selected.as_deref(), Some(id.as_str()));
+        assert!(dialog.details.is_some());
     }
 
     #[test]

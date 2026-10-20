@@ -456,6 +456,14 @@ fn palette_commands() -> Vec<(String, Command)> {
             Command::OpenHistoryDialog,
         ),
         (
+            format!("{}  Git: Show File History", icon::HISTORY),
+            Command::OpenFileHistory,
+        ),
+        (
+            format!("{}  Git: Blame Current File", icon::HISTORY),
+            Command::OpenBlame,
+        ),
+        (
             format!("{}  Git: Clone Repository", icon::GIT_BRANCH),
             Command::OpenCloneDialog,
         ),

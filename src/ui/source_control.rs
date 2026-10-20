@@ -65,6 +65,67 @@ fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
     rows
 }
 
+/// Blame of the saved file; a line leads to its commit.
+fn history_blame(
+    ui: &mut egui::Ui,
+    blame: &crate::app::git_history::BlameView,
+    actions: &mut Vec<Command>,
+) {
+    let colors = crate::ui::theme::palette(ui.visuals());
+    ui.horizontal(|ui| {
+        if ui.button("Back").clicked() {
+            actions.push(Command::CloseBlame);
+        }
+        ui.label(RichText::new(format!("Blame · {}", blame.path)).color(colors.muted));
+    });
+    ui.label(
+        RichText::new("Based on the saved file; unsaved editor text is not included.")
+            .small()
+            .color(colors.muted),
+    );
+    match &blame.lines {
+        None => {
+            ui.label(RichText::new("Reading blame…").color(colors.muted));
+        }
+        Some(Err(error)) => {
+            ui.label(RichText::new(error).color(colors.error));
+        }
+        Some(Ok(lines)) => {
+            ScrollArea::vertical()
+                .id_salt("git_history_blame")
+                .max_height(360.0)
+                .auto_shrink([false, true])
+                .show_rows(ui, 22.0, lines.len(), |ui, visible| {
+                    for index in visible {
+                        let line = &lines[index];
+                        let label = if line.is_uncommitted() {
+                            format!("{:>4}  Not committed yet  {}", index + 1, line.text)
+                        } else {
+                            format!(
+                                "{:>4}  {}  {}  {}  {}",
+                                index + 1,
+                                &line.commit[..line.commit.len().min(7)],
+                                line.author,
+                                commit_date(line.time),
+                                line.text
+                            )
+                        };
+                        let response = explorer_row(ui, label, 4, false);
+                        if line.is_uncommitted() {
+                            response.on_hover_text("This line is not in any commit yet");
+                        } else if response
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(format!("{}\n{}", line.commit, line.summary))
+                            .clicked()
+                        {
+                            actions.push(Command::ShowBlamedCommit(line.commit.clone()));
+                        }
+                    }
+                });
+        }
+    }
+}
+
 /// Side-by-side, read-only before/after for one file of a commit.
 fn history_comparison(
     ui: &mut egui::Ui,
@@ -744,6 +805,67 @@ impl Workbench<'_> {
                 }
                 return;
             }
+            if let Some(blame) = &dialog.blame {
+                history_blame(ui, blame, &mut actions);
+                return;
+            }
+            let (mut apply, mut clear) = (false, false);
+            let enter_pressed = |response: &egui::Response| {
+                response.lost_focus() && response.ctx.input(|i| i.key_pressed(egui::Key::Enter))
+            };
+            let text = ui.add(
+                TextEdit::singleline(&mut dialog.filter_text)
+                    .id_salt("git_history_text")
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Search messages, or paste a commit id"),
+            );
+            apply |= enter_pressed(&text);
+            let author = ui.add(
+                TextEdit::singleline(&mut dialog.filter_author)
+                    .id_salt("git_history_author")
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Author"),
+            );
+            apply |= enter_pressed(&author);
+            let path = ui.add(
+                TextEdit::singleline(&mut dialog.filter_path)
+                    .id_salt("git_history_path")
+                    .desired_width(f32::INFINITY)
+                    .hint_text("File path: history of one file, following renames"),
+            );
+            apply |= enter_pressed(&path);
+            ui.horizontal(|ui| {
+                let selected = dialog
+                    .filter_ref
+                    .clone()
+                    .unwrap_or_else(|| "HEAD".to_owned());
+                egui::ComboBox::from_id_salt("git_history_ref")
+                    .selected_text(selected)
+                    .width(ui.available_width() - 130.0)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(dialog.filter_ref.is_none(), "HEAD")
+                            .clicked()
+                        {
+                            actions.push(Command::SetHistoryRef(None));
+                        }
+                        for name in &dialog.refs {
+                            let current = dialog.filter_ref.as_deref() == Some(name.as_str());
+                            if ui.selectable_label(current, name).clicked() {
+                                actions.push(Command::SetHistoryRef(Some(name.clone())));
+                            }
+                        }
+                    });
+                apply |= ui.button("Search").clicked();
+                clear = ui.button("Clear").clicked();
+            });
+            if apply {
+                actions.push(Command::ApplyHistoryFilter);
+            }
+            if clear {
+                actions.push(Command::ClearHistoryFilter);
+            }
+            ui.add_space(4.0);
             let selected = dialog.selected.clone();
             ScrollArea::vertical()
                 .id_salt("git_history_list")
