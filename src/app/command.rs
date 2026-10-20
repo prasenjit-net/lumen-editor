@@ -1,5 +1,6 @@
 use super::agent::AgentKind;
 use super::editor_action::EditorAction;
+use super::settings::ThemeChoice;
 use super::tab_commands::TabMove;
 use super::view_state::{Activity, ClosedTab, ExplorerEdit, MAX_CLOSED_TABS, ViewState};
 use super::workspace_search::ReplaceScope;
@@ -12,6 +13,8 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
     Settings,
+    /// Set the user theme and clear the repository's theme overrides.
+    SetColorTheme(super::settings::ThemeChoice),
     /// Start a new native agent chat in the current workspace.
     NativeNewSession(lumen_agent_core::ProviderId),
     OpenChat(lumen_agent_core::SessionId),
@@ -104,6 +107,8 @@ pub(crate) enum Command {
     RefreshSourceControl,
     ToggleTerminal,
     ToggleProblems,
+    /// Hide the bottom panel, or bring back what it last showed.
+    ToggleBottomPanel,
     ToggleOutput,
     ToggleAgentPanel,
     SelectAgent(AgentKind),
@@ -137,6 +142,7 @@ pub(crate) enum Command {
     /// Review, revert or dismiss what the agent changed.
     AgentChanges(AgentKind, super::agent_changes::ChangeAction),
     ShowOutput,
+    ShowProblems,
     ShowTerminal,
     CloseOutput,
     ClearOutput,
@@ -453,6 +459,12 @@ impl Command {
             Self::Undo => Some("undo"),
             Self::Redo => Some("redo"),
             Self::SelectAll => Some("select_all"),
+            Self::SetColorTheme(choice) => Some(match choice {
+                ThemeChoice::Dark => "theme_dark",
+                ThemeChoice::Light => "theme_light",
+                ThemeChoice::HighContrast => "theme_high_contrast",
+                ThemeChoice::System => "theme_system",
+            }),
             _ => None,
         }
     }
@@ -489,6 +501,10 @@ impl Command {
             "undo" => Self::Undo,
             "redo" => Self::Redo,
             "select_all" => Self::SelectAll,
+            "theme_dark" => Self::SetColorTheme(ThemeChoice::Dark),
+            "theme_light" => Self::SetColorTheme(ThemeChoice::Light),
+            "theme_high_contrast" => Self::SetColorTheme(ThemeChoice::HighContrast),
+            "theme_system" => Self::SetColorTheme(ThemeChoice::System),
             _ => return None,
         })
     }

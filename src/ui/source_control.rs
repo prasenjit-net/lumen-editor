@@ -161,6 +161,23 @@ pub(super) fn history_comparison(
         Some(Ok(comparison)) => {
             let comparison = comparison.clone();
             let mut sync = compare.scroll;
+            let language = lumen_editor_core::syntax::Language::from_path(std::path::Path::new(
+                &compare.key.path,
+            ));
+            let palette =
+                crate::ui::theme::syntax_palette(crate::ui::theme::current(ui.visuals()).scheme());
+            let base_syntax = diff_syntax(
+                ui.ctx(),
+                "git_history_base",
+                &comparison.base,
+                Some((language, palette)),
+            );
+            let changed_syntax = diff_syntax(
+                ui.ctx(),
+                "git_history_changed",
+                comparison.changed.as_deref().unwrap_or_default(),
+                Some((language, palette)),
+            );
             ui.columns(2, |columns| {
                 columns[0].label(
                     RichText::new("Parent · read-only")
@@ -176,6 +193,7 @@ pub(super) fn history_comparison(
                         id: "git_history_base",
                         font,
                         line_height,
+                        syntax: &base_syntax,
                     },
                     sync.take_pending(0),
                 );
@@ -194,6 +212,7 @@ pub(super) fn history_comparison(
                         id: "git_history_changed",
                         font,
                         line_height,
+                        syntax: &changed_syntax,
                     },
                     sync.take_pending(1),
                 );
@@ -2121,6 +2140,26 @@ impl Workbench<'_> {
                         crate::app::scroll_sync::ScrollSync::at_top();
                     self.view.source_control.diff_scroll_key = Some(key);
                 }
+                let syntax_enabled = self
+                    .view
+                    .settings
+                    .document_boolean("editor.syntax_highlighting", Some(&path));
+                let language = lumen_editor_core::syntax::Language::from_path(&path);
+                let palette = crate::ui::theme::syntax_palette(
+                    crate::ui::theme::current(ui.visuals()).scheme(),
+                );
+                let base_syntax = diff_syntax(
+                    ui.ctx(),
+                    "git_diff_base",
+                    &comparison.base,
+                    syntax_enabled.then_some((language, palette)),
+                );
+                let changed_syntax = diff_syntax(
+                    ui.ctx(),
+                    "git_diff_changed",
+                    comparison.changed.as_deref().unwrap_or_default(),
+                    syntax_enabled.then_some((language, palette)),
+                );
                 let mut sync = self.view.source_control.diff_scroll;
                 ui.columns(2, |columns| {
                     columns[0].label(
@@ -2141,6 +2180,7 @@ impl Workbench<'_> {
                             id: "git_diff_base",
                             font: &font,
                             line_height,
+                            syntax: &base_syntax,
                         },
                         sync.take_pending(0),
                     );
@@ -2188,6 +2228,7 @@ impl Workbench<'_> {
                                 id: "git_diff_changed",
                                 font: &font,
                                 line_height,
+                                syntax: &changed_syntax,
                             },
                             sync.take_pending(1),
                         );
@@ -2207,6 +2248,41 @@ impl Workbench<'_> {
     }
 }
 
+type SyntaxColors = std::sync::Arc<Vec<(std::ops::Range<usize>, egui::Color32)>>;
+
+/// Highlight colors for one read-only side, recomputed only when its text,
+/// language or palette changes rather than every frame.
+fn diff_syntax(
+    ctx: &egui::Context,
+    id: &str,
+    text: &str,
+    syntax: Option<(
+        lumen_editor_core::syntax::Language,
+        lumen_editor_surface::SyntaxPalette,
+    )>,
+) -> SyntaxColors {
+    use std::hash::{Hash, Hasher};
+    let Some((language, palette)) = syntax else {
+        return SyntaxColors::default();
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    language.label().hash(&mut hasher);
+    palette.keyword.hash(&mut hasher);
+    palette.comment.hash(&mut hasher);
+    let key = (hasher.finish(), text.len());
+    let slot = egui::Id::new(("diff_syntax", id));
+    if let Some((cached_key, colors)) =
+        ctx.data(|data| data.get_temp::<((u64, usize), SyntaxColors)>(slot))
+        && cached_key == key
+    {
+        return colors;
+    }
+    let colors = SyntaxColors::new(lumen_editor_surface::syntax_colors(text, language, palette));
+    ctx.data_mut(|data| data.insert_temp(slot, (key, colors.clone())));
+    colors
+}
+
 /// One read-only side of a diff.
 struct ReadOnlySource<'a> {
     text: &'a str,
@@ -2215,6 +2291,54 @@ struct ReadOnlySource<'a> {
     id: &'a str,
     font: &'a FontId,
     line_height: f32,
+    /// Foreground colors by byte range, sorted; empty draws plain text.
+    syntax: &'a [(std::ops::Range<usize>, egui::Color32)],
+}
+
+/// Layout job for one line, coloring the parts of `syntax` that fall inside
+/// `line_start..line_start + line.len()`.
+fn highlighted_line(
+    line: &str,
+    line_start: usize,
+    syntax: &[(std::ops::Range<usize>, egui::Color32)],
+    font: &FontId,
+    default: egui::Color32,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let line_end = line_start + line.len();
+    let format = |color| egui::TextFormat::simple(font.clone(), color);
+    let mut cursor = line_start;
+    let first = syntax.partition_point(|(range, _)| range.end <= line_start);
+    for (range, color) in &syntax[first..] {
+        if range.start >= line_end {
+            break;
+        }
+        let start = range.start.max(cursor);
+        let end = range.end.min(line_end);
+        if start >= end || !line.is_char_boundary(start - line_start) {
+            continue;
+        }
+        if !line.is_char_boundary(end - line_start) {
+            continue;
+        }
+        if start > cursor {
+            job.append(
+                &line[cursor - line_start..start - line_start],
+                0.0,
+                format(default),
+            );
+        }
+        job.append(
+            &line[start - line_start..end - line_start],
+            0.0,
+            format(*color),
+        );
+        cursor = end;
+    }
+    if cursor < line_end {
+        job.append(&line[cursor - line_start..], 0.0, format(default));
+    }
+    job
 }
 
 /// Draws the pane, first jumping to `scroll_to_line` when given, and returns
@@ -2232,8 +2356,17 @@ fn read_only_source(
         id,
         font,
         line_height,
+        syntax,
     } = *source;
     let lines: Vec<_> = text.split('\n').collect();
+    let line_starts: Vec<usize> = lines
+        .iter()
+        .scan(0, |start, line| {
+            let current = *start;
+            *start += line.len() + 1;
+            Some(current)
+        })
+        .collect();
     let width = lines
         .iter()
         .map(|line| line.len().min(2_000))
@@ -2265,11 +2398,21 @@ fn read_only_source(
                             .font(font.clone())
                             .color(colors.muted),
                     );
-                    ui.label(
-                        RichText::new(lines[index])
-                            .font(font.clone())
-                            .color(colors.text),
-                    );
+                    if syntax.is_empty() {
+                        ui.label(
+                            RichText::new(lines[index])
+                                .font(font.clone())
+                                .color(colors.text),
+                        );
+                    } else {
+                        ui.label(highlighted_line(
+                            lines[index],
+                            line_starts[index],
+                            syntax,
+                            font,
+                            colors.text,
+                        ));
+                    }
                 });
             });
         }
@@ -2282,6 +2425,45 @@ fn read_only_source(
 mod tests {
     use super::*;
     use crate::ui::theme;
+
+    #[test]
+    fn highlighted_lines_color_tokens_including_ones_spanning_lines() {
+        let red = egui::Color32::RED;
+        let blue = egui::Color32::BLUE;
+        let font = FontId::monospace(12.0);
+        let text = "let é = 1;\nnext";
+        // "let" and a block that starts on line one and ends on line two.
+        let syntax = vec![(0..3, red), (11..13, blue)];
+        let first = highlighted_line("let é = 1;", 0, &syntax, &font, egui::Color32::WHITE);
+        let colors: Vec<_> = first
+            .sections
+            .iter()
+            .map(|section| {
+                (
+                    section.format.color,
+                    &first.text[section.byte_range.clone()],
+                )
+            })
+            .collect();
+        assert_eq!(colors[0], (red, "let"));
+        assert_eq!(first.text, "let é = 1;");
+        let second = highlighted_line("next", 11, &syntax, &font, egui::Color32::WHITE);
+        assert_eq!(second.sections[0].format.color, blue);
+        assert_eq!(second.sections[0].byte_range, 0..2);
+        assert_eq!(second.text, "next");
+        assert!(text.is_char_boundary(11));
+    }
+
+    #[test]
+    fn both_diff_sides_are_highlighted_for_a_known_language() {
+        let ctx = egui::Context::default();
+        let palette = theme::syntax_palette("lumen-dark");
+        let language = lumen_editor_core::syntax::Language::from_path(std::path::Path::new("a.rs"));
+        let base = diff_syntax(&ctx, "side_a", "fn a() {}\n", Some((language, palette)));
+        let changed = diff_syntax(&ctx, "side_b", "fn b() { 1 }\n", Some((language, palette)));
+        assert!(!base.is_empty() && !changed.is_empty());
+        assert!(diff_syntax(&ctx, "side_a", "fn a() {}\n", None).is_empty());
+    }
     use crate::{
         app::{
             LumenApp,

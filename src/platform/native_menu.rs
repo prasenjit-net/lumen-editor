@@ -1,4 +1,4 @@
-use crate::app::command::Command;
+use crate::app::{command::Command, settings::ThemeChoice};
 use std::sync::mpsc::{self, Receiver};
 
 use eframe::egui;
@@ -128,6 +128,11 @@ impl NativeMenu {
             &plain_item(Command::PreviousTab, "Previous Tab"),
             &plain_item(Command::ReopenClosedTab, "Reopen Closed Tab"),
         ])?;
+        let theme = Submenu::new("Color Theme", true);
+        for choice in ThemeChoice::ALL {
+            theme.append(&plain_item(Command::SetColorTheme(choice), choice.label()))?;
+        }
+        view.append_items(&[&PredefinedMenuItem::separator(), &theme])?;
         // Keep the terminal discoverable from the native menu on macOS and
         // Windows as well as from the status bar, mirroring VS Code's panel
         // toggle shortcut.

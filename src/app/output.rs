@@ -14,7 +14,55 @@ pub(crate) fn clear_text_selection(ctx: &egui::Context) {
         .clear_selection();
 }
 
+/// A view of the shared bottom slot, remembered across hiding it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BottomView {
+    Terminal,
+    Output,
+    Problems,
+    Run(super::task_runs::RunId),
+}
+
 impl LumenApp {
+    /// The view the bottom slot is drawing now, if any.
+    pub(crate) fn visible_bottom_view(&self) -> Option<BottomView> {
+        let view = &self.view;
+        if view.terminal.open {
+            Some(BottomView::Terminal)
+        } else if view.output.open {
+            Some(BottomView::Output)
+        } else if view.problems.open {
+            Some(BottomView::Problems)
+        } else if view.task_runs.panel_open {
+            view.task_runs
+                .selected_run()
+                .map(|run| BottomView::Run(run.id))
+        } else {
+            None
+        }
+    }
+
+    /// Hide the bottom panel (terminal sessions and task runs keep going), or
+    /// bring back the view it last showed, falling back to the terminal.
+    pub(crate) fn toggle_bottom_panel(&mut self, ctx: &egui::Context) {
+        if let Some(shown) = self.visible_bottom_view() {
+            self.view.bottom_restore = Some(shown);
+            self.view.terminal.open = false;
+            self.view.output.open = false;
+            self.view.problems.open = false;
+            self.view.task_runs.panel_open = false;
+            return;
+        }
+        match self.view.bottom_restore {
+            Some(BottomView::Output) => self.show_output(),
+            Some(BottomView::Problems) => self.show_problems(),
+            Some(BottomView::Run(id)) if self.view.task_runs.get(id).is_some() => {
+                self.show_task_run(id);
+            }
+            _ => self.toggle_terminal(ctx),
+        }
+    }
+
     /// Open the Output tab in the bottom panel (the terminal session keeps running).
     pub(crate) fn show_output(&mut self) {
         self.view.output.open = true;
@@ -22,6 +70,14 @@ impl LumenApp {
         self.view.problems.open = false;
         self.view.task_runs.panel_open = false;
         self.view.output.scroll_to_bottom = true;
+    }
+
+    /// Open the Problems tab in the bottom panel (the terminal session keeps running).
+    pub(crate) fn show_problems(&mut self) {
+        self.view.problems.open = true;
+        self.view.terminal.open = false;
+        self.view.output.open = false;
+        self.view.task_runs.panel_open = false;
     }
 
     pub(crate) fn toggle_output(&mut self) {
@@ -95,6 +151,40 @@ mod tests {
         app.execute(Command::ToggleOutput, &ctx);
         app.execute(Command::CloseOutput, &ctx);
         assert!(!app.view.output.open);
+    }
+
+    #[test]
+    fn the_bottom_toggle_hides_and_restores_the_last_view() {
+        let mut app = LumenApp::default();
+        let ctx = egui::Context::default();
+        app.execute(Command::ShowProblems, &ctx);
+        app.execute(Command::ToggleBottomPanel, &ctx);
+        assert_eq!(app.visible_bottom_view(), None);
+        app.execute(Command::ToggleBottomPanel, &ctx);
+        assert_eq!(app.visible_bottom_view(), Some(BottomView::Problems));
+        app.execute(Command::ShowOutput, &ctx);
+        app.execute(Command::ToggleBottomPanel, &ctx);
+        app.execute(Command::ToggleBottomPanel, &ctx);
+        assert_eq!(app.visible_bottom_view(), Some(BottomView::Output));
+    }
+
+    #[test]
+    fn problems_shares_the_bottom_slot_with_terminal_output_and_task_runs() {
+        let mut app = LumenApp::default();
+        let ctx = egui::Context::default();
+        app.view.output.open = true;
+        app.execute(Command::ShowProblems, &ctx);
+        assert!(app.view.problems.open && !app.view.output.open);
+        // Showing it again keeps it open (a tab click), unlike the toggle.
+        app.execute(Command::ShowProblems, &ctx);
+        assert!(app.view.problems.open);
+        app.execute(Command::ShowOutput, &ctx);
+        assert!(app.view.output.open && !app.view.problems.open);
+        app.view.task_runs.panel_open = true;
+        app.execute(Command::ShowProblems, &ctx);
+        assert!(app.view.problems.open && !app.view.task_runs.panel_open);
+        app.execute(Command::CloseProblems, &ctx);
+        assert!(!app.view.problems.open);
     }
 
     #[test]

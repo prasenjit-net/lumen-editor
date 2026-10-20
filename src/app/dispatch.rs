@@ -128,6 +128,7 @@ impl LumenApp {
             Command::RequestDeleteTask(key) => self.request_delete_task(key),
             Command::ConfirmDeleteTask(key) => self.delete_task_definition(key),
             Command::CancelDeleteTask => self.view.task_delete_prompt = None,
+            Command::SetColorTheme(choice) => self.set_color_theme(choice),
             Command::ApplySettings => self.apply_settings(),
             Command::ReloadSettings => self.reload_settings(),
             Command::DiscardSettingsAndQuit => {
@@ -154,11 +155,19 @@ impl LumenApp {
                 self.toggle_terminal(ctx);
             }
             Command::ToggleProblems => {
-                self.view.problems.open = !self.view.problems.open;
                 if self.view.problems.open {
-                    self.view.terminal.open = false;
-                    self.view.output.open = false;
+                    self.view.problems.open = false;
+                } else {
+                    self.show_problems();
                 }
+            }
+            Command::ToggleBottomPanel => {
+                super::output::clear_text_selection(ctx);
+                self.toggle_bottom_panel(ctx);
+            }
+            Command::ShowProblems => {
+                super::output::clear_text_selection(ctx);
+                self.show_problems();
             }
             Command::ToggleAgentPanel => self.toggle_agent_panel(),
             Command::SelectAgent(kind) => self.select_agent(kind),

@@ -4,9 +4,12 @@ use crate::{app::command::Command, icon};
 use eframe::egui::{self, Color32, Frame, Margin, RichText, TopBottomPanel};
 #[cfg(target_os = "macos")]
 use eframe::egui::{FontId, Vec2};
+/// Room the title bar reserves for the task launcher.
+#[cfg(target_os = "macos")]
+const LAUNCHER_WIDTH: f32 = 350.0;
+
 impl Workbench<'_> {
     pub(crate) fn title_bar(&mut self, ctx: &egui::Context) {
-        #[cfg(not(target_os = "windows"))]
         let colors = crate::ui::theme::palette(&ctx.style().visuals);
         let title = self
             .active()
@@ -31,13 +34,23 @@ impl Workbench<'_> {
                     Vec2::new(ui.available_width(), 32.0),
                     egui::Sense::hover(),
                 );
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    &self.view.window_title,
+                // The launcher sits at the right edge; the centered title yields
+                // when the two would overlap.
+                let launcher_width = LAUNCHER_WIDTH.min(rect.width() / 2.0);
+                let title_galley = ui.painter().layout_no_wrap(
+                    self.view.window_title.clone(),
                     FontId::proportional(13.0),
                     colors.text,
                 );
+                if rect.center().x + title_galley.size().x / 2.0 + 8.0
+                    < rect.right() - launcher_width
+                {
+                    ui.painter().galley(
+                        rect.center() - title_galley.size() / 2.0,
+                        title_galley,
+                        colors.text,
+                    );
+                }
                 // Leave the leftmost 80px to AppKit's real traffic-light buttons.
                 let drag_rect = egui::Rect::from_min_max(rect.min + Vec2::new(80.0, 0.0), rect.max);
                 let response = ui.interact(
@@ -52,6 +65,34 @@ impl Workbench<'_> {
                     let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                 }
+                // Added after the drag area so its buttons win the hit test.
+                let launcher_rect = egui::Rect::from_min_max(
+                    egui::pos2(rect.right() - launcher_width, rect.top()),
+                    rect.max,
+                );
+                ui.scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(launcher_rect.shrink2(Vec2::new(8.0, 0.0)))
+                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                    |ui| {
+                        self.panel_toggles(ui);
+                        self.task_launcher(ui);
+                    },
+                );
+            });
+        #[cfg(target_os = "windows")]
+        TopBottomPanel::top("task_toolbar")
+            .exact_height(28.0)
+            .frame(
+                Frame::default()
+                    .fill(colors.title)
+                    .inner_margin(Margin::symmetric(8, 0)),
+            )
+            .show(ctx, |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    self.panel_toggles(ui);
+                    self.task_launcher(ui);
+                });
             });
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         TopBottomPanel::top("titlebar")
@@ -105,6 +146,9 @@ impl Workbench<'_> {
                                     )
                                 })
                                 .unwrap_or_else(|| "Lumen".into());
+                            self.panel_toggles(ui);
+                            self.task_launcher(ui);
+                            ui.add_space(8.0);
                             ui.label(RichText::new(title).color(colors.muted).size(12.0));
                         });
                     });

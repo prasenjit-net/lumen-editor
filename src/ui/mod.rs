@@ -39,6 +39,7 @@ mod source_control_rows;
 mod tab_drag;
 mod task_dialogs;
 mod task_editor;
+mod task_launcher;
 mod task_output;
 mod tasks;
 mod terminal;

@@ -788,6 +788,7 @@ impl LumenApp {
         self.view.task_runs.panel_open = true;
         self.view.terminal.open = false;
         self.view.output.open = false;
+        self.view.problems.open = false;
         // An interactive run takes the keyboard, like opening the Terminal does.
         self.view.task_runs.focus_canvas = self
             .view

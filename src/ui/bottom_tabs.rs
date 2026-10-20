@@ -1,5 +1,5 @@
-//! The tab strip shared by the Terminal, Output and task-run panels. They draw in
-//! the same bottom slot, so each lists every sibling: TERMINAL, OUTPUT, then one
+//! The tab strip shared by the Terminal, Output, Problems and task-run panels. They draw in
+//! the same bottom slot, so each lists every sibling: TERMINAL, OUTPUT, PROBLEMS, then one
 //! tab per task run, keyed by `RunId`.
 use super::{Workbench, widgets::PanelTab};
 use crate::{
@@ -14,6 +14,7 @@ use crate::{
 pub(super) enum ActiveBottom {
     Terminal,
     Output,
+    Problems,
     /// A task run tab is showing; which one is `task_runs.selected`.
     Run,
 }
@@ -51,6 +52,12 @@ impl Workbench<'_> {
                 tooltip: String::new(),
                 active: active == ActiveBottom::Output,
                 command: Command::ShowOutput,
+            },
+            BottomTabEntry {
+                label: "PROBLEMS".into(),
+                tooltip: String::new(),
+                active: active == ActiveBottom::Problems,
+                command: Command::ShowProblems,
             },
         ];
         let runs = &self.view.task_runs;

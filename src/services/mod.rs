@@ -15,6 +15,7 @@ pub(crate) mod recent_files;
 pub(crate) mod recovery;
 mod reveal;
 pub(crate) mod settings;
+pub(crate) mod shell;
 pub(crate) mod source_control;
 pub(crate) mod task_process;
 pub(crate) mod task_trust;

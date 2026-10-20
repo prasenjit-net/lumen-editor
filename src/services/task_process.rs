@@ -39,9 +39,10 @@ pub(crate) struct ShellSpec {
 impl ShellSpec {
     pub(crate) fn platform_default() -> Self {
         if cfg!(windows) {
+            let shell = super::shell::platform_shell();
             Self {
-                program: "cmd.exe".into(),
-                args: vec!["/C".into()],
+                args: shell.command_args(),
+                program: shell.program,
             }
         } else {
             Self {

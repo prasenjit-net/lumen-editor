@@ -1,5 +1,5 @@
 use super::Workbench;
-use crate::app::command::Command;
+use crate::app::{command::Command, settings::ThemeChoice};
 use crate::icon;
 use eframe::egui::{self, CornerRadius, Frame, Stroke, TextEdit, Vec2};
 impl Workbench<'_> {
@@ -617,12 +617,18 @@ fn palette_commands() -> Vec<(String, Command)> {
             format!("{}  View: Output", icon::OUTPUT),
             Command::ToggleOutput,
         ),
-        (
-            format!("{}  View: Problems", icon::WARNING),
-            Command::ToggleProblems,
-        ),
     ]
     .into_iter()
+    .chain(ThemeChoice::ALL.map(|choice| {
+        (
+            format!("{}  Color Theme: {}", icon::GEAR, choice.label()),
+            Command::SetColorTheme(choice),
+        )
+    }))
+    .chain([(
+        format!("{}  View: Problems", icon::WARNING),
+        Command::ToggleProblems,
+    )])
     .collect()
 }
 #[cfg(test)]

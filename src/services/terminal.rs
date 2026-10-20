@@ -126,7 +126,7 @@ fn configure_environment(command: &mut CommandBuilder) {
 fn default_shell() -> std::ffi::OsString {
     #[cfg(windows)]
     {
-        std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into())
+        super::shell::platform_shell().program
     }
     #[cfg(not(windows))]
     {

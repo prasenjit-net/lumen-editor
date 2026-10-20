@@ -275,74 +275,8 @@ impl Workbench<'_> {
                                 .inner_margin(egui::Margin::symmetric(8, 0))
                                 .show(ui, |ui| self.tasks_panel(ui));
                         }
-                        Activity::Extensions => {
-                            unavailable_panel(
-                                ui,
-                                "Extensions",
-                                "Extensions are not supported yet. Language support is built in; see Settings for language servers.",
-                                None,
-                            );
-                        }
                     }
                 });
             });
-    }
-}
-
-/// An honest placeholder for an activity that is not built yet: say so, and keep
-/// any control it would have had visibly disabled with the reason on hover.
-fn unavailable_panel(ui: &mut egui::Ui, title: &str, message: &str, action: Option<String>) {
-    let colors = crate::ui::theme::palette(ui.visuals());
-    ui.label(RichText::new(title).size(18.0));
-    ui.add_space(4.0);
-    ui.add(egui::Label::new(RichText::new(message).size(12.0).color(colors.muted)).wrap());
-    if let Some(action) = action {
-        ui.add_space(8.0);
-        ui.add_enabled_ui(false, |ui| {
-            ui.add_sized([ui.available_width(), 32.0], egui::Button::new(action))
-                .on_disabled_hover_text("Not available yet");
-        });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::app::{LumenApp, view_state::Activity};
-    use eframe::egui;
-
-    #[test]
-    fn unfinished_activities_explain_themselves_and_offer_no_live_controls() {
-        for (activity, phrase) in [(Activity::Extensions, "not supported yet")] {
-            let mut app = LumenApp::default();
-            app.view.activity = activity;
-            app.view.sidebar_visible = true;
-            let ctx = egui::Context::default();
-            crate::ui::theme::configure_ui(&ctx);
-            let mut output = None;
-            for _ in 0..3 {
-                output = Some(ctx.run(
-                    egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(900.0, 600.0),
-                        )),
-                        ..Default::default()
-                    },
-                    |ctx| app.render_component(ctx, |workbench| workbench.sidebar(ctx)),
-                ));
-            }
-            let text: String = output
-                .unwrap()
-                .shapes
-                .iter()
-                .filter_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-            assert!(text.contains(phrase), "{activity:?}: {text}");
-            assert!(!text.contains("Search extensions"));
-        }
     }
 }

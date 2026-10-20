@@ -703,7 +703,6 @@ mod tests {
             Activity::Search,
             Activity::SourceControl,
             Activity::RunDebug,
-            Activity::Extensions,
         ] {
             for width in [180.0, 240.0, 600.0] {
                 let (_, output) = header_frame(&ctx, width, activity.title(), &[], vec![]);

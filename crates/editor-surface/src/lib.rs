@@ -687,6 +687,22 @@ pub struct SyntaxPalette {
     pub property: egui::Color32,
     pub tag: egui::Color32,
 }
+/// Foreground colors for `text`, sorted by byte range, using the same
+/// highlighter the editor uses. For read-only views that draw text themselves.
+pub fn syntax_colors(
+    text: &str,
+    language: Language,
+    palette: SyntaxPalette,
+) -> Vec<(Range<usize>, Color32)> {
+    geometry::highlight(text, language, &[])
+        .into_iter()
+        .map(|span| {
+            let color = span.color(palette);
+            (span.range, color)
+        })
+        .collect()
+}
+
 impl SyntaxPalette {
     pub(crate) fn color(self, kind: Kind) -> egui::Color32 {
         match kind {
