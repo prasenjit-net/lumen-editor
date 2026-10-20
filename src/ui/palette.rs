@@ -452,6 +452,10 @@ fn palette_commands() -> Vec<(String, Command)> {
             Command::OpenStashDialog,
         ),
         (
+            format!("{}  Git: Show History", icon::HISTORY),
+            Command::OpenHistoryDialog,
+        ),
+        (
             format!("{}  Git: Clone Repository", icon::GIT_BRANCH),
             Command::OpenCloneDialog,
         ),

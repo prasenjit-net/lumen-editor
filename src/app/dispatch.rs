@@ -229,6 +229,10 @@ impl LumenApp {
                     dialog.confirm_drop = None;
                 }
             }
+            Command::OpenHistoryDialog => self.open_history_dialog(ctx),
+            Command::CloseHistoryDialog => self.close_history_dialog(),
+            Command::LoadMoreHistory => self.load_history_page(ctx),
+            Command::SelectCommit(id) => self.select_commit(id, ctx),
             Command::OpenBranchDialog => self.open_branch_dialog(ctx),
             Command::CloseBranchDialog => self.close_branch_dialog(),
             Command::SwitchBranch(name, remote) => self.switch_to_branch(name, remote, ctx),

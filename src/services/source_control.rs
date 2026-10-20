@@ -205,6 +205,39 @@ pub(crate) struct GitStash {
     pub(crate) message: String,
 }
 
+/// One commit of the log, identified by its full object id.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GitCommit {
+    pub(crate) id: String,
+    pub(crate) parents: Vec<String>,
+    pub(crate) author: String,
+    /// Author date, seconds since the Unix epoch.
+    pub(crate) time: i64,
+    /// Branch, tag and HEAD decorations such as `HEAD -> main` or `tag: v1`.
+    pub(crate) refs: Vec<String>,
+    pub(crate) subject: String,
+}
+
+/// One page of history anchored to a fixed starting commit, so refs that move
+/// between pages cannot duplicate or skip rows.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GitLogPage {
+    pub(crate) anchor: String,
+    pub(crate) commits: Vec<GitCommit>,
+    pub(crate) has_more: bool,
+}
+
+/// Everything shown when a commit is selected.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GitCommitDetails {
+    pub(crate) message: String,
+    pub(crate) committer: String,
+    pub(crate) committed: i64,
+    /// `(status, path)`; renames read `R100 old -> new`. For a merge this is
+    /// the diff against the first parent.
+    pub(crate) files: Vec<(String, String)>,
+}
+
 /// A configured remote. Fetch and push URLs are kept apart because they may
 /// differ; both have embedded credentials removed for display.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -297,6 +330,16 @@ pub(crate) trait SourceControlService: Send + Sync {
         change: &GitChange,
         side: ConflictSide,
     ) -> Result<(), String>;
+    /// `limit` commits starting `skip` rows after `anchor` (`None` starts at HEAD
+    /// and returns the resolved anchor for later pages).
+    fn log(
+        &self,
+        root: &Path,
+        anchor: Option<&str>,
+        skip: usize,
+        limit: usize,
+    ) -> Result<GitLogPage, String>;
+    fn commit_details(&self, root: &Path, id: &str) -> Result<GitCommitDetails, String>;
     fn stashes(&self, root: &Path) -> Result<Vec<GitStash>, String>;
     /// Changed files of a stash as `(status, path)` pairs.
     fn stash_files(&self, root: &Path, id: &str) -> Result<Vec<(String, String)>, String>;
@@ -768,6 +811,173 @@ impl SourceControlService for LocalGit {
         git_paths(root, ["add", "--"], &paths, "stage")
     }
 
+    fn log(
+        &self,
+        root: &Path,
+        anchor: Option<&str>,
+        skip: usize,
+        limit: usize,
+    ) -> Result<GitLogPage, String> {
+        let anchor = match anchor {
+            Some(anchor) => {
+                check_object_id(anchor)?;
+                anchor.to_owned()
+            }
+            None => {
+                let head = git_command(root)
+                    .args([
+                        "--no-optional-locks",
+                        "rev-parse",
+                        "--verify",
+                        "--quiet",
+                        "HEAD",
+                    ])
+                    .output()
+                    .map_err(|error| format!("Could not read history: {error}"))?;
+                if !head.status.success() {
+                    // An unborn branch has no history yet.
+                    return Ok(GitLogPage::default());
+                }
+                String::from_utf8_lossy(&head.stdout).trim().to_owned()
+            }
+        };
+        // Ask for one extra row to learn whether another page exists.
+        let output = git_command(root)
+            .args(["--no-optional-locks", "log", "--decorate=short", "-z"])
+            .arg(format!("--skip={skip}"))
+            .arg(format!("-n{}", limit + 1))
+            .arg("--format=%H%x1f%P%x1f%an%x1f%at%x1f%D%x1f%s")
+            .arg(&anchor)
+            .arg("--")
+            .output()
+            .map_err(|error| format!("Could not read history: {error}"))?;
+        if !output.status.success() {
+            return Err(git_failure("Could not read history", &output.stderr));
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut commits: Vec<GitCommit> = text
+            .split('\0')
+            .filter(|record| !record.is_empty())
+            .filter_map(|record| {
+                let mut fields = record.split('\x1f');
+                let id = fields.next()?.to_owned();
+                let parents = fields
+                    .next()?
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect();
+                let author = fields.next()?.to_owned();
+                let time = fields.next()?.parse().ok()?;
+                let refs = fields
+                    .next()?
+                    .split(", ")
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+                let subject = fields.next()?.to_owned();
+                Some(GitCommit {
+                    id,
+                    parents,
+                    author,
+                    time,
+                    refs,
+                    subject,
+                })
+            })
+            .collect();
+        let has_more = commits.len() > limit;
+        commits.truncate(limit);
+        Ok(GitLogPage {
+            anchor,
+            commits,
+            has_more,
+        })
+    }
+
+    fn commit_details(&self, root: &Path, id: &str) -> Result<GitCommitDetails, String> {
+        check_object_id(id)?;
+        let meta = git_command(root)
+            .args([
+                "--no-optional-locks",
+                "log",
+                "-1",
+                "--format=%cn%x1f%ct%x1f%B",
+                id,
+                "--",
+            ])
+            .output()
+            .map_err(|error| format!("Could not read commit: {error}"))?;
+        if !meta.status.success() {
+            return Err(git_failure("Could not read commit", &meta.stderr));
+        }
+        let text = String::from_utf8_lossy(&meta.stdout).into_owned();
+        let mut fields = text.splitn(3, '\x1f');
+        let committer = fields.next().unwrap_or_default().to_owned();
+        let committed = fields
+            .next()
+            .and_then(|t| t.parse().ok())
+            .unwrap_or_default();
+        let message = fields.next().unwrap_or_default().trim_end().to_owned();
+        // Compare with the first parent; a root commit against the empty tree.
+        let mut command = git_command(root);
+        command.args([
+            "--no-optional-locks",
+            "diff-tree",
+            "-r",
+            "-z",
+            "--name-status",
+            "-M",
+        ]);
+        let parent = git_command(root)
+            .args([
+                "--no-optional-locks",
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{id}^1"),
+            ])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+        match &parent {
+            Some(parent) => command.arg(parent).arg(id),
+            None => command.args(["--root", id]),
+        };
+        let diff = command
+            .output()
+            .map_err(|error| format!("Could not read commit files: {error}"))?;
+        if !diff.status.success() {
+            return Err(git_failure("Could not read commit files", &diff.stderr));
+        }
+        let text = String::from_utf8_lossy(&diff.stdout).into_owned();
+        let mut parts = text.split('\0').filter(|part| !part.is_empty());
+        let mut files = Vec::new();
+        // A root commit's first record is the commit id itself.
+        let mut first = parent.is_none();
+        while let Some(status) = parts.next() {
+            if first {
+                first = false;
+                if status.len() >= 40 && status.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    continue;
+                }
+            }
+            let Some(path) = parts.next() else { break };
+            if status.starts_with('R') || status.starts_with('C') {
+                let Some(new) = parts.next() else { break };
+                files.push((status.to_owned(), format!("{path} -> {new}")));
+            } else {
+                files.push((status.to_owned(), path.to_owned()));
+            }
+        }
+        Ok(GitCommitDetails {
+            message,
+            committer,
+            committed,
+            files,
+        })
+    }
+
     fn stashes(&self, root: &Path) -> Result<Vec<GitStash>, String> {
         let output = git_command(root)
             .args(["--no-optional-locks", "stash", "list", "--format=%H%x00%s"])
@@ -1204,6 +1414,16 @@ fn run_remote(command: &mut Command, action: &str, timeout: Duration) -> Result<
             "Git {action} timed out after {} seconds and was stopped; the remote may or may not have applied it. Refresh and check before retrying",
             timeout.as_secs()
         )),
+    }
+}
+
+/// Only a full hexadecimal object id may reach Git as a revision, so UI input
+/// can never be read as an option or a revision expression.
+fn check_object_id(id: &str) -> Result<(), String> {
+    if (id.len() == 40 || id.len() == 64) && id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err("Invalid commit id".into())
     }
 }
 
@@ -2848,6 +3068,87 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         let error = LocalGit.stash_apply(&root, &id, false, true).unwrap_err();
         assert!(error.contains("The stash was kept"), "{error}");
         assert_eq!(LocalGit.stashes(&root).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn log_pages_are_anchored_so_new_commits_do_not_shift_later_pages() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        assert!(
+            LocalGit.log(&root, None, 0, 10).is_err()
+                || LocalGit.log(&root, None, 0, 10).unwrap().commits.is_empty()
+        );
+        repo_with_commit(&root);
+        assert!(LocalGit.log(&root, None, 0, 10).unwrap().commits.len() == 1);
+        for n in 1..=5 {
+            fs::write(root.join("f.txt"), format!("{n}\n")).unwrap();
+            git_ok(&root, &["commit", "-q", "-am", &format!("commit {n}")]);
+        }
+        git_ok(&root, &["tag", "v1"]);
+        let first = LocalGit.log(&root, None, 0, 4).unwrap();
+        assert_eq!(first.commits.len(), 4);
+        assert!(first.has_more);
+        assert_eq!(first.commits[0].subject, "commit 5");
+        assert!(first.commits[0].refs.iter().any(|r| r.contains("main")));
+        assert!(first.commits[0].refs.iter().any(|r| r == "tag: v1"));
+        assert_eq!(first.commits[0].author, "Test");
+        // A commit made after page one must not push rows into page two.
+        fs::write(root.join("f.txt"), "late\n").unwrap();
+        git_ok(&root, &["commit", "-q", "-am", "late"]);
+        let second = LocalGit.log(&root, Some(&first.anchor), 4, 4).unwrap();
+        assert_eq!(second.commits.len(), 2);
+        assert!(!second.has_more);
+        assert_eq!(second.commits[0].subject, "commit 1");
+        let ids: Vec<_> = first
+            .commits
+            .iter()
+            .chain(&second.commits)
+            .map(|c| &c.id)
+            .collect();
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), ids.len(), "no duplicated rows across pages");
+        assert!(LocalGit.log(&root, Some("--all"), 0, 4).is_err());
+        assert!(LocalGit.log(&root, Some("HEAD"), 0, 4).is_err());
+    }
+
+    #[test]
+    fn commit_details_cover_root_rename_and_merge_commits() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        let page = LocalGit.log(&root, None, 0, 5).unwrap();
+        let root_commit = &page.commits[0];
+        assert!(root_commit.parents.is_empty());
+        let details = LocalGit.commit_details(&root, &root_commit.id).unwrap();
+        assert_eq!(details.files, vec![("A".to_owned(), "f.txt".to_owned())]);
+        assert_eq!(details.message, "base");
+        git_ok(&root, &["mv", "f.txt", "g.txt"]);
+        git_ok(&root, &["commit", "-q", "-m", "rename\n\nBody text."]);
+        let renamed = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
+        let details = LocalGit.commit_details(&root, &renamed.id).unwrap();
+        assert_eq!(details.files[0].0, "R100");
+        assert_eq!(details.files[0].1, "f.txt -> g.txt");
+        assert_eq!(details.message, "rename\n\nBody text.");
+        // A merge reports its changes against the first parent.
+        git_ok(&root, &["checkout", "-q", "-b", "side"]);
+        fs::write(root.join("side.txt"), "s\n").unwrap();
+        git_ok(&root, &["add", "--", "side.txt"]);
+        git_ok(&root, &["commit", "-q", "-m", "side"]);
+        git_ok(&root, &["checkout", "-q", "main"]);
+        fs::write(root.join("main.txt"), "m\n").unwrap();
+        git_ok(&root, &["add", "--", "main.txt"]);
+        git_ok(&root, &["commit", "-q", "-m", "main work"]);
+        git_ok(
+            &root,
+            &["merge", "-q", "--no-ff", "-m", "merge side", "side"],
+        );
+        let merge = LocalGit.log(&root, None, 0, 1).unwrap().commits.remove(0);
+        assert_eq!(merge.parents.len(), 2);
+        let details = LocalGit.commit_details(&root, &merge.id).unwrap();
+        assert_eq!(details.files, vec![("A".to_owned(), "side.txt".to_owned())]);
+        assert!(LocalGit.commit_details(&root, "HEAD").is_err());
     }
 
     #[test]

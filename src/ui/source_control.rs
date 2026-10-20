@@ -65,6 +65,16 @@ fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
     rows
 }
 
+fn commit_date(seconds: i64) -> String {
+    chrono::DateTime::from_timestamp(seconds, 0)
+        .map(|time| {
+            time.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
 /// Row text for the repository list: path relative to the opened folder,
 /// branch and change count.
 fn repository_label(repo: &GitSnapshot, workspace: Option<&std::path::Path>) -> String {
@@ -308,6 +318,13 @@ impl Workbench<'_> {
                 .clicked()
             {
                 self.command(Command::OpenStashDialog);
+            }
+            if ui
+                .button("History…")
+                .on_hover_text("Browse recent commits")
+                .clicked()
+            {
+                self.command(Command::OpenHistoryDialog);
             }
             if ui
                 .add_enabled(
@@ -632,6 +649,135 @@ impl Workbench<'_> {
             );
             source_label(ui, &format!("{name}: {error}"), colors.error)
                 .on_hover_text(format!("{}\n{error}", root.display()));
+        }
+    }
+
+    pub(crate) fn history_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(dialog) = &self.view.history_dialog else {
+            return;
+        };
+        let mut actions: Vec<Command> = Vec::new();
+        let modal = egui::Modal::new(egui::Id::new("git_history_dialog")).show(ctx, |ui| {
+            ui.set_width(520.0);
+            ui.heading("History");
+            ui.add_space(4.0);
+            let selected = dialog.selected.clone();
+            ScrollArea::vertical()
+                .id_salt("git_history_list")
+                .max_height(260.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    if dialog.commits.is_empty() {
+                        let text = if dialog.loading {
+                            "Reading history…"
+                        } else {
+                            "No commits yet"
+                        };
+                        ui.label(RichText::new(text).color(colors.muted));
+                    }
+                    for commit in &dialog.commits {
+                        let mut label = format!(
+                            "{}  {}  {}",
+                            &commit.id[..commit.id.len().min(7)],
+                            commit_date(commit.time),
+                            commit.subject
+                        );
+                        if !commit.refs.is_empty() {
+                            label = format!("[{}]  {label}", commit.refs.join(", "));
+                        }
+                        let response =
+                            explorer_row(ui, label, 4, selected.as_deref() == Some(&commit.id))
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(format!("{}\n{}", commit.id, commit.author));
+                        if response.clicked() {
+                            actions.push(Command::SelectCommit(commit.id.clone()));
+                        }
+                    }
+                    if dialog.has_more
+                        && ui
+                            .add_enabled(!dialog.loading, egui::Button::new("Load more"))
+                            .clicked()
+                    {
+                        actions.push(Command::LoadMoreHistory);
+                    }
+                });
+            if let Some(id) = &selected
+                && let Some(commit) = dialog.commits.iter().find(|c| &c.id == id)
+            {
+                ui.separator();
+                ui.label(
+                    RichText::new(&commit.id)
+                        .small()
+                        .monospace()
+                        .color(colors.muted),
+                );
+                ui.label(format!("{}  {}", commit.author, commit_date(commit.time)));
+                if !commit.parents.is_empty() {
+                    let parents: Vec<_> = commit
+                        .parents
+                        .iter()
+                        .map(|parent| parent[..parent.len().min(7)].to_owned())
+                        .collect();
+                    ui.label(
+                        RichText::new(format!("Parents: {}", parents.join(", ")))
+                            .small()
+                            .color(colors.muted),
+                    );
+                }
+                match &dialog.details {
+                    Some(details) => {
+                        if details.committer != commit.author || details.committed != commit.time {
+                            ui.label(
+                                RichText::new(format!(
+                                    "Committed by {} on {}",
+                                    details.committer,
+                                    commit_date(details.committed)
+                                ))
+                                .small()
+                                .color(colors.muted),
+                            );
+                        }
+                        ScrollArea::vertical()
+                            .id_salt("git_history_details")
+                            .max_height(150.0)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.label(&details.message);
+                                ui.add_space(4.0);
+                                if commit.parents.len() > 1 {
+                                    ui.label(
+                                        RichText::new(
+                                            "Merge commit: files differ from the first parent",
+                                        )
+                                        .small()
+                                        .color(colors.muted),
+                                    );
+                                }
+                                for (status, path) in &details.files {
+                                    ui.label(RichText::new(format!("{status}  {path}")).small());
+                                }
+                            });
+                    }
+                    None => {
+                        ui.label(RichText::new("Reading commit…").color(colors.muted));
+                    }
+                }
+            }
+            if let Some(error) = &dialog.error {
+                ui.add_space(4.0);
+                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(8.0);
+            if ui.button("Close").clicked() {
+                actions.push(Command::CloseHistoryDialog);
+            }
+        });
+        if modal.should_close() {
+            actions.push(Command::CloseHistoryDialog);
+        }
+        for action in actions {
+            self.command(action);
         }
     }
 
