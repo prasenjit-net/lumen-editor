@@ -324,6 +324,136 @@ impl LumenApp {
         });
     }
 
+    /// Unsaved editor text under the repository would be silently overridden by
+    /// (or committed stale into) an operation that rewrites or commits files.
+    fn source_has_dirty_documents(&self) -> bool {
+        let Some(snapshot) = &self.view.source_control.snapshot else {
+            return false;
+        };
+        self.editor.files.iter().any(|file| {
+            file.dirty
+                && file
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| path.starts_with(&snapshot.root))
+        })
+    }
+
+    /// Continue and skip run immediately; abort asks first because Git may be
+    /// unable to restore everything it touched.
+    pub(crate) fn request_source_operation(
+        &mut self,
+        action: crate::services::source_control::OperationAction,
+        ctx: &egui::Context,
+    ) {
+        use crate::services::source_control::OperationAction;
+        let Some(snapshot) = &self.view.source_control.snapshot else {
+            return;
+        };
+        let state = snapshot.state;
+        let Some(label) = state.label() else {
+            self.view.source_control.error = Some("Nothing is in progress".into());
+            return;
+        };
+        if self.source_has_dirty_documents() {
+            self.view.source_control.error = Some(format!(
+                "Save or discard unsaved edits in this repository before changing how {} ends",
+                label.to_lowercase()
+            ));
+            return;
+        }
+        match action {
+            OperationAction::Abort => self.view.source_control.abort_prompt = true,
+            OperationAction::Continue
+                if snapshot.changes.iter().any(|change| change.is_conflict()) =>
+            {
+                self.view.source_control.error =
+                    Some("Resolve every conflict (and stage it) before continuing".into());
+            }
+            _ => self.run_source_operation_action(action, ctx),
+        }
+    }
+
+    pub(crate) fn confirm_operation_abort(&mut self, ctx: &egui::Context) {
+        self.view.source_control.abort_prompt = false;
+        self.run_source_operation_action(
+            crate::services::source_control::OperationAction::Abort,
+            ctx,
+        );
+    }
+
+    fn run_source_operation_action(
+        &mut self,
+        action: crate::services::source_control::OperationAction,
+        ctx: &egui::Context,
+    ) {
+        use crate::services::source_control::OperationAction;
+        let Some(state) = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.state)
+        else {
+            return;
+        };
+        let word = match action {
+            OperationAction::Continue => "Continued",
+            OperationAction::Skip => "Skipped step of",
+            OperationAction::Abort => "Aborted",
+        };
+        let label = format!(
+            "{word} {}",
+            state.label().unwrap_or("operation").to_lowercase()
+        );
+        self.run_source_repo_operation(ctx, label, move |service, root| {
+            service.operation(root, state, action)
+        });
+    }
+
+    /// Keeps one side of a conflicted file and stages the result.
+    pub(crate) fn resolve_source_conflict(
+        &mut self,
+        path: PathBuf,
+        side: crate::services::source_control::ConflictSide,
+        ctx: &egui::Context,
+    ) {
+        let Some(change) = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .changes
+                    .iter()
+                    .find(|change| change.path == path && change.is_conflict())
+                    .cloned()
+            })
+        else {
+            return;
+        };
+        let full_path = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.root.join(&change.path));
+        if self
+            .editor
+            .files
+            .iter()
+            .any(|file| file.dirty && file.path.is_some() && file.path == full_path)
+        {
+            self.view.source_control.error =
+                Some("Save or discard this file's editor changes before choosing a side".into());
+            return;
+        }
+        self.run_source_repo_operation(ctx, "Resolved conflict", move |service, root| {
+            service.resolve_conflict(root, &change, side)
+        });
+    }
+
     pub(crate) fn fetch_source_control(&mut self, ctx: &egui::Context) {
         self.run_source_repo_operation(ctx, "Fetched remote changes", |service, root| {
             service.fetch(root)
@@ -1130,6 +1260,78 @@ mod tests {
         let mut detached = base;
         detached.head = GitHead::Detached("abc".into());
         assert!(publish_target(&detached).unwrap_err().contains("Check out"));
+    }
+
+    fn conflicted_app(state: crate::services::source_control::RepoState) -> LumenApp {
+        use crate::services::source_control::ChangeKind;
+        let mut conflict = GitChange::new("both.rs", 'U', 'U');
+        conflict.kind = ChangeKind::Conflict;
+        let mut app = LumenApp::default();
+        app.view.source_control.snapshot = Some(GitSnapshot {
+            root: "/repo".into(),
+            state,
+            changes: vec![conflict],
+            ..Default::default()
+        });
+        app
+    }
+
+    #[test]
+    fn continue_waits_for_conflicts_abort_asks_and_unsaved_edits_block_everything() {
+        use crate::services::source_control::{OperationAction, RepoState};
+        let ctx = egui::Context::default();
+        let mut app = conflicted_app(RepoState::Rebase);
+        app.request_source_operation(OperationAction::Continue, &ctx);
+        assert!(app.source_control_job.is_none());
+        assert!(
+            app.view
+                .source_control
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("Resolve every conflict")
+        );
+        app.request_source_operation(OperationAction::Abort, &ctx);
+        assert!(app.view.source_control.abort_prompt, "abort asks first");
+        assert!(app.source_control_job.is_none());
+        let mut clean = conflicted_app(RepoState::Clean);
+        clean.request_source_operation(OperationAction::Abort, &ctx);
+        assert!(!clean.view.source_control.abort_prompt);
+        assert_eq!(
+            clean.view.source_control.error.as_deref(),
+            Some("Nothing is in progress")
+        );
+        let mut dirty = conflicted_app(RepoState::Merge);
+        let mut document = Document::from_path("/repo/both.rs".into(), "saved".into());
+        document.text = "edited".into();
+        document.record_text_change();
+        dirty.editor.files.push(document);
+        dirty.request_source_operation(OperationAction::Abort, &ctx);
+        assert!(!dirty.view.source_control.abort_prompt);
+        assert!(
+            dirty
+                .view
+                .source_control
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("unsaved")
+        );
+        dirty.resolve_source_conflict(
+            "both.rs".into(),
+            crate::services::source_control::ConflictSide::Ours,
+            &ctx,
+        );
+        assert!(dirty.source_control_job.is_none());
+        assert!(
+            dirty
+                .view
+                .source_control
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("editor changes")
+        );
     }
 
     #[test]

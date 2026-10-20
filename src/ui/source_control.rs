@@ -1,7 +1,9 @@
 use super::{Workbench, widgets::explorer_row};
 use crate::{
     app::command::Command,
-    services::source_control::{ChangeKind, DiffSide, GitChange, GitSnapshot},
+    services::source_control::{
+        ChangeKind, ConflictSide, DiffSide, GitChange, GitSnapshot, OperationAction, RepoState,
+    },
 };
 use eframe::egui::{self, FontId, RichText, ScrollArea, TextEdit};
 use std::collections::BTreeSet;
@@ -259,6 +261,38 @@ impl Workbench<'_> {
         branch.on_hover_text(branch_details(&snapshot));
         source_label(ui, &remote_summary(&snapshot), colors.muted)
             .on_hover_text(remote_details(&snapshot));
+        if let Some(label) = snapshot.state.label() {
+            let has_conflicts = snapshot.changes.iter().any(|change| change.is_conflict());
+            ui.horizontal_wrapped(|ui| {
+                let idle = !self.view.source_control.loading;
+                ui.label(RichText::new(label).small().color(colors.muted));
+                let continue_button =
+                    ui.add_enabled(idle && !has_conflicts, egui::Button::new("Continue"));
+                let continue_button = if has_conflicts {
+                    continue_button.on_disabled_hover_text("Resolve and stage every conflict first")
+                } else {
+                    continue_button.on_hover_text(format!("Continue {}", label.to_lowercase()))
+                };
+                if continue_button.clicked() {
+                    self.command(Command::SourceOperation(OperationAction::Continue));
+                }
+                if snapshot.state != RepoState::Merge
+                    && ui
+                        .add_enabled(idle, egui::Button::new("Skip"))
+                        .on_hover_text("Skip the current step")
+                        .clicked()
+                {
+                    self.command(Command::SourceOperation(OperationAction::Skip));
+                }
+                if ui
+                    .add_enabled(idle, egui::Button::new("Abort…"))
+                    .on_hover_text("Stop and return to where you started")
+                    .clicked()
+                {
+                    self.command(Command::SourceOperation(OperationAction::Abort));
+                }
+            });
+        }
         ui.horizontal_wrapped(|ui| {
             let idle = !self.view.source_control.loading;
             if ui
@@ -399,6 +433,7 @@ impl Workbench<'_> {
         let mut requested = None;
         let mut open_conflict = None;
         let mut open_repository = None;
+        let mut chosen_side = None;
         ScrollArea::vertical()
             .id_salt("source_control_changes")
             .show_rows(ui, 22.0, rows.len(), |ui, visible| {
@@ -432,7 +467,24 @@ impl Workbench<'_> {
                     };
                     let response = explorer_row(ui, label, 4, false)
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(hover);
+                        .on_hover_text(if change.is_conflict() {
+                            format!("{hover}\nRight-click to choose a side")
+                        } else {
+                            hover
+                        });
+                    if change.is_conflict() {
+                        let (ours, theirs) = snapshot.state.side_labels();
+                        response.context_menu(|ui| {
+                            if ui.button(ours).clicked() {
+                                chosen_side = Some((change.path.clone(), ConflictSide::Ours));
+                                ui.close();
+                            }
+                            if ui.button(theirs).clicked() {
+                                chosen_side = Some((change.path.clone(), ConflictSide::Theirs));
+                                ui.close();
+                            }
+                        });
+                    }
                     let action = match side {
                         DiffSide::Staged => Command::UnstagePaths(vec![change.path.clone()]),
                         DiffSide::Working | DiffSide::Untracked => {
@@ -501,6 +553,9 @@ impl Workbench<'_> {
                     }
                 }
             });
+        if let Some((path, side)) = chosen_side {
+            self.command(Command::ResolveConflict(path, side));
+        }
         if let Some(root) = open_repository {
             self.command(Command::SelectRepository(root));
         }
@@ -805,6 +860,41 @@ impl Workbench<'_> {
             self.command(Command::StartClone);
         } else if cancel || modal.should_close() {
             self.command(Command::CancelClone);
+        }
+    }
+
+    pub(crate) fn source_abort_dialog(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        if !self.view.source_control.abort_prompt {
+            return;
+        }
+        let label = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.state.label())
+            .unwrap_or("The operation");
+        let (mut confirm, mut cancel) = (false, false);
+        let modal = egui::Modal::new(egui::Id::new("source_control_abort")).show(ctx, |ui| {
+            ui.set_width(400.0);
+            ui.heading("Abort and go back?");
+            ui.label(
+                RichText::new(format!(
+                    "{label} will be stopped and Git will try to return to the state before it began. Changes you made while resolving conflicts are discarded, and Git may be unable to restore uncommitted changes that existed beforehand."
+                ))
+                .color(colors.muted),
+            );
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                confirm = ui.button("Abort").clicked();
+                cancel = ui.button("Keep Going").clicked();
+            });
+        });
+        if cancel || modal.should_close() {
+            self.command(Command::CancelOperationAbort);
+        } else if confirm {
+            self.command(Command::ConfirmOperationAbort);
         }
     }
 

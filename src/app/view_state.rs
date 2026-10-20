@@ -227,6 +227,8 @@ pub(crate) struct SourceControlView {
     pub(crate) commit_focus: bool,
     pub(crate) commit_focused: bool,
     pub(crate) revert_prompt: Option<SourceRevertPrompt>,
+    /// A confirmation waiting for the user before aborting an operation.
+    pub(crate) abort_prompt: bool,
     pub(crate) last_refresh: Option<std::time::Instant>,
 }
 

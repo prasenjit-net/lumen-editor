@@ -129,7 +129,32 @@ impl GitSnapshot {
     }
 }
 
+/// How to move an in-progress merge, rebase, cherry-pick or revert forward.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OperationAction {
+    Continue,
+    Skip,
+    Abort,
+}
+
+/// Which side of a conflict to keep, in Git's `--ours`/`--theirs` terms. During a
+/// rebase Git swaps what they mean, so the UI labels them per operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ConflictSide {
+    Ours,
+    Theirs,
+}
+
 impl RepoState {
+    /// Button labels for choosing a side, correct for this operation.
+    pub(crate) fn side_labels(self) -> (&'static str, &'static str) {
+        match self {
+            // The branch being rebased onto is "ours"; your replayed commit is "theirs".
+            Self::Rebase => ("Use upstream version", "Use your commit's version"),
+            _ => ("Use current branch version", "Use incoming version"),
+        }
+    }
+
     pub(crate) fn label(self) -> Option<&'static str> {
         match self {
             Self::Clean => None,
@@ -248,6 +273,21 @@ pub(crate) trait SourceControlService: Send + Sync {
     fn rename_branch(&self, root: &Path, from: &str, to: &str) -> Result<(), String>;
     /// Deletes a fully merged local branch (`git branch -d`); never forces.
     fn delete_branch(&self, root: &Path, name: &str) -> Result<(), String>;
+    /// Continues, skips or aborts the in-progress operation. Invalid combinations
+    /// (for example skipping a merge) are refused before Git runs.
+    fn operation(
+        &self,
+        root: &Path,
+        state: RepoState,
+        action: OperationAction,
+    ) -> Result<(), String>;
+    /// Resolves one conflicted path by keeping a side and staging the result.
+    fn resolve_conflict(
+        &self,
+        root: &Path,
+        change: &GitChange,
+        side: ConflictSide,
+    ) -> Result<(), String>;
     /// Fetches every remote and prunes deleted remote branches.
     fn fetch(&self, root: &Path) -> Result<(), String>;
     /// Pushes `branch` to `remote` and records it as the upstream.
@@ -622,6 +662,88 @@ impl SourceControlService for LocalGit {
         git_run(root, ["branch", "--delete", name], "delete branch")
     }
 
+    fn operation(
+        &self,
+        root: &Path,
+        state: RepoState,
+        action: OperationAction,
+    ) -> Result<(), String> {
+        let command = match state {
+            RepoState::Clean => {
+                return Err("No merge, rebase, cherry-pick or revert is in progress".into());
+            }
+            RepoState::Merge => "merge",
+            RepoState::Rebase => "rebase",
+            RepoState::CherryPick => "cherry-pick",
+            RepoState::Revert => "revert",
+        };
+        match (state, action) {
+            (RepoState::Merge, OperationAction::Skip) => {
+                Err("A merge cannot be skipped; abort it or resolve the conflicts".into())
+            }
+            // Finishing a merge is an ordinary commit that reuses the prepared message.
+            (RepoState::Merge, OperationAction::Continue) => {
+                git_run(root, ["commit", "--no-edit"], "merge commit")
+            }
+            (_, OperationAction::Continue) => git_run(
+                root,
+                [command, "--continue"],
+                &format!("{command} continue"),
+            ),
+            (_, OperationAction::Skip) => {
+                git_run(root, [command, "--skip"], &format!("{command} skip"))
+            }
+            (_, OperationAction::Abort) => {
+                git_run(root, [command, "--abort"], &format!("{command} abort"))
+            }
+        }
+    }
+
+    fn resolve_conflict(
+        &self,
+        root: &Path,
+        change: &GitChange,
+        side: ConflictSide,
+    ) -> Result<(), String> {
+        if !change.is_conflict() {
+            return Err("That file is not in conflict".into());
+        }
+        let paths = [change.path.clone()];
+        // The chosen side may not have the file at all (deleted or never added).
+        let xy = (change.index, change.worktree);
+        let absent = match side {
+            ConflictSide::Ours => matches!(xy, ('D', 'D') | ('D', 'U') | ('U', 'A')),
+            ConflictSide::Theirs => matches!(xy, ('D', 'D') | ('U', 'D') | ('A', 'U')),
+        };
+        if absent {
+            return git_paths(
+                root,
+                ["rm", "--quiet", "--"],
+                &paths,
+                "remove the conflicted file",
+            );
+        }
+        let flag = match side {
+            ConflictSide::Ours => "--ours",
+            ConflictSide::Theirs => "--theirs",
+        };
+        match flag {
+            "--ours" => git_paths(
+                root,
+                ["checkout", "--ours", "--"],
+                &paths,
+                "take our version of",
+            )?,
+            _ => git_paths(
+                root,
+                ["checkout", "--theirs", "--"],
+                &paths,
+                "take their version of",
+            )?,
+        }
+        git_paths(root, ["add", "--"], &paths, "stage")
+    }
+
     fn fetch(&self, root: &Path) -> Result<(), String> {
         git_run(root, ["fetch", "--all", "--prune"], "fetch")
     }
@@ -866,8 +988,11 @@ fn git_run<const N: usize>(root: &Path, args: [&str; N], action: &str) -> Result
             .args(["--no-optional-locks"])
             .args(args)
             // No terminal exists to answer a credential prompt; fail instead
-            // of waiting. Credential helpers and agents still work.
-            .env("GIT_TERMINAL_PROMPT", "0"),
+            // of waiting. Credential helpers and agents still work. Never open
+            // an editor either (`--continue` would otherwise block on one).
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_EDITOR", "true")
+            .env("GIT_SEQUENCE_EDITOR", "true"),
         action,
         REMOTE_TIMEOUT,
     )
@@ -2259,6 +2384,201 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         );
         let own = from_linked.iter().find(|b| b.name == "side").unwrap();
         assert!(own.checked_out_at.is_none() && own.current);
+    }
+
+    /// main and `other` both change f.txt differently; the merge of `other`
+    /// into main stops in a conflict.
+    fn conflicted_merge(root: &Path) {
+        repo_with_commit(root);
+        git_ok(root, &["checkout", "-q", "-b", "other"]);
+        fs::write(root.join("f.txt"), "other\n").unwrap();
+        git_ok(root, &["commit", "-q", "-am", "other"]);
+        git_ok(root, &["checkout", "-q", "main"]);
+        fs::write(root.join("f.txt"), "main\n").unwrap();
+        git_ok(root, &["commit", "-q", "-am", "main"]);
+        let merge = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["merge", "other"])
+            .output()
+            .unwrap();
+        assert!(!merge.status.success());
+    }
+
+    fn only_conflict(root: &Path) -> GitChange {
+        let snapshot = LocalGit.snapshot(root).unwrap().unwrap();
+        snapshot
+            .changes
+            .into_iter()
+            .find(|change| change.is_conflict())
+            .expect("a conflict")
+    }
+
+    #[test]
+    fn choosing_a_side_resolves_the_conflict_and_the_merge_can_be_continued() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        conflicted_merge(&root);
+        // Continuing with unresolved conflicts is refused by Git and changes nothing.
+        assert!(
+            LocalGit
+                .operation(&root, RepoState::Merge, OperationAction::Continue)
+                .is_err()
+        );
+        assert_eq!(
+            LocalGit.snapshot(&root).unwrap().unwrap().state,
+            RepoState::Merge
+        );
+        LocalGit
+            .resolve_conflict(&root, &only_conflict(&root), ConflictSide::Theirs)
+            .unwrap();
+        assert_eq!(fs::read_to_string(root.join("f.txt")).unwrap(), "other\n");
+        LocalGit
+            .operation(&root, RepoState::Merge, OperationAction::Continue)
+            .unwrap();
+        let snapshot = LocalGit.snapshot(&root).unwrap().unwrap();
+        assert_eq!(snapshot.state, RepoState::Clean);
+        assert!(snapshot.changes.is_empty());
+    }
+
+    #[test]
+    fn aborting_a_merge_restores_the_branch_and_skip_is_refused_for_merges() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        conflicted_merge(&root);
+        assert!(
+            LocalGit
+                .operation(&root, RepoState::Merge, OperationAction::Skip)
+                .is_err()
+        );
+        LocalGit
+            .operation(&root, RepoState::Merge, OperationAction::Abort)
+            .unwrap();
+        assert_eq!(fs::read_to_string(root.join("f.txt")).unwrap(), "main\n");
+        assert_eq!(
+            LocalGit.snapshot(&root).unwrap().unwrap().state,
+            RepoState::Clean
+        );
+        assert!(
+            LocalGit
+                .operation(&root, RepoState::Clean, OperationAction::Abort)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn rebase_conflicts_can_be_resolved_continued_skipped_and_aborted() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        git_ok(&root, &["checkout", "-q", "-b", "topic"]);
+        fs::write(root.join("f.txt"), "topic\n").unwrap();
+        git_ok(&root, &["commit", "-q", "-am", "topic"]);
+        git_ok(&root, &["checkout", "-q", "main"]);
+        fs::write(root.join("f.txt"), "main\n").unwrap();
+        git_ok(&root, &["commit", "-q", "-am", "main"]);
+        git_ok(&root, &["checkout", "-q", "topic"]);
+        let start = || {
+            let _ = Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(["rebase", "main"])
+                .output()
+                .unwrap();
+        };
+        // Abort returns to the original branch state.
+        start();
+        assert_eq!(
+            LocalGit.snapshot(&root).unwrap().unwrap().state,
+            RepoState::Rebase
+        );
+        LocalGit
+            .operation(&root, RepoState::Rebase, OperationAction::Abort)
+            .unwrap();
+        assert_eq!(fs::read_to_string(root.join("f.txt")).unwrap(), "topic\n");
+        // Skip drops the conflicting commit.
+        start();
+        LocalGit
+            .operation(&root, RepoState::Rebase, OperationAction::Skip)
+            .unwrap();
+        assert_eq!(fs::read_to_string(root.join("f.txt")).unwrap(), "main\n");
+        assert_eq!(
+            LocalGit.snapshot(&root).unwrap().unwrap().state,
+            RepoState::Clean
+        );
+        // Reset to try continue: pick "ours" (upstream side) and continue.
+        git_ok(&root, &["reset", "-q", "--hard", "topic@{1}"]);
+        start();
+        LocalGit
+            .resolve_conflict(&root, &only_conflict(&root), ConflictSide::Ours)
+            .unwrap();
+        assert_eq!(fs::read_to_string(root.join("f.txt")).unwrap(), "main\n");
+        LocalGit
+            .operation(&root, RepoState::Rebase, OperationAction::Continue)
+            .unwrap();
+        assert_eq!(
+            LocalGit.snapshot(&root).unwrap().unwrap().state,
+            RepoState::Clean
+        );
+    }
+
+    #[test]
+    fn choosing_the_deleting_side_removes_the_file_and_the_other_side_keeps_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        git_ok(&root, &["checkout", "-q", "-b", "other"]);
+        fs::write(root.join("f.txt"), "changed on other\n").unwrap();
+        git_ok(&root, &["commit", "-q", "-am", "modify"]);
+        git_ok(&root, &["checkout", "-q", "main"]);
+        git_ok(&root, &["rm", "-q", "--", "f.txt"]);
+        git_ok(&root, &["commit", "-q", "-m", "delete"]);
+        let merge = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["merge", "other"])
+            .output()
+            .unwrap();
+        assert!(!merge.status.success());
+        let conflict = only_conflict(&root);
+        assert_eq!((conflict.index, conflict.worktree), ('D', 'U'));
+        // "Ours" deleted the file, so keeping ours removes it.
+        LocalGit
+            .resolve_conflict(&root, &conflict, ConflictSide::Ours)
+            .unwrap();
+        assert!(!root.join("f.txt").exists());
+        LocalGit
+            .operation(&root, RepoState::Merge, OperationAction::Abort)
+            .unwrap();
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["merge", "other"])
+            .output()
+            .unwrap();
+        LocalGit
+            .resolve_conflict(&root, &only_conflict(&root), ConflictSide::Theirs)
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("f.txt")).unwrap(),
+            "changed on other\n"
+        );
+    }
+
+    #[test]
+    fn side_labels_swap_meaning_for_a_rebase() {
+        assert_eq!(
+            RepoState::Merge.side_labels().0,
+            "Use current branch version"
+        );
+        assert_eq!(RepoState::Rebase.side_labels().0, "Use upstream version");
+        assert!(RepoState::Rebase.side_labels().1.contains("your commit"));
+        let plain = GitChange::new("a.rs", 'M', ' ');
+        assert!(
+            LocalGit
+                .resolve_conflict(Path::new("."), &plain, ConflictSide::Ours)
+                .is_err()
+        );
     }
 
     #[test]
