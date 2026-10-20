@@ -207,6 +207,8 @@ Settings include `language.rust.enabled`, `language.go.enabled`, their `server_p
 
 Open a folder inside a Git repository and select Source Control. Lumen shows status groups and Explorer badges, with Git work performed outside the UI thread.
 
+- Lumen finds the repository containing the opened folder plus nested and sibling repositories (up to four levels deep, skipping `node_modules`, `target`, `vendor`, `dist`, `build` and hidden folders). When there are several, pick one from the list; staging, commits, push and pull act on the selected repository and each keeps its own commit draft. Explorer badges come from the repository that owns the file. Linked worktrees and submodules appear as their own entries; a submodule row in its parent jumps to the child, and staging it records only the child's commit.
+- The header shows the branch, `+ahead -behind` against the upstream (as of the last fetch) and any merge, rebase, cherry-pick or revert in progress. Unmerged files appear under **Merge conflicts**; click one to edit it, and the row button stages it as resolved. Continue/abort controls are not available yet.
 - Open staged, working, or untracked changes in a side-by-side diff.
 - Working comparisons have a read-only Git side and an editable working-document side. Staged comparisons are read-only.
 - An already-open dirty document is reused without replacing its text. A clean diff-only preview is dropped on close; dirty previews retain their file tab.

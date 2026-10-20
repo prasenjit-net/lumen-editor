@@ -38,6 +38,10 @@ impl GitChange {
     pub(crate) fn is_conflict(&self) -> bool {
         matches!(self.kind, ChangeKind::Conflict)
     }
+
+    pub(crate) fn is_submodule(&self) -> bool {
+        matches!(self.kind, ChangeKind::Submodule(_))
+    }
 }
 
 /// What kind of status record produced a change. Conflicts are never folded
@@ -50,6 +54,38 @@ pub(crate) enum ChangeKind {
         from: PathBuf,
     },
     Conflict,
+    /// A gitlink. Staging it records the child's checked-out commit in the
+    /// parent; the child's own files are never staged through the parent.
+    Submodule(SubmoduleChange),
+}
+
+/// What differs inside a submodule, from the `S<c><m><u>` status field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SubmoduleChange {
+    /// The checked-out commit differs from the one the parent records.
+    pub(crate) commit: bool,
+    pub(crate) modified_content: bool,
+    pub(crate) untracked_content: bool,
+}
+
+impl SubmoduleChange {
+    pub(crate) fn describe(self) -> String {
+        let mut parts = Vec::new();
+        if self.commit {
+            parts.push("new commits");
+        }
+        if self.modified_content {
+            parts.push("modified content");
+        }
+        if self.untracked_content {
+            parts.push("untracked content");
+        }
+        if parts.is_empty() {
+            "submodule".into()
+        } else {
+            format!("submodule: {}", parts.join(", "))
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -81,6 +117,18 @@ pub(crate) enum RepoState {
     Revert,
 }
 
+impl GitSnapshot {
+    pub(crate) fn is_linked_worktree(&self) -> bool {
+        !self.common_dir.as_os_str().is_empty() && self.git_dir != self.common_dir
+    }
+
+    /// Worktrees of one repository share refs and objects, so a ref change in
+    /// one invalidates the others.
+    pub(crate) fn shares_storage_with(&self, other: &GitSnapshot) -> bool {
+        !self.common_dir.as_os_str().is_empty() && self.common_dir == other.common_dir
+    }
+}
+
 impl RepoState {
     pub(crate) fn label(self) -> Option<&'static str> {
         match self {
@@ -96,6 +144,10 @@ impl RepoState {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct GitSnapshot {
     pub(crate) root: PathBuf,
+    /// This worktree's git directory, and the directory holding the shared
+    /// objects and refs. They differ for a linked worktree.
+    pub(crate) git_dir: PathBuf,
+    pub(crate) common_dir: PathBuf,
     /// Display label for the header; derived from `head`.
     pub(crate) branch: String,
     pub(crate) head: GitHead,
@@ -228,7 +280,6 @@ impl SourceControlService for LocalGit {
                 "--porcelain=v2",
                 "--branch",
                 "-z",
-                "--ignore-submodules=all",
                 "--untracked-files=normal",
             ])
             .output()
@@ -243,8 +294,11 @@ impl SourceControlService for LocalGit {
             GitHead::Detached(oid) => format!("Detached HEAD at {}", &oid[..oid.len().min(7)]),
             GitHead::Unknown => "Detached HEAD".into(),
         };
+        let (git_dir, common_dir) = git_directories(&root);
         Ok(Some(GitSnapshot {
-            state: repo_state(&root),
+            state: repo_state(&git_dir),
+            git_dir,
+            common_dir,
             root,
             branch,
             head: parsed.head,
@@ -779,25 +833,56 @@ fn git_command(root: &Path) -> Command {
     command
 }
 
+/// The `sub` field is `N...` for ordinary entries and `S<c><m><u>` for a
+/// submodule, where each flag letter is set when that kind of change exists.
+fn submodule_field(line: &str) -> Option<SubmoduleChange> {
+    let field = line.split(' ').nth(2)?;
+    let field = field.strip_prefix('S')?.as_bytes();
+    Some(SubmoduleChange {
+        commit: field.first() == Some(&b'C'),
+        modified_content: field.get(1) == Some(&b'M'),
+        untracked_content: field.get(2) == Some(&b'U'),
+    })
+}
+
 struct ParsedStatus {
     head: GitHead,
     upstream: Option<GitUpstream>,
     changes: Vec<GitChange>,
 }
 
-/// Reads the in-progress operation from state files in the real git directory
-/// (which for a linked worktree is not `<root>/.git`).
-fn repo_state(root: &Path) -> RepoState {
-    let Ok(output) = git_command(root)
-        .args(["rev-parse", "--absolute-git-dir"])
-        .output()
-    else {
-        return RepoState::Clean;
+/// Absolute git directory of this worktree and the shared common directory.
+fn git_directories(root: &Path) -> (PathBuf, PathBuf) {
+    let read = |args: &[&str]| {
+        git_command(root)
+            .args(["rev-parse"])
+            .args(args)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|text| PathBuf::from(text.trim_end_matches(['\r', '\n'])))
     };
-    let Ok(dir) = String::from_utf8(output.stdout) else {
-        return RepoState::Clean;
-    };
-    let dir = PathBuf::from(dir.trim_end_matches(['\r', '\n']));
+    let git_dir = read(&["--absolute-git-dir"]).unwrap_or_default();
+    // `--path-format` needs Git 2.31; without it the common dir may be relative
+    // to the root, so resolve it here and compare canonical paths.
+    let common = read(&["--git-common-dir"])
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                root.join(path)
+            }
+        })
+        .and_then(|path| fs::canonicalize(path).ok())
+        .unwrap_or_else(|| git_dir.clone());
+    let git_dir = fs::canonicalize(&git_dir).unwrap_or(git_dir);
+    (git_dir, common)
+}
+
+/// Reads the in-progress operation from state files in the git directory (for a
+/// linked worktree that is not `<root>/.git`).
+fn repo_state(dir: &Path) -> RepoState {
     let has = |name: &str| dir.join(name).exists();
     if has("rebase-merge") || has("rebase-apply") {
         RepoState::Rebase
@@ -880,7 +965,11 @@ fn parse_status(bytes: &[u8]) -> Result<ParsedStatus, String> {
                 let (index, worktree) = xy()?;
                 // 1 XY sub mH mI mW hH hI path
                 let path = line.splitn(9, ' ').nth(8).ok_or_else(bad)?;
-                changes.push(GitChange::new(path, index, worktree));
+                let mut change = GitChange::new(path, index, worktree);
+                if let Some(sub) = submodule_field(&line) {
+                    change.kind = ChangeKind::Submodule(sub);
+                }
+                changes.push(change);
             }
             b'2' => {
                 let (index, worktree) = xy()?;
@@ -1362,6 +1451,147 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         fs::create_dir_all(top.join("one")).unwrap();
         init_repo(&top.join("one"));
         assert_eq!(LocalGit.discover(&top).unwrap(), vec![top.join("one")]);
+    }
+
+    #[test]
+    fn submodule_status_flags_are_parsed_from_the_sub_field() {
+        let parsed = parse_status(
+            b"1 .M SCMU 160000 160000 160000 a b child\0\
+1 .M N... 100644 100644 100644 a b plain.rs\0",
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.changes[0].kind,
+            ChangeKind::Submodule(SubmoduleChange {
+                commit: true,
+                modified_content: true,
+                untracked_content: true
+            })
+        );
+        assert!(parsed.changes[0].is_submodule());
+        assert_eq!(parsed.changes[1].kind, ChangeKind::Ordinary);
+        assert!(SubmoduleChange::default().describe().contains("submodule"));
+    }
+
+    #[test]
+    fn linked_worktrees_share_storage_but_have_their_own_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let top = fs::canonicalize(directory.path()).unwrap();
+        let main = top.join("main");
+        fs::create_dir_all(&main).unwrap();
+        init_repo(&main);
+        let git = |dir: &Path, args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        fs::write(main.join("f.txt"), "x\n").unwrap();
+        git(&main, &["add", "--", "f.txt"]);
+        git(&main, &["commit", "-q", "-m", "init"]);
+        let linked = top.join("linked");
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "side",
+                linked.to_str().unwrap(),
+            ],
+        );
+        let a = LocalGit.snapshot(&main).unwrap().unwrap();
+        let b = LocalGit.snapshot(&linked).unwrap().unwrap();
+        assert!(!a.is_linked_worktree());
+        assert!(b.is_linked_worktree());
+        assert!(a.shares_storage_with(&b));
+        assert_ne!(a.git_dir, b.git_dir);
+        assert_eq!(b.head, GitHead::Attached("side".into()));
+        // A merge started in the linked worktree is invisible to the main one.
+        fs::write(
+            b.git_dir.join("MERGE_HEAD"),
+            "0000000000000000000000000000000000000000\n",
+        )
+        .unwrap();
+        assert_eq!(
+            LocalGit.snapshot(&linked).unwrap().unwrap().state,
+            RepoState::Merge
+        );
+        assert_eq!(
+            LocalGit.snapshot(&main).unwrap().unwrap().state,
+            RepoState::Clean
+        );
+    }
+
+    #[test]
+    fn a_real_submodule_is_discovered_and_reported_in_its_parent() {
+        let directory = tempfile::tempdir().unwrap();
+        let top = fs::canonicalize(directory.path()).unwrap();
+        let child = top.join("child_src");
+        let parent = top.join("parent");
+        fs::create_dir_all(&child).unwrap();
+        fs::create_dir_all(&parent).unwrap();
+        init_repo(&child);
+        init_repo(&parent);
+        let git = |dir: &Path, args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(["-c", "protocol.file.allow=always"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        fs::write(child.join("c.txt"), "c\n").unwrap();
+        git(&child, &["add", "--", "c.txt"]);
+        git(&child, &["commit", "-q", "-m", "child"]);
+        git(
+            &parent,
+            &["submodule", "add", "-q", child.to_str().unwrap(), "mod"],
+        );
+        git(&parent, &["commit", "-q", "-m", "add submodule"]);
+        fs::write(parent.join("mod/new.txt"), "untracked\n").unwrap();
+        let roots = LocalGit.discover(&parent).unwrap();
+        assert_eq!(roots, vec![parent.clone(), parent.join("mod")]);
+        let snapshot = LocalGit.snapshot(&parent).unwrap().unwrap();
+        let change = snapshot
+            .changes
+            .iter()
+            .find(|change| change.path == Path::new("mod"))
+            .expect("dirty submodule is listed");
+        let ChangeKind::Submodule(sub) = &change.kind else {
+            panic!("expected a submodule change: {change:?}");
+        };
+        assert!(sub.untracked_content);
+    }
+
+    #[test]
+    fn a_repository_above_the_opened_folder_owns_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let top = fs::canonicalize(directory.path()).unwrap();
+        init_repo(&top);
+        let inner = top.join("a/b");
+        fs::create_dir_all(&inner).unwrap();
+        fs::write(inner.join("x.txt"), "x\n").unwrap();
+        assert_eq!(LocalGit.discover(&inner).unwrap(), vec![top.clone()]);
+        let snapshot = LocalGit.snapshot(&inner).unwrap().unwrap();
+        assert_eq!(snapshot.root, top);
+        assert!(
+            snapshot.changes.iter().any(|c| c.path.starts_with("a")) // untracked dirs are reported collapsed
+        );
     }
 
     #[test]

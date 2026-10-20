@@ -1,7 +1,7 @@
 use super::{Workbench, widgets::explorer_row};
 use crate::{
     app::command::Command,
-    services::source_control::{DiffSide, GitChange, GitSnapshot},
+    services::source_control::{ChangeKind, DiffSide, GitChange, GitSnapshot},
 };
 use eframe::egui::{self, FontId, RichText, ScrollArea, TextEdit};
 use std::collections::BTreeSet;
@@ -77,10 +77,15 @@ fn repository_label(repo: &GitSnapshot, workspace: Option<&std::path::Path>) -> 
         })
         .unwrap_or_else(|| repo.root.display().to_string());
     let changes = repo.changes.len();
-    if changes == 0 {
-        format!("{name}  {}", repo.branch)
+    let kind = if repo.is_linked_worktree() {
+        "  (worktree)"
     } else {
-        format!("{name}  {}  {changes}", repo.branch)
+        ""
+    };
+    if changes == 0 {
+        format!("{name}{kind}  {}", repo.branch)
+    } else {
+        format!("{name}{kind}  {}  {changes}", repo.branch)
     }
 }
 
@@ -295,6 +300,7 @@ impl Workbench<'_> {
         let rows = source_rows(&snapshot);
         let mut requested = None;
         let mut open_conflict = None;
+        let mut open_repository = None;
         ScrollArea::vertical()
             .id_salt("source_control_changes")
             .show_rows(ui, 22.0, rows.len(), |ui, visible| {
@@ -314,10 +320,21 @@ impl Workbench<'_> {
                     } else {
                         change.worktree
                     };
-                    let label = format!("{marker}  {}", change.path.display());
+                    let submodule = match &change.kind {
+                        ChangeKind::Submodule(sub) => Some(*sub),
+                        _ => None,
+                    };
+                    let label = match submodule {
+                        Some(_) => format!("{marker}  {}  (submodule)", change.path.display()),
+                        None => format!("{marker}  {}", change.path.display()),
+                    };
+                    let hover = match submodule {
+                        Some(sub) => format!("{}\n{}", change.path.display(), sub.describe()),
+                        None => change.path.display().to_string(),
+                    };
                     let response = explorer_row(ui, label, 4, false)
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(change.path.display().to_string());
+                        .on_hover_text(hover);
                     let action = match side {
                         DiffSide::Staged => Command::UnstagePaths(vec![change.path.clone()]),
                         DiffSide::Working | DiffSide::Untracked => {
@@ -329,8 +346,10 @@ impl Workbench<'_> {
                     } else {
                         crate::icon::PLUS
                     };
-                    let revertible =
-                        !change.is_conflict() && change.index != '?' && change.index != 'A';
+                    let revertible = !change.is_conflict()
+                        && !change.is_submodule()
+                        && change.index != '?'
+                        && change.index != 'A';
                     let revert_clicked = revertible
                         && ui
                             .put(
@@ -362,6 +381,19 @@ impl Workbench<'_> {
                         self.command(action);
                     } else if revert_clicked {
                         self.command(Command::RequestSourceRevert(vec![change.path.clone()]));
+                    } else if response.clicked() && change.is_submodule() {
+                        // A gitlink has no text comparison; jump to the child
+                        // repository when it was discovered.
+                        let child = snapshot.root.join(&change.path);
+                        if self
+                            .view
+                            .source_control
+                            .repositories
+                            .iter()
+                            .any(|repo| repo.root == child)
+                        {
+                            open_repository = Some(child);
+                        }
                     } else if response.clicked() && change.is_conflict() {
                         // A comparison of a conflicted file is not meaningful;
                         // open it so the markers can be resolved in the editor.
@@ -371,6 +403,9 @@ impl Workbench<'_> {
                     }
                 }
             });
+        if let Some(root) = open_repository {
+            self.command(Command::SelectRepository(root));
+        }
         if let Some(path) = open_conflict {
             self.command(Command::OpenPath(path));
         }
@@ -389,7 +424,20 @@ impl Workbench<'_> {
             .iter()
             .map(|repo| {
                 let label = repository_label(repo, workspace.as_deref());
-                (repo.root.clone(), label)
+                let siblings = self
+                    .view
+                    .source_control
+                    .repositories
+                    .iter()
+                    .filter(|other| other.root != repo.root && other.shares_storage_with(repo))
+                    .count();
+                let mut tooltip = repo.root.display().to_string();
+                if siblings > 0 {
+                    tooltip.push_str(&format!(
+                        "\nShares branches and objects with {siblings} other listed worktree(s)"
+                    ));
+                }
+                (repo.root.clone(), label, tooltip)
             })
             .collect();
         if rows.len() < 2 {
@@ -401,10 +449,10 @@ impl Workbench<'_> {
             .max_height(22.0 * 5.0)
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                for (root, label) in &rows {
+                for (root, label, tooltip) in &rows {
                     let response = explorer_row(ui, label.clone(), 4, root == selected)
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(root.display().to_string());
+                        .on_hover_text(tooltip.clone());
                     if response.clicked() {
                         chosen = Some(root.clone());
                     }

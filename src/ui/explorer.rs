@@ -216,7 +216,7 @@ impl Workbench<'_> {
                         },
                         HeaderAction {
                             glyph: icon::REFRESH,
-                            tooltip: "Refresh source control",
+                            tooltip: "Refresh source control and rescan repositories",
                             command: Command::RefreshSourceControl,
                             enabled: self.editor.workspace.is_some(),
                         },
