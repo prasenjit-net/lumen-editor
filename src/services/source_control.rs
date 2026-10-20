@@ -48,6 +48,9 @@ pub(crate) struct GitComparison {
 #[derive(Clone, Debug)]
 pub(crate) struct GitHunk {
     pub(crate) header: String,
+    /// The exact patch text the user was shown. Staging verifies it against a
+    /// fresh diff so an external edit cannot redirect the action to other text.
+    pub(crate) patch: String,
 }
 
 pub(crate) trait SourceControlService: Send + Sync {
@@ -63,7 +66,13 @@ pub(crate) trait SourceControlService: Send + Sync {
     fn commit(&self, root: &Path, message: &str, amend: bool) -> Result<(), String>;
     fn pull(&self, root: &Path) -> Result<(), String>;
     fn push(&self, root: &Path) -> Result<(), String>;
-    fn stage_hunk(&self, root: &Path, path: &Path, hunk: usize) -> Result<(), String>;
+    fn stage_hunk(
+        &self,
+        root: &Path,
+        path: &Path,
+        hunk: usize,
+        expected_patch: &str,
+    ) -> Result<(), String>;
 }
 
 pub(crate) struct LocalGit;
@@ -213,6 +222,7 @@ impl SourceControlService for LocalGit {
                         .find(|line| line.starts_with("@@"))
                         .unwrap_or_default()
                         .to_owned(),
+                    patch,
                 })
                 .collect(),
         })
@@ -251,7 +261,7 @@ impl SourceControlService for LocalGit {
             return Err("Enter a commit message".into());
         }
         let mut command = git_command(root);
-        command.args(["--no-optional-locks", "commit", "--no-verify"]);
+        command.args(["--no-optional-locks", "commit"]);
         if amend {
             command.arg("--amend");
             if message.is_empty() {
@@ -268,7 +278,10 @@ impl SourceControlService for LocalGit {
         if output.status.success() {
             Ok(())
         } else {
-            Err(git_failure("Git commit failed", &output.stderr))
+            // Hooks may report their reason on either stream.
+            let mut detail = output.stderr;
+            detail.extend_from_slice(&output.stdout);
+            Err(git_failure("Git commit failed", &detail))
         }
     }
 
@@ -280,10 +293,22 @@ impl SourceControlService for LocalGit {
         git_remote_command(root, ["push"], "push")
     }
 
-    fn stage_hunk(&self, root: &Path, path: &Path, hunk: usize) -> Result<(), String> {
+    fn stage_hunk(
+        &self,
+        root: &Path,
+        path: &Path,
+        hunk: usize,
+        expected_patch: &str,
+    ) -> Result<(), String> {
         let patch = self.diff(root, path, DiffSide::Working)?;
-        let Some(patch) = patch_hunks(&patch).into_iter().nth(hunk) else {
-            return Err("That change hunk is no longer available; refresh the diff".into());
+        let Some(patch) = patch_hunks(&patch)
+            .into_iter()
+            .nth(hunk)
+            .filter(|current| current == expected_patch)
+        else {
+            return Err(
+                "That change hunk changed on disk since it was shown; refresh the diff".into(),
+            );
         };
         let mut child = git_command(root)
             .args(["--no-optional-locks", "apply", "--cached", "--recount"])
@@ -559,7 +584,7 @@ fn git_command(root: &Path) -> Command {
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
-        .args(["-c", "core.fsmonitor=false", "-C"])
+        .args(["--literal-pathspecs", "-c", "core.fsmonitor=false", "-C"])
         .arg(root);
     // A GUI process has no console of its own on Windows. Without this flag,
     // each background Git invocation can briefly create a visible console
@@ -899,8 +924,23 @@ mod tests {
             .comparison(&root, &root.join("file.txt"), DiffSide::Working)
             .unwrap();
         assert_eq!(comparison.hunks.len(), 2);
+        let stale = comparison.hunks[0].patch.clone();
+        // An external edit that changes the first hunk must be rejected rather
+        // than staged under the old preview.
+        fs::write(root.join("file.txt"), changed.replacen("ONE", "EDITED", 1)).unwrap();
+        let error = service
+            .stage_hunk(&root, &root.join("file.txt"), 0, &stale)
+            .unwrap_err();
+        assert!(error.contains("changed on disk"), "{error}");
+        assert!(
+            service
+                .diff(&root, &root.join("file.txt"), DiffSide::Staged)
+                .unwrap()
+                .is_empty()
+        );
+        fs::write(root.join("file.txt"), changed).unwrap();
         service
-            .stage_hunk(&root, &root.join("file.txt"), 0)
+            .stage_hunk(&root, &root.join("file.txt"), 0, &stale)
             .unwrap();
         let staged = service
             .diff(&root, &root.join("file.txt"), DiffSide::Staged)
@@ -912,6 +952,81 @@ mod tests {
             .unwrap();
         assert!(working.contains("+FIFTEEN"));
         assert!(!working.contains("+ONE"));
+    }
+
+    fn init_repo(root: &Path) {
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "--quiet"]);
+        git(&["config", "core.autocrlf", "false"]);
+        git(&["config", "user.name", "Test"]);
+        git(&["config", "user.email", "test@example.invalid"]);
+        git(&["config", "commit.gpgsign", "false"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn commit_runs_hooks_and_reports_their_output() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        init_repo(root);
+        let hook = root.join(".git/hooks/pre-commit");
+        fs::write(&hook, "#!/bin/sh\necho hook says no\nexit 1\n").unwrap();
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(root.join("a.txt"), "a\n").unwrap();
+        let service = LocalGit;
+        service.stage(root, &[PathBuf::from("a.txt")]).unwrap();
+        let error = service.commit(root, "blocked", false).unwrap_err();
+        assert!(error.contains("hook says no"), "{error}");
+        // The staged change survives so the caller can keep the draft and retry.
+        assert!(
+            service
+                .snapshot(root)
+                .unwrap()
+                .unwrap()
+                .changes
+                .iter()
+                .any(|change| change.path == Path::new("a.txt") && change.index == 'A')
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wildcard_file_names_are_targeted_literally() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        init_repo(root);
+        fs::write(root.join("*.txt"), "star\n").unwrap();
+        fs::write(root.join("a.txt"), "a\n").unwrap();
+        fs::write(root.join(":(top)b.txt"), "magic\n").unwrap();
+        let service = LocalGit;
+        service
+            .stage(
+                root,
+                &[PathBuf::from("*.txt"), PathBuf::from(":(top)b.txt")],
+            )
+            .unwrap();
+        let changes = service.snapshot(root).unwrap().unwrap().changes;
+        let staged = |name: &str| {
+            changes
+                .iter()
+                .any(|change| change.path == Path::new(name) && change.index == 'A')
+        };
+        assert!(staged("*.txt"));
+        assert!(staged(":(top)b.txt"));
+        assert!(!staged("a.txt"), "a glob must not stage other files");
     }
 
     #[test]

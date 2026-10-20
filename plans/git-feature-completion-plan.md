@@ -105,6 +105,8 @@ Explicit exclusions for this plan: hosting-provider PR/issue/review APIs, Git se
 
 ### 0. Correctness and safety foundation
 
+Progress (branch `f-git-safety-foundation`): done — hooks run by default with their output shown; literal pathspecs for all Git calls; hunk staging bound to the displayed patch text; mutations are serialized and never replaced by reads; clean open documents reconcile after every mutation outcome. Remaining — generation checks for reads, cancellation/timeouts for remote commands, symlink/executable-bit representation, narrow-width error details, documenting size limits, and a mutation outcome that survives a workspace switch.
+
 - Remove implicit `--no-verify`; retain the draft and show full hook failure output. Define how hooks that modify the index are reflected in the next snapshot.
 - Make mutation dispatch serialized and completion durable, then add generation checks for reads. Verify refresh/diff clicks during a slow commit, pull, and stage operation do not lose the result or start an unsafe overlapping mutation.
 - Bind hunk staging to the exact displayed patch and index/worktree revision; reject stale requests. Test external file edits, index edits, reordered hunks, and failure without modifying another hunk.

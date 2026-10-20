@@ -11,6 +11,9 @@ use std::{
 
 pub(crate) struct SourceControlJob {
     receiver: Receiver<GitResult>,
+    /// Mutations are never replaced or overlapped: dropping the receiver would
+    /// hide the outcome of work that is still running.
+    mutating: bool,
 }
 
 const SOURCE_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
@@ -78,7 +81,29 @@ impl LumenApp {
         }
     }
 
+    /// True while a Git mutation is running. Reads must wait for its result
+    /// (which refreshes the view itself) instead of replacing the job.
+    fn source_mutation_in_flight(&self) -> bool {
+        self.source_control_job
+            .as_ref()
+            .is_some_and(|job| job.mutating)
+    }
+
+    /// Claims the single mutation slot, or explains why the action is refused.
+    fn begin_source_mutation(&mut self) -> bool {
+        if self.source_mutation_in_flight() {
+            self.view.status = "Wait for the current Git operation to finish".into();
+            return false;
+        }
+        self.source_control_job = None;
+        self.view.source_control.loading = true;
+        true
+    }
+
     pub(crate) fn refresh_source_control(&mut self, ctx: &egui::Context) {
+        if self.source_mutation_in_flight() {
+            return;
+        }
         self.source_control_job = None;
         let workspace_changed = self.view.source_control.workspace != self.editor.workspace;
         if workspace_changed {
@@ -106,7 +131,10 @@ impl LumenApp {
             let _ = sender.send(GitResult::Snapshot(workspace, result));
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: false,
+        });
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 
@@ -178,6 +206,7 @@ impl LumenApp {
     }
 
     pub(crate) fn confirm_source_revert(&mut self, ctx: &egui::Context) {
+        let in_flight = self.source_mutation_in_flight();
         let Some(prompt) = &mut self.view.source_control.revert_prompt else {
             return;
         };
@@ -199,6 +228,10 @@ impl LumenApp {
             return;
         }
         let root = snapshot.root.clone();
+        if in_flight {
+            prompt.error = Some("Wait for the current Git operation to finish".into());
+            return;
+        }
         self.source_control_job = None;
         self.view.source_control.loading = true;
         let service = self.source_control_service.clone();
@@ -211,7 +244,10 @@ impl LumenApp {
             let _ = sender.send(GitResult::Revert { paths, result });
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
     }
 
     pub(crate) fn stage_source_hunk(&mut self, path: PathBuf, hunk: usize, ctx: &egui::Context) {
@@ -239,19 +275,32 @@ impl LumenApp {
             self.view.status = "Save or discard editor edits before staging a hunk".into();
             return;
         }
-        self.source_control_job = None;
-        self.view.source_control.loading = true;
+        let Some(expected) = diff
+            .comparison
+            .as_ref()
+            .ok()
+            .and_then(|comparison| comparison.hunks.get(hunk))
+            .map(|hunk| hunk.patch.clone())
+        else {
+            return;
+        };
+        if !self.begin_source_mutation() {
+            return;
+        }
         let service = self.source_control_service.clone();
         let worker_ctx = ctx.clone();
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let result = service
-                .stage_hunk(&root, &root.join(&path), hunk)
+                .stage_hunk(&root, &root.join(&path), hunk, &expected)
                 .map(|_| "Staged hunk".into());
             let _ = sender.send(GitResult::Operation(result));
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
     }
 
     pub(crate) fn commit_source_control(&mut self, ctx: &egui::Context) {
@@ -271,8 +320,9 @@ impl LumenApp {
         else {
             return;
         };
-        self.source_control_job = None;
-        self.view.source_control.loading = true;
+        if !self.begin_source_mutation() {
+            return;
+        }
         self.view.source_control.commit_error = None;
         let service = self.source_control_service.clone();
         let worker_ctx = ctx.clone();
@@ -288,7 +338,10 @@ impl LumenApp {
             let _ = sender.send(GitResult::Commit { result, message });
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
     }
 
     fn run_source_operation<F>(
@@ -315,8 +368,9 @@ impl LumenApp {
         else {
             return;
         };
-        self.source_control_job = None;
-        self.view.source_control.loading = true;
+        if !self.begin_source_mutation() {
+            return;
+        }
         self.view.source_control.error = None;
         let service = self.source_control_service.clone();
         let worker_ctx = ctx.clone();
@@ -326,7 +380,10 @@ impl LumenApp {
             let _ = sender.send(GitResult::Operation(result));
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
     }
 
     fn run_source_remote_operation<F>(
@@ -351,8 +408,9 @@ impl LumenApp {
         else {
             return;
         };
-        self.source_control_job = None;
-        self.view.source_control.loading = true;
+        if !self.begin_source_mutation() {
+            return;
+        }
         self.view.source_control.error = None;
         let service = self.source_control_service.clone();
         let worker_ctx = ctx.clone();
@@ -362,7 +420,10 @@ impl LumenApp {
             let _ = sender.send(GitResult::Operation(result));
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
     }
 
     pub(crate) fn show_source_diff(&mut self, path: PathBuf, side: DiffSide, ctx: &egui::Context) {
@@ -377,6 +438,9 @@ impl LumenApp {
                     DiffSide::Untracked => change.index == '?' && change.worktree == '?',
                 }
         }) {
+            return;
+        }
+        if self.source_mutation_in_flight() {
             return;
         }
         let root = snapshot.root.clone();
@@ -395,7 +459,10 @@ impl LumenApp {
             });
             worker_ctx.request_repaint();
         });
-        self.source_control_job = Some(SourceControlJob { receiver });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: false,
+        });
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 
@@ -426,6 +493,7 @@ impl LumenApp {
             Ok(GitResult::Operation(result)) => {
                 self.view.source_control.loading = false;
                 self.source_control_job = None;
+                self.reconcile_clean_documents();
                 match result {
                     Ok(status) => {
                         self.view.status = status;
@@ -439,6 +507,7 @@ impl LumenApp {
             Ok(GitResult::Commit { result, message }) => {
                 self.view.source_control.loading = false;
                 self.source_control_job = None;
+                self.reconcile_clean_documents();
                 match result {
                     Ok(status) => {
                         self.view.status = status;
@@ -555,6 +624,32 @@ impl LumenApp {
         self.view.source_control.loading = false;
     }
 
+    /// Brings clean open documents in line with the disk after a Git operation
+    /// (pull, hook rewrites, partial failures). Dirty buffers are never touched;
+    /// the regular changed-on-disk check flags them.
+    fn reconcile_clean_documents(&mut self) {
+        let Some(root) = self
+            .view
+            .source_control
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.root.clone())
+        else {
+            return;
+        };
+        for file in &mut self.editor.files {
+            let Some(path) = &file.path else { continue };
+            if file.dirty || !path.starts_with(&root) {
+                continue;
+            }
+            if let Ok(text) = self.file_system.read_text(path)
+                && text != file.text
+            {
+                file.reload_from_disk(text);
+            }
+        }
+    }
+
     fn reload_reverted_documents(&mut self, paths: &[PathBuf]) {
         let Some(root) = self
             .view
@@ -642,7 +737,10 @@ mod tests {
         sender
             .send(GitResult::Operation(Ok("Staged changes".into())))
             .unwrap();
-        app.source_control_job = Some(SourceControlJob { receiver });
+        app.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: false,
+        });
         app.poll_source_control(&egui::Context::default());
         assert_eq!(app.view.source_control.commit_message, "Keep this draft");
         assert!(app.view.source_control.amend_commit);
@@ -666,6 +764,60 @@ mod tests {
         app.view.source_control.commit_focused = false;
         app.ensure_source_control(&ctx);
         assert!(app.source_control_job.is_some());
+    }
+
+    #[test]
+    fn a_running_mutation_is_not_replaced_by_refresh_diff_or_another_mutation() {
+        let root = std::path::Path::new("/workspace");
+        let mut app = app_with_change(root, std::path::Path::new("src/main.rs"));
+        let (sender, receiver) = mpsc::channel();
+        app.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
+        let ctx = egui::Context::default();
+        app.refresh_source_control(&ctx);
+        app.show_source_diff("src/main.rs".into(), DiffSide::Working, &ctx);
+        app.stage_source_paths(vec!["src/main.rs".into()], &ctx);
+        assert_eq!(
+            app.view.status,
+            "Wait for the current Git operation to finish"
+        );
+        // The original job is still the one polled, so its result is not lost.
+        sender
+            .send(GitResult::Operation(Ok("Committed changes".into())))
+            .unwrap();
+        app.poll_source_control(&ctx);
+        assert_eq!(app.view.status, "Committed changes");
+    }
+
+    #[test]
+    fn clean_documents_reload_after_an_operation_but_dirty_ones_are_kept() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
+        std::fs::write(root.join("clean.txt"), "new from pull\n").unwrap();
+        std::fs::write(root.join("dirty.txt"), "new from pull\n").unwrap();
+        let mut app = app_with_change(&root, std::path::Path::new("clean.txt"));
+        app.editor
+            .files
+            .push(Document::from_path(root.join("clean.txt"), "old\n".into()));
+        let mut dirty = Document::from_path(root.join("dirty.txt"), "old\n".into());
+        dirty.text = "my edit\n".into();
+        dirty.record_text_change();
+        app.editor.files.push(dirty);
+        let (sender, receiver) = mpsc::channel();
+        app.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
+        });
+        sender
+            .send(GitResult::Operation(Err("partial failure".into())))
+            .unwrap();
+        app.poll_source_control(&egui::Context::default());
+        assert_eq!(app.editor.files[0].text, "new from pull\n");
+        assert!(!app.editor.files[0].dirty);
+        assert_eq!(app.editor.files[1].text, "my edit\n");
+        assert!(app.editor.files[1].dirty);
     }
 
     #[test]

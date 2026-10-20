@@ -945,9 +945,11 @@ mod tests {
                 hunks: vec![
                     GitHunk {
                         header: "@@ -1 +1 @@".into(),
+                        patch: String::new(),
                     },
                     GitHunk {
                         header: "@@ -8 +8 @@".into(),
+                        patch: String::new(),
                     },
                 ],
             })),
