@@ -130,6 +130,8 @@ Gate: no action on repository A mutates B, an outer repository never claims a ne
 
 ### 2. Repository creation, commits and remotes
 
+Progress (branch `f-git-everyday`, stacked on milestone 1): done — init with initial-branch choice and validation, multiline commit drafts with amend context, remote listing with separate fetch/push URLs and credential redaction, fetch with prune, publish branch (single remote only; never chooses between several), local bare-remote tests. Remaining core — clone with progress/cancel, non-interactive credential flow beyond the no-prompt policy. Deferred tier unchanged (line staging, remote editing, identity/signing UI, explicit ref targets).
+
 - Add Init and Clone with explicit destination and initial branch options as applicable. Never overwrite an existing destination. On cancelled/failed clone, identify partial output and offer cleanup only for content created by that operation; never recursively delete pre-existing user content. Open the result only on success.
 - Add multiline commit drafts, last-commit context for amend, author identity setup with explicit repository/global scope, and configured GPG/SSH signing support through installed tooling. Preserve drafts after hook/signing failure; refresh state even when a hook fails after modifying files/index. Do not store signing secrets.
 - Complete file/hunk/selected-line stage and unstage with revision-bound selection. Confirm tracked file/hunk discard against the exact displayed content; destructive actions remain unavailable for unsupported file types. Preserve the current whole-file behavior until partial operations pass their own tests.

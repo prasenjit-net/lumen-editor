@@ -89,6 +89,30 @@ fn repository_label(repo: &GitSnapshot, workspace: Option<&std::path::Path>) -> 
     }
 }
 
+/// Muted line under the branch: the sole remote's URL, or what is missing.
+fn remote_summary(snapshot: &GitSnapshot) -> String {
+    match snapshot.remotes.as_slice() {
+        [] => "No remote configured".into(),
+        [remote] => format!("{}  {}", remote.name, remote.fetch_url),
+        [first, rest @ ..] => format!("{}  {}  +{} more", first.name, first.fetch_url, rest.len()),
+    }
+}
+
+fn remote_details(snapshot: &GitSnapshot) -> String {
+    if snapshot.remotes.is_empty() {
+        return "Add a remote with `git remote add <name> <url>`".into();
+    }
+    snapshot
+        .remotes
+        .iter()
+        .map(|remote| match &remote.push_url {
+            Some(push) => format!("{}\nfetch {}\npush  {push}", remote.name, remote.fetch_url),
+            None => format!("{}\n{}", remote.name, remote.fetch_url),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// One-line header: branch, ahead/behind counts and any operation in progress.
 fn branch_summary(snapshot: &GitSnapshot) -> String {
     let mut text = format!("{}  {}", crate::icon::GIT_BRANCH, snapshot.branch);
@@ -196,12 +220,63 @@ impl Workbench<'_> {
         let Some(snapshot) = self.view.source_control.snapshot.clone() else {
             source_label(ui, "No Git repository found", colors.muted);
             source_label(ui, &workspace.display().to_string(), colors.muted);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Initial branch").small().color(colors.muted));
+                let width = (ui.available_width() - 4.0).max(24.0);
+                ui.add_sized(
+                    [width, 22.0],
+                    TextEdit::singleline(&mut self.view.source_control.init_branch)
+                        .id_salt("source_control_init_branch")
+                        .hint_text("main"),
+                );
+            });
+            if ui
+                .add_enabled(
+                    !self.view.source_control.loading,
+                    egui::Button::new("Initialize Repository"),
+                )
+                .on_hover_text("Run git init in the opened folder")
+                .clicked()
+            {
+                self.command(Command::InitSourceRepository);
+            }
             return;
         };
         self.repository_list(ui, &snapshot.root);
         let branch_text = branch_summary(&snapshot);
         let branch = source_label(ui, &branch_text, colors.text);
         branch.on_hover_text(branch_details(&snapshot));
+        source_label(ui, &remote_summary(&snapshot), colors.muted)
+            .on_hover_text(remote_details(&snapshot));
+        ui.horizontal_wrapped(|ui| {
+            let idle = !self.view.source_control.loading;
+            if ui
+                .add_enabled(
+                    idle && !snapshot.remotes.is_empty(),
+                    egui::Button::new("Fetch"),
+                )
+                .on_hover_text("Fetch all remotes and prune deleted remote branches")
+                .clicked()
+            {
+                self.command(Command::FetchSourceControl);
+            }
+            match crate::app::source_control::publish_target(&snapshot) {
+                Ok((remote, branch)) => {
+                    if ui
+                        .add_enabled(idle, egui::Button::new("Publish Branch"))
+                        .on_hover_text(format!("Push {branch} to {remote} and track it"))
+                        .clicked()
+                    {
+                        self.command(Command::PublishSourceBranch);
+                    }
+                }
+                Err(reason) if snapshot.upstream.is_none() => {
+                    ui.add_enabled(false, egui::Button::new("Publish Branch"))
+                        .on_disabled_hover_text(reason);
+                }
+                Err(_) => {}
+            }
+        });
         let staged_paths: Vec<_> = snapshot
             .changes
             .iter()
@@ -253,6 +328,25 @@ impl Workbench<'_> {
             });
         });
         let has_staged = !staged_paths.is_empty();
+        // The previous frame's focus decides whether Cmd/Ctrl+Enter commits;
+        // consume it before the multiline editor can turn it into a newline.
+        let commit_shortcut = self.view.source_control.commit_focused
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter));
+        let message_width = ui.available_width().max(24.0);
+        let response = ui.add_sized(
+            [message_width, 56.0],
+            TextEdit::multiline(&mut self.view.source_control.commit_message)
+                .id_salt("source_control_commit_message")
+                .desired_rows(3)
+                .hint_text("Message (Cmd/Ctrl+Enter to commit)"),
+        );
+        if self.view.source_control.commit_focus {
+            response.request_focus();
+            self.view.source_control.commit_focus = false;
+        }
+        self.view.source_control.commit_focused = response.has_focus();
+        let can_commit = (has_staged || self.view.source_control.amend_commit)
+            && !self.view.source_control.loading;
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.view.source_control.amend_commit, "Amend")
                 .on_hover_text(
@@ -263,33 +357,19 @@ impl Workbench<'_> {
             } else {
                 "Commit"
             };
-            // Reserve the full Commit/Amend button and row spacing. Reserving
-            // only the button's text width makes the row a few pixels too wide;
-            // SidePanel then persists that overflow as its next frame's width.
-            const COMMIT_BUTTON_AND_SPACING: f32 = 70.0;
-            let message_width = (ui.available_width() - COMMIT_BUTTON_AND_SPACING).max(24.0);
-            let response = ui.add_sized(
-                [message_width, 22.0],
-                TextEdit::singleline(&mut self.view.source_control.commit_message)
-                    .id_salt("source_control_commit_message")
-                    .hint_text("Message"),
-            );
-            if self.view.source_control.commit_focus {
-                response.request_focus();
-                self.view.source_control.commit_focus = false;
-            }
-            self.view.source_control.commit_focused = response.has_focus();
             if ui
-                .add_enabled(
-                    (has_staged || self.view.source_control.amend_commit)
-                        && !self.view.source_control.loading,
-                    egui::Button::new(commit_label),
-                )
+                .add_enabled(can_commit, egui::Button::new(commit_label))
                 .clicked()
+                || (commit_shortcut && can_commit)
             {
                 self.command(Command::CommitSourceControl);
             }
         });
+        if self.view.source_control.amend_commit
+            && let Some(subject) = &snapshot.last_commit
+        {
+            source_label(ui, &format!("Amending: {subject}"), colors.muted);
+        }
         if let Some(error) = &self.view.source_control.commit_error {
             source_label(ui, error, colors.error);
         }
@@ -950,6 +1030,13 @@ mod tests {
         app.view.source_control.snapshot = Some(GitSnapshot {
             root: PathBuf::from("/workspace"),
             branch: "feature/a-branch-name-long-enough-to-previously-grow-the-sidebar".into(),
+            remotes: vec![crate::services::source_control::GitRemote {
+                name: "origin".into(),
+                fetch_url: "https://example.com/a/remarkably/long/repository/path/that/clips.git"
+                    .into(),
+                push_url: None,
+            }],
+            last_commit: Some("A very long last commit subject that must clip in the pane".into()),
             changes: vec![GitChange::new(
                 PathBuf::from("src/a-very-long-file-name-that-must-stay-clipped.rs"),
                 ' ',
@@ -957,6 +1044,8 @@ mod tests {
             )],
             ..Default::default()
         });
+        app.view.source_control.amend_commit = true;
+        app.view.source_control.commit_message = "line one\nline two\nline three\nfour".into();
         let ctx = egui::Context::default();
         theme::configure_ui(&ctx);
         for requested in [180.0, 240.0, 600.0] {

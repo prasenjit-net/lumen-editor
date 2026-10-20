@@ -153,7 +153,19 @@ pub(crate) struct GitSnapshot {
     pub(crate) head: GitHead,
     pub(crate) upstream: Option<GitUpstream>,
     pub(crate) state: RepoState,
+    pub(crate) remotes: Vec<GitRemote>,
+    /// Subject of the latest commit, shown as context when amending.
+    pub(crate) last_commit: Option<String>,
     pub(crate) changes: Vec<GitChange>,
+}
+
+/// A configured remote. Fetch and push URLs are kept apart because they may
+/// differ; both have embedded credentials removed for display.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GitRemote {
+    pub(crate) name: String,
+    pub(crate) fetch_url: String,
+    pub(crate) push_url: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -217,6 +229,12 @@ pub(crate) trait SourceControlService: Send + Sync {
     fn commit(&self, root: &Path, message: &str, amend: bool) -> Result<(), String>;
     fn pull(&self, root: &Path) -> Result<(), String>;
     fn push(&self, root: &Path) -> Result<(), String>;
+    /// Fetches every remote and prunes deleted remote branches.
+    fn fetch(&self, root: &Path) -> Result<(), String>;
+    /// Pushes `branch` to `remote` and records it as the upstream.
+    fn publish(&self, root: &Path, remote: &str, branch: &str) -> Result<(), String>;
+    /// Creates a repository in `directory` with an explicit initial branch.
+    fn init(&self, directory: &Path, initial_branch: &str) -> Result<(), String>;
     fn stage_hunk(
         &self,
         root: &Path,
@@ -311,7 +329,11 @@ impl SourceControlService for LocalGit {
             GitHead::Unknown => "Detached HEAD".into(),
         };
         let (git_dir, common_dir) = git_directories(&root);
+        let remotes = read_remotes(&root);
+        let last_commit = last_commit_subject(&root);
         Ok(Some(GitSnapshot {
+            remotes,
+            last_commit,
             state: repo_state(&git_dir),
             git_dir,
             common_dir,
@@ -497,6 +519,44 @@ impl SourceControlService for LocalGit {
         git_remote_command(root, ["push"], "push")
     }
 
+    fn fetch(&self, root: &Path) -> Result<(), String> {
+        git_remote_command(root, ["fetch", "--all", "--prune"], "fetch")
+    }
+
+    fn publish(&self, root: &Path, remote: &str, branch: &str) -> Result<(), String> {
+        for name in [remote, branch] {
+            if name.is_empty() || name.starts_with('-') {
+                return Err(format!("Invalid remote or branch name: {name}"));
+            }
+        }
+        git_remote_command(root, ["push", "--set-upstream", remote, branch], "publish")
+    }
+
+    fn init(&self, directory: &Path, initial_branch: &str) -> Result<(), String> {
+        let branch = initial_branch.trim();
+        let valid = !branch.is_empty()
+            && !branch.starts_with('-')
+            && git_command(directory)
+                .args(["check-ref-format", "--branch", branch])
+                .output()
+                .is_ok_and(|output| output.status.success());
+        if !valid {
+            return Err(format!("\"{branch}\" is not a valid branch name"));
+        }
+        if directory.join(".git").exists() {
+            return Err("This folder is already a Git repository".into());
+        }
+        let output = git_command(directory)
+            .args(["init", "--quiet", "--initial-branch", branch])
+            .output()
+            .map_err(|error| format!("Could not start Git init: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(git_failure("Git init failed", &output.stderr))
+        }
+    }
+
     fn stage_hunk(
         &self,
         root: &Path,
@@ -665,8 +725,31 @@ fn run_remote(command: &mut Command, action: &str, timeout: Duration) -> Result<
     }
 }
 
+/// Removes `user:password@` (or a bare token) from URLs in Git output so
+/// credentials never reach the UI or logs.
+fn redact_credentials(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(index) = rest.find("://") {
+        let (head, tail) = rest.split_at(index + 3);
+        out.push_str(head);
+        let end = tail
+            .find(|c: char| c.is_whitespace() || c == '/')
+            .unwrap_or(tail.len());
+        match tail[..end].rfind('@') {
+            Some(at) => {
+                out.push_str("***@");
+                rest = &tail[at + 1..];
+            }
+            None => rest = tail,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn git_failure(prefix: &str, stderr: &[u8]) -> String {
-    let detail = String::from_utf8_lossy(stderr).trim().to_owned();
+    let detail = redact_credentials(String::from_utf8_lossy(stderr).trim());
     if detail.is_empty() {
         prefix.into()
     } else {
@@ -865,6 +948,67 @@ struct ParsedStatus {
     head: GitHead,
     upstream: Option<GitUpstream>,
     changes: Vec<GitChange>,
+}
+
+fn last_commit_subject(root: &Path) -> Option<String> {
+    let output = git_command(root)
+        .args(["--no-optional-locks", "log", "-1", "--format=%s"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let subject = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!subject.is_empty()).then_some(subject)
+}
+
+/// Remotes with their fetch and (when different) push URLs, from one
+/// `git config` call. Credentials embedded in URLs are redacted.
+fn read_remotes(root: &Path) -> Vec<GitRemote> {
+    let Ok(output) = git_command(root)
+        .args([
+            "--no-optional-locks",
+            "config",
+            "--null",
+            "--get-regexp",
+            r"^remote\..*\.(url|pushurl)$",
+        ])
+        .output()
+    else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut remotes: Vec<GitRemote> = Vec::new();
+    for entry in text.split('\0').filter(|entry| !entry.is_empty()) {
+        let Some((key, value)) = entry.split_once('\n') else {
+            continue;
+        };
+        let Some(key) = key.strip_prefix("remote.") else {
+            continue;
+        };
+        let (name, field) = if let Some(name) = key.strip_suffix(".pushurl") {
+            (name, true)
+        } else if let Some(name) = key.strip_suffix(".url") {
+            (name, false)
+        } else {
+            continue;
+        };
+        let index = match remotes.iter().position(|remote| remote.name == name) {
+            Some(index) => index,
+            None => {
+                remotes.push(GitRemote {
+                    name: name.to_owned(),
+                    ..Default::default()
+                });
+                remotes.len() - 1
+            }
+        };
+        let value = redact_credentials(value);
+        if field {
+            remotes[index].push_url = Some(value);
+        } else {
+            remotes[index].fetch_url = value;
+        }
+    }
+    remotes
 }
 
 /// Absolute git directory of this worktree and the shared common directory.
@@ -1607,6 +1751,166 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         assert_eq!(snapshot.root, top);
         assert!(
             snapshot.changes.iter().any(|c| c.path.starts_with("a")) // untracked dirs are reported collapsed
+        );
+    }
+
+    #[test]
+    fn credentials_in_urls_are_redacted_from_output() {
+        assert_eq!(
+            redact_credentials("fatal: https://user:secret@example.com/r.git denied"),
+            "fatal: https://***@example.com/r.git denied"
+        );
+        assert_eq!(
+            redact_credentials("ssh://git@host/x and https://tok@h/y"),
+            "ssh://***@host/x and https://***@h/y"
+        );
+        assert_eq!(redact_credentials("no urls here"), "no urls here");
+        assert_eq!(
+            redact_credentials("https://example.com/a@b"),
+            "https://example.com/a@b"
+        );
+    }
+
+    fn git_ok(dir: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn remotes_report_separate_push_urls_without_credentials() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        init_repo(root);
+        git_ok(
+            root,
+            &["remote", "add", "origin", "https://u:pw@example.com/a.git"],
+        );
+        git_ok(
+            root,
+            &[
+                "remote",
+                "set-url",
+                "--push",
+                "origin",
+                "git@example.com:a.git",
+            ],
+        );
+        git_ok(root, &["remote", "add", "backup", "/srv/backup.git"]);
+        let mut remotes = read_remotes(root);
+        remotes.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(remotes[0].name, "backup");
+        assert_eq!(remotes[0].push_url, None);
+        assert_eq!(remotes[1].fetch_url, "https://***@example.com/a.git");
+        assert_eq!(
+            remotes[1].push_url.as_deref(),
+            Some("git@example.com:a.git")
+        );
+    }
+
+    #[test]
+    fn publish_and_fetch_work_against_a_local_bare_remote() {
+        let directory = tempfile::tempdir().unwrap();
+        let top = fs::canonicalize(directory.path()).unwrap();
+        let bare = top.join("remote.git");
+        fs::create_dir_all(&bare).unwrap();
+        git_ok(&bare, &["init", "--quiet", "--bare"]);
+        let work = top.join("work");
+        fs::create_dir_all(&work).unwrap();
+        init_repo(&work);
+        git_ok(&work, &["checkout", "-q", "-b", "main"]);
+        fs::write(work.join("f.txt"), "one\n").unwrap();
+        git_ok(&work, &["add", "--", "f.txt"]);
+        git_ok(&work, &["commit", "-q", "-m", "first"]);
+        git_ok(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        let before = LocalGit.snapshot(&work).unwrap().unwrap();
+        assert!(before.upstream.is_none());
+        assert_eq!(before.last_commit.as_deref(), Some("first"));
+        LocalGit.publish(&work, "origin", "main").unwrap();
+        let after = LocalGit.snapshot(&work).unwrap().unwrap();
+        assert_eq!(after.upstream.as_ref().unwrap().name, "origin/main");
+        // A second clone commits; fetch brings the count behind without merging.
+        let other = top.join("other");
+        git_ok(
+            &top,
+            &[
+                "clone",
+                "-q",
+                bare.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
+        );
+        git_ok(&other, &["config", "user.name", "T"]);
+        git_ok(&other, &["config", "user.email", "t@example.invalid"]);
+        git_ok(&other, &["config", "commit.gpgsign", "false"]);
+        fs::write(other.join("g.txt"), "two\n").unwrap();
+        git_ok(&other, &["add", "--", "g.txt"]);
+        git_ok(&other, &["commit", "-q", "-m", "second"]);
+        git_ok(&other, &["push", "-q"]);
+        LocalGit.fetch(&work).unwrap();
+        let fetched = LocalGit.snapshot(&work).unwrap().unwrap();
+        assert_eq!(fetched.upstream.unwrap().ahead_behind, Some((0, 1)));
+        assert_eq!(fetched.last_commit.as_deref(), Some("first"));
+        assert!(!work.join("g.txt").exists());
+    }
+
+    #[test]
+    fn publish_rejects_option_like_names_and_fetch_without_remote_reports_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        init_repo(root);
+        assert!(LocalGit.publish(root, "--force", "main").is_err());
+        assert!(LocalGit.publish(root, "origin", "").is_err());
+        // With no remote there is nothing to fetch; no panic and no hang.
+        let _ = LocalGit.fetch(root);
+    }
+
+    #[test]
+    fn init_uses_the_chosen_branch_and_refuses_bad_names_and_existing_repositories() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(directory.path()).unwrap();
+        assert!(LocalGit.init(&root, "bad name").is_err());
+        assert!(LocalGit.init(&root, "--bare").is_err());
+        assert!(!root.join(".git").exists());
+        LocalGit.init(&root, "trunk").unwrap();
+        let snapshot = LocalGit.snapshot(&root).unwrap().unwrap();
+        assert_eq!(snapshot.head, GitHead::Unborn("trunk".into()));
+        assert!(
+            LocalGit
+                .init(&root, "trunk")
+                .unwrap_err()
+                .contains("already")
+        );
+    }
+
+    #[test]
+    fn multiline_commit_messages_keep_their_body() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        init_repo(root);
+        fs::write(root.join("a.txt"), "a\n").unwrap();
+        LocalGit.stage(root, &[PathBuf::from("a.txt")]).unwrap();
+        LocalGit
+            .commit(root, "Subject line\n\nBody paragraph.\n", false)
+            .unwrap();
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["log", "-1", "--format=%B"])
+            .output()
+            .unwrap();
+        let message = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            message.starts_with("Subject line\n\nBody paragraph."),
+            "{message}"
         );
     }
 

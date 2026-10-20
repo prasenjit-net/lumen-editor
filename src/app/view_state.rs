@@ -213,6 +213,8 @@ pub(crate) struct SourceControlView {
     pub(crate) parked_drafts: std::collections::BTreeMap<PathBuf, CommitDraft>,
     pub(crate) loading: bool,
     pub(crate) error: Option<String>,
+    /// Initial branch typed for "Initialize Repository"; empty means `main`.
+    pub(crate) init_branch: String,
     pub(crate) diff: Option<SourceDiffView>,
     /// Keeps the two diff panes on the same line; reset when the diff changes.
     pub(crate) diff_scroll: super::scroll_sync::ScrollSync,

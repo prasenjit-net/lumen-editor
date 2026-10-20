@@ -48,6 +48,26 @@ struct RepositoryScan {
     errors: Vec<(PathBuf, String)>,
 }
 
+/// The remote and branch a "Publish Branch" action would use, or why it cannot.
+pub(crate) fn publish_target(snapshot: &GitSnapshot) -> Result<(String, String), String> {
+    use crate::services::source_control::GitHead;
+    let branch = match &snapshot.head {
+        GitHead::Attached(branch) => branch.clone(),
+        GitHead::Unborn(_) => return Err("Make a first commit before publishing".into()),
+        _ => return Err("Check out a branch before publishing".into()),
+    };
+    if snapshot.upstream.is_some() {
+        return Err("This branch already tracks an upstream; use Push".into());
+    }
+    match snapshot.remotes.as_slice() {
+        [] => Err("No remote is configured; add one with `git remote add` first".into()),
+        [remote] => Ok((remote.name.clone(), branch)),
+        _ => Err(
+            "Several remotes are configured; publish with `git push -u <remote> <branch>`".into(),
+        ),
+    }
+}
+
 fn scan_repositories(
     service: &dyn SourceControlService,
     workspace: &std::path::Path,
@@ -301,6 +321,62 @@ impl LumenApp {
         }
         self.run_source_remote_operation(ctx, "Pulled latest changes", |service, root| {
             service.pull(root)
+        });
+    }
+
+    pub(crate) fn fetch_source_control(&mut self, ctx: &egui::Context) {
+        self.run_source_remote_operation(ctx, "Fetched remote changes", |service, root| {
+            service.fetch(root)
+        });
+    }
+
+    /// Publishes the current branch to its only configured remote and records
+    /// it as the upstream. Lumen never picks between several remotes itself.
+    pub(crate) fn publish_source_branch(&mut self, ctx: &egui::Context) {
+        let Some(snapshot) = &self.view.source_control.snapshot else {
+            return;
+        };
+        let (remote, branch) = match publish_target(snapshot) {
+            Ok(target) => target,
+            Err(error) => {
+                self.view.source_control.error = Some(error);
+                return;
+            }
+        };
+        self.run_source_remote_operation(ctx, "Published branch", move |service, root| {
+            service.publish(root, &remote, &branch)
+        });
+    }
+
+    /// Creates a repository in the opened folder with the chosen initial branch.
+    pub(crate) fn init_source_repository(&mut self, ctx: &egui::Context) {
+        let Some(workspace) = self.editor.workspace.clone() else {
+            return;
+        };
+        if self.view.source_control.snapshot.is_some() {
+            return;
+        }
+        if !self.begin_source_mutation() {
+            return;
+        }
+        self.view.source_control.error = None;
+        let branch = match self.view.source_control.init_branch.trim() {
+            "" => "main".to_owned(),
+            branch => branch.to_owned(),
+        };
+        let service = self.source_control_service.clone();
+        let worker_ctx = ctx.clone();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = service
+                .init(&workspace, &branch)
+                .map(|_| format!("Initialized repository on branch {branch}"));
+            let _ = sender.send(GitResult::Operation(result));
+            worker_ctx.request_repaint();
+        });
+        self.source_control_job = Some(SourceControlJob {
+            receiver,
+            mutating: true,
         });
     }
 
@@ -1006,6 +1082,51 @@ mod tests {
             view.owning_snapshot(std::path::Path::new("/elsewhere/a.rs"))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn publish_target_requires_a_branch_without_upstream_and_exactly_one_remote() {
+        use crate::services::source_control::{GitHead, GitRemote, GitUpstream};
+        let remote = |name: &str| GitRemote {
+            name: name.into(),
+            fetch_url: format!("https://example.com/{name}.git"),
+            push_url: None,
+        };
+        let base = GitSnapshot {
+            head: GitHead::Attached("feature".into()),
+            remotes: vec![remote("origin")],
+            ..Default::default()
+        };
+        assert_eq!(
+            publish_target(&base).unwrap(),
+            ("origin".to_owned(), "feature".to_owned())
+        );
+        let mut two = base.clone();
+        two.remotes.push(remote("backup"));
+        assert!(
+            publish_target(&two)
+                .unwrap_err()
+                .contains("Several remotes")
+        );
+        let mut none = base.clone();
+        none.remotes.clear();
+        assert!(publish_target(&none).unwrap_err().contains("No remote"));
+        let mut tracked = base.clone();
+        tracked.upstream = Some(GitUpstream {
+            name: "origin/feature".into(),
+            ahead_behind: Some((0, 0)),
+        });
+        assert!(publish_target(&tracked).unwrap_err().contains("already"));
+        let mut unborn = base.clone();
+        unborn.head = GitHead::Unborn("main".into());
+        assert!(
+            publish_target(&unborn)
+                .unwrap_err()
+                .contains("first commit")
+        );
+        let mut detached = base;
+        detached.head = GitHead::Detached("abc".into());
+        assert!(publish_target(&detached).unwrap_err().contains("Check out"));
     }
 
     #[test]
