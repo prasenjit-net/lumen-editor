@@ -13,10 +13,10 @@ use std::{
 };
 
 pub(crate) struct SourceControlJob {
-    receiver: Receiver<GitResult>,
+    pub(super) receiver: Receiver<GitResult>,
     /// Mutations are never replaced or overlapped: dropping the receiver would
     /// hide the outcome of work that is still running.
-    mutating: bool,
+    pub(super) mutating: bool,
 }
 
 const SOURCE_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
@@ -43,9 +43,9 @@ pub(crate) fn close_diff_preview(editor: &mut EditorState, view: &mut ViewState)
 
 /// Every repository found for the opened folder, with per-repository failures
 /// kept apart so one broken repository never blanks the others.
-struct RepositoryScan {
-    snapshots: Vec<GitSnapshot>,
-    errors: Vec<(PathBuf, String)>,
+pub(super) struct RepositoryScan {
+    pub(super) snapshots: Vec<GitSnapshot>,
+    pub(super) errors: Vec<(PathBuf, String)>,
 }
 
 /// The remote and branch a "Publish Branch" action would use, or why it cannot.
@@ -86,7 +86,7 @@ fn scan_repositories(
     Ok(scan)
 }
 
-enum GitResult {
+pub(super) enum GitResult {
     Repositories(PathBuf, Result<RepositoryScan, String>),
     Diff {
         root: PathBuf,
@@ -111,6 +111,7 @@ impl LumenApp {
             self.view.source_control.commit_focused = false;
             return;
         }
+        self.ensure_repo_extras(ctx);
         if self.view.source_control.workspace != self.editor.workspace {
             self.refresh_source_control(ctx);
         } else if !self.view.source_control.commit_focused && self.source_control_job.is_none() {
@@ -149,7 +150,11 @@ impl LumenApp {
 
     /// Installs a fresh scan, keeping the selected repository when it still
     /// exists and otherwise choosing the one that encloses the opened folder.
-    fn apply_repository_scan(&mut self, workspace: &std::path::Path, scan: RepositoryScan) {
+    pub(super) fn apply_repository_scan(
+        &mut self,
+        workspace: &std::path::Path,
+        scan: RepositoryScan,
+    ) {
         let view = &mut self.view.source_control;
         let previous = view.snapshot.as_ref().map(|snapshot| snapshot.root.clone());
         view.repositories = scan.snapshots;
@@ -190,6 +195,23 @@ impl LumenApp {
                 }
                 view.snapshot = None;
             }
+        }
+        // A History tab for a repository that no longer exists has nothing to show.
+        // A repository that failed to read this time is only unavailable, not
+        // gone, so its tab stays.
+        let stale = self.view.history_dialog.as_ref().is_some_and(|dialog| {
+            let view = &self.view.source_control;
+            !view
+                .repositories
+                .iter()
+                .any(|repo| repo.root == dialog.root)
+                && !view
+                    .repository_errors
+                    .iter()
+                    .any(|(root, _)| root == &dialog.root)
+        });
+        if stale {
+            self.close_history_dialog();
         }
     }
 
@@ -252,6 +274,7 @@ impl LumenApp {
         let workspace_changed = self.view.source_control.workspace != self.editor.workspace;
         if workspace_changed {
             close_diff_preview(&mut self.editor, &mut self.view);
+            self.close_history_dialog();
         }
         let view = &mut self.view.source_control;
         view.workspace = self.editor.workspace.clone();
@@ -805,7 +828,12 @@ impl LumenApp {
             Ok(GitResult::Repositories(workspace, result)) => {
                 if self.view.source_control.workspace.as_ref() == Some(&workspace) {
                     match result {
-                        Ok(scan) => self.apply_repository_scan(&workspace, scan),
+                        Ok(scan) => {
+                            self.apply_repository_scan(&workspace, scan);
+                            // A commit, pull, switch or reset made here or elsewhere
+                            // changes these; the History tab then re-reads.
+                            self.reload_history_if_head_moved(ctx);
+                        }
                         Err(error) => self.view.source_control.error = Some(error),
                     }
                     self.view.source_control.loading = false;
@@ -829,6 +857,13 @@ impl LumenApp {
                 self.request_branches(ctx);
                 self.request_stashes(ctx);
                 self.request_tags(ctx);
+                // Only a tag change leaves the branch, tip and counts alone, so
+                // the history tab is reloaded for it here; everything else is
+                // noticed when the refresh below is applied.
+                if self.view.tags_dialog.is_some() {
+                    self.reload_history(ctx);
+                }
+                self.invalidate_repo_extras();
                 match result {
                     Ok(status) => {
                         self.view.status = status;
@@ -857,6 +892,7 @@ impl LumenApp {
                 self.view.source_control.loading = false;
                 self.source_control_job = None;
                 self.reconcile_clean_documents();
+                self.invalidate_repo_extras();
                 match result {
                     Ok(status) => {
                         self.view.status = status;
@@ -1142,6 +1178,30 @@ mod tests {
         );
         assert_eq!(view.repositories.len(), 2);
         assert_eq!(view.repository_errors.len(), 1);
+    }
+
+    #[test]
+    fn a_history_tab_closes_when_its_repository_disappears_from_a_scan() {
+        let mut app = LumenApp::default();
+        let ctx = egui::Context::default();
+        let scan = |roots: &[&str]| RepositoryScan {
+            snapshots: roots.iter().map(|root| repo(root, "main")).collect(),
+            errors: Vec::new(),
+        };
+        let workspace = std::path::Path::new("/w");
+        app.apply_repository_scan(workspace, scan(&["/w/a", "/w/b"]));
+        app.select_repository("/w/b".into());
+        app.open_history_dialog(&ctx);
+        assert!(app.view.history_dialog.is_some() && app.view.history_active);
+
+        app.apply_repository_scan(workspace, scan(&["/w/a", "/w/b"]));
+        assert!(
+            app.view.history_dialog.is_some(),
+            "a rescan that still has the repository keeps the tab"
+        );
+        app.apply_repository_scan(workspace, scan(&["/w/a"]));
+        assert!(app.view.history_dialog.is_none());
+        assert!(!app.view.history_active);
     }
 
     #[test]

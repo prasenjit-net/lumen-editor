@@ -21,6 +21,10 @@ pub(crate) struct BranchDialog {
     /// A local branch awaiting delete confirmation.
     pub(crate) confirm_delete: Option<String>,
     pub(crate) error: Option<String>,
+    /// Shown as a quick-pick under the branch chip instead of the full dialog.
+    pub(crate) quick: bool,
+    /// The quick-pick's filter box takes keyboard focus when it first appears.
+    pub(crate) focus_filter: bool,
     receiver: Option<Receiver<Result<Vec<GitBranch>, String>>>,
 }
 
@@ -43,6 +47,22 @@ impl LumenApp {
             ..Default::default()
         });
         self.request_branches(ctx);
+    }
+
+    /// Opens (or, when already open, closes) the quick branch switcher.
+    pub(crate) fn toggle_branch_picker(&mut self, ctx: &egui::Context) {
+        if self.view.branch_dialog.as_ref().is_some_and(|d| d.quick) {
+            self.close_branch_dialog();
+            return;
+        }
+        if self.view.branch_dialog.is_some() {
+            return;
+        }
+        self.open_branch_dialog(ctx);
+        if let Some(dialog) = &mut self.view.branch_dialog {
+            dialog.quick = true;
+            dialog.focus_filter = true;
+        }
     }
 
     pub(crate) fn close_branch_dialog(&mut self) {
@@ -287,6 +307,28 @@ mod tests {
             .as_ref()
             .and_then(|dialog| dialog.error.clone())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn the_quick_switcher_toggles_and_never_replaces_the_full_dialog() {
+        let ctx = egui::Context::default();
+        let mut app = LumenApp::default();
+        app.view.source_control.snapshot = Some(GitSnapshot {
+            root: "/repo".into(),
+            ..Default::default()
+        });
+        app.toggle_branch_picker(&ctx);
+        let dialog = app.view.branch_dialog.as_ref().unwrap();
+        assert!(dialog.quick && dialog.focus_filter);
+        app.toggle_branch_picker(&ctx);
+        assert!(app.view.branch_dialog.is_none(), "a second click closes it");
+
+        app.open_branch_dialog(&ctx);
+        app.toggle_branch_picker(&ctx);
+        assert!(
+            app.view.branch_dialog.as_ref().is_some_and(|d| !d.quick),
+            "the full dialog stays as it is"
+        );
     }
 
     #[test]

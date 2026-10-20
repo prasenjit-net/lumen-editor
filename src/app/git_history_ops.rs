@@ -74,6 +74,17 @@ impl LumenApp {
         title: String,
         ctx: &egui::Context,
     ) {
+        // Commit actions come from the History tab, which may show a repository
+        // other than the selected one; they must never run against the wrong one.
+        let from_history = matches!(
+            action,
+            HistoryAction::CherryPick { .. }
+                | HistoryAction::Revert { .. }
+                | HistoryAction::Reset { .. }
+        );
+        if from_history && !self.target_history_repository() {
+            return;
+        }
         let Some(root) = self.selected_root() else {
             return;
         };
@@ -86,13 +97,18 @@ impl LumenApp {
                 .view
                 .history_dialog
                 .as_ref()
-                .and_then(|dialog| dialog.commits.iter().find(|c| &c.id == commit))
+                .and_then(|dialog| {
+                    dialog
+                        .commits
+                        .iter()
+                        .chain(dialog.selected_commit.iter())
+                        .find(|c| &c.id == commit)
+                })
                 .map_or(1, |commit| commit.parents.len()),
             _ => 1,
         };
-        // One modal at a time: the review replaces the dialog it came from.
+        // One modal at a time; the History tab stays open behind the review.
         self.view.branch_dialog = None;
-        self.view.history_dialog = None;
         self.view.history_op_dialog = Some(HistoryOpDialog {
             root,
             title,

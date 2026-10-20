@@ -152,6 +152,16 @@ pub(crate) fn current(visuals: &egui::Visuals) -> Theme {
         Theme::Dark
     }
 }
+/// Color of a Git status letter in change rows; reuses the semantic palette.
+pub(crate) fn change_color(colors: &Palette, marker: char) -> Color32 {
+    match marker {
+        'A' | 'U' | '?' => colors.success,
+        'D' => colors.error,
+        '!' => colors.warning,
+        _ => colors.info,
+    }
+}
+
 pub(crate) fn palette(visuals: &egui::Visuals) -> Palette {
     current(visuals).palette()
 }

@@ -200,6 +200,32 @@ impl SourceControlView {
     }
 }
 
+/// Collapsible sections below the change groups.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum ExtraSection {
+    Stashes,
+    Outgoing,
+    Incoming,
+}
+
+/// The groups a repository's changes are listed in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum ChangeGroup {
+    Conflicts,
+    Staged,
+    Working,
+}
+
+impl ChangeGroup {
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Self::Conflicts => "MERGE CONFLICTS",
+            Self::Staged => "STAGED CHANGES",
+            Self::Working => "CHANGES",
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct SourceControlView {
     pub(crate) workspace: Option<PathBuf>,
@@ -230,6 +256,14 @@ pub(crate) struct SourceControlView {
     /// A confirmation waiting for the user before aborting an operation.
     pub(crate) abort_prompt: bool,
     pub(crate) last_refresh: Option<std::time::Instant>,
+    /// Change groups the user collapsed, keyed by repository and `ChangeGroup`.
+    pub(crate) collapsed_groups: std::collections::BTreeSet<(PathBuf, ChangeGroup)>,
+    /// Selected repositories whose section body the user collapsed.
+    pub(crate) collapsed_repos: std::collections::BTreeSet<PathBuf>,
+    /// Stashes and Outgoing/Incoming lists of the selected repository.
+    pub(crate) extras: super::repo_extras::ExtrasState,
+    /// Extra sections the user expanded; they start collapsed.
+    pub(crate) expanded_extras: std::collections::BTreeSet<(PathBuf, ExtraSection)>,
 }
 
 #[derive(Default)]
@@ -353,7 +387,10 @@ pub(crate) struct ViewState {
     pub(crate) clone_dialog: Option<super::git_clone::CloneDialog>,
     pub(crate) branch_dialog: Option<super::git_branches::BranchDialog>,
     pub(crate) stash_dialog: Option<super::git_stash::StashDialog>,
+    /// The History tab's state; present while the tab is open.
     pub(crate) history_dialog: Option<super::git_history::HistoryDialog>,
+    /// The History tab is the page the editor area shows.
+    pub(crate) history_active: bool,
     pub(crate) history_op_dialog: Option<super::git_history_ops::HistoryOpDialog>,
     pub(crate) tags_dialog: Option<super::git_tags::TagsDialog>,
     pub(crate) settings: super::settings::SettingsState,
@@ -475,6 +512,17 @@ pub(crate) struct ViewState {
     pub(crate) native_quit_deadline: Option<std::time::Instant>,
 }
 impl ViewState {
+    /// A Git dialog or confirmation is open over the workbench.
+    pub(crate) fn git_modal_open(&self) -> bool {
+        self.clone_dialog.is_some()
+            || self.branch_dialog.is_some()
+            || self.stash_dialog.is_some()
+            || self.history_op_dialog.is_some()
+            || self.tags_dialog.is_some()
+            || self.source_control.revert_prompt.is_some()
+            || self.source_control.abort_prompt
+    }
+
     /// A task-related modal prompt is waiting for an answer.
     pub(crate) fn task_prompt_open(&self) -> bool {
         self.task_close_prompt.is_some()
@@ -489,6 +537,7 @@ impl ViewState {
     /// Stop showing a non-document page (Settings or a task editor); the tabs stay open.
     pub(crate) fn leave_page_tabs(&mut self) {
         self.settings.open = false;
+        self.history_active = false;
         self.task_editors.deactivate();
         self.chats.deactivate();
     }
@@ -496,13 +545,17 @@ impl ViewState {
     /// Make a task editor the visible page (used when it must be answered).
     pub(crate) fn leave_page_tabs_for_task(&mut self, id: super::task_editor::TaskEditorId) {
         self.settings.open = false;
+        self.history_active = false;
         self.chats.deactivate();
         self.task_editors.activate(id);
     }
 
     /// A non-document page (Settings or a task editor) is what the editor area shows.
     pub(crate) fn page_tab_active(&self) -> bool {
-        self.settings.open || self.task_editors.active().is_some() || self.chats.active().is_some()
+        self.settings.open
+            || self.history_active
+            || self.task_editors.active().is_some()
+            || self.chats.active().is_some()
     }
 
     pub(crate) fn reveal_edit_directory(&mut self, editor: &crate::model::EditorState) {
@@ -527,6 +580,7 @@ impl Default for ViewState {
             branch_dialog: None,
             stash_dialog: None,
             history_dialog: None,
+            history_active: false,
             history_op_dialog: None,
             tags_dialog: None,
             settings: Default::default(),

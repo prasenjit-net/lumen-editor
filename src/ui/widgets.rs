@@ -23,8 +23,19 @@ pub(crate) fn panel_header(
     title: &str,
     actions: &[HeaderAction],
 ) -> Option<Command> {
+    panel_header_with_menu(ui, title, actions, None)
+}
+
+/// `panel_header` with a trailing `⋯` menu at the fixed right edge, after the
+/// icon actions. The menu is for commands that do not deserve a header icon.
+pub(crate) fn panel_header_with_menu(
+    ui: &mut egui::Ui,
+    title: &str,
+    actions: &[HeaderAction],
+    menu: Option<(&str, &[MenuEntry])>,
+) -> Option<Command> {
     let colors = crate::ui::theme::palette(ui.visuals());
-    header_row(ui, actions, |ui| {
+    header_row(ui, actions, menu, |ui| {
         ui.add(
             egui::Label::new(RichText::new(title).size(11.0).color(colors.text))
                 .halign(egui::Align::LEFT)
@@ -54,7 +65,7 @@ pub(crate) fn tabbed_panel_header(
     actions: &[HeaderAction],
 ) -> Option<Command> {
     let colors = crate::ui::theme::palette(ui.visuals());
-    header_row(ui, actions, |ui| {
+    header_row(ui, actions, None, |ui| {
         ui.spacing_mut().item_spacing.x = 14.0;
         let mut clicked = None;
         // Many tabs (task runs) must stay reachable: the strip scrolls sideways
@@ -124,6 +135,7 @@ pub(crate) fn tabbed_panel_header(
 fn header_row(
     ui: &mut egui::Ui,
     actions: &[HeaderAction],
+    menu: Option<(&str, &[MenuEntry])>,
     draw_title: impl FnOnce(&mut egui::Ui) -> Option<Command>,
 ) -> Option<Command> {
     const HEIGHT: f32 = 35.0;
@@ -136,11 +148,11 @@ fn header_row(
         Vec2::new(ui.available_width(), HEIGHT),
         egui::Sense::hover(),
     );
-    let actions_width =
-        actions.len() as f32 * BUTTON_SIZE + actions.len().saturating_sub(1) as f32 * GAP;
+    let slots = actions.len() + usize::from(menu.is_some());
+    let actions_width = slots as f32 * BUTTON_SIZE + slots.saturating_sub(1) as f32 * GAP;
     let actions_left = rect.right() - RIGHT_INSET - actions_width;
     let title_left = rect.left() + LEFT_INSET;
-    let title_right = if actions.is_empty() {
+    let title_right = if slots == 0 {
         rect.right() - RIGHT_INSET
     } else {
         actions_left - GAP
@@ -184,7 +196,263 @@ fn header_row(
             clicked = Some(action.command.clone());
         }
     }
+    if let Some((name, entries)) = menu {
+        let menu_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                actions_left + actions.len() as f32 * (BUTTON_SIZE + GAP),
+                rect.center().y - BUTTON_SIZE / 2.0,
+            ),
+            Vec2::splat(BUTTON_SIZE),
+        );
+        if let Some(command) = overflow_menu(&mut header_ui, menu_rect, name, entries) {
+            clicked = Some(command);
+        }
+    }
     clicked
+}
+
+/// One entry of a `⋯` menu. Entries only name a `Command`; the menu never runs
+/// logic, so palette, shortcuts and menus keep sharing command behavior.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum MenuEntry {
+    /// Non-interactive line naming what the menu acts on.
+    Caption(String),
+    Separator,
+    Item(MenuItem),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MenuItem {
+    pub(crate) label: String,
+    pub(crate) shortcut: Option<&'static str>,
+    pub(crate) command: Command,
+    /// Why the item cannot be used right now; `None` when it can.
+    pub(crate) disabled: Option<String>,
+    /// Destructive or history-rewriting; drawn in the error color.
+    pub(crate) danger: bool,
+}
+
+impl MenuItem {
+    pub(crate) fn new(label: impl Into<String>, command: Command) -> Self {
+        Self {
+            label: label.into(),
+            shortcut: None,
+            command,
+            disabled: None,
+            danger: false,
+        }
+    }
+
+    /// Disabled with a reason shown on hover when `reason` is `Some`.
+    pub(crate) fn unless(mut self, reason: Option<impl Into<String>>) -> Self {
+        self.disabled = reason.map(Into::into);
+        self
+    }
+
+    pub(crate) fn danger(mut self) -> Self {
+        self.danger = true;
+        self
+    }
+
+    pub(crate) fn entry(self) -> MenuEntry {
+        MenuEntry::Item(self)
+    }
+}
+
+/// A frameless `⋯` button at `rect` that opens `entries`. Returns the chosen
+/// command; the menu closes on click and disabled items explain themselves.
+pub(crate) fn overflow_menu(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    name: &str,
+    entries: &[MenuEntry],
+) -> Option<Command> {
+    let colors = crate::ui::theme::palette(ui.visuals());
+    let mut chosen = None;
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::centered_and_justified(
+                egui::Direction::LeftToRight,
+            )),
+        |ui| {
+            let button = egui::Button::new(RichText::new(icon::ELLIPSIS).color(colors.muted))
+                .frame(false)
+                .min_size(rect.size());
+            let (response, _) =
+                egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
+                    ui.set_min_width(220.0);
+                    chosen = menu_entries(ui, entries);
+                });
+            named(response.on_hover_text(name), true, name);
+        },
+    );
+    chosen
+}
+
+/// Draws `entries` inside an open menu or context menu and returns the chosen
+/// command, closing the menu when one is chosen.
+pub(crate) fn menu_entries(ui: &mut egui::Ui, entries: &[MenuEntry]) -> Option<Command> {
+    let colors = crate::ui::theme::palette(ui.visuals());
+    let mut chosen = None;
+    for entry in entries {
+        match entry {
+            MenuEntry::Caption(text) => {
+                ui.label(RichText::new(text).size(11.0).color(colors.muted));
+                ui.separator();
+            }
+            MenuEntry::Separator => {
+                ui.separator();
+            }
+            MenuEntry::Item(item) => {
+                let mut text = RichText::new(&item.label);
+                if item.danger {
+                    text = text.color(colors.error);
+                }
+                let mut button = egui::Button::new(text);
+                if let Some(shortcut) = item.shortcut {
+                    button = button.shortcut_text(shortcut);
+                }
+                let response = ui.add_enabled(item.disabled.is_none(), button);
+                let response = match &item.disabled {
+                    Some(reason) => response.on_disabled_hover_text(reason),
+                    None => response,
+                };
+                if response.clicked() {
+                    chosen = Some(item.command.clone());
+                    ui.close();
+                }
+            }
+        }
+    }
+    chosen
+}
+
+/// Lay `text` out on one line no wider than `max_width`, ending in an ellipsis
+/// when it does not fit. Long branch, path and error text must never widen a pane.
+pub(crate) fn fit_galley(
+    ui: &egui::Ui,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    max_width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
+    job.wrap = egui::text::TextWrapping {
+        max_width: max_width.max(0.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    ui.painter().layout_job(job)
+}
+
+/// A small action drawn at the right of a `disclosure_row` while it is hovered.
+pub(crate) struct RowAction {
+    pub(crate) glyph: &'static str,
+    pub(crate) tooltip: &'static str,
+    pub(crate) enabled: bool,
+}
+
+pub(crate) struct DisclosureOutcome {
+    /// The row itself was clicked: expand or collapse.
+    pub(crate) toggled: bool,
+    /// Index into the `actions` passed in.
+    pub(crate) action: Option<usize>,
+}
+
+/// A collapsible group header: caret, title, count badge, and hover actions.
+pub(crate) fn disclosure_row(
+    ui: &mut egui::Ui,
+    collapsed: bool,
+    title: &str,
+    count: usize,
+    actions: &[RowAction],
+) -> DisclosureOutcome {
+    const BUTTON: f32 = 20.0;
+    let colors = crate::ui::theme::palette(ui.visuals());
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), egui::Sense::click());
+    let hovered = ui.rect_contains_pointer(rect);
+    if hovered {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::ZERO, colors.hover);
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{title} {count}"))
+    });
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    painter.text(
+        egui::pos2(rect.left() + 4.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        if collapsed {
+            icon::CARET_RIGHT
+        } else {
+            icon::CARET_DOWN
+        },
+        FontId::proportional(12.0),
+        colors.muted,
+    );
+    let heading = painter.layout_no_wrap(title.to_owned(), FontId::proportional(11.0), colors.text);
+    let heading_pos = egui::pos2(rect.left() + 20.0, rect.center().y - heading.size().y / 2.0);
+    let heading_right = heading_pos.x + heading.size().x;
+    painter.galley(heading_pos, heading, colors.text);
+    if count > 0 {
+        let badge =
+            painter.layout_no_wrap(count.to_string(), FontId::proportional(10.0), colors.muted);
+        let badge_rect = egui::Rect::from_min_size(
+            egui::pos2(heading_right + 6.0, rect.center().y - 7.5),
+            Vec2::new(badge.size().x + 10.0, 15.0),
+        );
+        painter.rect_filled(badge_rect, CornerRadius::same(8), colors.input);
+        painter.galley(
+            egui::pos2(
+                badge_rect.center().x - badge.size().x / 2.0,
+                badge_rect.center().y - badge.size().y / 2.0,
+            ),
+            badge,
+            colors.muted,
+        );
+    }
+    let mut action = None;
+    // Keep the actions while the row or one of them has keyboard focus so Tab
+    // can reach them; remembered because they only exist once shown.
+    let focus_key = response.id.with("actions_focus");
+    let focus_within = ui
+        .data(|data| data.get_temp::<bool>(focus_key))
+        .unwrap_or(false);
+    let mut focused = response.has_focus();
+    if hovered || focus_within {
+        for (index, spec) in actions.iter().rev().enumerate() {
+            let button_rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    rect.right() - 4.0 - (index as f32 + 1.0) * BUTTON,
+                    rect.center().y - BUTTON / 2.0,
+                ),
+                Vec2::splat(BUTTON),
+            );
+            let button = ui
+                .add_enabled_ui(spec.enabled, |ui| {
+                    ui.put(button_rect, egui::Button::new(spec.glyph).frame(false))
+                })
+                .inner;
+            // egui shows tooltips on disabled widgets only via the disabled variant.
+            let button = if spec.enabled {
+                button.on_hover_text(spec.tooltip)
+            } else {
+                button.on_disabled_hover_text(spec.tooltip)
+            };
+            focused |= button.has_focus();
+            if named(button, spec.enabled, spec.tooltip).clicked() {
+                action = Some(actions.len() - 1 - index);
+            }
+        }
+    }
+    ui.data_mut(|data| data.insert_temp(focus_key, focused));
+    DisclosureOutcome {
+        toggled: action.is_none() && response.clicked(),
+        action,
+    }
 }
 
 pub(crate) fn surface(fill: Color32) -> Frame {

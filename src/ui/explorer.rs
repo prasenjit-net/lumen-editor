@@ -1,5 +1,5 @@
 use super::Workbench;
-use super::widgets::{self, HeaderAction, canvas, panel_header, surface};
+use super::widgets::{self, HeaderAction, canvas, panel_header_with_menu, surface};
 use crate::app::command::Command;
 use crate::app::view_state::ExplorerEditKind;
 use crate::app::view_state::{Activity, ExplorerSelection};
@@ -199,28 +199,16 @@ impl Workbench<'_> {
                             enabled: self.editor.workspace.is_some(),
                         },
                     ];
-                    let source_actions = [
-                        HeaderAction {
-                            glyph: icon::REPO_PULL,
-                            tooltip: "Pull remote changes (fast-forward only)",
-                            command: Command::PullSourceControl,
-                            enabled: self.view.source_control.snapshot.is_some()
-                                && !self.view.source_control.loading,
-                        },
-                        HeaderAction {
-                            glyph: icon::REPO_PUSH,
-                            tooltip: "Push local commits",
-                            command: Command::PushSourceControl,
-                            enabled: self.view.source_control.snapshot.is_some()
-                                && !self.view.source_control.loading,
-                        },
-                        HeaderAction {
-                            glyph: icon::REFRESH,
-                            tooltip: "Refresh source control and rescan repositories",
-                            command: Command::RefreshSourceControl,
-                            enabled: self.editor.workspace.is_some(),
-                        },
-                    ];
+                    let source_actions = [HeaderAction {
+                        glyph: icon::REFRESH,
+                        tooltip: "Refresh source control and rescan repositories",
+                        command: Command::RefreshSourceControl,
+                        enabled: self.editor.workspace.is_some(),
+                    }];
+                    let source_menu = crate::ui::source_control_menu::panel_menu(
+                        self.editor.workspace.is_some(),
+                        !self.view.source_control.loading,
+                    );
                     let task_scope = self.default_task_scope();
                     let task_actions = [
                         HeaderAction {
@@ -257,7 +245,11 @@ impl Workbench<'_> {
                     } else {
                         &[]
                     };
-                    if let Some(command) = panel_header(ui, self.view.activity.title(), actions) {
+                    let menu = (self.view.activity == Activity::SourceControl)
+                        .then_some(("Source Control actions", &source_menu[..]));
+                    if let Some(command) =
+                        panel_header_with_menu(ui, self.view.activity.title(), actions, menu)
+                    {
                         self.command(command);
                     }
                     match self.view.activity {

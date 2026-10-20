@@ -29,6 +29,10 @@ pub(crate) struct TagsDialog {
 
 impl LumenApp {
     pub(crate) fn open_tags_dialog(&mut self, target: Option<String>, ctx: &egui::Context) {
+        // A tag on a commit comes from the History tab and belongs to its repository.
+        if target.is_some() && !self.target_history_repository() {
+            return;
+        }
         let Some(snapshot) = &self.view.source_control.snapshot else {
             return;
         };
@@ -36,8 +40,6 @@ impl LumenApp {
         // A single remote can be preselected; with several the user must choose.
         let remote = (remotes.len() == 1).then(|| remotes[0].clone());
         let root = snapshot.root.clone();
-        // One modal at a time.
-        self.view.history_dialog = None;
         self.view.tags_dialog = Some(TagsDialog {
             root,
             target,

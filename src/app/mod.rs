@@ -30,6 +30,7 @@ mod language_services;
 pub(crate) mod native_agents;
 mod navigation;
 pub(crate) mod output;
+pub(crate) mod repo_extras;
 mod safety;
 pub(crate) mod scroll_sync;
 pub(crate) mod settings;
@@ -204,8 +205,8 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.source_abort_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.clone_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.branch_dialog(ctx));
+        self.render_component(ctx, |workbench| workbench.branch_picker(ctx));
         self.render_component(ctx, |workbench| workbench.stash_dialog(ctx));
-        self.render_component(ctx, |workbench| workbench.history_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.history_op_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.tags_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.save_conflict_dialog(ctx));
@@ -218,6 +219,7 @@ impl eframe::App for LumenApp {
         self.poll_workspace_search(ctx);
         self.poll_file_index(ctx);
         self.poll_source_control(ctx);
+        self.poll_repo_extras(ctx);
         self.poll_clone(ctx);
         self.poll_branches(ctx);
         self.poll_stashes(ctx);

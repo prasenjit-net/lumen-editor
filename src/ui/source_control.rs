@@ -1,9 +1,19 @@
-use super::{Workbench, widgets::explorer_row};
+use super::{
+    Workbench,
+    git_history_tab::relative_time,
+    source_control_menu::repository_menu,
+    source_control_rows::{
+        CHANGE_ROW_HEIGHT, ChangeRow, ListRow, RepoKind, RepoRow, change_row, list_row, repo_row,
+        repository_kind,
+    },
+    widgets::{RowAction, disclosure_row, explorer_row, overflow_menu},
+};
+use crate::app::view_state::{ChangeGroup, ExtraSection};
 use crate::{
     app::command::Command,
     services::source_control::{
         ChangeKind, ConflictSide, DiffSide, GitChange, GitSnapshot, HistoryAction, OperationAction,
-        RepoState, ResetMode,
+        RepoState,
     },
 };
 use eframe::egui::{self, FontId, RichText, ScrollArea, TextEdit};
@@ -11,7 +21,7 @@ use std::collections::BTreeSet;
 
 #[derive(Clone, Copy)]
 enum SourceRow<'a> {
-    Heading(&'static str, usize),
+    Heading(ChangeGroup, usize),
     Change(&'a GitChange, DiffSide),
 }
 
@@ -25,7 +35,7 @@ fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
         .filter(|change| change.is_conflict())
         .collect();
     if !conflicts.is_empty() {
-        rows.push(SourceRow::Heading("MERGE CONFLICTS", conflicts.len()));
+        rows.push(SourceRow::Heading(ChangeGroup::Conflicts, conflicts.len()));
         rows.extend(
             conflicts
                 .into_iter()
@@ -38,7 +48,7 @@ fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
         .filter(|change| !change.is_conflict() && change.index != ' ' && change.index != '?')
         .collect();
     if !staged.is_empty() {
-        rows.push(SourceRow::Heading("STAGED CHANGES", staged.len()));
+        rows.push(SourceRow::Heading(ChangeGroup::Staged, staged.len()));
         rows.extend(
             staged
                 .into_iter()
@@ -51,7 +61,7 @@ fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
         .filter(|change| !change.is_conflict() && change.worktree != ' ')
         .collect();
     if !working.is_empty() {
-        rows.push(SourceRow::Heading("CHANGES", working.len()));
+        rows.push(SourceRow::Heading(ChangeGroup::Working, working.len()));
         rows.extend(working.into_iter().map(|change| {
             SourceRow::Change(
                 change,
@@ -67,7 +77,7 @@ fn source_rows(snapshot: &GitSnapshot) -> Vec<SourceRow<'_>> {
 }
 
 /// Blame of the saved file; a line leads to its commit.
-fn history_blame(
+pub(super) fn history_blame(
     ui: &mut egui::Ui,
     blame: &crate::app::git_history::BlameView,
     actions: &mut Vec<Command>,
@@ -94,8 +104,7 @@ fn history_blame(
         Some(Ok(lines)) => {
             ScrollArea::vertical()
                 .id_salt("git_history_blame")
-                .max_height(360.0)
-                .auto_shrink([false, true])
+                .auto_shrink([false, false])
                 .show_rows(ui, 22.0, lines.len(), |ui, visible| {
                     for index in visible {
                         let line = &lines[index];
@@ -128,7 +137,7 @@ fn history_blame(
 }
 
 /// Side-by-side, read-only before/after for one file of a commit.
-fn history_comparison(
+pub(super) fn history_comparison(
     ui: &mut egui::Ui,
     compare: &mut crate::app::git_history::CommitCompare,
     font: &FontId,
@@ -198,7 +207,7 @@ fn history_comparison(
     }
 }
 
-fn commit_date(seconds: i64) -> String {
+pub(super) fn commit_date(seconds: i64) -> String {
     chrono::DateTime::from_timestamp(seconds, 0)
         .map(|time| {
             time.with_timezone(&chrono::Local)
@@ -208,10 +217,10 @@ fn commit_date(seconds: i64) -> String {
         .unwrap_or_default()
 }
 
-/// Row text for the repository list: path relative to the opened folder,
-/// branch and change count.
-fn repository_label(repo: &GitSnapshot, workspace: Option<&std::path::Path>) -> String {
-    let name = workspace
+/// Display name of a repository: its path relative to the opened folder, or
+/// its directory name.
+fn repository_name(repo: &GitSnapshot, workspace: Option<&std::path::Path>) -> String {
+    workspace
         .and_then(|workspace| repo.root.strip_prefix(workspace).ok())
         .filter(|relative| !relative.as_os_str().is_empty())
         .map(|relative| relative.display().to_string())
@@ -220,27 +229,21 @@ fn repository_label(repo: &GitSnapshot, workspace: Option<&std::path::Path>) -> 
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
         })
-        .unwrap_or_else(|| repo.root.display().to_string());
-    let changes = repo.changes.len();
-    let kind = if repo.is_linked_worktree() {
-        "  (worktree)"
-    } else {
-        ""
-    };
-    if changes == 0 {
-        format!("{name}{kind}  {}", repo.branch)
-    } else {
-        format!("{name}{kind}  {}  {changes}", repo.branch)
-    }
+        .unwrap_or_else(|| repo.root.display().to_string())
 }
 
-/// Muted line under the branch: the sole remote's URL, or what is missing.
-fn remote_summary(snapshot: &GitSnapshot) -> String {
-    match snapshot.remotes.as_slice() {
-        [] => "No remote configured".into(),
-        [remote] => format!("{}  {}", remote.name, remote.fetch_url),
-        [first, rest @ ..] => format!("{}  {}  +{} more", first.name, first.fetch_url, rest.len()),
-    }
+/// What a repository's accordion row shows, taken from its snapshot.
+struct RepoSummary {
+    root: std::path::PathBuf,
+    name: String,
+    kind: Option<RepoKind>,
+    branch: String,
+    ahead: usize,
+    behind: usize,
+    changes: usize,
+    conflicts: bool,
+    draft: bool,
+    tooltip: String,
 }
 
 fn remote_details(snapshot: &GitSnapshot) -> String {
@@ -256,23 +259,6 @@ fn remote_details(snapshot: &GitSnapshot) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// One-line header: branch, ahead/behind counts and any operation in progress.
-fn branch_summary(snapshot: &GitSnapshot) -> String {
-    let mut text = format!("{}  {}", crate::icon::GIT_BRANCH, snapshot.branch);
-    if let Some((ahead, behind)) = snapshot
-        .upstream
-        .as_ref()
-        .and_then(|upstream| upstream.ahead_behind)
-        .filter(|counts| *counts != (0, 0))
-    {
-        text.push_str(&format!("  +{ahead} -{behind}"));
-    }
-    if let Some(state) = snapshot.state.label() {
-        text.push_str(&format!("  ({state})"));
-    }
-    text
 }
 
 fn branch_details(snapshot: &GitSnapshot) -> String {
@@ -365,7 +351,9 @@ impl Workbench<'_> {
                 return;
             }
         }
-        self.repository_errors(ui);
+        if self.view.source_control.snapshot.is_none() {
+            self.repository_errors(ui);
+        }
         let Some(snapshot) = self.view.source_control.snapshot.clone() else {
             source_label(ui, "No Git repository found", colors.muted);
             source_label(ui, &workspace.display().to_string(), colors.muted);
@@ -398,111 +386,254 @@ impl Workbench<'_> {
             }
             return;
         };
-        self.repository_list(ui, &snapshot.root);
-        let branch_text = branch_summary(&snapshot);
-        let branch = source_label(ui, &branch_text, colors.text);
-        branch.on_hover_text(branch_details(&snapshot));
-        source_label(ui, &remote_summary(&snapshot), colors.muted)
-            .on_hover_text(remote_details(&snapshot));
-        if let Some(label) = snapshot.state.label() {
-            let has_conflicts = snapshot.changes.iter().any(|change| change.is_conflict());
-            ui.horizontal_wrapped(|ui| {
-                let idle = !self.view.source_control.loading;
-                ui.label(RichText::new(label).small().color(colors.muted));
-                let continue_button =
-                    ui.add_enabled(idle && !has_conflicts, egui::Button::new("Continue"));
-                let continue_button = if has_conflicts {
-                    continue_button.on_disabled_hover_text("Resolve and stage every conflict first")
-                } else {
-                    continue_button.on_hover_text(format!("Continue {}", label.to_lowercase()))
-                };
-                if continue_button.clicked() {
-                    self.command(Command::SourceOperation(OperationAction::Continue));
-                }
-                if snapshot.state != RepoState::Merge
-                    && ui
-                        .add_enabled(idle, egui::Button::new("Skip"))
-                        .on_hover_text("Skip the current step")
-                        .clicked()
-                {
-                    self.command(Command::SourceOperation(OperationAction::Skip));
-                }
-                if ui
-                    .add_enabled(idle, egui::Button::new("Abort…"))
-                    .on_hover_text("Stop and return to where you started")
-                    .clicked()
-                {
-                    self.command(Command::SourceOperation(OperationAction::Abort));
-                }
-            });
+        self.repository_sections(ui, &snapshot);
+    }
+
+    /// Every repository as an accordion section. One repository is selected and
+    /// expanded; it owns the commit box and the change groups, so no action is
+    /// ever ambiguous. Collapsed repositories show a one-line summary.
+    fn repository_sections(&mut self, ui: &mut egui::Ui, snapshot: &GitSnapshot) {
+        let colors = crate::ui::theme::palette(ui.visuals());
+        let summaries = self.repository_summaries(snapshot);
+        let multi = summaries.len() > 1;
+        let idle = !self.view.source_control.loading;
+        let has_conflicts = snapshot.changes.iter().any(|change| change.is_conflict());
+        if multi {
+            let dirty = summaries.iter().filter(|s| s.changes > 0).count();
+            let mut text = format!("{} repositories · {dirty} with changes", summaries.len());
+            let broken = self.view.source_control.repository_errors.len();
+            if broken > 0 {
+                text.push_str(&format!(" · {broken} unreadable"));
+            }
+            source_label(ui, &text, colors.muted);
         }
-        ui.horizontal_wrapped(|ui| {
-            let idle = !self.view.source_control.loading;
-            if ui
-                .add_enabled(idle, egui::Button::new("Branches…"))
-                .on_hover_text("Switch, create, rename or delete branches")
-                .clicked()
-            {
-                self.command(Command::OpenBranchDialog);
-            }
-            if ui
-                .add_enabled(idle, egui::Button::new("Stash…"))
-                .on_hover_text("Save, inspect and restore stashed changes")
-                .clicked()
-            {
-                self.command(Command::OpenStashDialog);
-            }
-            if ui
-                .add_enabled(idle, egui::Button::new("Tags…"))
-                .on_hover_text("Create, push and delete tags")
-                .clicked()
-            {
-                self.command(Command::OpenTagsDialog(None));
-            }
-            if ui
-                .button("History…")
-                .on_hover_text("Browse recent commits")
-                .clicked()
-            {
-                self.command(Command::OpenHistoryDialog);
-            }
-            if ui
-                .add_enabled(
-                    idle && !snapshot.remotes.is_empty(),
-                    egui::Button::new("Fetch"),
-                )
-                .on_hover_text("Fetch all remotes and prune deleted remote branches")
-                .clicked()
-            {
-                self.command(Command::FetchSourceControl);
-            }
-            if snapshot.upstream.is_some()
-                && ui
-                    .add_enabled(idle, egui::Button::new("Force Push…"))
-                    .on_hover_text(
-                        "Overwrite the remote branch, but only if it still has the commit you reviewed",
-                    )
-                    .clicked()
-            {
-                self.command(Command::PlanForcePush);
-            }
-            match crate::app::source_control::publish_target(&snapshot) {
-                Ok((remote, branch)) => {
-                    if ui
-                        .add_enabled(idle, egui::Button::new("Publish Branch"))
-                        .on_hover_text(format!("Push {branch} to {remote} and track it"))
-                        .clicked()
-                    {
-                        self.command(Command::PublishSourceBranch);
+        let mut commands: Vec<Command> = Vec::new();
+        ScrollArea::vertical()
+            .id_salt("source_control_changes")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for summary in &summaries {
+                    let active = summary.root == snapshot.root;
+                    // A lone repository has no caret to expand it again.
+                    let collapsed = multi
+                        && active
+                        && self
+                            .view
+                            .source_control
+                            .collapsed_repos
+                            .contains(&summary.root);
+                    let row = RepoRow {
+                        name: &summary.name,
+                        kind: summary.kind,
+                        branch: &summary.branch,
+                        ahead: summary.ahead,
+                        behind: summary.behind,
+                        changes: summary.changes,
+                        conflicts: summary.conflicts,
+                        active,
+                        expanded: active && !collapsed,
+                        accordion: multi,
+                        draft: summary.draft,
+                        menu: active,
+                        tooltip: summary.tooltip.clone(),
+                    };
+                    let shown = repo_row(ui, &row);
+                    if active {
+                        let entries = repository_menu(&summary.name, snapshot, idle, has_conflicts);
+                        if let Some(command) = overflow_menu(
+                            ui,
+                            shown.menu_rect,
+                            &format!("Actions for {}", summary.name),
+                            &entries,
+                        ) {
+                            commands.push(command);
+                        }
+                    }
+                    // The branch name of the selected repository opens the switcher.
+                    let mut chip_clicked = false;
+                    if let Some(rect) = shown.branch_rect {
+                        // Remember where the chip was drawn and when, so the
+                        // switcher can tell if its anchor is still on screen.
+                        let frame = ui.ctx().cumulative_frame_nr();
+                        ui.ctx().data_mut(|data| {
+                            data.insert_temp(egui::Id::new("branch_chip_rect"), (rect, frame))
+                        });
+                        let chip = ui
+                            .interact(
+                                rect,
+                                egui::Id::new(("branch_chip", &summary.root)),
+                                egui::Sense::click(),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text("Switch branch");
+                        if chip.clicked() {
+                            chip_clicked = true;
+                            commands.push(Command::OpenBranchPicker);
+                        }
+                    }
+                    if shown.response.clicked() && !chip_clicked {
+                        if !active {
+                            // A repository selected on purpose is shown open.
+                            self.view
+                                .source_control
+                                .collapsed_repos
+                                .remove(&summary.root);
+                            commands.push(Command::SelectRepository(summary.root.clone()));
+                        } else if multi
+                            && !self
+                                .view
+                                .source_control
+                                .collapsed_repos
+                                .remove(&summary.root)
+                        {
+                            self.view
+                                .source_control
+                                .collapsed_repos
+                                .insert(summary.root.clone());
+                        }
+                    }
+                    if active && !collapsed {
+                        self.repository_body(ui, snapshot, &mut commands);
                     }
                 }
-                Err(reason) if snapshot.upstream.is_none() => {
-                    ui.add_enabled(false, egui::Button::new("Publish Branch"))
-                        .on_disabled_hover_text(reason);
+                for (root, error) in &self.view.source_control.repository_errors {
+                    let name = root.file_name().map_or_else(
+                        || root.display().to_string(),
+                        |n| n.to_string_lossy().into(),
+                    );
+                    source_label(
+                        ui,
+                        &format!("{} {name}: {error}", crate::icon::ERROR),
+                        colors.error,
+                    )
+                    .on_hover_text(format!(
+                        "{}\n{error}\nOther repositories are not affected.",
+                        root.display()
+                    ));
                 }
-                Err(_) => {}
+            });
+        for command in commands {
+            self.command(command);
+        }
+    }
+
+    /// One summary per repository; the selected one is read from `snapshot`,
+    /// which is fresher than its entry in the scanned list.
+    fn repository_summaries(&self, snapshot: &GitSnapshot) -> Vec<RepoSummary> {
+        let view = &self.view.source_control;
+        let workspace = self.editor.workspace.as_deref();
+        let all = &view.repositories;
+        let summarize = |repo: &GitSnapshot| {
+            let (ahead, behind) = repo
+                .upstream
+                .as_ref()
+                .and_then(|upstream| upstream.ahead_behind)
+                .unwrap_or((0, 0));
+            let shared = all
+                .iter()
+                .filter(|other| other.root != repo.root && other.shares_storage_with(repo))
+                .count();
+            let mut tooltip = branch_details(repo);
+            if !repo.remotes.is_empty() {
+                tooltip.push_str(&format!("\n{}", remote_details(repo)));
             }
-        });
+            if shared > 0 {
+                tooltip.push_str(&format!(
+                    "\nShares branches and objects with {shared} other listed worktree(s)"
+                ));
+            }
+            RepoSummary {
+                root: repo.root.clone(),
+                name: repository_name(repo, workspace),
+                kind: repository_kind(all, repo),
+                branch: repo.branch.clone(),
+                ahead: ahead as usize,
+                behind: behind as usize,
+                changes: repo.changes.len(),
+                conflicts: repo.changes.iter().any(|change| change.is_conflict()),
+                draft: view.parked_drafts.contains_key(&repo.root),
+                tooltip,
+            }
+        };
+        let mut summaries: Vec<_> = all
+            .iter()
+            .map(|repo| {
+                if repo.root == snapshot.root {
+                    summarize(snapshot)
+                } else {
+                    summarize(repo)
+                }
+            })
+            .collect();
+        if !summaries
+            .iter()
+            .any(|summary| summary.root == snapshot.root)
+        {
+            summaries.insert(0, summarize(snapshot));
+        }
+        summaries
+    }
+
+    /// The selected repository's operation banner, commit box and change groups.
+    fn repository_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: &GitSnapshot,
+        commands: &mut Vec<Command>,
+    ) {
+        let colors = crate::ui::theme::palette(ui.visuals());
+        let idle = !self.view.source_control.loading;
+        let conflicts = snapshot.changes.iter().filter(|c| c.is_conflict()).count();
+        if let Some(label) = snapshot.state.label() {
+            let banner = egui::Frame::NONE
+                .fill(colors.warning.gamma_multiply(0.14))
+                .inner_margin(egui::Margin::symmetric(8, 3))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let text = if conflicts > 0 {
+                            format!("{label} · {conflicts} left to resolve")
+                        } else {
+                            label.to_owned()
+                        };
+                        ui.label(RichText::new(text).small().color(colors.text));
+                        let continue_button =
+                            ui.add_enabled(idle && conflicts == 0, egui::Button::new("Continue"));
+                        let continue_button = if conflicts > 0 {
+                            continue_button
+                                .on_disabled_hover_text("Resolve and stage every conflict first")
+                        } else {
+                            continue_button
+                                .on_hover_text(format!("Continue {}", label.to_lowercase()))
+                        };
+                        if continue_button.clicked() {
+                            commands.push(Command::SourceOperation(OperationAction::Continue));
+                        }
+                        if snapshot.state != RepoState::Merge
+                            && ui
+                                .add_enabled(idle, egui::Button::new("Skip"))
+                                .on_hover_text("Skip the current step")
+                                .clicked()
+                        {
+                            commands.push(Command::SourceOperation(OperationAction::Skip));
+                        }
+                        if ui
+                            .add_enabled(idle, egui::Button::new("Abort…"))
+                            .on_hover_text("Stop and return to where you started")
+                            .clicked()
+                        {
+                            commands.push(Command::SourceOperation(OperationAction::Abort));
+                        }
+                    });
+                });
+            let rect = banner.response.rect;
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())),
+                egui::CornerRadius::ZERO,
+                colors.warning,
+            );
+            ui.add_space(4.0);
+        }
+
         let staged_paths: Vec<_> = snapshot
             .changes
             .iter()
@@ -521,39 +652,8 @@ impl Workbench<'_> {
             .filter(|change| !change.is_conflict() && change.index != '?' && change.index != 'A')
             .map(|change| change.path.clone())
             .collect();
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("SOURCE CONTROL").small().color(colors.muted));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add_sized(
-                        [22.0, 22.0],
-                        egui::Button::new(crate::icon::PLUS).frame(false),
-                    )
-                    .on_hover_text("Stage all working changes")
-                    .clicked()
-                {
-                    self.command(Command::StagePaths(working_paths.clone()));
-                }
-                if ui
-                    .add_sized([22.0, 22.0], egui::Button::new(crate::icon::X).frame(false))
-                    .on_hover_text("Unstage all staged changes")
-                    .clicked()
-                {
-                    self.command(Command::UnstagePaths(staged_paths.clone()));
-                }
-                if ui
-                    .add_enabled(
-                        !revertible_paths.is_empty(),
-                        egui::Button::new(crate::icon::DISCARD).frame(false),
-                    )
-                    .on_hover_text("Discard all tracked changes")
-                    .clicked()
-                {
-                    self.command(Command::RequestSourceRevert(revertible_paths.clone()));
-                }
-            });
-        });
-        let has_staged = !staged_paths.is_empty();
+
+        ui.add_space(4.0);
         // The previous frame's focus decides whether Cmd/Ctrl+Enter commits;
         // consume it before the multiline editor can turn it into a newline.
         let commit_shortcut = self.view.source_control.commit_focused
@@ -571,222 +671,422 @@ impl Workbench<'_> {
             self.view.source_control.commit_focus = false;
         }
         self.view.source_control.commit_focused = response.has_focus();
-        let can_commit = (has_staged || self.view.source_control.amend_commit)
-            && !self.view.source_control.loading;
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.view.source_control.amend_commit, "Amend")
-                .on_hover_text(
-                    "Amend the most recent commit; an empty message keeps its current message",
+        ui.add_space(6.0);
+        let can_commit =
+            (!staged_paths.is_empty() || self.view.source_control.amend_commit) && idle;
+        if self.commit_button(ui, can_commit) || (commit_shortcut && can_commit) {
+            commands.push(Command::CommitSourceControl);
+        }
+        ui.add_space(4.0);
+        if self.view.source_control.amend_commit {
+            ui.horizontal(|ui| {
+                // Leave room for the 22px button and the item spacing between.
+                let width = (ui.available_width() - 22.0 - ui.spacing().item_spacing.x).max(0.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width, 22.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        let subject = snapshot.last_commit.as_deref().unwrap_or("the last commit");
+                        source_label(ui, &format!("Amending: {subject}"), colors.muted);
+                    },
                 );
-            let commit_label = if self.view.source_control.amend_commit {
-                "Amend"
-            } else {
-                "Commit"
-            };
-            if ui
-                .add_enabled(can_commit, egui::Button::new(commit_label))
-                .clicked()
-                || (commit_shortcut && can_commit)
-            {
-                self.command(Command::CommitSourceControl);
-            }
-        });
-        if self.view.source_control.amend_commit
-            && let Some(subject) = &snapshot.last_commit
-        {
-            source_label(ui, &format!("Amending: {subject}"), colors.muted);
+                if ui
+                    .add_sized([22.0, 22.0], egui::Button::new(crate::icon::X).frame(false))
+                    .on_hover_text("Stop amending")
+                    .clicked()
+                {
+                    self.view.source_control.amend_commit = false;
+                }
+            });
         }
         if let Some(error) = &self.view.source_control.commit_error {
             source_label(ui, error, colors.error);
         }
         if snapshot.changes.is_empty() {
-            source_label(ui, "No changes", colors.muted);
+            source_label(
+                ui,
+                &format!("{} No changes", crate::icon::CHECK),
+                colors.muted,
+            );
+            self.repository_extras(ui, snapshot, commands);
             return;
         }
-        let rows = source_rows(&snapshot);
-        let mut requested = None;
-        let mut open_conflict = None;
-        let mut open_repository = None;
-        let mut chosen_side = None;
-        ScrollArea::vertical()
-            .id_salt("source_control_changes")
-            .show_rows(ui, 22.0, rows.len(), |ui, visible| {
-                for index in visible {
-                    let SourceRow::Change(change, side) = rows[index] else {
-                        if let SourceRow::Heading(title, count) = rows[index] {
-                            source_heading(ui, title, count);
-                        }
-                        continue;
-                    };
-                    let marker = if change.is_conflict() {
-                        '!'
-                    } else if side == DiffSide::Untracked {
-                        'U'
-                    } else if side == DiffSide::Staged {
-                        change.index
-                    } else {
-                        change.worktree
-                    };
-                    let submodule = match &change.kind {
-                        ChangeKind::Submodule(sub) => Some(*sub),
-                        _ => None,
-                    };
-                    let label = match submodule {
-                        Some(_) => format!("{marker}  {}  (submodule)", change.path.display()),
-                        None => format!("{marker}  {}", change.path.display()),
-                    };
-                    let hover = match submodule {
-                        Some(sub) => format!("{}\n{}", change.path.display(), sub.describe()),
-                        None => change.path.display().to_string(),
-                    };
-                    let response = explorer_row(ui, label, 4, false)
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(if change.is_conflict() {
-                            format!("{hover}\nRight-click to choose a side")
-                        } else {
-                            hover
-                        });
-                    if change.is_conflict() {
-                        let (ours, theirs) = snapshot.state.side_labels();
-                        response.context_menu(|ui| {
-                            if ui.button(ours).clicked() {
-                                chosen_side = Some((change.path.clone(), ConflictSide::Ours));
-                                ui.close();
-                            }
-                            if ui.button(theirs).clicked() {
-                                chosen_side = Some((change.path.clone(), ConflictSide::Theirs));
-                                ui.close();
-                            }
-                        });
-                    }
-                    let action = match side {
-                        DiffSide::Staged => Command::UnstagePaths(vec![change.path.clone()]),
-                        DiffSide::Working | DiffSide::Untracked => {
-                            Command::StagePaths(vec![change.path.clone()])
-                        }
-                    };
-                    let action_label = if side == DiffSide::Staged {
-                        crate::icon::X
-                    } else {
-                        crate::icon::PLUS
-                    };
-                    let revertible = !change.is_conflict()
-                        && !change.is_submodule()
-                        && change.index != '?'
-                        && change.index != 'A';
-                    let revert_clicked = revertible
-                        && ui
-                            .put(
-                                egui::Rect::from_min_size(
-                                    response.rect.right_top() - egui::vec2(44.0, 0.0),
-                                    egui::vec2(22.0, response.rect.height()),
-                                ),
-                                egui::Button::new(crate::icon::DISCARD).frame(false),
-                            )
-                            .on_hover_text("Discard changes to this file")
-                            .clicked();
-                    let action_clicked = ui
-                        .put(
-                            egui::Rect::from_min_size(
-                                response.rect.right_top() - egui::vec2(22.0, 0.0),
-                                egui::vec2(22.0, response.rect.height()),
+
+        let rows = source_rows(snapshot);
+        let mut collapsed_group = false;
+        for row in &rows {
+            let (change, side) = match *row {
+                SourceRow::Heading(group, count) => {
+                    let key = (snapshot.root.clone(), group);
+                    collapsed_group = self.view.source_control.collapsed_groups.contains(&key);
+                    // Each action carries its own command, so order and
+                    // labels can change without rewiring anything.
+                    let group_actions: Vec<(RowAction, Command)> = match group {
+                        ChangeGroup::Staged => vec![(
+                            RowAction {
+                                glyph: crate::icon::X,
+                                tooltip: "Unstage all staged changes",
+                                enabled: true,
+                            },
+                            Command::UnstagePaths(staged_paths.clone()),
+                        )],
+                        ChangeGroup::Working => vec![
+                            (
+                                RowAction {
+                                    glyph: crate::icon::DISCARD,
+                                    tooltip: "Discard all tracked changes",
+                                    enabled: !revertible_paths.is_empty(),
+                                },
+                                Command::RequestSourceRevert(revertible_paths.clone()),
                             ),
-                            egui::Button::new(action_label).frame(false),
-                        )
-                        .on_hover_text(if side == DiffSide::Staged {
-                            "Unstage change"
-                        } else if change.is_conflict() {
-                            "Mark resolved (stage the file as it is on disk)"
-                        } else {
-                            "Stage change"
-                        })
-                        .clicked();
-                    if action_clicked {
-                        self.command(action);
-                    } else if revert_clicked {
-                        self.command(Command::RequestSourceRevert(vec![change.path.clone()]));
-                    } else if response.clicked() && change.is_submodule() {
-                        // A gitlink has no text comparison; jump to the child
-                        // repository when it was discovered.
-                        let child = snapshot.root.join(&change.path);
-                        if self
-                            .view
-                            .source_control
-                            .repositories
-                            .iter()
-                            .any(|repo| repo.root == child)
-                        {
-                            open_repository = Some(child);
-                        }
-                    } else if response.clicked() && change.is_conflict() {
-                        // A comparison of a conflicted file is not meaningful;
-                        // open it so the markers can be resolved in the editor.
-                        open_conflict = Some(snapshot.root.join(&change.path));
-                    } else if response.clicked() {
-                        requested = Some((change.path.clone(), side));
+                            (
+                                RowAction {
+                                    glyph: crate::icon::PLUS,
+                                    tooltip: "Stage all working changes",
+                                    enabled: true,
+                                },
+                                Command::StagePaths(working_paths.clone()),
+                            ),
+                        ],
+                        ChangeGroup::Conflicts => Vec::new(),
+                    };
+                    let (specs, group_commands): (Vec<_>, Vec<_>) =
+                        group_actions.into_iter().unzip();
+                    let outcome = disclosure_row(ui, collapsed_group, group.title(), count, &specs);
+                    if outcome.toggled && !self.view.source_control.collapsed_groups.remove(&key) {
+                        self.view.source_control.collapsed_groups.insert(key);
                     }
+                    if let Some(command) = outcome.action.and_then(|i| group_commands.get(i)) {
+                        commands.push(command.clone());
+                    }
+                    continue;
                 }
-            });
-        if let Some((path, side)) = chosen_side {
-            self.command(Command::ResolveConflict(path, side));
+                SourceRow::Change(change, side) => (change, side),
+            };
+            if collapsed_group {
+                continue;
+            }
+            // Only rows in view are drawn; the rest keep their height.
+            let top = ui.cursor().top();
+            if top + CHANGE_ROW_HEIGHT < ui.clip_rect().top() || top > ui.clip_rect().bottom() {
+                ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), CHANGE_ROW_HEIGHT),
+                    egui::Sense::hover(),
+                );
+                continue;
+            }
+            self.change_entry(ui, snapshot, change, side, commands);
         }
-        if let Some(root) = open_repository {
-            self.command(Command::SelectRepository(root));
-        }
-        if let Some(path) = open_conflict {
-            self.command(Command::OpenPath(path));
-        }
-        if let Some((path, side)) = requested {
-            self.command(Command::ShowSourceDiff(path, side));
-        }
+        self.repository_extras(ui, snapshot, commands);
     }
 
-    /// Lists every repository found under the folder; hidden for a single one.
-    fn repository_list(&mut self, ui: &mut egui::Ui, selected: &std::path::Path) {
-        let workspace = self.editor.workspace.clone();
-        let rows: Vec<_> = self
-            .view
-            .source_control
-            .repositories
-            .iter()
-            .map(|repo| {
-                let label = repository_label(repo, workspace.as_deref());
-                let siblings = self
-                    .view
-                    .source_control
-                    .repositories
-                    .iter()
-                    .filter(|other| other.root != repo.root && other.shares_storage_with(repo))
-                    .count();
-                let mut tooltip = repo.root.display().to_string();
-                if siblings > 0 {
-                    tooltip.push_str(&format!(
-                        "\nShares branches and objects with {siblings} other listed worktree(s)"
-                    ));
-                }
-                (repo.root.clone(), label, tooltip)
-            })
-            .collect();
-        if rows.len() < 2 {
+    /// Stashes and the commits that differ from the upstream, as collapsed
+    /// sections that appear only when they have something to show.
+    fn repository_extras(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: &GitSnapshot,
+        commands: &mut Vec<Command>,
+    ) {
+        let colors = crate::ui::theme::palette(ui.visuals());
+        // Taken for the frame so toggling a section can borrow the view too.
+        let Some(extras) = self.view.source_control.extras.loaded.take() else {
+            return;
+        };
+        if extras.root() != snapshot.root {
+            self.view.source_control.extras.loaded = Some(extras);
             return;
         }
-        let mut chosen = None;
-        ScrollArea::vertical()
-            .id_salt("source_control_repositories")
-            .max_height(22.0 * 5.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                for (root, label, tooltip) in &rows {
-                    let response = explorer_row(ui, label.clone(), 4, root == selected)
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(tooltip.clone());
-                    if response.clicked() {
-                        chosen = Some(root.clone());
+        if let Some(error) = &extras.error {
+            source_label(ui, error, colors.error);
+        }
+        let now = chrono::Utc::now().timestamp();
+        let sections = [
+            (ExtraSection::Stashes, "STASHES", extras.stashes.len()),
+            (
+                ExtraSection::Outgoing,
+                "OUTGOING",
+                extras.sync.outgoing.len(),
+            ),
+            (
+                ExtraSection::Incoming,
+                "INCOMING",
+                extras.sync.incoming.len(),
+            ),
+        ];
+        for (section, title, count) in sections {
+            if count == 0 {
+                continue;
+            }
+            let key = (snapshot.root.clone(), section);
+            let open = self.view.source_control.expanded_extras.contains(&key);
+            if disclosure_row(ui, !open, title, count, &[]).toggled
+                && !self.view.source_control.expanded_extras.remove(&key)
+            {
+                self.view.source_control.expanded_extras.insert(key);
+            }
+            if !open {
+                continue;
+            }
+            match section {
+                ExtraSection::Stashes => {
+                    for stash in &extras.stashes {
+                        let tip = "Open the stash list to apply, pop or drop it";
+                        if list_row(
+                            ui,
+                            &ListRow {
+                                lead: &format!("stash@{{{}}}", stash.index),
+                                text: &stash.message,
+                                trail: "",
+                                tooltip: tip.to_owned(),
+                                selected: false,
+                            },
+                        )
+                        .clicked()
+                        {
+                            commands.push(Command::OpenStashDialog);
+                        }
                     }
                 }
+                ExtraSection::Outgoing | ExtraSection::Incoming => {
+                    let commits = if section == ExtraSection::Outgoing {
+                        &extras.sync.outgoing
+                    } else {
+                        &extras.sync.incoming
+                    };
+                    let note = if section == ExtraSection::Outgoing {
+                        "Not on the upstream yet"
+                    } else {
+                        "On the upstream, not here yet (as of the last fetch)"
+                    };
+                    for commit in commits {
+                        let response = list_row(
+                            ui,
+                            &ListRow {
+                                lead: &commit.id[..commit.id.len().min(7)],
+                                text: &commit.subject,
+                                trail: &relative_time(now, commit.time),
+                                tooltip: format!("{note}\n{}\n{}", commit.id, commit.author),
+                                selected: false,
+                            },
+                        );
+                        if response.clicked() {
+                            commands.push(Command::OpenHistoryAt(commit.id.clone()));
+                        }
+                    }
+                    if commits.len() >= crate::services::source_control::SYNC_LIMIT {
+                        source_label(
+                            ui,
+                            &format!(
+                                "Showing the newest {}",
+                                crate::services::source_control::SYNC_LIMIT
+                            ),
+                            colors.muted,
+                        );
+                    }
+                }
+            }
+        }
+        self.view.source_control.extras.loaded = Some(extras);
+    }
+
+    /// The split Commit button: commit on the left, options on the right.
+    /// Returns true when the primary part was clicked.
+    fn commit_button(&mut self, ui: &mut egui::Ui, can_commit: bool) -> bool {
+        const DROP: f32 = 24.0;
+        let colors = crate::ui::theme::palette(ui.visuals());
+        let fill = if can_commit {
+            colors.accent
+        } else {
+            colors.input
+        };
+        let text_color = if can_commit {
+            egui::Color32::WHITE
+        } else {
+            colors.muted
+        };
+        let label = if self.view.source_control.amend_commit {
+            format!("{} Amend", crate::icon::CHECK)
+        } else {
+            format!("{} Commit", crate::icon::CHECK)
+        };
+        let mut clicked = false;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 1.0;
+            let width = (ui.available_width() - DROP - 1.0).max(24.0);
+            clicked = ui
+                .add_enabled(
+                    can_commit,
+                    egui::Button::new(RichText::new(label).color(text_color))
+                        .fill(fill)
+                        .corner_radius(egui::CornerRadius {
+                            nw: 3,
+                            sw: 3,
+                            ne: 0,
+                            se: 0,
+                        })
+                        .min_size(egui::vec2(width, 24.0)),
+                )
+                .on_hover_text(if self.view.source_control.amend_commit {
+                    "Amend the most recent commit"
+                } else {
+                    "Commit the staged changes"
+                })
+                .clicked();
+            let drop = egui::Button::new(RichText::new(crate::icon::CARET_DOWN).color(text_color))
+                .fill(fill)
+                .corner_radius(egui::CornerRadius {
+                    nw: 0,
+                    sw: 0,
+                    ne: 3,
+                    se: 3,
+                })
+                .min_size(egui::vec2(DROP, 24.0));
+            // The caret must fit its fixed slot; default padding would make it
+            // wider than DROP and widen the pane by the difference every frame.
+            ui.spacing_mut().button_padding.x = 2.0;
+            let (response, _) =
+                egui::containers::menu::MenuButton::from_button(drop).ui(ui, |ui| {
+                    ui.set_min_width(200.0);
+                    ui.checkbox(
+                        &mut self.view.source_control.amend_commit,
+                        "Amend Last Commit",
+                    )
+                    .on_hover_text(
+                        "Amend the most recent commit; an empty message keeps its current message",
+                    );
+                });
+            response.on_hover_text("Commit options");
+        });
+        clicked
+    }
+
+    /// One file row with its actions and context menu.
+    fn change_entry(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: &GitSnapshot,
+        change: &GitChange,
+        side: DiffSide,
+        commands: &mut Vec<Command>,
+    ) {
+        let marker = if change.is_conflict() {
+            '!'
+        } else if side == DiffSide::Untracked {
+            'U'
+        } else if side == DiffSide::Staged {
+            change.index
+        } else {
+            change.worktree
+        };
+        let submodule = match &change.kind {
+            ChangeKind::Submodule(sub) => Some(*sub),
+            _ => None,
+        };
+        let hover = match submodule {
+            Some(sub) => format!("{}\n{}", change.path.display(), sub.describe()),
+            None => change.path.display().to_string(),
+        };
+        let hover = if change.is_conflict() {
+            format!("{hover}\nRight-click to choose a side")
+        } else {
+            hover
+        };
+        let revertible = !change.is_conflict()
+            && !change.is_submodule()
+            && change.index != '?'
+            && change.index != 'A';
+        let (primary_glyph, primary_tip) = if side == DiffSide::Staged {
+            (crate::icon::X, "Unstage change")
+        } else if change.is_conflict() {
+            (
+                crate::icon::PLUS,
+                "Mark resolved (stage the file as it is on disk)",
+            )
+        } else {
+            (crate::icon::PLUS, "Stage change")
+        };
+        let shown = change_row(
+            ui,
+            &ChangeRow {
+                change,
+                marker,
+                discardable: revertible,
+                primary_glyph,
+                primary_tip,
+                hover,
+            },
+        );
+        let response = shown
+            .response
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        let path = change.path.clone();
+        let (ours, theirs) = snapshot.state.side_labels();
+        response.context_menu(|ui| {
+            if change.is_conflict() {
+                if ui.button(ours).clicked() {
+                    commands.push(Command::ResolveConflict(path.clone(), ConflictSide::Ours));
+                    ui.close();
+                }
+                if ui.button(theirs).clicked() {
+                    commands.push(Command::ResolveConflict(path.clone(), ConflictSide::Theirs));
+                    ui.close();
+                }
+                ui.separator();
+            }
+            let deleted = change.index == 'D' || change.worktree == 'D';
+            if !change.is_submodule()
+                && ui
+                    .add_enabled(!deleted, egui::Button::new("Open File"))
+                    .on_disabled_hover_text("The file no longer exists on disk")
+                    .clicked()
+            {
+                commands.push(Command::OpenPath(snapshot.root.join(&path)));
+                ui.close();
+            }
+            let primary_label = match (side, change.is_conflict()) {
+                (DiffSide::Staged, _) => "Unstage",
+                (_, true) => "Mark Resolved",
+                _ => "Stage",
+            };
+            if ui.button(primary_label).clicked() {
+                commands.push(match side {
+                    DiffSide::Staged => Command::UnstagePaths(vec![path.clone()]),
+                    _ => Command::StagePaths(vec![path.clone()]),
+                });
+                ui.close();
+            }
+            if revertible && ui.button("Discard Changes…").clicked() {
+                commands.push(Command::RequestSourceRevert(vec![path.clone()]));
+                ui.close();
+            }
+        });
+        if shown.primary {
+            commands.push(match side {
+                DiffSide::Staged => Command::UnstagePaths(vec![change.path.clone()]),
+                _ => Command::StagePaths(vec![change.path.clone()]),
             });
-        if let Some(root) = chosen {
-            self.command(Command::SelectRepository(root));
+        } else if shown.discard {
+            commands.push(Command::RequestSourceRevert(vec![change.path.clone()]));
+        } else if response.clicked() && change.is_submodule() {
+            // A gitlink has no text comparison; jump to the child repository
+            // when it was discovered.
+            let child = snapshot.root.join(&change.path);
+            if self
+                .view
+                .source_control
+                .repositories
+                .iter()
+                .any(|repo| repo.root == child)
+            {
+                commands.push(Command::SelectRepository(child));
+            }
+        } else if response.clicked() && change.is_conflict() {
+            // A comparison of a conflicted file is not meaningful; open it so
+            // the markers can be resolved in the editor.
+            commands.push(Command::OpenPath(snapshot.root.join(&change.path)));
+        } else if response.clicked() {
+            commands.push(Command::ShowSourceDiff(change.path.clone(), side));
         }
     }
 
@@ -799,276 +1099,6 @@ impl Workbench<'_> {
             );
             source_label(ui, &format!("{name}: {error}"), colors.error)
                 .on_hover_text(format!("{}\n{error}", root.display()));
-        }
-    }
-
-    pub(crate) fn history_dialog(&mut self, ctx: &egui::Context) {
-        let colors = crate::ui::theme::palette(&ctx.style().visuals);
-        let font_size = self.view.settings.number("editor.font_size", None);
-        let line_height = self.view.settings.number("editor.line_height", None);
-        let font = FontId::monospace(font_size);
-        let Some(dialog) = &mut self.view.history_dialog else {
-            return;
-        };
-        let mut actions: Vec<Command> = Vec::new();
-        let comparing = dialog.compare.is_some();
-        let modal = egui::Modal::new(egui::Id::new("git_history_dialog")).show(ctx, |ui| {
-            ui.set_width(if comparing { 900.0 } else { 520.0 });
-            ui.heading("History");
-            ui.add_space(4.0);
-            if let Some(compare) = &mut dialog.compare {
-                history_comparison(ui, compare, &font, line_height, &mut actions);
-                if let Some(error) = &dialog.error {
-                    ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
-                }
-                return;
-            }
-            if let Some(blame) = &dialog.blame {
-                history_blame(ui, blame, &mut actions);
-                return;
-            }
-            let (mut apply, mut clear) = (false, false);
-            let enter_pressed = |response: &egui::Response| {
-                response.lost_focus() && response.ctx.input(|i| i.key_pressed(egui::Key::Enter))
-            };
-            let text = ui.add(
-                TextEdit::singleline(&mut dialog.filter_text)
-                    .id_salt("git_history_text")
-                    .desired_width(f32::INFINITY)
-                    .hint_text("Search messages, or paste a commit id"),
-            );
-            apply |= enter_pressed(&text);
-            let author = ui.add(
-                TextEdit::singleline(&mut dialog.filter_author)
-                    .id_salt("git_history_author")
-                    .desired_width(f32::INFINITY)
-                    .hint_text("Author"),
-            );
-            apply |= enter_pressed(&author);
-            let path = ui.add(
-                TextEdit::singleline(&mut dialog.filter_path)
-                    .id_salt("git_history_path")
-                    .desired_width(f32::INFINITY)
-                    .hint_text("File path: history of one file, following renames"),
-            );
-            apply |= enter_pressed(&path);
-            ui.horizontal(|ui| {
-                let selected = dialog
-                    .filter_ref
-                    .clone()
-                    .unwrap_or_else(|| "HEAD".to_owned());
-                egui::ComboBox::from_id_salt("git_history_ref")
-                    .selected_text(selected)
-                    .width(ui.available_width() - 130.0)
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(dialog.filter_ref.is_none(), "HEAD")
-                            .clicked()
-                        {
-                            actions.push(Command::SetHistoryRef(None));
-                        }
-                        for name in &dialog.refs {
-                            let current = dialog.filter_ref.as_deref() == Some(name.as_str());
-                            if ui.selectable_label(current, name).clicked() {
-                                actions.push(Command::SetHistoryRef(Some(name.clone())));
-                            }
-                        }
-                    });
-                apply |= ui.button("Search").clicked();
-                clear = ui.button("Clear").clicked();
-            });
-            if apply {
-                actions.push(Command::ApplyHistoryFilter);
-            }
-            if clear {
-                actions.push(Command::ClearHistoryFilter);
-            }
-            ui.add_space(4.0);
-            let selected = dialog.selected.clone();
-            ScrollArea::vertical()
-                .id_salt("git_history_list")
-                .max_height(260.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    if dialog.commits.is_empty() {
-                        let text = if dialog.loading {
-                            "Reading history…"
-                        } else {
-                            "No commits yet"
-                        };
-                        ui.label(RichText::new(text).color(colors.muted));
-                    }
-                    for commit in &dialog.commits {
-                        let mut label = format!(
-                            "{}  {}  {}",
-                            &commit.id[..commit.id.len().min(7)],
-                            commit_date(commit.time),
-                            commit.subject
-                        );
-                        if !commit.refs.is_empty() {
-                            label = format!("[{}]  {label}", commit.refs.join(", "));
-                        }
-                        let response =
-                            explorer_row(ui, label, 4, selected.as_deref() == Some(&commit.id))
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text(format!("{}\n{}", commit.id, commit.author));
-                        if response.clicked() {
-                            actions.push(Command::SelectCommit(commit.id.clone()));
-                        }
-                    }
-                    if dialog.has_more
-                        && ui
-                            .add_enabled(!dialog.loading, egui::Button::new("Load more"))
-                            .clicked()
-                    {
-                        actions.push(Command::LoadMoreHistory);
-                    }
-                });
-            if let Some(id) = &selected
-                && let Some(commit) = dialog.commits.iter().find(|c| &c.id == id)
-            {
-                ui.separator();
-                ui.label(
-                    RichText::new(&commit.id)
-                        .small()
-                        .monospace()
-                        .color(colors.muted),
-                );
-                ui.label(format!("{}  {}", commit.author, commit_date(commit.time)));
-                if commit.parents.len() > 1 {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new("Compare with").small().color(colors.muted));
-                        for (index, parent) in commit.parents.iter().enumerate() {
-                            if ui
-                                .selectable_label(
-                                    dialog.parent == index,
-                                    format!(
-                                        "parent {} ({})",
-                                        index + 1,
-                                        &parent[..parent.len().min(7)]
-                                    ),
-                                )
-                                .clicked()
-                            {
-                                actions.push(Command::ChooseHistoryParent(index));
-                            }
-                        }
-                    });
-                } else if !commit.parents.is_empty() {
-                    let parents: Vec<_> = commit
-                        .parents
-                        .iter()
-                        .map(|parent| parent[..parent.len().min(7)].to_owned())
-                        .collect();
-                    ui.label(
-                        RichText::new(format!("Parents: {}", parents.join(", ")))
-                            .small()
-                            .color(colors.muted),
-                    );
-                }
-                ui.horizontal_wrapped(|ui| {
-                    let short = &commit.id[..commit.id.len().min(7)];
-                    let parent = (commit.parents.len() > 1).then_some(dialog.parent);
-                    if ui
-                        .button("Cherry-pick…")
-                        .on_hover_text("Apply this commit's changes on top of the current branch")
-                        .clicked()
-                    {
-                        actions.push(Command::PlanHistoryAction(
-                            HistoryAction::CherryPick {
-                                commit: commit.id.clone(),
-                                parent,
-                            },
-                            format!("Cherry-pick {short}"),
-                        ));
-                    }
-                    if ui
-                        .button("Revert…")
-                        .on_hover_text("Create a commit that undoes this commit")
-                        .clicked()
-                    {
-                        actions.push(Command::PlanHistoryAction(
-                            HistoryAction::Revert {
-                                commit: commit.id.clone(),
-                                parent,
-                            },
-                            format!("Revert {short}"),
-                        ));
-                    }
-                    if ui
-                        .button("Tag…")
-                        .on_hover_text("Create a tag on this commit")
-                        .clicked()
-                    {
-                        actions.push(Command::OpenTagsDialog(Some(commit.id.clone())));
-                    }
-                    if ui
-                        .button("Reset to here…")
-                        .on_hover_text("Move the current branch to this commit")
-                        .clicked()
-                    {
-                        actions.push(Command::PlanHistoryAction(
-                            HistoryAction::Reset {
-                                target: commit.id.clone(),
-                                mode: ResetMode::Mixed,
-                                backup: true,
-                            },
-                            format!("Reset to {short}"),
-                        ));
-                    }
-                });
-                match &dialog.details {
-                    Some(details) => {
-                        if details.committer != commit.author || details.committed != commit.time {
-                            ui.label(
-                                RichText::new(format!(
-                                    "Committed by {} on {}",
-                                    details.committer,
-                                    commit_date(details.committed)
-                                ))
-                                .small()
-                                .color(colors.muted),
-                            );
-                        }
-                        ScrollArea::vertical()
-                            .id_salt("git_history_details")
-                            .max_height(150.0)
-                            .auto_shrink([false, true])
-                            .show(ui, |ui| {
-                                ui.label(&details.message);
-                                ui.add_space(4.0);
-                                for (index, file) in details.files.iter().enumerate() {
-                                    if explorer_row(ui, file.label(), 4, false)
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                        .on_hover_text(
-                                            "Compare this file with its parent (read-only)",
-                                        )
-                                        .clicked()
-                                    {
-                                        actions.push(Command::OpenCommitFile(index));
-                                    }
-                                }
-                            });
-                    }
-                    None => {
-                        ui.label(RichText::new("Reading commit…").color(colors.muted));
-                    }
-                }
-            }
-            if let Some(error) = &dialog.error {
-                ui.add_space(4.0);
-                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
-            }
-            ui.add_space(8.0);
-            if ui.button("Close").clicked() {
-                actions.push(Command::CloseHistoryDialog);
-            }
-        });
-        if modal.should_close() {
-            actions.push(Command::CloseHistoryDialog);
-        }
-        for action in actions {
-            self.command(action);
         }
     }
 
@@ -1476,11 +1506,220 @@ impl Workbench<'_> {
         }
     }
 
+    /// The quick branch switcher: a popover under the branch name with a
+    /// filter, the local and remote branches, and shortcuts to create or manage.
+    pub(crate) fn branch_picker(&mut self, ctx: &egui::Context) {
+        let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let Some(dialog) = &mut self.view.branch_dialog else {
+            return;
+        };
+        if !dialog.quick {
+            return;
+        }
+        const WIDTH: f32 = 280.0;
+        // The switcher hangs from the branch name. When that is not drawn this
+        // frame (sidebar hidden, another activity), it has no anchor: close it.
+        let drawn: Option<(egui::Rect, u64)> =
+            ctx.data(|data| data.get_temp(egui::Id::new("branch_chip_rect")));
+        let Some(anchor) = drawn
+            .filter(|(_, frame)| *frame == ctx.cumulative_frame_nr())
+            .map(|(rect, _)| rect)
+        else {
+            self.command(Command::CloseBranchDialog);
+            return;
+        };
+        let screen = ctx.content_rect();
+        let left = anchor
+            .left()
+            .min(screen.right() - WIDTH - 8.0)
+            .max(screen.left() + 8.0);
+        let mut actions: Vec<Command> = Vec::new();
+        let selection_key = egui::Id::new("git_branch_picker_selection");
+        let output = egui::Area::new(egui::Id::new("git_branch_picker"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(left, anchor.bottom() + 2.0))
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_width(WIDTH);
+                    let filter = ui.add(
+                        TextEdit::singleline(&mut dialog.filter)
+                            .id_salt("git_branch_picker_filter")
+                            .desired_width(f32::INFINITY)
+                            .hint_text("Switch to a branch…"),
+                    );
+                    if std::mem::take(&mut dialog.focus_filter) {
+                        filter.request_focus();
+                    }
+                    if let Some(error) = &dialog.error {
+                        ui.label(RichText::new(error).size(12.0).color(colors.error));
+                    }
+                    let needle = dialog.filter.trim().to_lowercase();
+                    let shown: Vec<&crate::services::source_control::GitBranch> = [false, true]
+                        .into_iter()
+                        .flat_map(|remote| {
+                            dialog.branches.iter().filter(move |b| b.remote == remote)
+                        })
+                        .filter(|branch| branch.name.to_lowercase().contains(&needle))
+                        .collect();
+                    // Up/Down move the highlight and Enter switches, while typing.
+                    let mut selected: usize =
+                        ui.data(|data| data.get_temp(selection_key)).unwrap_or(0);
+                    selected = selected.min(shown.len().saturating_sub(1));
+                    // Keys are taken only while the filter box owns the keyboard.
+                    let (step, enter) = if filter.has_focus() || filter.lost_focus() {
+                        ui.input_mut(|input| {
+                            let step = if input
+                                .consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
+                            {
+                                1
+                            } else if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                                -1
+                            } else {
+                                0
+                            };
+                            (
+                                step,
+                                input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                            )
+                        })
+                    } else {
+                        (0, false)
+                    };
+                    if step != 0 && !shown.is_empty() {
+                        selected =
+                            (selected as isize + step).clamp(0, shown.len() as isize - 1) as usize;
+                    }
+                    if filter.changed() {
+                        selected = 0;
+                    }
+                    ui.data_mut(|data| data.insert_temp(selection_key, selected));
+                    if enter && let Some(branch) = shown.get(selected) {
+                        actions.push(Command::SwitchBranch(branch.name.clone(), branch.remote));
+                    }
+                    ui.add_space(4.0);
+                    ScrollArea::vertical()
+                        .id_salt("git_branch_picker_list")
+                        .max_height(240.0)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            if dialog.loading && dialog.branches.is_empty() {
+                                ui.label(RichText::new("Reading branches…").color(colors.muted));
+                            } else if shown.is_empty() {
+                                ui.label(RichText::new("No matching branch").color(colors.muted));
+                            }
+                            let mut heading: Option<bool> = None;
+                            for (index, branch) in shown.iter().enumerate() {
+                                if heading != Some(branch.remote) {
+                                    source_heading(
+                                        ui,
+                                        if branch.remote { "REMOTE" } else { "LOCAL" },
+                                        0,
+                                    );
+                                    heading = Some(branch.remote);
+                                }
+                                let trail = if branch.current {
+                                    "current"
+                                } else if branch.checked_out_at.is_some() {
+                                    "in a worktree"
+                                } else {
+                                    ""
+                                };
+                                let tip = match (&branch.upstream, &branch.checked_out_at) {
+                                    (_, Some(path)) => {
+                                        format!("Checked out in {}", path.display())
+                                    }
+                                    (Some(upstream), None) => format!("Tracks {upstream}"),
+                                    (None, None) => branch.name.clone(),
+                                };
+                                let row = list_row(
+                                    ui,
+                                    &ListRow {
+                                        lead: "",
+                                        text: &branch.name,
+                                        trail,
+                                        tooltip: tip,
+                                        selected: index == selected,
+                                    },
+                                );
+                                if row.clicked() {
+                                    actions.push(Command::SwitchBranch(
+                                        branch.name.clone(),
+                                        branch.remote,
+                                    ));
+                                }
+                            }
+                        });
+                    ui.separator();
+                    let typed = dialog.filter.trim().to_owned();
+                    if !typed.is_empty()
+                        && !dialog
+                            .branches
+                            .iter()
+                            .any(|branch| !branch.remote && branch.name == typed)
+                        && list_row(
+                            ui,
+                            &ListRow {
+                                lead: "+",
+                                text: &format!("Create branch “{typed}”"),
+                                trail: "",
+                                tooltip: "Create it from the current commit and switch to it"
+                                    .into(),
+                                selected: false,
+                            },
+                        )
+                        .clicked()
+                    {
+                        dialog.new_name = typed;
+                        actions.push(Command::CreateBranch);
+                    }
+                    if list_row(
+                        ui,
+                        &ListRow {
+                            lead: "",
+                            text: "Manage branches…",
+                            trail: "",
+                            tooltip: "Create, rename or delete branches".into(),
+                            selected: false,
+                        },
+                    )
+                    .clicked()
+                    {
+                        actions.push(Command::CloseBranchDialog);
+                        actions.push(Command::OpenBranchDialog);
+                    }
+                });
+            });
+        let inside = output.response.rect;
+        let (escape, pressed_at) = ctx.input(|input| {
+            (
+                input.key_pressed(egui::Key::Escape),
+                input
+                    .pointer
+                    .any_pressed()
+                    .then(|| input.pointer.interact_pos())
+                    .flatten(),
+            )
+        });
+        // A press on the branch name itself toggles through its own command.
+        let outside =
+            pressed_at.is_some_and(|point| !inside.contains(point) && !anchor.contains(point));
+        if escape || outside {
+            actions.push(Command::CloseBranchDialog);
+        }
+        for action in actions {
+            self.command(action);
+        }
+    }
+
     pub(crate) fn branch_dialog(&mut self, ctx: &egui::Context) {
         let colors = crate::ui::theme::palette(&ctx.style().visuals);
         let Some(dialog) = &mut self.view.branch_dialog else {
             return;
         };
+        // The quick switcher is drawn by `branch_picker`.
+        if dialog.quick {
+            return;
+        }
         let mut actions: Vec<Command> = Vec::new();
         let modal = egui::Modal::new(egui::Id::new("git_branch_dialog")).show(ctx, |ui| {
             ui.set_width(440.0);
@@ -2118,6 +2357,7 @@ mod tests {
         app.editor.workspace = Some(PathBuf::from("/workspace"));
         let ctx = egui::Context::default();
         theme::configure_ui(&ctx);
+        crate::platform::fonts::configure(&ctx);
         let mut widths = vec![source_sidebar_frame(&mut app, &ctx, vec![])];
         app.view.source_control.snapshot = Some(GitSnapshot {
             root: PathBuf::from("/workspace"),
@@ -2201,6 +2441,7 @@ mod tests {
         });
         let ctx = egui::Context::default();
         theme::configure_ui(&ctx);
+        crate::platform::fonts::configure(&ctx);
         app.view.source_control.commit_focus = true;
         source_sidebar_frame(&mut app, &ctx, vec![]);
         assert!(app.view.source_control.commit_focused);
@@ -2255,6 +2496,7 @@ mod tests {
         app.view.source_control.commit_message = "line one\nline two\nline three\nfour".into();
         let ctx = egui::Context::default();
         theme::configure_ui(&ctx);
+        crate::platform::fonts::configure(&ctx);
         for requested in [180.0, 240.0, 600.0] {
             let widths = [
                 source_sidebar_width(&mut app, &ctx, requested, egui::pos2(850.0, 400.0)),
@@ -2305,6 +2547,7 @@ mod tests {
         for width in [180.0, 300.0, 600.0] {
             let ctx = egui::Context::default();
             theme::configure_ui(&ctx);
+            crate::platform::fonts::configure(&ctx);
             let mut editor = EditorState::with_workspace(PathBuf::from("/workspace"));
             let mut view = ViewState::default();
             view.source_control.snapshot = Some(GitSnapshot {
@@ -2329,7 +2572,7 @@ mod tests {
                     });
                 },
             );
-            for expected in ["main", "src/file.rs"] {
+            for expected in ["main", "file.rs"] {
                 let x = output.shapes.iter().find_map(|shape| match &shape.shape {
                     egui::Shape::Text(text) if text.galley.text().contains(expected) => {
                         Some(text.pos.x)
@@ -2338,7 +2581,10 @@ mod tests {
                 });
                 // The branch text follows its icon; both labels still begin
                 // in the left portion of the panel rather than being centred.
-                assert!(x.is_some_and(|x| x < 80.0), "{width}: {expected} at {x:?}");
+                assert!(
+                    x.is_some_and(|x| x < width * 0.55),
+                    "{width}: {expected} at {x:?}"
+                );
             }
         }
     }
@@ -2355,9 +2601,15 @@ mod tests {
             ..Default::default()
         };
         let rows = source_rows(&snapshot);
-        assert!(matches!(rows[0], SourceRow::Heading("STAGED CHANGES", 1)));
+        assert!(matches!(
+            rows[0],
+            SourceRow::Heading(ChangeGroup::Staged, 1)
+        ));
         assert!(matches!(rows[1], SourceRow::Change(_, DiffSide::Staged)));
-        assert!(matches!(rows[2], SourceRow::Heading("CHANGES", 2)));
+        assert!(matches!(
+            rows[2],
+            SourceRow::Heading(ChangeGroup::Working, 2)
+        ));
         assert!(matches!(rows[3], SourceRow::Change(_, DiffSide::Working)));
         assert!(matches!(rows[4], SourceRow::Change(_, DiffSide::Untracked)));
     }
@@ -2367,6 +2619,7 @@ mod tests {
         for width in [620.0, 1100.0] {
             let ctx = egui::Context::default();
             theme::configure_ui(&ctx);
+            crate::platform::fonts::configure(&ctx);
             let mut editor = EditorState::default();
             let mut view = ViewState::default();
             view.source_control.diff = Some(SourceDiffView {
@@ -2443,7 +2696,7 @@ mod tests {
         let headings: Vec<_> = rows
             .iter()
             .filter_map(|row| match row {
-                SourceRow::Heading(title, count) => Some((*title, *count)),
+                SourceRow::Heading(group, count) => Some((group.title(), *count)),
                 _ => None,
             })
             .collect();
@@ -2451,7 +2704,7 @@ mod tests {
     }
 
     #[test]
-    fn header_shows_ahead_behind_and_operation_state() {
+    fn tooltip_shows_ahead_behind_and_operation_state() {
         use crate::services::source_control::{GitUpstream, RepoState};
         let snapshot = GitSnapshot {
             branch: "main".into(),
@@ -2462,18 +2715,16 @@ mod tests {
             state: RepoState::Merge,
             ..Default::default()
         };
-        let text = branch_summary(&snapshot);
-        assert!(
-            text.contains("+2 -1") && text.contains("(Merging)"),
-            "{text}"
-        );
-        assert!(branch_details(&snapshot).contains("2 ahead, 1 behind"));
+        let details = branch_details(&snapshot);
+        assert!(details.contains("2 ahead, 1 behind"), "{details}");
+        assert!(details.contains("Merging is in progress"), "{details}");
     }
 
     #[test]
     fn working_diff_exposes_compact_stage_buttons_for_each_hunk() {
         let ctx = egui::Context::default();
         theme::configure_ui(&ctx);
+        crate::platform::fonts::configure(&ctx);
         let mut editor = EditorState::default();
         let mut view = ViewState::default();
         view.source_control.diff = Some(SourceDiffView {
@@ -2533,6 +2784,7 @@ mod tests {
         fn staged(lines: usize) -> Self {
             let ctx = egui::Context::default();
             theme::configure_ui(&ctx);
+            crate::platform::fonts::configure(&ctx);
             let mut view = ViewState::default();
             view.source_control.diff = Some(SourceDiffView {
                 root: PathBuf::from("/workspace"),
@@ -2695,5 +2947,672 @@ mod tests {
             "base pane followed the editor: {left_after}"
         );
         assert!((left_after - right_after).abs() < 1.0);
+    }
+
+    fn repo(root: &str, branch: &str, changes: Vec<GitChange>) -> GitSnapshot {
+        GitSnapshot {
+            root: PathBuf::from(root),
+            branch: branch.into(),
+            changes,
+            ..Default::default()
+        }
+    }
+
+    fn text_x(output: &egui::FullOutput, needle: &str) -> Option<f32> {
+        output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text().contains(needle) => Some(text.pos.x),
+            _ => None,
+        })
+    }
+
+    fn several_repositories() -> (GitSnapshot, Vec<GitSnapshot>) {
+        let selected = repo(
+            "/workspace",
+            "feature/a-branch-name-long-enough-to-previously-grow-the-sidebar",
+            vec![
+                GitChange::new(PathBuf::from("src/a-long-file-name.rs"), 'M', 'M'),
+                GitChange::new(PathBuf::from("notes.md"), '?', '?'),
+            ],
+        );
+        let others = vec![
+            selected.clone(),
+            repo(
+                "/workspace/crates/settings-core-with-a-long-name",
+                "main",
+                vec![],
+            ),
+            repo(
+                "/workspace/tools/vendor/a-submodule",
+                "detached",
+                vec![GitChange::new(PathBuf::from("lib.c"), ' ', 'M')],
+            ),
+        ];
+        (selected, others)
+    }
+
+    #[test]
+    fn several_repositories_never_widen_the_sidebar_in_any_state() {
+        let (selected, all) = several_repositories();
+        let mut app = LumenApp::default();
+        app.view.activity = Activity::SourceControl;
+        app.editor.workspace = Some(PathBuf::from("/workspace"));
+        app.view.source_control.snapshot = Some(selected);
+        app.view.source_control.repositories = all;
+        app.view.source_control.repository_errors = vec![(
+            PathBuf::from("/workspace/archive/legacy-with-a-long-name"),
+            "cannot read status: dubious ownership in repository".into(),
+        )];
+        app.view.source_control.amend_commit = true;
+        app.view.source_control.commit_message = "message\nover\nlines".into();
+        app.view.source_control.parked_drafts.insert(
+            PathBuf::from("/workspace/tools/vendor/a-submodule"),
+            Default::default(),
+        );
+        let ctx = egui::Context::default();
+        theme::configure_ui(&ctx);
+        crate::platform::fonts::configure(&ctx);
+        for requested in [180.0, 240.0, 600.0] {
+            let widths = [
+                source_sidebar_width(&mut app, &ctx, requested, egui::pos2(850.0, 400.0)),
+                source_sidebar_width(&mut app, &ctx, requested, egui::pos2(120.0, 95.0)),
+                source_sidebar_width(&mut app, &ctx, requested, egui::pos2(120.0, 180.0)),
+                source_sidebar_width(&mut app, &ctx, requested, egui::pos2(120.0, 260.0)),
+            ];
+            assert!(
+                widths.iter().all(|width| (*width - requested).abs() < 2.0),
+                "{requested}: {widths:?}"
+            );
+        }
+        // Collapsed sections and groups change height, never width.
+        app.view
+            .source_control
+            .collapsed_repos
+            .insert(PathBuf::from("/workspace"));
+        let width = source_sidebar_width(&mut app, &ctx, 240.0, egui::pos2(850.0, 400.0));
+        assert!((width - 240.0).abs() < 2.0, "collapsed: {width}");
+    }
+
+    #[test]
+    fn selecting_a_collapsed_repository_issues_a_typed_selection_command() {
+        let (selected, all) = several_repositories();
+        let mut editor = EditorState::with_workspace(PathBuf::from("/workspace"));
+        let mut view = ViewState::default();
+        view.source_control.snapshot = Some(selected);
+        view.source_control.repositories = all;
+        let target = PathBuf::from("/workspace/crates/settings-core-with-a-long-name");
+        view.source_control.collapsed_repos.insert(target.clone());
+        let ctx = egui::Context::default();
+        theme::configure_ui(&ctx);
+        crate::platform::fonts::configure(&ctx);
+        let frame = |ctx: &egui::Context,
+                     editor: &mut EditorState,
+                     view: &mut ViewState,
+                     events: Vec<egui::Event>| {
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(300.0, 500.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let mut workbench = Workbench::new(editor, view, &LocalFileSystem);
+                        workbench.source_control_panel(ui);
+                        let taken = workbench.take_commands();
+                        ui.data_mut(|data| data.insert_temp(egui::Id::new("taken"), taken));
+                    });
+                },
+            );
+            let taken: Vec<Command> = ctx
+                .data(|data| data.get_temp(egui::Id::new("taken")))
+                .unwrap_or_default();
+            (output, taken)
+        };
+        let (output, _) = frame(&ctx, &mut editor, &mut view, vec![]);
+        let x = text_x(&output, "settings-core").expect("collapsed repository row is drawn");
+        let y = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text().contains("settings-core") => {
+                    Some(text.pos.y + 6.0)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let at = egui::pos2(x + 10.0, y);
+        frame(
+            &ctx,
+            &mut editor,
+            &mut view,
+            vec![egui::Event::PointerMoved(at)],
+        );
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&ctx, &mut editor, &mut view, vec![button(true)]);
+        let (_, commands) = frame(&ctx, &mut editor, &mut view, vec![button(false)]);
+        assert!(
+            commands.contains(&Command::SelectRepository(PathBuf::from(
+                "/workspace/crates/settings-core-with-a-long-name"
+            ))),
+            "{commands:?}"
+        );
+        assert!(
+            !view.source_control.collapsed_repos.contains(&target),
+            "choosing a repository must show it open"
+        );
+    }
+
+    #[test]
+    fn a_lone_repository_cannot_stay_collapsed() {
+        let mut app = LumenApp::default();
+        app.view.activity = Activity::SourceControl;
+        app.editor.workspace = Some(PathBuf::from("/workspace"));
+        app.view.source_control.snapshot = Some(repo(
+            "/workspace",
+            "main",
+            vec![GitChange::new(PathBuf::from("a.rs"), ' ', 'M')],
+        ));
+        app.view
+            .source_control
+            .collapsed_repos
+            .insert(PathBuf::from("/workspace"));
+        app.view.source_control.commit_focus = true;
+        let ctx = egui::Context::default();
+        theme::configure_ui(&ctx);
+        crate::platform::fonts::configure(&ctx);
+        source_sidebar_frame(&mut app, &ctx, vec![]);
+        assert!(
+            app.view.source_control.commit_focused,
+            "the commit box must be drawn for a single repository"
+        );
+    }
+
+    #[test]
+    fn the_header_menu_stays_at_the_right_edge_at_every_width() {
+        let ctx = egui::Context::default();
+        theme::configure_ui(&ctx);
+        crate::platform::fonts::configure(&ctx);
+        for requested in [180.0, 240.0, 600.0] {
+            let mut app = LumenApp::default();
+            app.view.activity = Activity::SourceControl;
+            app.editor.workspace = Some(PathBuf::from("/workspace"));
+            app.view.source_control.snapshot = Some(repo("/workspace", "main", vec![]));
+            ctx.data_mut(|data| {
+                data.insert_persisted(
+                    egui::Id::new("explorer"),
+                    egui::containers::panel::PanelState {
+                        rect: egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(requested, 600.0),
+                        ),
+                    },
+                );
+            });
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| app.render_component(ctx, |workbench| workbench.sidebar(ctx)),
+            );
+            let menu = text_x(&output, crate::icon::ELLIPSIS).expect("header menu button");
+            let title = text_x(&output, "SOURCE CONTROL").expect("header title");
+            assert!(
+                menu > requested - 40.0 && menu < requested,
+                "{requested}: menu at {menu}"
+            );
+            assert!(title < 40.0, "{requested}: title at {title}");
+        }
+    }
+
+    fn quick_branches() -> Vec<crate::services::source_control::GitBranch> {
+        use crate::services::source_control::GitBranch;
+        let branch = |name: &str, remote: bool, current: bool| GitBranch {
+            name: name.into(),
+            remote,
+            current,
+            ..Default::default()
+        };
+        vec![
+            branch("main", false, true),
+            branch("feature/login", false, false),
+            branch("origin/main", true, false),
+        ]
+    }
+
+    fn picker_app(filter: &str) -> LumenApp {
+        let mut app = LumenApp::default();
+        app.editor.workspace = Some(PathBuf::from("/workspace"));
+        app.view.source_control.snapshot = Some(repo("/workspace", "main", vec![]));
+        let mut dialog = crate::app::git_branches::BranchDialog::default();
+        dialog.root = PathBuf::from("/workspace");
+        dialog.branches = quick_branches();
+        dialog.filter = filter.into();
+        dialog.quick = true;
+        app.view.branch_dialog = Some(dialog);
+        app
+    }
+
+    fn run_picker(
+        app: &mut LumenApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> (egui::FullOutput, Vec<Command>) {
+        run_picker_with_chip(app, ctx, events, true)
+    }
+
+    /// `chip` stands in for the sidebar drawing the branch name this frame.
+    fn run_picker_with_chip(
+        app: &mut LumenApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        chip: bool,
+    ) -> (egui::FullOutput, Vec<Command>) {
+        let mut taken = Vec::new();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                if chip {
+                    let rect =
+                        egui::Rect::from_min_size(egui::pos2(20.0, 60.0), egui::vec2(90.0, 20.0));
+                    let frame = ctx.cumulative_frame_nr();
+                    ctx.data_mut(|data| {
+                        data.insert_temp(egui::Id::new("branch_chip_rect"), (rect, frame))
+                    });
+                }
+                let mut workbench =
+                    Workbench::new(&mut app.editor, &mut app.view, &LocalFileSystem);
+                workbench.branch_picker(ctx);
+                taken = workbench.take_commands();
+            },
+        );
+        (output, taken)
+    }
+
+    fn fixture() -> egui::Context {
+        let ctx = egui::Context::default();
+        theme::configure_ui(&ctx);
+        crate::platform::fonts::configure(&ctx);
+        ctx
+    }
+
+    fn click(at: egui::Pos2) -> [egui::Event; 2] {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        [button(true), button(false)]
+    }
+
+    #[test]
+    fn the_quick_switcher_lists_filters_and_switches_branches() {
+        let ctx = fixture();
+        let mut app = picker_app("");
+        run_picker(&mut app, &ctx, vec![]);
+        let (output, _) = run_picker(&mut app, &ctx, vec![]);
+        for name in ["main", "feature/login", "origin/main", "LOCAL", "REMOTE"] {
+            assert!(text_x(&output, name).is_some(), "{name} is listed");
+        }
+
+        // Filtering keeps only matches, so the others disappear.
+        let mut app = picker_app("login");
+        run_picker(&mut app, &ctx, vec![]);
+        let (output, _) = run_picker(&mut app, &ctx, vec![]);
+        assert!(text_x(&output, "feature/login").is_some());
+        assert!(text_x(&output, "origin/main").is_none());
+        assert!(
+            text_x(&output, "Create branch").is_some(),
+            "an unmatched name offers creation"
+        );
+
+        // Clicking a branch asks to switch to it.
+        let bounds = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "feature/login" => Some(text.pos),
+                _ => None,
+            })
+            .unwrap();
+        let at = bounds + egui::vec2(10.0, 6.0);
+        run_picker(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        let mut commands = Vec::new();
+        for event in click(at) {
+            commands.extend(run_picker(&mut app, &ctx, vec![event]).1);
+        }
+        assert!(
+            commands.contains(&Command::SwitchBranch("feature/login".into(), false)),
+            "{commands:?}"
+        );
+    }
+
+    #[test]
+    fn the_quick_switcher_creates_from_the_typed_name_and_closes_on_escape_or_outside() {
+        let ctx = fixture();
+        let mut app = picker_app("brand-new");
+        run_picker(&mut app, &ctx, vec![]);
+        let (output, _) = run_picker(&mut app, &ctx, vec![]);
+        let at = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text().contains("Create branch") => {
+                    Some(text.pos + egui::vec2(10.0, 6.0))
+                }
+                _ => None,
+            })
+            .expect("a create row");
+        run_picker(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        let mut commands = Vec::new();
+        for event in click(at) {
+            commands.extend(run_picker(&mut app, &ctx, vec![event]).1);
+        }
+        assert!(commands.contains(&Command::CreateBranch), "{commands:?}");
+        assert_eq!(
+            app.view.branch_dialog.as_ref().unwrap().new_name,
+            "brand-new"
+        );
+
+        let escape = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: Some(egui::Key::Escape),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let (_, commands) = run_picker(&mut app, &ctx, vec![escape]);
+        assert!(commands.contains(&Command::CloseBranchDialog));
+
+        let far = egui::pos2(850.0, 550.0);
+        run_picker(&mut app, &ctx, vec![egui::Event::PointerMoved(far)]);
+        let (_, commands) = run_picker(&mut app, &ctx, vec![click(far)[0].clone()]);
+        assert!(
+            commands.contains(&Command::CloseBranchDialog),
+            "a press outside closes it: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn the_full_dialog_is_not_drawn_while_the_quick_switcher_is_open() {
+        let ctx = fixture();
+        let mut app = picker_app("");
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                let mut workbench =
+                    Workbench::new(&mut app.editor, &mut app.view, &LocalFileSystem);
+                workbench.branch_dialog(ctx);
+            },
+        );
+        assert!(text_x(&output, "Rename current branch").is_none());
+    }
+
+    fn extras(
+        stashes: &[&str],
+        outgoing: &[&str],
+        incoming: &[&str],
+    ) -> crate::app::repo_extras::RepoExtras {
+        use crate::services::source_control::{GitCommit, GitStash, SyncCommits};
+        let commit = |n: usize, subject: &&str| GitCommit {
+            id: format!("{n:07x}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            subject: (*subject).into(),
+            author: "A".into(),
+            time: 1_700_000_000,
+            ..Default::default()
+        };
+        crate::app::repo_extras::RepoExtras::for_test(
+            "/workspace",
+            stashes
+                .iter()
+                .enumerate()
+                .map(|(index, message)| GitStash {
+                    id: format!("{index}"),
+                    index,
+                    message: (*message).into(),
+                })
+                .collect(),
+            SyncCommits {
+                outgoing: outgoing
+                    .iter()
+                    .enumerate()
+                    .map(|(n, s)| commit(n, s))
+                    .collect(),
+                incoming: incoming
+                    .iter()
+                    .enumerate()
+                    .map(|(n, s)| commit(n + 50, s))
+                    .collect(),
+            },
+        )
+    }
+
+    fn render_panel(
+        editor: &mut EditorState,
+        view: &mut ViewState,
+        ctx: &egui::Context,
+        width: f32,
+        events: Vec<egui::Event>,
+    ) -> (egui::FullOutput, Vec<Command>) {
+        let mut taken = Vec::new();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 700.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let mut workbench = Workbench::new(editor, view, &LocalFileSystem);
+                    workbench.source_control_panel(ui);
+                    taken = workbench.take_commands();
+                });
+            },
+        );
+        (output, taken)
+    }
+
+    #[test]
+    fn stashes_and_sync_sections_show_counts_open_on_demand_and_lead_to_their_tools() {
+        let ctx = fixture();
+        let mut editor = EditorState::with_workspace(PathBuf::from("/workspace"));
+        let mut view = ViewState::default();
+        view.source_control.snapshot = Some(repo("/workspace", "main", vec![]));
+        view.source_control.extras.loaded =
+            Some(extras(&["WIP on login"], &["add feature", "fix typo"], &[]));
+        let (output, _) = render_panel(&mut editor, &mut view, &ctx, 320.0, vec![]);
+        for title in ["STASHES", "OUTGOING"] {
+            assert!(text_x(&output, title).is_some(), "{title} header");
+        }
+        assert!(
+            text_x(&output, "INCOMING").is_none(),
+            "empty lists have no section"
+        );
+        assert!(
+            text_x(&output, "add feature").is_none(),
+            "sections start collapsed"
+        );
+
+        view.source_control.expanded_extras.insert((
+            PathBuf::from("/workspace"),
+            crate::app::view_state::ExtraSection::Outgoing,
+        ));
+        view.source_control.expanded_extras.insert((
+            PathBuf::from("/workspace"),
+            crate::app::view_state::ExtraSection::Stashes,
+        ));
+        let (output, _) = render_panel(&mut editor, &mut view, &ctx, 320.0, vec![]);
+        assert!(text_x(&output, "add feature").is_some());
+        assert!(text_x(&output, "WIP on login").is_some());
+
+        let position = |needle: &str| {
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text().contains(needle) => {
+                    Some(text.pos + egui::vec2(8.0, 6.0))
+                }
+                _ => None,
+            })
+        };
+        let commit_at = position("add feature").unwrap();
+        let stash_at = position("WIP on login").unwrap();
+        for (at, expected) in [
+            (
+                commit_at,
+                Command::OpenHistoryAt("0000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
+            ),
+            (stash_at, Command::OpenStashDialog),
+        ] {
+            render_panel(
+                &mut editor,
+                &mut view,
+                &ctx,
+                320.0,
+                vec![egui::Event::PointerMoved(at)],
+            );
+            let mut commands = Vec::new();
+            for event in click(at) {
+                commands.extend(render_panel(&mut editor, &mut view, &ctx, 320.0, vec![event]).1);
+            }
+            assert!(commands.contains(&expected), "{expected:?} in {commands:?}");
+        }
+    }
+
+    #[test]
+    fn extras_of_another_repository_are_never_shown_and_long_subjects_stay_inside() {
+        let ctx = fixture();
+        let mut editor = EditorState::with_workspace(PathBuf::from("/workspace"));
+        let mut view = ViewState::default();
+        view.source_control.snapshot = Some(repo("/workspace", "main", vec![]));
+        let long = "a subject far too long to fit in a narrow sidebar without being truncated";
+        let mut loaded = extras(&[], &[long], &[]);
+        view.source_control.expanded_extras.insert((
+            PathBuf::from("/workspace"),
+            crate::app::view_state::ExtraSection::Outgoing,
+        ));
+        view.source_control.extras.loaded = Some(loaded);
+        let (output, _) = render_panel(&mut editor, &mut view, &ctx, 200.0, vec![]);
+        let drawn = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text().contains("a subject far") => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()))
+                }
+                _ => None,
+            })
+            .expect("the subject is drawn truncated");
+        assert!(drawn.right() <= 200.0, "{drawn:?}");
+
+        loaded = crate::app::repo_extras::RepoExtras::for_test(
+            "/elsewhere",
+            Vec::new(),
+            crate::services::source_control::SyncCommits::default(),
+        );
+        view.source_control.extras.loaded = Some(loaded);
+        let (output, _) = render_panel(&mut editor, &mut view, &ctx, 200.0, vec![]);
+        assert!(text_x(&output, "OUTGOING").is_none());
+    }
+
+    #[test]
+    fn clicking_the_selected_branch_opens_the_switcher_instead_of_collapsing_the_section() {
+        let ctx = fixture();
+        let (selected, all) = several_repositories();
+        let mut editor = EditorState::with_workspace(PathBuf::from("/workspace"));
+        let mut view = ViewState::default();
+        view.source_control.snapshot = Some(selected);
+        view.source_control.repositories = all;
+        let (output, _) = render_panel(&mut editor, &mut view, &ctx, 420.0, vec![]);
+        let at = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text().contains("feature/a-branch") => {
+                    Some(text.pos + egui::vec2(10.0, 6.0))
+                }
+                _ => None,
+            })
+            .expect("the selected repository's branch is drawn");
+        render_panel(
+            &mut editor,
+            &mut view,
+            &ctx,
+            420.0,
+            vec![egui::Event::PointerMoved(at)],
+        );
+        let mut commands = Vec::new();
+        for event in click(at) {
+            commands.extend(render_panel(&mut editor, &mut view, &ctx, 420.0, vec![event]).1);
+        }
+        assert!(
+            commands.contains(&Command::OpenBranchPicker),
+            "{commands:?}"
+        );
+        assert!(
+            view.source_control.collapsed_repos.is_empty(),
+            "the row must not toggle as well"
+        );
+    }
+
+    #[test]
+    fn the_quick_switcher_closes_when_its_anchor_is_gone_and_ignores_keys_without_focus() {
+        let ctx = fixture();
+        let mut app = picker_app("");
+        run_picker(&mut app, &ctx, vec![]);
+        let (_, commands) = run_picker_with_chip(&mut app, &ctx, vec![], false);
+        assert!(
+            commands.contains(&Command::CloseBranchDialog),
+            "no branch name on screen means nothing to hang from: {commands:?}"
+        );
+
+        // With the filter box not focused the keyboard belongs to someone else.
+        let mut app = picker_app("");
+        app.view.branch_dialog.as_mut().unwrap().focus_filter = false;
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run_picker(&mut app, &ctx, vec![]);
+        let (_, commands) = run_picker(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowDown), key(egui::Key::Enter)],
+        );
+        assert!(
+            !commands
+                .iter()
+                .any(|c| matches!(c, Command::SwitchBranch(..))),
+            "{commands:?}"
+        );
     }
 }
