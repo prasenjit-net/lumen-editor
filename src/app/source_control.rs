@@ -834,6 +834,10 @@ impl LumenApp {
                         self.refresh_source_control(ctx);
                     }
                     Err(error) => {
+                        // A failure can still leave a merge, rebase or partial
+                        // change behind, so look at the repository again; the
+                        // refresh clears the error, so set it afterwards.
+                        self.refresh_source_control(ctx);
                         // A modal dialog hides the panel, so show the failure there too.
                         if let Some(dialog) = &mut self.view.stash_dialog {
                             dialog.error = Some(error.clone());
@@ -859,7 +863,11 @@ impl LumenApp {
                         self.view.source_control.commit_error = None;
                         self.refresh_source_control(ctx);
                     }
-                    Err(error) => self.view.source_control.commit_error = Some(error),
+                    Err(error) => {
+                        // Hooks may have changed files or the index before failing.
+                        self.refresh_source_control(ctx);
+                        self.view.source_control.commit_error = Some(error);
+                    }
                 }
             }
             Ok(GitResult::Revert { paths, result }) => {

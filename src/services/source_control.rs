@@ -284,6 +284,70 @@ impl GitCommitFile {
     }
 }
 
+/// How far `git reset` moves things.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResetMode {
+    /// Move HEAD only; the index and files stay.
+    Soft,
+    /// Move HEAD and reset the index; files stay.
+    Mixed,
+    /// Move HEAD, the index and tracked files; uncommitted tracked changes are lost.
+    Hard,
+}
+
+/// A history-changing action. Every commit is a full object id, so nothing the
+/// user types is ever read as an option or a revision expression.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum HistoryAction {
+    Merge {
+        target: String,
+        /// Always create a merge commit, even when a fast-forward is possible.
+        no_ff: bool,
+    },
+    CherryPick {
+        commit: String,
+        /// 0-based parent to diff against when the commit is a merge.
+        parent: Option<usize>,
+    },
+    Revert {
+        commit: String,
+        parent: Option<usize>,
+    },
+    Reset {
+        target: String,
+        mode: ResetMode,
+        /// Keep the current tip reachable from a new `lumen-backup/...` branch.
+        backup: bool,
+    },
+    /// Overwrite `branch` on `remote` only if it still points at `expected`.
+    ForcePush {
+        remote: String,
+        branch: String,
+        expected: String,
+    },
+}
+
+/// What an action would do right now, and the HEAD it was computed against.
+/// Applying with a different HEAD is refused as stale.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct HistoryPlan {
+    pub(crate) head: String,
+    pub(crate) lines: Vec<String>,
+    pub(crate) warnings: Vec<String>,
+    /// Set when the action cannot run (for example, nothing to merge).
+    pub(crate) blocked: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GitTag {
+    pub(crate) name: String,
+    /// The commit the tag points at.
+    pub(crate) commit: String,
+    pub(crate) annotated: bool,
+    /// The tag message's first line, for annotated tags.
+    pub(crate) message: String,
+}
+
 /// A configured remote. Fetch and push URLs are kept apart because they may
 /// differ; both have embedded credentials removed for display.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -378,6 +442,39 @@ pub(crate) trait SourceControlService: Send + Sync {
     ) -> Result<(), String>;
     /// Blame for the saved contents of `path` (relative to `root`), line by line.
     fn blame(&self, root: &Path, path: &str) -> Result<Vec<GitBlameLine>, String>;
+    /// What `action` would do against the current repository state.
+    fn plan_history_action(
+        &self,
+        root: &Path,
+        action: &HistoryAction,
+    ) -> Result<HistoryPlan, String>;
+    /// Runs `action` only if HEAD is still `plan_head`. A conflict stops the
+    /// operation in its in-progress state; nothing is retried or forced.
+    fn apply_history_action(
+        &self,
+        root: &Path,
+        action: &HistoryAction,
+        plan_head: &str,
+    ) -> Result<(), String>;
+    fn tags(&self, root: &Path) -> Result<Vec<GitTag>, String>;
+    /// Creates a lightweight tag, or an annotated one when `message` is given.
+    fn create_tag(
+        &self,
+        root: &Path,
+        name: &str,
+        commit: &str,
+        message: Option<&str>,
+    ) -> Result<(), String>;
+    fn delete_tag(&self, root: &Path, name: &str) -> Result<(), String>;
+    /// Pushes one tag to an explicitly chosen remote.
+    fn push_tag(&self, root: &Path, remote: &str, name: &str) -> Result<(), String>;
+    /// The object id `branch` currently has on `remote`, or `None` if absent.
+    fn remote_branch_tip(
+        &self,
+        root: &Path,
+        remote: &str,
+        branch: &str,
+    ) -> Result<Option<String>, String>;
     /// Branch and tag names usable as a history starting point.
     fn history_refs(&self, root: &Path) -> Result<Vec<String>, String>;
     /// `limit` commits starting `skip` rows after `anchor` (`None` starts at HEAD
@@ -904,6 +1001,340 @@ impl SourceControlService for LocalGit {
             return Err(git_failure("Git blame failed", &output.stderr));
         }
         parse_blame(&String::from_utf8_lossy(&output.stdout))
+    }
+
+    fn plan_history_action(
+        &self,
+        root: &Path,
+        action: &HistoryAction,
+    ) -> Result<HistoryPlan, String> {
+        let head = rev_parse(root, "HEAD^{commit}")
+            .ok_or_else(|| "Make a first commit before changing history".to_owned())?;
+        let short = |id: &str| id[..id.len().min(7)].to_owned();
+        let subject_of = |id: &str| {
+            git_command(root)
+                .args(["--no-optional-locks", "log", "-1", "--format=%s", id, "--"])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+                .unwrap_or_default()
+        };
+        let mut plan = HistoryPlan {
+            head: head.clone(),
+            ..Default::default()
+        };
+        match action {
+            HistoryAction::Merge { target, no_ff } => {
+                check_commit(root, target)?;
+                let incoming = rev_count(root, &format!("{head}..{target}"))?;
+                let behind = rev_count(root, &format!("{target}..{head}"))?;
+                if incoming == 0 {
+                    plan.blocked = Some("Already up to date: nothing to merge".into());
+                }
+                plan.lines.push(format!(
+                    "Merge {} (\"{}\") into the current branch",
+                    short(target),
+                    subject_of(target)
+                ));
+                plan.lines
+                    .push(format!("{incoming} commit(s) will be added"));
+                if behind == 0 && !no_ff {
+                    plan.lines
+                        .push("The branch fast-forwards; no merge commit is created".into());
+                } else {
+                    plan.lines.push("A merge commit is created".into());
+                    plan.warnings
+                        .push("Conflicts stop the merge so you can resolve or abort it".into());
+                }
+            }
+            HistoryAction::CherryPick { commit, parent }
+            | HistoryAction::Revert { commit, parent } => {
+                check_commit(root, commit)?;
+                let parents = commit_parent_count(root, commit)?;
+                if parents > 1 && parent.is_none() {
+                    plan.blocked =
+                        Some("This is a merge commit: choose which parent to use".into());
+                }
+                if parent.is_some_and(|p| p >= parents.max(1)) {
+                    plan.blocked = Some("That parent does not exist".into());
+                }
+                let verb = if matches!(action, HistoryAction::Revert { .. }) {
+                    "Create a new commit that undoes"
+                } else {
+                    "Apply the changes of"
+                };
+                plan.lines.push(format!(
+                    "{verb} {} (\"{}\") on top of the current branch",
+                    short(commit),
+                    subject_of(commit)
+                ));
+                let is_ancestor = git_command(root)
+                    .args(["merge-base", "--is-ancestor", commit, &head])
+                    .output()
+                    .is_ok_and(|o| o.status.success());
+                if is_ancestor && matches!(action, HistoryAction::CherryPick { .. }) {
+                    plan.warnings
+                        .push("This commit is already in the current history".into());
+                }
+                plan.warnings.push(
+                    "Conflicts stop the operation so you can resolve, skip or abort it".into(),
+                );
+            }
+            HistoryAction::Reset {
+                target,
+                mode,
+                backup,
+            } => {
+                check_commit(root, target)?;
+                let lost = rev_count(root, &format!("{target}..{head}"))?;
+                plan.lines.push(format!(
+                    "Move the current branch from {} to {} (\"{}\")",
+                    short(&head),
+                    short(target),
+                    subject_of(target)
+                ));
+                plan.lines.push(
+                    match mode {
+                        ResetMode::Soft => "Soft: the index and your files stay as they are",
+                        ResetMode::Mixed => "Mixed: staged changes become unstaged; files stay",
+                        ResetMode::Hard => {
+                            "Hard: the index and tracked files are reset to that commit"
+                        }
+                    }
+                    .into(),
+                );
+                if lost > 0 {
+                    plan.warnings
+                        .push(format!("{lost} commit(s) will no longer be on this branch"));
+                    if *backup {
+                        plan.lines
+                            .push("A lumen-backup/... branch keeps the current tip".into());
+                    } else {
+                        plan.warnings.push(
+                            "No backup branch: recover them only through `git reflog`".into(),
+                        );
+                    }
+                }
+                if *mode == ResetMode::Hard {
+                    let changed = tracked_change_count(root);
+                    if changed > 0 {
+                        plan.warnings.push(format!(
+                            "Uncommitted changes to {changed} tracked file(s) are discarded and cannot be recovered"
+                        ));
+                    }
+                    plan.warnings.push("Untracked files are kept".into());
+                }
+                if target == &head && *mode != ResetMode::Hard {
+                    plan.blocked = Some("The branch already points at that commit".into());
+                }
+            }
+            HistoryAction::ForcePush {
+                remote,
+                branch,
+                expected,
+            } => {
+                check_remote(root, remote)?;
+                check_branch_name(root, branch, false)?;
+                check_object_id(expected)?;
+                let local = rev_parse(root, &format!("refs/heads/{branch}^{{commit}}"))
+                    .ok_or_else(|| format!("{branch} is not a local branch"))?;
+                plan.head = head;
+                plan.lines.push(format!(
+                    "Force {branch} on {remote} from {} to {}",
+                    short(expected),
+                    short(&local)
+                ));
+                match rev_count(root, &format!("{local}..{expected}")) {
+                    Ok(lost) => plan.warnings.push(format!(
+                        "{lost} commit(s) on the remote will be overwritten"
+                    )),
+                    Err(_) => {
+                        plan.blocked = Some(
+                            "The remote's current commit is not in this repository; fetch first"
+                                .into(),
+                        );
+                    }
+                }
+                plan.warnings.push(
+                    "The push is refused if the remote branch moved since this was shown".into(),
+                );
+            }
+        }
+        Ok(plan)
+    }
+
+    fn apply_history_action(
+        &self,
+        root: &Path,
+        action: &HistoryAction,
+        plan_head: &str,
+    ) -> Result<(), String> {
+        let current = rev_parse(root, "HEAD^{commit}").unwrap_or_default();
+        if current != plan_head {
+            return Err("The repository changed since this was shown; review it again".into());
+        }
+        let blocked = self.plan_history_action(root, action)?.blocked;
+        if let Some(reason) = blocked {
+            return Err(reason);
+        }
+        match action {
+            HistoryAction::Merge { target, no_ff } => {
+                let mut args = vec!["merge", "--no-edit"];
+                args.push(if *no_ff { "--no-ff" } else { "--ff" });
+                args.push(target);
+                git_run_args(root, &args, "merge")
+            }
+            HistoryAction::CherryPick { commit, parent } => {
+                let number = parent.map(|p| (p + 1).to_string());
+                let mut args = vec!["cherry-pick"];
+                if let Some(number) = &number {
+                    args.extend(["-m", number]);
+                }
+                args.push(commit);
+                git_run_args(root, &args, "cherry-pick")
+            }
+            HistoryAction::Revert { commit, parent } => {
+                let number = parent.map(|p| (p + 1).to_string());
+                let mut args = vec!["revert", "--no-edit"];
+                if let Some(number) = &number {
+                    args.extend(["-m", number]);
+                }
+                args.push(commit);
+                git_run_args(root, &args, "revert")
+            }
+            HistoryAction::Reset {
+                target,
+                mode,
+                backup,
+            } => {
+                let lost = rev_count(root, &format!("{target}..{current}"))?;
+                if *backup && lost > 0 {
+                    let name = format!(
+                        "lumen-backup/{}-{}",
+                        chrono::Utc::now().format("%Y%m%d-%H%M%S"),
+                        &current[..7]
+                    );
+                    check_branch_name(root, &name, false)?;
+                    git_run_args(
+                        root,
+                        &["branch", "--", &name, &current],
+                        "create backup branch",
+                    )?;
+                }
+                let flag = match mode {
+                    ResetMode::Soft => "--soft",
+                    ResetMode::Mixed => "--mixed",
+                    ResetMode::Hard => "--hard",
+                };
+                git_run_args(root, &["reset", flag, target], "reset")
+            }
+            HistoryAction::ForcePush {
+                remote,
+                branch,
+                expected,
+            } => {
+                let lease = format!("--force-with-lease=refs/heads/{branch}:{expected}");
+                let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+                git_run_args(root, &["push", &lease, remote, &refspec], "force push")
+            }
+        }
+    }
+
+    fn tags(&self, root: &Path) -> Result<Vec<GitTag>, String> {
+        let output = git_command(root)
+            .args([
+                "--no-optional-locks",
+                "for-each-ref",
+                "--sort=-creatordate",
+                "--format=%(refname:strip=2)%00%(objecttype)%00%(*objectname)%00%(objectname)%00%(contents:subject)",
+                "refs/tags",
+            ])
+            .output()
+            .map_err(|error| format!("Could not list tags: {error}"))?;
+        if !output.status.success() {
+            return Err(git_failure("Could not list tags", &output.stderr));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut f = line.split('\0');
+                let name = f.next()?.to_owned();
+                let kind = f.next()?;
+                let peeled = f.next()?;
+                let object = f.next()?;
+                let subject = f.next().unwrap_or_default().to_owned();
+                let annotated = kind == "tag";
+                Some(GitTag {
+                    name,
+                    commit: if annotated { peeled } else { object }.to_owned(),
+                    annotated,
+                    message: if annotated { subject } else { String::new() },
+                })
+            })
+            .collect())
+    }
+
+    fn create_tag(
+        &self,
+        root: &Path,
+        name: &str,
+        commit: &str,
+        message: Option<&str>,
+    ) -> Result<(), String> {
+        check_tag_name(root, name)?;
+        check_commit(root, commit)?;
+        match message.map(str::trim).filter(|m| !m.is_empty()) {
+            Some(message) => git_run_args(
+                root,
+                &[
+                    "tag",
+                    "--annotate",
+                    "--message",
+                    message,
+                    "--",
+                    name,
+                    commit,
+                ],
+                "create tag",
+            ),
+            None => git_run_args(root, &["tag", "--", name, commit], "create tag"),
+        }
+    }
+
+    fn delete_tag(&self, root: &Path, name: &str) -> Result<(), String> {
+        check_tag_name(root, name)?;
+        git_run_args(root, &["tag", "--delete", "--", name], "delete tag")
+    }
+
+    fn push_tag(&self, root: &Path, remote: &str, name: &str) -> Result<(), String> {
+        check_remote(root, remote)?;
+        check_tag_name(root, name)?;
+        let refspec = format!("refs/tags/{name}:refs/tags/{name}");
+        git_run_args(root, &["push", remote, &refspec], "push tag")
+    }
+
+    fn remote_branch_tip(
+        &self,
+        root: &Path,
+        remote: &str,
+        branch: &str,
+    ) -> Result<Option<String>, String> {
+        check_remote(root, remote)?;
+        check_branch_name(root, branch, false)?;
+        let output = git_command(root)
+            .args(["--no-optional-locks", "ls-remote", "--heads", remote])
+            .arg(format!("refs/heads/{branch}"))
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|error| format!("Could not ask the remote: {error}"))?;
+        if !output.status.success() {
+            return Err(git_failure("Could not ask the remote", &output.stderr));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().next())
+            .map(str::to_owned))
     }
 
     fn history_refs(&self, root: &Path) -> Result<Vec<String>, String> {
@@ -1722,6 +2153,129 @@ fn stash_reference(root: &Path, id: &str) -> Result<String, String> {
         .position(|line| line == id)
         .map(|index| format!("stash@{{{index}}}"))
         .ok_or_else(|| "That stash no longer exists; refresh the list".to_owned())
+}
+
+/// Resolves a revision expression to an object id, or `None`.
+fn rev_parse(root: &Path, spec: &str) -> Option<String> {
+    git_command(root)
+        .args([
+            "--no-optional-locks",
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            spec,
+        ])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn rev_count(root: &Path, range: &str) -> Result<usize, String> {
+    let output = git_command(root)
+        .args(["--no-optional-locks", "rev-list", "--count", range, "--"])
+        .output()
+        .map_err(|error| format!("Could not count commits: {error}"))?;
+    if !output.status.success() {
+        return Err(git_failure("Could not count commits", &output.stderr));
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .map_err(|_| "Unexpected commit count".to_owned())
+}
+
+/// A full object id that names an existing commit.
+fn check_commit(root: &Path, id: &str) -> Result<(), String> {
+    check_object_id(id)?;
+    rev_parse(root, &format!("{id}^{{commit}}"))
+        .map(|_| ())
+        .ok_or_else(|| "That commit does not exist".to_owned())
+}
+
+fn commit_parent_count(root: &Path, id: &str) -> Result<usize, String> {
+    let output = git_command(root)
+        .args([
+            "--no-optional-locks",
+            "rev-list",
+            "--parents",
+            "-n",
+            "1",
+            id,
+            "--",
+        ])
+        .output()
+        .map_err(|error| format!("Could not read commit: {error}"))?;
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    Ok(text.split_whitespace().count().saturating_sub(1))
+}
+
+fn tracked_change_count(root: &Path) -> usize {
+    git_command(root)
+        .args([
+            "--no-optional-locks",
+            "diff",
+            "--name-only",
+            "-z",
+            "HEAD",
+            "--",
+        ])
+        .output()
+        .map(|output| {
+            output
+                .stdout
+                .split(|b| *b == 0)
+                .filter(|p| !p.is_empty())
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// The remote must already be configured; its name is never parsed as an option.
+fn check_remote(root: &Path, remote: &str) -> Result<(), String> {
+    if remote.is_empty() || remote.starts_with('-') {
+        return Err(format!("\"{remote}\" is not a configured remote"));
+    }
+    let output = git_command(root)
+        .args(["--no-optional-locks", "remote"])
+        .output()
+        .map_err(|error| format!("Could not list remotes: {error}"))?;
+    if String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|name| name == remote)
+    {
+        Ok(())
+    } else {
+        Err(format!("\"{remote}\" is not a configured remote"))
+    }
+}
+
+fn check_tag_name(root: &Path, name: &str) -> Result<(), String> {
+    let valid = !name.is_empty()
+        && !name.starts_with('-')
+        && git_command(root)
+            .args(["check-ref-format", &format!("refs/tags/{name}")])
+            .output()
+            .is_ok_and(|output| output.status.success());
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("\"{name}\" is not a valid tag name"))
+    }
+}
+
+/// Like `git_run` for argument lists built at runtime.
+fn git_run_args(root: &Path, args: &[&str], action: &str) -> Result<(), String> {
+    run_remote(
+        git_command(root)
+            .args(["--no-optional-locks"])
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_EDITOR", "true")
+            .env("GIT_SEQUENCE_EDITOR", "true"),
+        action,
+        REMOTE_TIMEOUT,
+    )
 }
 
 /// Rejects names Git would parse as options or that are not valid ref names.
@@ -3822,6 +4376,512 @@ u UU N... 100644 100644 100644 100644 a b c both.rs\0",
         assert_eq!(lines[1].time, 100);
         assert_eq!(lines[1].text, "two");
         assert!(parse_blame("\tstray").is_err());
+    }
+
+    fn head_id(root: &Path) -> String {
+        rev_parse(root, "HEAD^{commit}").unwrap()
+    }
+
+    fn run_action(root: &Path, action: &HistoryAction) -> Result<(), String> {
+        let plan = LocalGit.plan_history_action(root, action)?;
+        LocalGit.apply_history_action(root, action, &plan.head)
+    }
+
+    /// main: base -> m1; topic: base -> t1 (diverged).
+    fn diverged(root: &Path) -> (String, String) {
+        repo_with_commit(root);
+        git_ok(root, &["checkout", "-q", "-b", "topic"]);
+        fs::write(root.join("t.txt"), "t\n").unwrap();
+        git_ok(root, &["add", "--", "t.txt"]);
+        git_ok(root, &["commit", "-q", "-m", "t1"]);
+        let topic = head_id(root);
+        git_ok(root, &["checkout", "-q", "main"]);
+        fs::write(root.join("m.txt"), "m\n").unwrap();
+        git_ok(root, &["add", "--", "m.txt"]);
+        git_ok(root, &["commit", "-q", "-m", "m1"]);
+        (head_id(root), topic)
+    }
+
+    #[test]
+    fn merge_plans_describe_fast_forward_merge_commit_and_nothing_to_do() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        let (main_tip, topic) = diverged(&root);
+        let plan = LocalGit
+            .plan_history_action(
+                &root,
+                &HistoryAction::Merge {
+                    target: topic.clone(),
+                    no_ff: false,
+                },
+            )
+            .unwrap();
+        assert_eq!(plan.head, main_tip);
+        assert!(
+            plan.lines
+                .iter()
+                .any(|l| l.contains("1 commit(s) will be added"))
+        );
+        assert!(
+            plan.lines
+                .iter()
+                .any(|l| l.contains("merge commit is created"))
+        );
+        assert!(plan.blocked.is_none());
+        run_action(
+            &root,
+            &HistoryAction::Merge {
+                target: topic.clone(),
+                no_ff: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            LocalGit
+                .log(&root, &GitLogQuery::default(), None, 0, 1)
+                .unwrap()
+                .commits[0]
+                .parents
+                .len(),
+            2
+        );
+        let again = LocalGit
+            .plan_history_action(
+                &root,
+                &HistoryAction::Merge {
+                    target: topic,
+                    no_ff: false,
+                },
+            )
+            .unwrap();
+        assert!(again.blocked.unwrap().contains("Already up to date"));
+    }
+
+    #[test]
+    fn a_fast_forward_merge_creates_no_commit_unless_no_ff_is_chosen() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        git_ok(&root, &["checkout", "-q", "-b", "ahead"]);
+        fs::write(root.join("a.txt"), "a\n").unwrap();
+        git_ok(&root, &["add", "--", "a.txt"]);
+        git_ok(&root, &["commit", "-q", "-m", "ahead"]);
+        let ahead = head_id(&root);
+        git_ok(&root, &["checkout", "-q", "main"]);
+        let plan = LocalGit
+            .plan_history_action(
+                &root,
+                &HistoryAction::Merge {
+                    target: ahead.clone(),
+                    no_ff: false,
+                },
+            )
+            .unwrap();
+        assert!(plan.lines.iter().any(|l| l.contains("fast-forwards")));
+        run_action(
+            &root,
+            &HistoryAction::Merge {
+                target: ahead.clone(),
+                no_ff: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(head_id(&root), ahead);
+        git_ok(&root, &["reset", "-q", "--hard", "HEAD~1"]);
+        run_action(
+            &root,
+            &HistoryAction::Merge {
+                target: ahead,
+                no_ff: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            LocalGit
+                .log(&root, &GitLogQuery::default(), None, 0, 1)
+                .unwrap()
+                .commits[0]
+                .parents
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn a_conflicting_merge_stops_in_the_merge_state_and_stale_plans_are_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        git_ok(&root, &["checkout", "-q", "-b", "other"]);
+        fs::write(root.join("f.txt"), "other\n").unwrap();
+        git_ok(&root, &["commit", "-q", "-am", "other"]);
+        let other = head_id(&root);
+        git_ok(&root, &["checkout", "-q", "main"]);
+        fs::write(root.join("f.txt"), "main\n").unwrap();
+        git_ok(&root, &["commit", "-q", "-am", "main"]);
+        let action = HistoryAction::Merge {
+            target: other,
+            no_ff: false,
+        };
+        let plan = LocalGit.plan_history_action(&root, &action).unwrap();
+        // Another commit lands after the plan was shown.
+        fs::write(root.join("late.txt"), "l\n").unwrap();
+        git_ok(&root, &["add", "--", "late.txt"]);
+        git_ok(&root, &["commit", "-q", "-m", "late"]);
+        let stale = LocalGit
+            .apply_history_action(&root, &action, &plan.head)
+            .unwrap_err();
+        assert!(stale.contains("changed since"), "{stale}");
+        assert!(LocalGit.snapshot(&root).unwrap().unwrap().state == RepoState::Clean);
+        let error = run_action(&root, &action).unwrap_err();
+        assert!(error.to_lowercase().contains("conflict"), "{error}");
+        assert_eq!(
+            LocalGit.snapshot(&root).unwrap().unwrap().state,
+            RepoState::Merge
+        );
+    }
+
+    #[test]
+    fn cherry_pick_and_revert_need_a_parent_for_merge_commits() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        let (_, topic) = diverged(&root);
+        run_action(
+            &root,
+            &HistoryAction::CherryPick {
+                commit: topic.clone(),
+                parent: None,
+            },
+        )
+        .unwrap();
+        assert!(root.join("t.txt").exists());
+        let picked = head_id(&root);
+        run_action(
+            &root,
+            &HistoryAction::Revert {
+                commit: picked,
+                parent: None,
+            },
+        )
+        .unwrap();
+        assert!(!root.join("t.txt").exists());
+        git_ok(
+            &root,
+            &["merge", "-q", "--no-ff", "-m", "merge topic", &topic],
+        );
+        let merge = head_id(&root);
+        let plan = LocalGit
+            .plan_history_action(
+                &root,
+                &HistoryAction::Revert {
+                    commit: merge.clone(),
+                    parent: None,
+                },
+            )
+            .unwrap();
+        assert!(plan.blocked.unwrap().contains("choose which parent"));
+        assert!(
+            run_action(
+                &root,
+                &HistoryAction::Revert {
+                    commit: merge.clone(),
+                    parent: None
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            run_action(
+                &root,
+                &HistoryAction::Revert {
+                    commit: merge.clone(),
+                    parent: Some(5)
+                }
+            )
+            .is_err()
+        );
+        run_action(
+            &root,
+            &HistoryAction::Revert {
+                commit: merge,
+                parent: Some(0),
+            },
+        )
+        .unwrap();
+        assert!(!root.join("t.txt").exists());
+        assert!(
+            run_action(
+                &root,
+                &HistoryAction::CherryPick {
+                    commit: "HEAD".into(),
+                    parent: None
+                }
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn reset_modes_move_head_and_a_backup_branch_keeps_the_old_tip() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = canonical_path(directory.path()).unwrap();
+        repo_with_commit(&root);
+        let base = head_id(&root);
+        for n in 1..=2 {
+            fs::write(root.join("f.txt"), format!("{n}\n")).unwrap();
+            git_ok(&root, &["commit", "-q", "-am", &format!("c{n}")]);
+        }
+        let tip = head_id(&root);
+        // Soft keeps the change staged.
+        run_action(
+            &root,
+            &HistoryAction::Reset {
+                target: base.clone(),
+                mode: ResetMode::Soft,
+                backup: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(head_id(&root), base);
+        assert_eq!(fs::read_to_string(root.join("f.txt")).unwrap(), "2\n");
+        assert!(
+            LocalGit
+                .snapshot(&root)
+                .unwrap()
+                .unwrap()
+                .changes
+                .iter()
+                .any(|c| c.index == 'M')
+        );
+        git_ok(&root, &["reset", "-q", "--hard", &tip]);
+        // Mixed unstages but keeps files.
+        run_action(
+            &root,
+            &HistoryAction::Reset {
+                target: base.clone(),
+                mode: ResetMode::Mixed,
+                backup: false,
+            },
+        )
+        .unwrap();
+        assert!(
+            LocalGit
+                .snapshot(&root)
+                .unwrap()
+                .unwrap()
+                .changes
+                .iter()
+                .all(|c| c.index == ' ')
+        );
+        git_ok(&root, &["reset", "-q", "--hard", &tip]);
+        // Hard warns about uncommitted work, discards it, and keeps a backup branch.
+        fs::write(root.join("f.txt"), "uncommitted\n").unwrap();
+        fs::write(root.join("untracked.txt"), "keep me\n").unwrap();
+        let action = HistoryAction::Reset {
+            target: base.clone(),
+            mode: ResetMode::Hard,
+            backup: true,
+        };
+        let plan = LocalGit.plan_history_action(&root, &action).unwrap();
+        assert!(plan.warnings.iter().any(|w| w.contains("2 commit(s)")));
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|w| w.contains("1 tracked file(s)"))
+        );
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|w| w.contains("Untracked files are kept"))
+        );
+        LocalGit
+            .apply_history_action(&root, &action, &plan.head)
+            .unwrap();
+        assert_eq!(fs::read_to_string(root.join("f.txt")).unwrap(), "base\n");
+        assert!(root.join("untracked.txt").exists());
+        let backups: Vec<_> = LocalGit
+            .branches(&root)
+            .unwrap()
+            .into_iter()
+            .filter(|b| b.name.starts_with("lumen-backup/"))
+            .collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(
+            rev_parse(&root, &format!("refs/heads/{}", backups[0].name)).unwrap(),
+            tip
+        );
+        let noop = LocalGit
+            .plan_history_action(
+                &root,
+                &HistoryAction::Reset {
+                    target: base,
+                    mode: ResetMode::Soft,
+                    backup: false,
+                },
+            )
+            .unwrap();
+        assert!(noop.blocked.is_some());
+    }
+
+    #[test]
+    fn tags_can_be_created_listed_pushed_and_deleted() {
+        let directory = tempfile::tempdir().unwrap();
+        let top = canonical_path(directory.path()).unwrap();
+        let bare = top.join("remote.git");
+        fs::create_dir_all(&bare).unwrap();
+        git_ok(&bare, &["init", "--quiet", "--bare"]);
+        let work = top.join("work");
+        fs::create_dir_all(&work).unwrap();
+        repo_with_commit(&work);
+        git_ok(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        let commit = head_id(&work);
+        LocalGit.create_tag(&work, "v1", &commit, None).unwrap();
+        LocalGit
+            .create_tag(&work, "v2", &commit, Some("Release two\n\nDetails"))
+            .unwrap();
+        let tags = LocalGit.tags(&work).unwrap();
+        let v1 = tags.iter().find(|t| t.name == "v1").unwrap();
+        let v2 = tags.iter().find(|t| t.name == "v2").unwrap();
+        assert!(!v1.annotated && v1.commit == commit);
+        assert!(v2.annotated && v2.commit == commit && v2.message == "Release two");
+        assert!(
+            LocalGit.create_tag(&work, "v1", &commit, None).is_err(),
+            "no silent overwrite"
+        );
+        for bad in ["-x", "", "a b", "x..y"] {
+            assert!(
+                LocalGit.create_tag(&work, bad, &commit, None).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(LocalGit.create_tag(&work, "v3", "HEAD", None).is_err());
+        assert!(LocalGit.push_tag(&work, "nowhere", "v1").is_err());
+        assert!(LocalGit.push_tag(&work, "--all", "v1").is_err());
+        LocalGit.push_tag(&work, "origin", "v2").unwrap();
+        let remote_tags = Command::new("git")
+            .arg("-C")
+            .arg(&bare)
+            .args(["tag"])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&remote_tags.stdout).trim(), "v2");
+        LocalGit.delete_tag(&work, "v1").unwrap();
+        assert!(LocalGit.tags(&work).unwrap().iter().all(|t| t.name != "v1"));
+        assert!(LocalGit.delete_tag(&work, "v1").is_err());
+    }
+
+    #[test]
+    fn force_with_lease_overwrites_only_the_commit_that_was_shown() {
+        let directory = tempfile::tempdir().unwrap();
+        let top = canonical_path(directory.path()).unwrap();
+        let bare = top.join("remote.git");
+        fs::create_dir_all(&bare).unwrap();
+        git_ok(&bare, &["init", "--quiet", "--bare"]);
+        let work = top.join("work");
+        fs::create_dir_all(&work).unwrap();
+        repo_with_commit(&work);
+        git_ok(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        fs::write(work.join("f.txt"), "second\n").unwrap();
+        git_ok(&work, &["commit", "-q", "-am", "second"]);
+        git_ok(&work, &["push", "-q", "-u", "origin", "main"]);
+        let remote_tip = LocalGit
+            .remote_branch_tip(&work, "origin", "main")
+            .unwrap()
+            .unwrap();
+        assert_eq!(remote_tip, head_id(&work));
+        assert!(
+            LocalGit
+                .remote_branch_tip(&work, "origin", "absent")
+                .unwrap()
+                .is_none()
+        );
+        // Rewrite local history (amend), so a plain push would be rejected.
+        git_ok(&work, &["commit", "-q", "--amend", "-m", "second amended"]);
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&work)
+                .args(["push"])
+                .output()
+                .unwrap()
+                .status
+                .code()
+                != Some(0)
+        );
+        let action = HistoryAction::ForcePush {
+            remote: "origin".into(),
+            branch: "main".into(),
+            expected: remote_tip.clone(),
+        };
+        let plan = LocalGit.plan_history_action(&work, &action).unwrap();
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|w| w.contains("1 commit(s) on the remote will be overwritten"))
+        );
+        // Someone else pushes first, so the lease no longer matches.
+        let other = top.join("other");
+        git_ok(
+            &top,
+            &[
+                "clone",
+                "-q",
+                "-b",
+                "main",
+                bare.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
+        );
+        git_ok(&other, &["config", "user.name", "O"]);
+        git_ok(&other, &["config", "user.email", "o@example.invalid"]);
+        git_ok(&other, &["config", "commit.gpgsign", "false"]);
+        fs::write(other.join("o.txt"), "o\n").unwrap();
+        git_ok(&other, &["add", "--", "o.txt"]);
+        git_ok(&other, &["commit", "-q", "-m", "theirs"]);
+        git_ok(&other, &["push", "-q", "origin", "main"]);
+        let rejected = LocalGit
+            .apply_history_action(&work, &action, &plan.head)
+            .unwrap_err();
+        assert!(rejected.contains("force push failed"), "{rejected}");
+        assert_ne!(
+            LocalGit
+                .remote_branch_tip(&work, "origin", "main")
+                .unwrap()
+                .unwrap(),
+            head_id(&work)
+        );
+        // After re-reading the remote tip the push goes through.
+        let fresh = LocalGit
+            .remote_branch_tip(&work, "origin", "main")
+            .unwrap()
+            .unwrap();
+        git_ok(&work, &["fetch", "-q"]);
+        let action = HistoryAction::ForcePush {
+            remote: "origin".into(),
+            branch: "main".into(),
+            expected: fresh,
+        };
+        run_action(&work, &action).unwrap();
+        assert_eq!(
+            LocalGit
+                .remote_branch_tip(&work, "origin", "main")
+                .unwrap()
+                .unwrap(),
+            head_id(&work)
+        );
+        // An unknown remote tip blocks the plan instead of guessing.
+        let unknown = HistoryAction::ForcePush {
+            remote: "origin".into(),
+            branch: "main".into(),
+            expected: "1".repeat(40),
+        };
+        assert!(
+            LocalGit
+                .plan_history_action(&work, &unknown)
+                .unwrap()
+                .blocked
+                .is_some()
+        );
     }
 
     #[test]
