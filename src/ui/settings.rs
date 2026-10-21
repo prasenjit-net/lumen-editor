@@ -15,29 +15,47 @@ impl Workbench<'_> {
         if !self.view.settings.pending_quit {
             return;
         }
-        egui::Window::new("Unapplied settings")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.label("Settings drafts have not been applied. Quitting will discard them.");
-                ui.label("Reopen any previously edited project to apply its retained draft.");
-                ui.horizontal(|ui| {
-                    let keep = super::dialogs::primary_button(ui, "Keep Editing");
-                    let discard = ui.button("Discard Settings and Continue");
-                    let cancel = ui.button("Cancel");
-                    super::dialogs::keep_focus(ui.ctx(), &[&keep, &discard, &cancel], &keep);
-                    if keep.clicked() {
-                        self.view.settings.pending_quit = false;
-                        self.command(Command::Settings);
-                    } else if discard.clicked() {
-                        self.command(Command::DiscardSettingsAndQuit);
-                    } else if cancel.clicked() || super::dialogs::escape_pressed(ui.ctx()) {
-                        self.view.settings.pending_quit = false;
-                        self.view.focus_editor = true;
-                    }
-                });
-            });
+        let dialog = super::dialog::Dialog::new("Unapplied settings").show(ctx, |ui| {
+            ui.add(
+                egui::Label::new(
+                    "Settings drafts have not been applied. Quitting will discard them.",
+                )
+                .wrap(),
+            );
+            ui.add(
+                egui::Label::new(
+                    "Reopen any previously edited project to apply its retained draft.",
+                )
+                .wrap(),
+            );
+            super::dialog::footer(ui, |ui| {
+                let keep = super::dialogs::primary_button(ui, "Keep Editing");
+                let cancel = ui.button("Cancel");
+                let discard = ui.button("Discard Settings and Continue");
+                super::dialogs::keep_focus(ui.ctx(), &[&keep, &discard, &cancel], &keep);
+                if keep.clicked() {
+                    Some(0)
+                } else if discard.clicked() {
+                    Some(1)
+                } else if cancel.clicked() || super::dialogs::escape_pressed(ui.ctx()) {
+                    Some(2)
+                } else {
+                    None
+                }
+            })
+        });
+        match dialog.inner.or(dialog.close_clicked.then_some(2)) {
+            Some(0) => {
+                self.view.settings.pending_quit = false;
+                self.command(Command::Settings);
+            }
+            Some(1) => self.command(Command::DiscardSettingsAndQuit),
+            Some(_) => {
+                self.view.settings.pending_quit = false;
+                self.view.focus_editor = true;
+            }
+            None => {}
+        }
     }
     pub(super) fn settings_page(&mut self, ui: &mut egui::Ui) {
         let actions = [
