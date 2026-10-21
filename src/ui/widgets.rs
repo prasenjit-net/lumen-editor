@@ -37,9 +37,13 @@ pub(crate) fn panel_header_with_menu(
     let colors = crate::ui::theme::palette(ui.visuals());
     header_row(ui, actions, menu, |ui| {
         ui.add(
-            egui::Label::new(RichText::new(title).size(11.0).color(colors.text))
-                .halign(egui::Align::LEFT)
-                .truncate(),
+            egui::Label::new(
+                RichText::new(title)
+                    .size(crate::ui::theme::META_SIZE)
+                    .color(colors.text),
+            )
+            .halign(egui::Align::LEFT)
+            .truncate(),
         );
         None
     })
@@ -64,8 +68,19 @@ pub(crate) fn tabbed_panel_header(
     tabs: &[PanelTab],
     actions: &[HeaderAction],
 ) -> Option<Command> {
+    tabbed_panel_header_with_menu(ui, tabs, actions, None)
+}
+
+/// `tabbed_panel_header` with a trailing `⋯` menu after the icon actions, for
+/// commands that move out of the header when it is too narrow to show them all.
+pub(crate) fn tabbed_panel_header_with_menu(
+    ui: &mut egui::Ui,
+    tabs: &[PanelTab],
+    actions: &[HeaderAction],
+    menu: Option<(&str, &[MenuEntry])>,
+) -> Option<Command> {
     let colors = crate::ui::theme::palette(ui.visuals());
-    header_row(ui, actions, None, |ui| {
+    header_row(ui, actions, menu, |ui| {
         ui.spacing_mut().item_spacing.x = 14.0;
         let mut clicked = None;
         // Many tabs (task runs) must stay reachable: the strip scrolls sideways
@@ -88,13 +103,15 @@ pub(crate) fn tabbed_panel_header(
                         .scope(|ui| {
                             ui.set_max_width(MAX_TAB_WIDTH);
                             ui.add(
-                                egui::Label::new(RichText::new(tab.label).size(11.0).color(
-                                    if tab.active {
-                                        colors.text
-                                    } else {
-                                        colors.muted
-                                    },
-                                ))
+                                egui::Label::new(
+                                    RichText::new(tab.label)
+                                        .size(crate::ui::theme::META_SIZE)
+                                        .color(if tab.active {
+                                            colors.text
+                                        } else {
+                                            colors.muted
+                                        }),
+                                )
                                 // A selectable label would start a text selection on click, and
                                 // that selection would then sweep over whatever panel replaces it.
                                 .selectable(false)
@@ -190,8 +207,13 @@ fn header_row(
             .add_enabled_ui(action.enabled, |ui| {
                 ui.put(button_rect, egui::Button::new(action.glyph).frame(false))
             })
-            .inner
-            .on_hover_text(action.tooltip);
+            .inner;
+        // egui shows a disabled widget's tooltip only through the disabled variant.
+        let button = if action.enabled {
+            button.on_hover_text(action.tooltip)
+        } else {
+            button.on_disabled_hover_text(action.tooltip)
+        };
         if named(button, action.enabled, action.tooltip).clicked() {
             clicked = Some(action.command.clone());
         }
@@ -298,7 +320,11 @@ pub(crate) fn menu_entries(ui: &mut egui::Ui, entries: &[MenuEntry]) -> Option<C
     for entry in entries {
         match entry {
             MenuEntry::Caption(text) => {
-                ui.label(RichText::new(text).size(11.0).color(colors.muted));
+                ui.label(
+                    RichText::new(text)
+                        .size(crate::ui::theme::META_SIZE)
+                        .color(colors.muted),
+                );
                 ui.separator();
             }
             MenuEntry::Separator => {
@@ -326,6 +352,40 @@ pub(crate) fn menu_entries(ui: &mut egui::Ui, entries: &[MenuEntry]) -> Option<C
         }
     }
     chosen
+}
+
+/// Gap above an empty state's content: generous in a tall pane, small enough in a
+/// short split group that the title and its actions are not pushed out of view.
+pub(crate) fn empty_state_top(ui: &egui::Ui) -> f32 {
+    (ui.available_height() * 0.2).clamp(12.0, 130.0)
+}
+
+/// `text` cut with an ellipsis so it is no wider than `max_width` when drawn in
+/// `font`; unchanged when it already fits. Measures glyphs, not characters.
+pub(crate) fn ellipsize(ui: &egui::Ui, text: &str, font: &FontId, max_width: f32) -> String {
+    let measure = |candidate: &str| {
+        ui.fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap(candidate.to_owned(), font.clone(), Color32::WHITE)
+                .size()
+                .x
+        })
+    };
+    if measure(text) <= max_width {
+        return text.to_owned();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let (mut low, mut high) = (0, chars.len());
+    while low < high {
+        let mid = (low + high).div_ceil(2);
+        let candidate: String = chars[..mid].iter().collect::<String>() + "…";
+        if measure(&candidate) <= max_width {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    chars[..low].iter().collect::<String>() + "…"
 }
 
 /// Lay `text` out on one line no wider than `max_width`, ending in an ellipsis
@@ -480,16 +540,34 @@ pub(crate) fn explorer_row(
     indent: usize,
     selected: bool,
 ) -> egui::Response {
-    explorer_row_with_icon(ui, None, None, text, indent, selected)
+    explorer_row_with_icon(ui, None, None, text, None, indent, selected)
+}
+
+/// Width reserved at a row's right edge for its Git status letter.
+const BADGE_COLUMN: f32 = 20.0;
+
+/// Spoken form of a Git status letter drawn in an Explorer row.
+pub(crate) fn git_badge_label(badge: char) -> &'static str {
+    match badge {
+        '!' => "Conflict",
+        'U' => "Untracked",
+        'A' => "Added",
+        'D' => "Deleted",
+        'S' => "Staged",
+        _ => "Modified",
+    }
 }
 
 /// An explorer row with an optional disclosure caret and a coloured file or
-/// folder icon ahead of the label. `indent` is where the row's first element starts.
+/// folder icon ahead of the label, and a Git status letter in its own column at
+/// the right edge. The name is cut with an ellipsis before it can reach the
+/// badge. `indent` is where the row's first element starts.
 pub(crate) fn explorer_row_with_icon(
     ui: &mut egui::Ui,
     caret: Option<&str>,
     file_icon: Option<crate::ui::file_icons::FileIcon>,
     text: String,
+    badge: Option<char>,
     indent: usize,
     selected: bool,
 ) -> egui::Response {
@@ -516,8 +594,12 @@ pub(crate) fn explorer_row_with_icon(
             egui::StrokeKind::Inside,
         );
     }
+    let spoken = match badge {
+        Some(badge) => format!("{text}, {}", git_badge_label(badge)),
+        None => text.clone(),
+    };
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &text)
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &spoken)
     });
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     let mut x = rect.left() + indent as f32;
@@ -541,13 +623,28 @@ pub(crate) fn explorer_row_with_icon(
         );
         x += 20.0;
     }
-    painter.text(
-        egui::pos2(x, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        text,
+    let badge_width = if badge.is_some() { BADGE_COLUMN } else { 0.0 };
+    let name = fit_galley(
+        ui,
+        &text,
         FontId::proportional(13.0),
         colors.text,
+        rect.right() - badge_width - x - 6.0,
     );
+    painter.galley(
+        egui::pos2(x, rect.center().y - name.size().y / 2.0),
+        name,
+        colors.text,
+    );
+    if let Some(badge) = badge {
+        painter.text(
+            egui::pos2(rect.right() - BADGE_COLUMN / 2.0 - 2.0, rect.center().y),
+            egui::Align2::CENTER_CENTER,
+            badge,
+            FontId::proportional(11.5),
+            crate::ui::theme::change_color(&colors, badge),
+        );
+    }
     response
 }
 pub(crate) fn icon_button(ui: &mut egui::Ui, icon: &str, selected: bool) -> egui::Response {
@@ -617,6 +714,130 @@ mod tests {
         assert!(nodes.iter().any(|node| {
             node.label() == Some("main.rs") && format!("{:?}", node.toggled()) == "Some(True)"
         }));
+    }
+
+    #[test]
+    fn long_explorer_names_ellipsize_before_the_git_badge_at_every_sidebar_width() {
+        let long = "a_very_long_nested_component_file_name_for_the_sidebar.rs";
+        for width in [180.0_f32, 240.0, 600.0] {
+            let ctx = egui::Context::default();
+            configure_ui(&ctx);
+            ctx.enable_accesskit();
+            let mut row = egui::Rect::NOTHING;
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 120.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE)
+                        .show(ctx, |ui| {
+                            row = explorer_row_with_icon(
+                                ui,
+                                None,
+                                None,
+                                long.into(),
+                                Some('M'),
+                                28,
+                                false,
+                            )
+                            .rect;
+                        });
+                },
+            );
+            let mut name_right = None;
+            let mut badge_left = None;
+            for clipped in &output.shapes {
+                if let egui::Shape::Text(text) = &clipped.shape {
+                    let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                    match text.galley.text() {
+                        "M" => badge_left = Some(rect.left()),
+                        name if name.starts_with("a_very") => name_right = Some(rect.right()),
+                        _ => {}
+                    }
+                }
+            }
+            let (name_right, badge_left) = (name_right.expect("name"), badge_left.expect("badge"));
+            assert!(
+                name_right <= badge_left,
+                "{width}: name ends {name_right}, badge starts {badge_left}"
+            );
+            assert!(
+                badge_left + 4.0 <= row.right(),
+                "{width}: badge inside the row"
+            );
+            let spoken: Vec<_> = output
+                .platform_output
+                .accesskit_update
+                .iter()
+                .flat_map(|update| update.nodes.iter())
+                .filter_map(|(_, node)| node.label().map(str::to_owned))
+                .collect();
+            assert!(
+                spoken.iter().any(|label| label.ends_with(", Modified")),
+                "{spoken:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ellipsize_measures_rendered_width_not_characters() {
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        let font = FontId::proportional(11.0);
+        let measure = |ui: &egui::Ui, text: &str| {
+            ui.fonts_mut(|fonts| {
+                fonts
+                    .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
+                    .size()
+                    .x
+            })
+        };
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                assert_eq!(ellipsize(ui, "Build", &font, 150.0), "Build");
+                let wide = "W".repeat(40);
+                let narrow = "i".repeat(40);
+                let cut_wide = ellipsize(ui, &wide, &font, 100.0);
+                let cut_narrow = ellipsize(ui, &narrow, &font, 100.0);
+                for cut in [&cut_wide, &cut_narrow] {
+                    assert!(cut.ends_with('…'));
+                    assert!(measure(ui, cut) <= 100.0, "{cut} is {}", measure(ui, cut));
+                }
+                assert!(
+                    cut_narrow.chars().count() > cut_wide.chars().count(),
+                    "narrow glyphs keep more characters in the same width"
+                );
+                assert_eq!(ellipsize(ui, "anything", &font, 0.0), "…");
+            });
+        });
+    }
+
+    #[test]
+    fn empty_state_gap_shrinks_in_short_panes() {
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        let mut gaps = Vec::new();
+        for height in [120.0_f32, 400.0, 1200.0] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, height),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| gaps.push(empty_state_top(ui)));
+                },
+            );
+        }
+        assert!(gaps[0] < gaps[1] && gaps[1] < gaps[2], "{gaps:?}");
+        assert!(gaps[0] >= 12.0 && gaps[2] <= 130.0, "{gaps:?}");
     }
 
     fn actions() -> [HeaderAction; 3] {

@@ -104,7 +104,8 @@ impl Workbench<'_> {
 
         let width = ui.available_width().min(MAX_CONTENT_WIDTH);
         let side = ((ui.available_width() - width) / 2.0).max(0.0);
-        let column = (width - 2.0 * GUTTER).max(240.0);
+        // Never wider than the group: a floor larger than the pane pushed the composer off-screen.
+        let column = (width - 2.0 * GUTTER).max(80.0).min(width.max(0.0));
 
         // Bottom block first so the transcript takes whatever is left.
         egui::TopBottomPanel::bottom(egui::Id::new(("chat_composer", id.0)))
@@ -130,7 +131,7 @@ impl Workbench<'_> {
                             SessionStatus::Working | SessionStatus::NeedsAttention
                         );
                         let draft = self.view.chats.draft_mut(id);
-                        composer(ui, id, draft, busy, accent, &mut commands);
+                        composer(ui, id, draft, busy, &mut commands);
                     });
                 });
             });
@@ -169,7 +170,11 @@ impl Workbench<'_> {
                                 ItemKind::Plan(entries) => plan_card(ui, entries, &colors),
                                 ItemKind::Error(text) => notice_card(ui, text, colors.error),
                                 ItemKind::Notice(text) => {
-                                    ui.label(RichText::new(text).size(11.0).color(colors.muted));
+                                    ui.label(
+                                        RichText::new(text)
+                                            .size(crate::ui::theme::META_SIZE)
+                                            .color(colors.muted),
+                                    );
                                 }
                             }
                         }
@@ -206,33 +211,43 @@ fn chat_header(
         .inner_margin(Margin::symmetric(GUTTER as i8, 7))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                provider_pill(ui, provider.label(), accent);
-                ui.add(
-                    egui::Label::new(RichText::new(title).size(13.0).strong().color(colors.text))
-                        .truncate(),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Status is placed first at the right edge; the provider and title share
+            // what is left and the title is the part that gives way.
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), 20.0),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
                     status_chip(ui, status, colors);
-                });
-            });
-            ui.label(
-                RichText::new(folder.display().to_string())
-                    .size(10.5)
-                    .color(colors.muted),
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        provider_pill(ui, provider.label(), accent);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(title).size(13.0).strong().color(colors.text),
+                            )
+                            .truncate(),
+                        );
+                    });
+                },
+            );
+            ui.add(
+                egui::Label::new(
+                    RichText::new(folder.display().to_string())
+                        .size(10.5)
+                        .color(colors.muted),
+                )
+                .truncate(),
             );
         });
 }
 
 /// Small rounded label tinted with the provider colour.
 fn provider_pill(ui: &mut egui::Ui, label: &str, accent: Color32) {
-    Frame::default()
-        .fill(accent.gamma_multiply(0.18))
-        .corner_radius(8)
-        .inner_margin(Margin::symmetric(8, 1))
-        .show(ui, |ui| {
-            ui.label(RichText::new(label).size(10.5).color(accent));
-        });
+    ui.label(
+        RichText::new(label.to_uppercase())
+            .size(10.5)
+            .strong()
+            .color(accent),
+    );
 }
 
 fn status_chip(ui: &mut egui::Ui, status: &SessionStatus, colors: &theme::Palette) {
@@ -247,7 +262,14 @@ fn status_chip(ui: &mut egui::Ui, status: &SessionStatus, colors: &theme::Palett
         SessionStatus::Failed(_) => "Failed".to_string(),
         other => status_text(other),
     };
-    let response = ui.add(egui::Label::new(RichText::new(text).size(11.0).color(color)).truncate());
+    let response = ui.add(
+        egui::Label::new(
+            RichText::new(text)
+                .size(crate::ui::theme::META_SIZE)
+                .color(color),
+        )
+        .truncate(),
+    );
     if let SessionStatus::Failed(message) = status {
         response.on_hover_text(message);
     }
@@ -260,7 +282,7 @@ fn empty_state(
     accent: Color32,
     colors: &theme::Palette,
 ) {
-    ui.add_space(48.0);
+    ui.add_space(super::widgets::empty_state_top(ui).min(48.0));
     ui.vertical_centered(|ui| {
         ui.label(RichText::new(icon::AGENT).size(26.0).color(accent));
         ui.add_space(4.0);
@@ -284,7 +306,7 @@ fn empty_state(
 fn user_bubble(ui: &mut egui::Ui, text: &str, colors: &theme::Palette) {
     Frame::default()
         .fill(colors.input)
-        .corner_radius(6)
+        .corner_radius(3)
         .inner_margin(Margin::symmetric(12, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -361,7 +383,7 @@ fn tool_row(ui: &mut egui::Ui, item_id: &str, call: &ToolCall, colors: &theme::P
     let mut open = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
     let row = Frame::default()
         .fill(colors.panel)
-        .corner_radius(4)
+        .corner_radius(3)
         .inner_margin(Margin::symmetric(8, 4))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -383,7 +405,7 @@ fn tool_row(ui: &mut egui::Ui, item_id: &str, call: &ToolCall, colors: &theme::P
                             } else {
                                 icon::CARET_RIGHT
                             })
-                            .size(11.0)
+                            .size(crate::ui::theme::META_SIZE)
                             .color(colors.muted),
                         );
                     }
@@ -405,7 +427,7 @@ fn tool_row(ui: &mut egui::Ui, item_id: &str, call: &ToolCall, colors: &theme::P
                             egui::Label::new(
                                 RichText::new(text)
                                     .monospace()
-                                    .size(11.0)
+                                    .size(crate::ui::theme::META_SIZE)
                                     .color(colors.muted),
                             )
                             .selectable(true),
@@ -432,7 +454,7 @@ fn plan_card(
     use lumen_agent_core::model::PlanStatus;
     Frame::default()
         .fill(colors.panel)
-        .corner_radius(4)
+        .corner_radius(3)
         .inner_margin(Margin::symmetric(10, 6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -449,7 +471,11 @@ fn plan_card(
                     PlanStatus::Pending => ("○", colors.muted),
                 };
                 ui.horizontal_top(|ui| {
-                    ui.label(RichText::new(mark).size(11.0).color(color));
+                    ui.label(
+                        RichText::new(mark)
+                            .size(crate::ui::theme::META_SIZE)
+                            .color(color),
+                    );
                     ui.add(
                         egui::Label::new(RichText::new(&entry.text).size(11.5).color(colors.text))
                             .selectable(true),
@@ -464,7 +490,7 @@ fn notice_card(ui: &mut egui::Ui, text: &str, color: Color32) {
     Frame::default()
         .fill(color.gamma_multiply(0.12))
         .stroke(egui::Stroke::new(1.0_f32, color.gamma_multiply(0.6)))
-        .corner_radius(5)
+        .corner_radius(3)
         .inner_margin(Margin::symmetric(10, 6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -481,11 +507,16 @@ fn approval_card(
     colors: &theme::Palette,
     commands: &mut Vec<Command>,
 ) {
-    Frame::default()
-        .fill(colors.warning.gamma_multiply(0.10))
-        .stroke(egui::Stroke::new(1.0_f32, colors.warning))
-        .corner_radius(6)
-        .inner_margin(Margin::symmetric(12, 9))
+    // A warning edge marks the request; the rest of the card stays a quiet panel.
+    let card = Frame::default()
+        .fill(colors.panel)
+        .corner_radius(3)
+        .inner_margin(Margin {
+            left: 14,
+            right: 12,
+            top: 9,
+            bottom: 9,
+        })
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -512,7 +543,7 @@ fn approval_card(
             if let Some(command) = &request.command {
                 Frame::default()
                     .fill(colors.bg)
-                    .corner_radius(4)
+                    .corner_radius(3)
                     .inner_margin(Margin::symmetric(8, 5))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -530,7 +561,7 @@ fn approval_card(
             for path in &request.paths {
                 ui.label(
                     RichText::new(format!("{} {}", icon::FILE, path.display()))
-                        .size(11.0)
+                        .size(crate::ui::theme::META_SIZE)
                         .color(colors.muted),
                 );
             }
@@ -539,7 +570,7 @@ fn approval_card(
                 for choice in &request.choices {
                     let label = RichText::new(&choice.label).size(11.5);
                     let button = if choice.allows {
-                        egui::Button::new(label.color(Color32::WHITE)).fill(colors.accent)
+                        egui::Button::new(label.color(colors.on_accent)).fill(colors.accent)
                     } else {
                         egui::Button::new(label.color(colors.text))
                     };
@@ -557,6 +588,20 @@ fn approval_card(
                 }
             });
         });
+    let rect = card.response.rect;
+    ui.painter().rect_filled(
+        egui::Rect::from_min_max(
+            rect.left_top(),
+            egui::pos2(rect.left() + 3.0, rect.bottom()),
+        ),
+        egui::CornerRadius {
+            nw: 3,
+            sw: 3,
+            ne: 0,
+            se: 0,
+        },
+        colors.warning,
+    );
 }
 
 /// "Working…" with animated dots, or why the turn has not started.
@@ -598,15 +643,19 @@ fn queue_list<'a>(
             .unwrap_or("(attachment)");
         Frame::default()
             .fill(colors.panel)
-            .corner_radius(4)
+            .corner_radius(3)
             .inner_margin(Margin::symmetric(8, 3))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Queued").size(10.0).color(colors.muted));
                     ui.add(
-                        egui::Label::new(RichText::new(text).size(11.0).color(colors.text))
-                            .truncate(),
+                        egui::Label::new(
+                            RichText::new(text)
+                                .size(crate::ui::theme::META_SIZE)
+                                .color(colors.text),
+                        )
+                        .truncate(),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
@@ -632,7 +681,7 @@ fn settings_strip(
     let colors = theme::palette(ui.visuals());
     Frame::default()
         .fill(colors.panel)
-        .corner_radius(6)
+        .corner_radius(3)
         .inner_margin(Margin::symmetric(8, 3))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -649,7 +698,6 @@ fn composer(
     id: SessionId,
     draft: &mut String,
     busy: bool,
-    accent: Color32,
     commands: &mut Vec<Command>,
 ) {
     let colors = theme::palette(ui.visuals());
@@ -673,7 +721,7 @@ fn composer(
                 colors.border
             },
         ))
-        .corner_radius(8)
+        .corner_radius(3)
         .inner_margin(Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -691,24 +739,29 @@ fn composer(
                     })
                     .lock_focus(true),
             );
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("Enter to send · Shift+Enter for a new line")
-                        .size(10.0)
-                        .color(colors.muted),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), 24.0),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
                     let send = egui::Button::new(
-                        RichText::new(format!("{}  Send", icon::SEND))
-                            .size(12.0)
-                            .color(if can_send {
-                                Color32::WHITE
-                            } else {
-                                colors.muted
-                            }),
+                        RichText::new(format!(
+                            "{}  {}",
+                            icon::SEND,
+                            if busy { "Queue" } else { "Send" }
+                        ))
+                        .size(12.0)
+                        .color(if can_send {
+                            colors.on_accent
+                        } else {
+                            colors.muted
+                        }),
                     )
-                    .fill(if can_send { accent } else { colors.panel })
-                    .corner_radius(6);
+                    .fill(if can_send {
+                        colors.accent
+                    } else {
+                        colors.panel
+                    })
+                    .corner_radius(3);
                     if ui
                         .add_enabled(can_send, send)
                         .on_hover_text(if busy {
@@ -728,15 +781,30 @@ fn composer(
                                         .size(12.0)
                                         .color(colors.error),
                                 )
-                                .corner_radius(6),
+                                .corner_radius(3),
                             )
                             .on_hover_text("Stop the current turn")
                             .clicked()
                     {
                         commands.push(Command::ChatStop(id));
                     }
-                });
-            });
+                    // The hint takes whatever the buttons leave and gives way first.
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(if busy {
+                                    "Enter to queue · sends after the current turn · Shift+Enter for a new line"
+                                } else {
+                                    "Enter to send · Shift+Enter for a new line"
+                                })
+                                .size(10.0)
+                                .color(colors.muted),
+                            )
+                            .truncate(),
+                        );
+                    });
+                },
+            );
         });
     if send_now {
         commands.push(Command::ChatSend(id));
@@ -791,7 +859,7 @@ fn config_row(
                         .map_or(option.current.as_str(), |c| c.label.as_str());
                     ui.add_enabled_ui(enabled, |ui| {
                         egui::ComboBox::from_id_salt(("chat_option", id.0, &option.id))
-                            .selected_text(RichText::new(current).size(11.0))
+                            .selected_text(RichText::new(current).size(crate::ui::theme::META_SIZE))
                             .show_ui(ui, |ui| {
                                 for choice in &option.choices {
                                     let selected = choice.value == option.current;

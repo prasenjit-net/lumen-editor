@@ -74,7 +74,7 @@ fn running_section(
     ui.add_space(6.0);
     ui.label(
         RichText::new(format!("RUNNING ({})", running.len()))
-            .size(11.0)
+            .size(crate::ui::theme::META_SIZE)
             .color(colors.muted),
     );
     for (id, title, elapsed) in running {
@@ -123,7 +123,7 @@ fn scope_section(
         } else {
             heading.to_string()
         })
-        .size(11.0)
+        .size(crate::ui::theme::META_SIZE)
         .color(colors.muted),
     );
     if let Some(path) = &tasks.path {
@@ -131,7 +131,7 @@ fn scope_section(
     }
     let muted = |text: &str| {
         RichText::new(text.to_string())
-            .size(11.0)
+            .size(crate::ui::theme::META_SIZE)
             .color(colors.muted)
     };
     match &tasks.state {
@@ -221,7 +221,11 @@ fn task_row(
                     .frame_when_inactive(selected)
                     .min_size(egui::vec2(ui.available_width(), 22.0));
             if let Some(tag) = tag {
-                button = button.right_text(RichText::new(tag).size(11.0).color(colors.muted));
+                button = button.right_text(
+                    RichText::new(tag)
+                        .size(crate::ui::theme::META_SIZE)
+                        .color(colors.muted),
+                );
             }
             ui.add(button)
         })

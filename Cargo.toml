@@ -57,6 +57,7 @@ lumen-editor-surface = { path = "crates/editor-surface", optional = true }
 lumen-language-services = { path = "crates/language-services" }
 lumen-terminal-core = { path = "crates/terminal-core" }
 lumen-task-core = { path = "crates/task-core" }
+image = { version = "0.25", default-features = false, features = ["png"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 
 [dev-dependencies]

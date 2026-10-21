@@ -51,6 +51,7 @@ pub(crate) fn run() -> eframe::Result<()> {
                 repaint.request_repaint()
             }));
             let mut app = LumenApp::default();
+            app.capture = crate::app::capture::Capture::from_env();
             #[cfg(feature = "shared-editor")]
             {
                 app.view.shared_surface = Some(lumen_editor_surface::EditorSurface::with_shaper(

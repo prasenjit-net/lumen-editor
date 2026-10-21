@@ -6,7 +6,7 @@ use super::{
     bottom_tabs::{ActiveBottom, as_panel_tabs},
     terminal::{TerminalStyle, cell_advance, terminal_input_bytes, terminal_line},
     theme,
-    widgets::{HeaderAction, tabbed_panel_header},
+    widgets::{HeaderAction, MenuItem, tabbed_panel_header_with_menu},
 };
 use crate::{
     app::{
@@ -22,6 +22,8 @@ use std::time::{Duration, Instant};
 const DEFAULT_HEIGHT: f32 = 220.0;
 const MIN_HEIGHT: f32 = 120.0;
 const MAX_HEIGHT: f32 = 520.0;
+/// Below this header width the output commands move into an overflow menu.
+const NARROW_HEADER_WIDTH: f32 = 520.0;
 
 fn clock(elapsed: Duration) -> String {
     let seconds = elapsed.as_secs();
@@ -52,11 +54,7 @@ impl Workbench<'_> {
             return;
         };
         let colors = theme::palette(&ctx.style().visuals);
-        let font_size = self
-            .view
-            .settings
-            .number("terminal.font_size", None)
-            .min(13.0);
+        let font_size = self.view.settings.number("terminal.font_size", None);
         let font = FontId::monospace(font_size);
         let panel_divider = self.view.settings.boolean("terminal.panel_divider");
         let entries = self.bottom_tab_entries(ActiveBottom::Run);
@@ -75,90 +73,139 @@ impl Workbench<'_> {
             .height_range(MIN_HEIGHT..=MAX_HEIGHT)
             .resizable(true)
             .show_separator_line(panel_divider)
-            .frame(egui::Frame::default().fill(colors.panel))
+            .frame(super::widgets::canvas(ctx))
             .show(ctx, |ui| {
-                ui.set_min_height(ui.available_height());
-                let tabs = as_panel_tabs(&entries);
-                let actions = [
-                    HeaderAction {
-                        glyph: icon::STOP,
-                        tooltip: "Stop task",
-                        command: Command::StopTaskRun(run_id),
-                        enabled: active
-                            && !matches!(
-                                self.view.task_runs.get(run_id).map(|run| &run.state),
-                                Some(RunState::Stopping)
-                            ),
-                    },
-                    HeaderAction {
-                        glyph: icon::REFRESH,
-                        tooltip: "Restart task",
-                        command: Command::RestartTaskRun(run_id),
-                        enabled: true,
-                    },
-                    HeaderAction {
-                        glyph: icon::CLEAR_ALL,
-                        tooltip: "Clear this view (the task keeps running)",
-                        command: Command::ClearTaskOutput(run_id),
-                        enabled: has_output,
-                    },
-                    HeaderAction {
-                        glyph: icon::COPY,
-                        tooltip: "Copy output",
-                        command: Command::CopyTaskOutput(run_id),
-                        enabled: has_output,
-                    },
-                    HeaderAction {
-                        glyph: icon::FLOPPY_DISK,
-                        tooltip: "Save output to a file (what Lumen retained)",
-                        command: Command::SaveTaskOutput(run_id),
-                        enabled: has_output,
-                    },
-                    HeaderAction {
-                        glyph: icon::X,
-                        tooltip: "Close this task tab",
-                        command: Command::CloseTaskRun(run_id),
-                        enabled: true,
-                    },
-                    HeaderAction {
-                        glyph: icon::CARET_DOWN,
-                        tooltip: "Hide panel (tasks keep running)",
-                        command: Command::HideTaskPanel,
-                        enabled: true,
-                    },
-                ];
-                if let Some(command) = tabbed_panel_header(ui, &tabs, &actions) {
-                    commands.push(command);
-                }
-                let Some(run) = self.view.task_runs.get(run_id) else {
-                    return;
-                };
-                ui.horizontal(|ui| {
-                    ui.add_space(10.0);
-                    let color = match run.outcome() {
-                        Some(outcome) if outcome.is_success() => colors.success,
-                        Some(RunOutcome::Cancelled) => colors.muted,
-                        Some(_) => colors.error,
-                        None => colors.text,
-                    };
-                    ui.label(RichText::new(status_text(run, now)).size(11.0).color(color));
-                    ui.label(
-                        RichText::new(run.command_line.clone())
-                            .size(11.0)
-                            .color(colors.muted),
-                    );
-                });
-                egui::Frame::default()
-                    .fill(colors.bg)
-                    .corner_radius(egui::CornerRadius::same(3))
-                    .inner_margin(egui::Margin::symmetric(7, 5))
-                    .show(ui, |ui| {
-                        if run.is_pty() {
-                            pty_view(ui, ctx, run, &style, &mut commands, focus_request);
-                        } else {
-                            log_view(ui, run, &font, &colors, run_id);
+                super::widgets::surface(colors.panel).show(ui, |ui| {
+                    ui.set_min_size(ui.available_size());
+                    // Claim the allocated height up-front so the log cannot resize the
+                    // persisted panel.
+                    ui.set_min_height(ui.available_height());
+                    let tabs = as_panel_tabs(&entries);
+                    let mut actions = vec![
+                        HeaderAction {
+                            glyph: icon::STOP,
+                            tooltip: "Stop task",
+                            command: Command::StopTaskRun(run_id),
+                            enabled: active
+                                && !matches!(
+                                    self.view.task_runs.get(run_id).map(|run| &run.state),
+                                    Some(RunState::Stopping)
+                                ),
+                        },
+                        HeaderAction {
+                            glyph: icon::REFRESH,
+                            tooltip: "Restart task",
+                            command: Command::RestartTaskRun(run_id),
+                            enabled: true,
+                        },
+                        HeaderAction {
+                            glyph: icon::CLEAR_ALL,
+                            tooltip: "Clear this view (the task keeps running)",
+                            command: Command::ClearTaskOutput(run_id),
+                            enabled: has_output,
+                        },
+                        HeaderAction {
+                            glyph: icon::COPY,
+                            tooltip: "Copy output",
+                            command: Command::CopyTaskOutput(run_id),
+                            enabled: has_output,
+                        },
+                        HeaderAction {
+                            glyph: icon::FLOPPY_DISK,
+                            tooltip: "Save output to a file (what Lumen retained)",
+                            command: Command::SaveTaskOutput(run_id),
+                            enabled: has_output,
+                        },
+                        HeaderAction {
+                            glyph: icon::X,
+                            tooltip: "Close this task tab",
+                            command: Command::CloseTaskRun(run_id),
+                            enabled: true,
+                        },
+                        HeaderAction {
+                            glyph: icon::CARET_DOWN,
+                            tooltip: "Hide panel (tasks keep running)",
+                            command: Command::HideTaskPanel,
+                            enabled: true,
+                        },
+                    ];
+                    // A narrow header keeps Stop, Restart, Close and Hide at the edge and moves
+                    // the output commands into one overflow menu in a stable order.
+                    let mut overflow = Vec::new();
+                    if ui.available_width() < NARROW_HEADER_WIDTH {
+                        let moved: Vec<HeaderAction> = actions
+                            .iter()
+                            .filter(|action| {
+                                matches!(
+                                    action.command,
+                                    Command::ClearTaskOutput(_)
+                                        | Command::CopyTaskOutput(_)
+                                        | Command::SaveTaskOutput(_)
+                                )
+                            })
+                            .map(|action| HeaderAction {
+                                glyph: action.glyph,
+                                tooltip: action.tooltip,
+                                command: action.command.clone(),
+                                enabled: action.enabled,
+                            })
+                            .collect();
+                        actions.retain(|action| {
+                            !matches!(
+                                action.command,
+                                Command::ClearTaskOutput(_)
+                                    | Command::CopyTaskOutput(_)
+                                    | Command::SaveTaskOutput(_)
+                            )
+                        });
+                        for action in moved {
+                            let mut item = MenuItem::new(action.tooltip, action.command);
+                            if !action.enabled {
+                                item = item.unless(Some("No output yet"));
+                            }
+                            overflow.push(item.entry());
                         }
+                    }
+                    let menu = (!overflow.is_empty())
+                        .then_some(("More task output actions", &overflow[..]));
+                    if let Some(command) = tabbed_panel_header_with_menu(ui, &tabs, &actions, menu)
+                    {
+                        commands.push(command);
+                    }
+                    let Some(run) = self.view.task_runs.get(run_id) else {
+                        return;
+                    };
+                    ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+                        let color = match run.outcome() {
+                            Some(outcome) if outcome.is_success() => colors.success,
+                            Some(RunOutcome::Cancelled) => colors.muted,
+                            Some(_) => colors.error,
+                            None => colors.text,
+                        };
+                        ui.label(
+                            RichText::new(status_text(run, now))
+                                .size(crate::ui::theme::META_SIZE)
+                                .color(color),
+                        );
+                        ui.label(
+                            RichText::new(run.command_line.clone())
+                                .size(crate::ui::theme::META_SIZE)
+                                .color(colors.muted),
+                        );
                     });
+                    egui::Frame::default()
+                        .fill(colors.bg)
+                        .corner_radius(egui::CornerRadius::same(3))
+                        .inner_margin(egui::Margin::symmetric(7, 5))
+                        .show(ui, |ui| {
+                            if run.is_pty() {
+                                pty_view(ui, ctx, run, &style, &mut commands, focus_request);
+                            } else {
+                                log_view(ui, run, &font, &colors, run_id);
+                            }
+                        });
+                });
             });
         for command in commands {
             self.command(command);
@@ -202,7 +249,7 @@ fn pty_view(
                 } else {
                     "The task produced no output."
                 })
-                .size(11.0)
+                .size(crate::ui::theme::META_SIZE)
                 .color(colors.muted),
             );
         }
@@ -264,7 +311,7 @@ fn log_view(
             } else {
                 "The task produced no output."
             })
-            .size(11.0)
+            .size(crate::ui::theme::META_SIZE)
             .color(colors.muted),
         );
         return;
@@ -504,6 +551,44 @@ mod tests {
             selected.left() >= 0.0 && selected.right() <= hide.left(),
             "the selected tab was scrolled into view, clear of the actions: {selected:?}"
         );
+    }
+
+    #[test]
+    fn a_narrow_header_moves_output_commands_into_one_overflow_menu() {
+        let mut f = fixture(1);
+        f.run(0);
+        let wide = f.frame(900.0);
+        for glyph in [
+            crate::icon::CLEAR_ALL,
+            crate::icon::COPY,
+            crate::icon::FLOPPY_DISK,
+        ] {
+            assert!(
+                rect_of(&wide, glyph).is_some(),
+                "{glyph:?} is a button at 900px"
+            );
+        }
+        let narrow = f.frame(420.0);
+        for glyph in [
+            crate::icon::CLEAR_ALL,
+            crate::icon::COPY,
+            crate::icon::FLOPPY_DISK,
+        ] {
+            assert!(
+                rect_of(&narrow, glyph).is_none(),
+                "{glyph:?} moved into the menu at 420px"
+            );
+        }
+        // Stop, Restart, Close and Hide stay at the edge.
+        for glyph in [
+            crate::icon::STOP,
+            crate::icon::REFRESH,
+            crate::icon::X,
+            crate::icon::CARET_DOWN,
+        ] {
+            let rect = rect_of(&narrow, glyph).unwrap_or_else(|| panic!("{glyph:?} stays"));
+            assert!(rect.right() <= 420.0, "{glyph:?} inside the header");
+        }
     }
 
     #[test]

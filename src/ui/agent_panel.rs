@@ -180,7 +180,7 @@ fn status_strip(
         .show(ui, |ui| {
             ui.horizontal_top(|ui| {
                 ui.label(RichText::new("●").size(10.0).color(dot));
-                ui.add(egui::Label::new(RichText::new(text).size(11.0).color(colors.muted)).wrap());
+                ui.add(egui::Label::new(RichText::new(text).size(crate::ui::theme::META_SIZE).color(colors.muted)).wrap());
             });
             match &session.state {
                 ConnectionState::NeedsAuth => {
@@ -253,7 +253,7 @@ fn unsaved_card(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Ve
                     "⚠ {} unsaved file(s): {names}. The agent reads files from disk and will not see these edits.",
                     held.files.len()
                 ))
-                .size(11.0)
+                .size(crate::ui::theme::META_SIZE)
                 .color(colors.text),
             );
             ui.horizontal_wrapped(|ui| {
@@ -396,12 +396,19 @@ fn change_rows(
                     };
                     let path = row.change.path.display().to_string();
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(mark).monospace().size(11.0).color(color));
+                        ui.label(
+                            RichText::new(mark)
+                                .monospace()
+                                .size(crate::ui::theme::META_SIZE)
+                                .color(color),
+                        );
                         let label = display_path(&path, root);
                         if ui
                             .add(
                                 egui::Label::new(
-                                    RichText::new(label).size(11.0).color(colors.text),
+                                    RichText::new(label)
+                                        .size(crate::ui::theme::META_SIZE)
+                                        .color(colors.text),
                                 )
                                 .selectable(false)
                                 .sense(egui::Sense::click()),
@@ -576,7 +583,7 @@ fn permission_body(
     for warning in &pending.warnings {
         ui.label(
             RichText::new(format!("⚠ {warning}"))
-                .size(11.0)
+                .size(crate::ui::theme::META_SIZE)
                 .color(colors.warning),
         );
     }
@@ -600,7 +607,7 @@ fn permission_body(
             egui::Label::new(
                 RichText::new(format!("$ {command}"))
                     .monospace()
-                    .size(11.0)
+                    .size(crate::ui::theme::META_SIZE)
                     .color(colors.text),
             )
             .selectable(true),
@@ -859,7 +866,7 @@ fn suggestion_list(
                     egui::Button::new(
                         RichText::new(text)
                             .monospace()
-                            .size(11.0)
+                            .size(crate::ui::theme::META_SIZE)
                             .color(colors.text),
                     )
                     .fill(if index == selected {
@@ -895,7 +902,7 @@ fn attachment_chips(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mu
                     ui.horizontal(|ui| {
                         ui.label(
                             RichText::new(format!("{} {}", icon::FILE, chip.label))
-                                .size(11.0)
+                                .size(crate::ui::theme::META_SIZE)
                                 .color(colors.text),
                         );
                         let remove = ui
@@ -969,7 +976,7 @@ fn config_row(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Vec<
                     RichText::new(format!(
                         "⚠ “{label}” lets the agent act without asking first. Edits still show up under “Changed by the agent”."
                     ))
-                    .size(11.0)
+                    .size(crate::ui::theme::META_SIZE)
                     .color(colors.text),
                 );
                 ui.horizontal(|ui| {
@@ -1015,12 +1022,16 @@ fn history_list(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Ve
     });
     ui.separator();
     if let Some(error) = &history.error {
-        ui.label(RichText::new(error).size(11.0).color(colors.error));
+        ui.label(
+            RichText::new(error)
+                .size(crate::ui::theme::META_SIZE)
+                .color(colors.error),
+        );
     }
     if history.unsupported {
         ui.label(
             RichText::new("This agent does not keep a list of earlier sessions.")
-                .size(11.0)
+                .size(crate::ui::theme::META_SIZE)
                 .color(colors.muted),
         );
         return;
@@ -1028,13 +1039,13 @@ fn history_list(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Ve
     if history.loading && history.sessions.is_empty() {
         ui.label(
             RichText::new("Loading sessions…")
-                .size(11.0)
+                .size(crate::ui::theme::META_SIZE)
                 .color(colors.muted),
         );
     } else if history.sessions.is_empty() && history.error.is_none() {
         ui.label(
             RichText::new("No earlier sessions in this folder.")
-                .size(11.0)
+                .size(crate::ui::theme::META_SIZE)
                 .color(colors.muted),
         );
     }
@@ -1072,7 +1083,11 @@ fn history_list(ui: &mut egui::Ui, session: &AgentSessionView, commands: &mut Ve
             }
             if history.next_cursor.is_some() {
                 if history.loading {
-                    ui.label(RichText::new("Loading…").size(11.0).color(colors.muted));
+                    ui.label(
+                        RichText::new("Loading…")
+                            .size(crate::ui::theme::META_SIZE)
+                            .color(colors.muted),
+                    );
                 } else if ui.small_button("Show more").clicked() {
                     commands.push(Command::MoreAgentHistory);
                 }
@@ -1143,7 +1158,12 @@ fn transcript(ui: &mut egui::Ui, session: &mut AgentSessionView) {
                         } => thought(ui, text),
                         Entry::ToolCall(call) => tool_call(ui, call),
                         Entry::Notice(text) => {
-                            ui.label(RichText::new(text).italics().size(11.0).color(colors.muted));
+                            ui.label(
+                                RichText::new(text)
+                                    .italics()
+                                    .size(crate::ui::theme::META_SIZE)
+                                    .color(colors.muted),
+                            );
                         }
                     }
                     ui.add_space(ENTRY_GAP);
@@ -1152,7 +1172,11 @@ fn transcript(ui: &mut egui::Ui, session: &mut AgentSessionView) {
             }
             ui.add_space(window.space_after);
             if session.running {
-                ui.label(RichText::new("Working…").size(11.0).color(colors.muted));
+                ui.label(
+                    RichText::new("Working…")
+                        .size(crate::ui::theme::META_SIZE)
+                        .color(colors.muted),
+                );
             }
             if follow {
                 ui.scroll_to_cursor(Some(Align::BOTTOM));
@@ -1274,15 +1298,24 @@ fn code_block(ui: &mut egui::Ui, language: &str, text: &str) {
 
 fn thought(ui: &mut egui::Ui, text: &str) {
     let colors = crate::ui::theme::palette(ui.visuals());
-    egui::CollapsingHeader::new(RichText::new("Thinking").size(11.0).color(colors.muted))
-        .id_salt("thought")
-        .default_open(false)
-        .show(ui, |ui| {
-            ui.add(
-                egui::Label::new(RichText::new(text).italics().size(11.0).color(colors.muted))
-                    .selectable(true),
-            );
-        });
+    egui::CollapsingHeader::new(
+        RichText::new("Thinking")
+            .size(crate::ui::theme::META_SIZE)
+            .color(colors.muted),
+    )
+    .id_salt("thought")
+    .default_open(false)
+    .show(ui, |ui| {
+        ui.add(
+            egui::Label::new(
+                RichText::new(text)
+                    .italics()
+                    .size(crate::ui::theme::META_SIZE)
+                    .color(colors.muted),
+            )
+            .selectable(true),
+        );
+    });
 }
 
 fn tool_call(ui: &mut egui::Ui, call: &ToolCall) {
@@ -1300,7 +1333,7 @@ fn tool_call(ui: &mut egui::Ui, call: &ToolCall) {
     };
     egui::CollapsingHeader::new(
         RichText::new(format!("{} {title}  ·  {status}", kind_glyph(call.kind)))
-            .size(11.0)
+            .size(crate::ui::theme::META_SIZE)
             .color(color),
     )
     .id_salt("tool")
@@ -1323,7 +1356,7 @@ fn tool_call(ui: &mut egui::Ui, call: &ToolCall) {
                         egui::Label::new(
                             RichText::new(text)
                                 .monospace()
-                                .size(11.0)
+                                .size(crate::ui::theme::META_SIZE)
                                 .color(colors.text),
                         )
                         .selectable(true),
@@ -1338,7 +1371,7 @@ fn tool_call(ui: &mut egui::Ui, call: &ToolCall) {
                     let removed = old_text.as_deref().map_or(0, |old| old.lines().count());
                     ui.label(
                         RichText::new(format!("Edit {path}: +{added} −{removed} lines"))
-                            .size(11.0)
+                            .size(crate::ui::theme::META_SIZE)
                             .color(colors.text),
                     );
                 }
@@ -1368,7 +1401,7 @@ fn tool_call(ui: &mut egui::Ui, call: &ToolCall) {
                 egui::Label::new(
                     RichText::new(format!("$ {command}"))
                         .monospace()
-                        .size(11.0)
+                        .size(crate::ui::theme::META_SIZE)
                         .color(colors.text),
                 )
                 .selectable(true),

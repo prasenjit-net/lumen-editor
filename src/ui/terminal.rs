@@ -108,7 +108,11 @@ impl Workbench<'_> {
                         self.command(command);
                     }
                     if let Some(error) = &self.view.terminal.error {
-                        ui.label(RichText::new(error).size(11.0).color(colors.error));
+                        ui.label(
+                            RichText::new(error)
+                                .size(crate::ui::theme::META_SIZE)
+                                .color(colors.error),
+                        );
                     }
                     // The emulator owns both output and the active prompt. Keep a
                     // single fixed canvas so its scrollback cannot affect panel

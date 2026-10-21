@@ -60,11 +60,7 @@ impl Workbench<'_> {
         if !self.view.output.open {
             return;
         }
-        let font_size = self
-            .view
-            .settings
-            .number("terminal.font_size", None)
-            .min(13.0);
+        let font_size = self.view.settings.number("terminal.font_size", None);
         let font = FontId::monospace(font_size);
         let panel_divider = self.view.settings.boolean("terminal.panel_divider");
         TopBottomPanel::bottom("terminal")
@@ -72,68 +68,73 @@ impl Workbench<'_> {
             .height_range(MIN_HEIGHT..=MAX_HEIGHT)
             .resizable(true)
             .show_separator_line(panel_divider)
-            .frame(egui::Frame::default().fill(colors.panel))
+            .frame(super::widgets::canvas(ctx))
             .show(ctx, |ui| {
-                ui.set_min_height(ui.available_height());
-                let entries = self.bottom_tab_entries(super::bottom_tabs::ActiveBottom::Output);
-                let tabs = super::bottom_tabs::as_panel_tabs(&entries);
-                let actions = [
-                    HeaderAction {
-                        glyph: icon::COPY,
-                        tooltip: "Copy all output",
-                        command: Command::CopyOutput,
-                        enabled: !self.view.output.entries.is_empty(),
-                    },
-                    HeaderAction {
-                        glyph: icon::CLEAR_ALL,
-                        tooltip: "Clear output",
-                        command: Command::ClearOutput,
-                        enabled: !self.view.output.entries.is_empty(),
-                    },
-                    HeaderAction {
-                        glyph: icon::X,
-                        tooltip: "Close output",
-                        command: Command::CloseOutput,
-                        enabled: true,
-                    },
-                ];
-                if let Some(command) = tabbed_panel_header(ui, &tabs, &actions) {
-                    self.command(command);
-                }
-                let scroll_to_bottom = std::mem::take(&mut self.view.output.scroll_to_bottom);
-                egui::Frame::default()
-                    .fill(colors.bg)
-                    .corner_radius(egui::CornerRadius::same(3))
-                    .inner_margin(egui::Margin::symmetric(7, 5))
-                    .show(ui, |ui| {
-                        ScrollArea::both()
-                            .id_salt("output_log")
-                            .auto_shrink([false, false])
-                            .stick_to_bottom(true)
-                            .max_height(ui.available_height())
-                            .show(ui, |ui| {
-                                if self.view.output.entries.is_empty() {
-                                    ui.label(
-                                        egui::RichText::new("No output yet.")
-                                            .color(colors.muted)
-                                            .size(11.0),
-                                    );
-                                }
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                for entry in &self.view.output.entries {
-                                    // Wrapping off keeps one entry on one row;
-                                    // long messages scroll horizontally.
-                                    ui.add(
-                                        egui::Label::new(entry_job(entry, &font, colors))
-                                            .wrap_mode(egui::TextWrapMode::Extend)
-                                            .selectable(true),
-                                    );
-                                }
-                                if scroll_to_bottom {
-                                    ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
-                                }
-                            });
-                    });
+                super::widgets::surface(colors.panel).show(ui, |ui| {
+                    ui.set_min_size(ui.available_size());
+                    // Claim the allocated height up-front so the log cannot resize the
+                    // persisted panel.
+                    ui.set_min_height(ui.available_height());
+                    let entries = self.bottom_tab_entries(super::bottom_tabs::ActiveBottom::Output);
+                    let tabs = super::bottom_tabs::as_panel_tabs(&entries);
+                    let actions = [
+                        HeaderAction {
+                            glyph: icon::COPY,
+                            tooltip: "Copy all output",
+                            command: Command::CopyOutput,
+                            enabled: !self.view.output.entries.is_empty(),
+                        },
+                        HeaderAction {
+                            glyph: icon::CLEAR_ALL,
+                            tooltip: "Clear output",
+                            command: Command::ClearOutput,
+                            enabled: !self.view.output.entries.is_empty(),
+                        },
+                        HeaderAction {
+                            glyph: icon::X,
+                            tooltip: "Close output",
+                            command: Command::CloseOutput,
+                            enabled: true,
+                        },
+                    ];
+                    if let Some(command) = tabbed_panel_header(ui, &tabs, &actions) {
+                        self.command(command);
+                    }
+                    let scroll_to_bottom = std::mem::take(&mut self.view.output.scroll_to_bottom);
+                    egui::Frame::default()
+                        .fill(colors.bg)
+                        .corner_radius(egui::CornerRadius::same(3))
+                        .inner_margin(egui::Margin::symmetric(7, 5))
+                        .show(ui, |ui| {
+                            ScrollArea::both()
+                                .id_salt("output_log")
+                                .auto_shrink([false, false])
+                                .stick_to_bottom(true)
+                                .max_height(ui.available_height())
+                                .show(ui, |ui| {
+                                    if self.view.output.entries.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new("No output yet.")
+                                                .color(colors.muted)
+                                                .size(crate::ui::theme::META_SIZE),
+                                        );
+                                    }
+                                    ui.spacing_mut().item_spacing.y = 1.0;
+                                    for entry in &self.view.output.entries {
+                                        // Wrapping off keeps one entry on one row;
+                                        // long messages scroll horizontally.
+                                        ui.add(
+                                            egui::Label::new(entry_job(entry, &font, colors))
+                                                .wrap_mode(egui::TextWrapMode::Extend)
+                                                .selectable(true),
+                                        );
+                                    }
+                                    if scroll_to_bottom {
+                                        ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
+                                    }
+                                });
+                        });
+                });
             });
     }
 }
@@ -170,6 +171,52 @@ mod tests {
             },
             |ctx| app.render_component(ctx, |workbench| workbench.output_panel(ctx)),
         )
+    }
+
+    /// The rounded pane surface (`widgets::surface`) the bottom panel draws on.
+    fn pane_surface(output: &egui::FullOutput) -> Option<egui::Rect> {
+        fn find(shape: &egui::Shape, panel: egui::Color32) -> Option<egui::Rect> {
+            match shape {
+                egui::Shape::Rect(rect)
+                    if rect.fill == panel
+                        && rect.corner_radius == egui::CornerRadius::same(5)
+                        && rect.rect.height() > 50.0 =>
+                {
+                    Some(rect.rect)
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| find(shape, panel)),
+                _ => None,
+            }
+        }
+        let panel = crate::ui::theme::Theme::Dark.palette().panel;
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| find(&shape.shape, panel))
+    }
+
+    #[test]
+    fn output_and_problems_share_one_rounded_pane_silhouette() {
+        let mut app = LumenApp::default();
+        app.view.output.open = true;
+        let output = frame(&mut app, vec![]);
+        let output_surface = pane_surface(&output).expect("output pane is a rounded surface");
+        app.view.output.open = false;
+        app.view.problems.open = true;
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let problems = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| app.render_component(ctx, |workbench| workbench.problems_panel(ctx)),
+        );
+        let problems_surface = pane_surface(&problems).expect("problems pane is a rounded surface");
+        assert_eq!(output_surface, problems_surface);
     }
 
     fn texts(output: &egui::FullOutput) -> String {

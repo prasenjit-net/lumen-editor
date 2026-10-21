@@ -1,6 +1,9 @@
-use super::Workbench;
+use super::{
+    Workbench,
+    dialog::{Dialog, danger_button, footer},
+};
 use crate::app::{command::Command, view_state::LanguageServerStatus};
-use eframe::egui::{self, RichText, Vec2};
+use eframe::egui::{self, RichText};
 /// Escape is the dialog's safe exit. Consume it so the editor beneath, whose
 /// own Escape handling closes Find, never also reacts to the same key.
 pub(super) fn escape_pressed(ctx: &egui::Context) -> bool {
@@ -10,7 +13,7 @@ pub(super) fn escape_pressed(ctx: &egui::Context) -> bool {
 /// The suggested, non-destructive action: filled with the accent colour.
 pub(super) fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let colors = crate::ui::theme::palette(ui.visuals());
-    ui.add(egui::Button::new(RichText::new(label).color(egui::Color32::WHITE)).fill(colors.accent))
+    ui.add(egui::Button::new(RichText::new(label).color(colors.on_accent)).fill(colors.accent))
 }
 
 /// Keep keyboard focus inside the dialog, starting on its safe default so a
@@ -25,6 +28,20 @@ pub(super) fn keep_focus(
     }
 }
 
+/// The three-way answer shared by the save-before-closing prompts.
+enum Answer {
+    Save,
+    Discard,
+    Cancel,
+}
+
+enum ConflictAnswer {
+    Keep,
+    Overwrite,
+    Reload,
+    SaveAs,
+}
+
 impl Workbench<'_> {
     pub(crate) fn language_server_details_dialog(&mut self, ctx: &egui::Context) {
         let colors = crate::ui::theme::palette(&ctx.style().visuals);
@@ -37,12 +54,9 @@ impl Workbench<'_> {
             return;
         };
         let message = message.clone();
-        egui::Window::new("Language Server Error")
-            .open(&mut self.view.language_server_details_open)
-            .collapsible(false)
-            .resizable(true)
-            .default_width(640.0)
-            .default_height(320.0)
+        let dialog = Dialog::new("Language Server Error")
+            .width(640.0)
+            .non_modal(false)
             .show(ctx, |ui| {
                 ui.label(
                     RichText::new("The language server stopped. The diagnostic below is selectable and can be copied for troubleshooting.")
@@ -51,7 +65,7 @@ impl Workbench<'_> {
                 ui.add_space(6.0);
                 egui::ScrollArea::both()
                     .id_salt("language_server_error_details")
-                    .auto_shrink([false, false])
+                    .auto_shrink([false, true])
                     .max_height(260.0)
                     .show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
@@ -60,26 +74,32 @@ impl Workbench<'_> {
                                 .selectable(true),
                         );
                     });
-                ui.add_space(6.0);
-                if ui.button("Copy Error").clicked() {
-                    ui.ctx().copy_text(message.clone());
-                    self.view.status = "Language server error copied".into();
-                }
+                footer(ui, |ui| ui.button("Copy Error").clicked())
             });
+        if dialog.inner {
+            ctx.copy_text(message);
+            self.view.status = "Language server error copied".into();
+        }
+        if dialog.close_clicked {
+            self.view.language_server_details_open = false;
+        }
     }
 
     pub(crate) fn safety_details_dialog(&mut self, ctx: &egui::Context) {
         if !self.view.safety_details_open {
             return;
         }
-        egui::Window::new("Recovery and save warnings")
-            .open(&mut self.view.safety_details_open)
-            .resizable(true)
+        let dialog = Dialog::new("Recovery and save warnings")
+            .width(480.0)
+            .non_modal(false)
             .show(ctx, |ui| {
                 for notice in &self.view.safety_notices {
-                    ui.label(notice);
+                    ui.add(egui::Label::new(notice).wrap());
                 }
             });
+        if dialog.close_clicked {
+            self.view.safety_details_open = false;
+        }
     }
     pub(crate) fn save_conflict_dialog(&mut self, ctx: &egui::Context) {
         let colors = crate::ui::theme::palette(&ctx.style().visuals);
@@ -108,90 +128,126 @@ impl Workbench<'_> {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| conflict.path.display().to_string());
-        egui::Window::new("File changed on disk")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_max_width(640.0);
-                ui.add(egui::Label::new(format!(
+        let dialog = Dialog::new("File changed on disk").width(640.0).show(ctx, |ui| {
+            ui.add(
+                egui::Label::new(format!(
                     "{name} changed outside Lumen since it was opened or saved."
-                )).wrap());
-                ui.label(RichText::new("Your edits have not been overwritten.").color(colors.muted));
-                ui.label(RichText::new("Reload discards this tab's unsaved edits; Overwrite replaces the external version.").color(colors.muted));
-                if ui.button(if show_comparison { "Hide Comparison" } else { "Compare Versions" }).clicked()
-                    && let Some(conflict) = &mut self.view.save_conflict {
-                    conflict.show_comparison = !show_comparison;
-                }
-                if show_comparison {
-                    ui.horizontal_top(|ui| {
-                        ui.set_min_width(620.0);
-                        ui.vertical(|ui| {
-                            ui.label("On Disk");
-                            egui::ScrollArea::both().id_salt("conflict_disk").max_height(260.0).max_width(300.0).show(ui, |ui| {
-                                ui.set_min_width(290.0);
-                                ui.label(RichText::new(disk_text.as_deref().unwrap_or("(File missing from disk)")).monospace());
-                            });
-                        });
-                        ui.vertical(|ui| {
-                            ui.label("In Editor (unsaved)");
-                            egui::ScrollArea::both().id_salt("conflict_editor").max_height(260.0).max_width(300.0).show(ui, |ui| {
-                                ui.set_min_width(290.0);
-                                ui.label(RichText::new(&editor_text).monospace());
-                            });
-                        });
-                    });
-                }
-                ui.horizontal(|ui| {
-                    let keep = primary_button(ui, "Keep Editing");
-                    let overwrite = ui
-                        .button("Overwrite Disk File")
-                        .on_hover_text(
-                            "Replace the external version with your current editor contents",
-                        );
-                    let reload = ui.button("Reload from Disk").on_hover_text("Discard this tab's unsaved edits and open the external version");
-                    let save_as = ui.button("Save As…").on_hover_text("Keep both versions by saving editor contents to another path");
-                    keep_focus(ui.ctx(), &[&keep, &overwrite, &reload, &save_as], &keep);
-                    if keep.clicked() || escape_pressed(ui.ctx()) {
-                        self.command(Command::DismissConflict);
-                        self.view.focus_editor = true;
-                    } else if overwrite.clicked() {
-                        self.command(Command::OverwriteConflict(document));
-                    } else if reload.clicked() {
-                        self.command(Command::ReloadConflict(document));
-                    } else if save_as.clicked() {
-                        self.command(Command::SaveConflictAs(document));
-                    }
-                });
+                ))
+                .wrap(),
+            );
+            ui.label(RichText::new("Your edits have not been overwritten.").color(colors.muted));
+            ui.label(
+                RichText::new(
+                    "Reload discards this tab's unsaved edits; Overwrite replaces the external version.",
+                )
+                .color(colors.muted),
+            );
+            let toggle = ui.button(if show_comparison {
+                "Hide Comparison"
+            } else {
+                "Compare Versions"
             });
+            if toggle.clicked()
+                && let Some(conflict) = &mut self.view.save_conflict
+            {
+                conflict.show_comparison = !show_comparison;
+            }
+            if show_comparison {
+                ui.columns(2, |columns| {
+                    columns[0].label("On Disk");
+                    egui::ScrollArea::both()
+                        .id_salt("conflict_disk")
+                        .max_height(260.0)
+                        .show(&mut columns[0], |ui| {
+                            ui.label(
+                                RichText::new(
+                                    disk_text.as_deref().unwrap_or("(File missing from disk)"),
+                                )
+                                .monospace(),
+                            );
+                        });
+                    columns[1].label("In Editor (unsaved)");
+                    egui::ScrollArea::both()
+                        .id_salt("conflict_editor")
+                        .max_height(260.0)
+                        .show(&mut columns[1], |ui| {
+                            ui.label(RichText::new(&editor_text).monospace());
+                        });
+                });
+            }
+            footer(ui, |ui| {
+                let keep = primary_button(ui, "Keep Editing");
+                let save_as = ui
+                    .button("Save As…")
+                    .on_hover_text("Keep both versions by saving editor contents to another path");
+                let reload = ui
+                    .button("Reload from Disk")
+                    .on_hover_text("Discard this tab's unsaved edits and open the external version");
+                let overwrite = ui
+                    .button("Overwrite Disk File")
+                    .on_hover_text("Replace the external version with your current editor contents");
+                keep_focus(ui.ctx(), &[&keep, &overwrite, &reload, &save_as], &keep);
+                if keep.clicked() || escape_pressed(ui.ctx()) {
+                    Some(ConflictAnswer::Keep)
+                } else if overwrite.clicked() {
+                    Some(ConflictAnswer::Overwrite)
+                } else if reload.clicked() {
+                    Some(ConflictAnswer::Reload)
+                } else if save_as.clicked() {
+                    Some(ConflictAnswer::SaveAs)
+                } else {
+                    None
+                }
+            })
+        });
+        match dialog
+            .inner
+            .or(dialog.close_clicked.then_some(ConflictAnswer::Keep))
+        {
+            Some(ConflictAnswer::Keep) => {
+                self.command(Command::DismissConflict);
+                self.view.focus_editor = true;
+            }
+            Some(ConflictAnswer::Overwrite) => self.command(Command::OverwriteConflict(document)),
+            Some(ConflictAnswer::Reload) => self.command(Command::ReloadConflict(document)),
+            Some(ConflictAnswer::SaveAs) => self.command(Command::SaveConflictAs(document)),
+            None => {}
+        }
     }
     pub(crate) fn quit_dialog(&mut self, ctx: &egui::Context) {
         if !self.view.pending_quit {
             return;
         }
-        egui::Window::new("Save changes before quitting?")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_max_width(420.0);
-                ui.label("There are unsaved changes in your open files.");
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    let save = primary_button(ui, "Save All");
-                    let discard = ui.button("Don't Save");
-                    let cancel = ui.button("Cancel");
-                    keep_focus(ui.ctx(), &[&save, &discard, &cancel], &save);
-                    if save.clicked() {
-                        self.command(Command::SaveAllAndQuit);
-                    } else if discard.clicked() {
-                        self.command(Command::DiscardAndQuit);
-                    } else if cancel.clicked() || escape_pressed(ui.ctx()) {
-                        self.view.pending_quit = false;
-                        self.view.focus_editor = true;
-                    }
-                });
-            });
+        let dialog = Dialog::new("Save changes before quitting?").show(ctx, |ui| {
+            ui.label("There are unsaved changes in your open files.");
+            footer(ui, |ui| {
+                let save = primary_button(ui, "Save All");
+                let cancel = ui.button("Cancel");
+                let discard = ui.button("Don't Save");
+                keep_focus(ui.ctx(), &[&save, &discard, &cancel], &save);
+                if save.clicked() {
+                    Some(Answer::Save)
+                } else if discard.clicked() {
+                    Some(Answer::Discard)
+                } else if cancel.clicked() || escape_pressed(ui.ctx()) {
+                    Some(Answer::Cancel)
+                } else {
+                    None
+                }
+            })
+        });
+        match dialog
+            .inner
+            .or(dialog.close_clicked.then_some(Answer::Cancel))
+        {
+            Some(Answer::Save) => self.command(Command::SaveAllAndQuit),
+            Some(Answer::Discard) => self.command(Command::DiscardAndQuit),
+            Some(Answer::Cancel) => {
+                self.view.pending_quit = false;
+                self.view.focus_editor = true;
+            }
+            None => {}
+        }
     }
 
     /// Confirmation before a task definition is removed from its tasks file.
@@ -205,51 +261,50 @@ impl Workbench<'_> {
             return;
         };
         let dependents = self.view.tasks.dependents(&key);
-        egui::Window::new("Delete task definition")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_max_width(420.0);
+        let dialog = Dialog::new("Delete task definition").show(ctx, |ui| {
+            ui.add(
+                egui::Label::new(format!(
+                    "Delete the {} task '{label}' from its tasks file?",
+                    key.scope.label().to_lowercase()
+                ))
+                .wrap(),
+            );
+            ui.label(RichText::new("Files the task produced are not touched.").color(colors.muted));
+            if !dependents.is_empty() {
+                ui.add_space(4.0);
+                let names: Vec<String> = dependents
+                    .iter()
+                    .map(|dependent| dependent.id.clone())
+                    .collect();
                 ui.add(
-                    egui::Label::new(format!(
-                        "Delete the {} task '{label}' from its tasks file?",
-                        key.scope.label().to_lowercase()
-                    ))
+                    egui::Label::new(
+                        RichText::new(format!(
+                            "These tasks depend on it and will stop validating: {}",
+                            names.join(", ")
+                        ))
+                        .color(colors.error),
+                    )
                     .wrap(),
                 );
-                ui.label(
-                    RichText::new("Files the task produced are not touched.").color(colors.muted),
-                );
-                if !dependents.is_empty() {
-                    ui.add_space(4.0);
-                    let names: Vec<String> = dependents
-                        .iter()
-                        .map(|dependent| dependent.id.clone())
-                        .collect();
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(format!(
-                                "These tasks depend on it and will stop validating: {}",
-                                names.join(", ")
-                            ))
-                            .color(colors.error),
-                        )
-                        .wrap(),
-                    );
+            }
+            footer(ui, |ui| {
+                let delete = danger_button(ui, "Delete");
+                let cancel = ui.button("Cancel");
+                keep_focus(ui.ctx(), &[&delete, &cancel], &cancel);
+                if delete.clicked() {
+                    Some(true)
+                } else if cancel.clicked() || escape_pressed(ui.ctx()) {
+                    Some(false)
+                } else {
+                    None
                 }
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    let delete = primary_button(ui, "Delete");
-                    let cancel = ui.button("Cancel");
-                    keep_focus(ui.ctx(), &[&delete, &cancel], &cancel);
-                    if delete.clicked() {
-                        self.command(Command::ConfirmDeleteTask(key.clone()));
-                    } else if cancel.clicked() || escape_pressed(ui.ctx()) {
-                        self.command(Command::CancelDeleteTask);
-                    }
-                });
-            });
+            })
+        });
+        match dialog.inner.or(dialog.close_clicked.then_some(false)) {
+            Some(true) => self.command(Command::ConfirmDeleteTask(key)),
+            Some(false) => self.command(Command::CancelDeleteTask),
+            None => {}
+        }
     }
 
     /// Save / Don't Save / Cancel for a task editor with unsaved edits.
@@ -262,31 +317,36 @@ impl Workbench<'_> {
             self.view.task_close_prompt = None;
             return;
         };
-        egui::Window::new("Unsaved task changes")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_max_width(420.0);
-                ui.add(egui::Label::new(format!("Save changes to task '{title}'?")).wrap());
-                ui.label(
-                    RichText::new("Your edits will be lost if you don't save.").color(colors.muted),
-                );
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    let save = primary_button(ui, "Save");
-                    let discard = ui.button("Don't Save");
-                    let cancel = ui.button("Cancel");
-                    keep_focus(ui.ctx(), &[&save, &discard, &cancel], &save);
-                    if save.clicked() {
-                        self.command(Command::SaveAndCloseTaskEditor(id));
-                    } else if discard.clicked() {
-                        self.command(Command::DiscardTaskEditor(id));
-                    } else if cancel.clicked() || escape_pressed(ui.ctx()) {
-                        self.command(Command::CancelTaskEditorClose);
-                    }
-                });
-            });
+        let dialog = Dialog::new("Unsaved task changes").show(ctx, |ui| {
+            ui.add(egui::Label::new(format!("Save changes to task '{title}'?")).wrap());
+            ui.label(
+                RichText::new("Your edits will be lost if you don't save.").color(colors.muted),
+            );
+            footer(ui, |ui| {
+                let save = primary_button(ui, "Save");
+                let cancel = ui.button("Cancel");
+                let discard = ui.button("Don't Save");
+                keep_focus(ui.ctx(), &[&save, &discard, &cancel], &save);
+                if save.clicked() {
+                    Some(Answer::Save)
+                } else if discard.clicked() {
+                    Some(Answer::Discard)
+                } else if cancel.clicked() || escape_pressed(ui.ctx()) {
+                    Some(Answer::Cancel)
+                } else {
+                    None
+                }
+            })
+        });
+        match dialog
+            .inner
+            .or(dialog.close_clicked.then_some(Answer::Cancel))
+        {
+            Some(Answer::Save) => self.command(Command::SaveAndCloseTaskEditor(id)),
+            Some(Answer::Discard) => self.command(Command::DiscardTaskEditor(id)),
+            Some(Answer::Cancel) => self.command(Command::CancelTaskEditorClose),
+            None => {}
+        }
     }
 
     pub(crate) fn unsaved_changes_dialog(&mut self, ctx: &egui::Context) {
@@ -303,33 +363,42 @@ impl Workbench<'_> {
             self.view.pending_close = None;
             return;
         };
-        egui::Window::new("Unsaved changes")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_max_width(420.0);
-                ui.add(egui::Label::new(format!("Save changes to {name}?")).wrap());
-                ui.label(
-                    RichText::new("Your edits will be lost if you don't save.").color(colors.muted),
-                );
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    let save = primary_button(ui, "Save");
-                    let discard = ui.button("Don't Save");
-                    let cancel = ui.button("Cancel");
-                    keep_focus(ui.ctx(), &[&save, &discard, &cancel], &save);
-                    if save.clicked() {
-                        self.command(Command::SaveAndClose(id));
-                    } else if discard.clicked() {
-                        self.view.pending_close = None;
-                        self.command(Command::CloseFile(id));
-                    } else if cancel.clicked() || escape_pressed(ui.ctx()) {
-                        self.view.pending_close = None;
-                        self.view.focus_editor = true;
-                    }
-                });
-            });
+        let dialog = Dialog::new("Unsaved changes").show(ctx, |ui| {
+            ui.add(egui::Label::new(format!("Save changes to {name}?")).wrap());
+            ui.label(
+                RichText::new("Your edits will be lost if you don't save.").color(colors.muted),
+            );
+            footer(ui, |ui| {
+                let save = primary_button(ui, "Save");
+                let cancel = ui.button("Cancel");
+                let discard = ui.button("Don't Save");
+                keep_focus(ui.ctx(), &[&save, &discard, &cancel], &save);
+                if save.clicked() {
+                    Some(Answer::Save)
+                } else if discard.clicked() {
+                    Some(Answer::Discard)
+                } else if cancel.clicked() || escape_pressed(ui.ctx()) {
+                    Some(Answer::Cancel)
+                } else {
+                    None
+                }
+            })
+        });
+        let answer = dialog
+            .inner
+            .or(dialog.close_clicked.then_some(Answer::Cancel));
+        match answer {
+            Some(Answer::Save) => self.command(Command::SaveAndClose(id)),
+            Some(Answer::Discard) => {
+                self.view.pending_close = None;
+                self.command(Command::CloseFile(id));
+            }
+            Some(Answer::Cancel) => {
+                self.view.pending_close = None;
+                self.view.focus_editor = true;
+            }
+            None => {}
+        }
     }
 }
 
