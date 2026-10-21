@@ -4,7 +4,7 @@
 //! number of frames to let the layout settle, default 20) and launch Lumen on a
 //! disposable folder, e.g. `LUMEN_CAPTURE=/tmp/a.png lumen-editor /tmp/fixture`.
 //! `LUMEN_CAPTURE_COMMANDS=settings,theme_light,palette` runs those commands first,
-//! one per frame (menu ids plus `problems`, `agents`, `bottom`; `text:abc` types
+//! one per frame (menu ids plus `problems`, `agents`, `bottom`, `chat`; `text:abc` types
 //! `abc` into whatever has focus, e.g. the palette's search box). The window is
 //! captured once, written as a PNG, and the app exits. Never point it
 //! at a real workspace or profile: the capture shows whatever is on screen.
@@ -117,20 +117,32 @@ fn command_named(name: &str) -> Option<Step> {
         "problems" => Some(Command::ToggleProblems),
         "agents" => Some(Command::ToggleAgentPanel),
         "bottom" => Some(Command::ToggleBottomPanel),
+        "chat" => Some(Command::NativeNewSession(
+            lumen_agent_core::ProviderId::Codex,
+        )),
         other => Command::from_menu_id(other),
     }
     .map(Step::Command)
 }
 
+/// Writes beside the target and renames, so a script waiting for the file never
+/// reads a half-written PNG.
 fn save_png(path: &Path, image: &egui::ColorImage) -> Result<(), String> {
-    image::save_buffer(
-        path,
+    let mut partial = path.as_os_str().to_owned();
+    partial.push(".partial");
+    let partial = PathBuf::from(partial);
+    let fail =
+        |error: &dyn std::fmt::Display| format!("Could not write {}: {error}", path.display());
+    image::save_buffer_with_format(
+        &partial,
         image.as_raw(),
         image.size[0] as u32,
         image.size[1] as u32,
         image::ColorType::Rgba8,
+        image::ImageFormat::Png,
     )
-    .map_err(|error| format!("Could not write {}: {error}", path.display()))
+    .map_err(|error| fail(&error))?;
+    std::fs::rename(&partial, path).map_err(|error| fail(&error))
 }
 
 #[cfg(test)]
@@ -143,6 +155,7 @@ mod tests {
         let path = dir.path().join("shot.png");
         let image = egui::ColorImage::new([3, 2], vec![egui::Color32::from_rgb(10, 20, 30); 6]);
         save_png(&path, &image).unwrap();
+        assert!(!dir.path().join("shot.png.partial").exists());
         let read = image::open(&path).unwrap().to_rgba8();
         assert_eq!((read.width(), read.height()), (3, 2));
         assert_eq!(read.get_pixel(1, 1).0, [10, 20, 30, 255]);
