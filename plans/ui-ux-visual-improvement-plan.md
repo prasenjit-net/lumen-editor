@@ -263,14 +263,14 @@ Either way, keep fixture content in the repository (a small workspace with long 
 
 ## Implementation status
 
-Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements` (#31) ← `f-ui-dialogs` (#32) ← `f-ui-narrow-layouts` (#33) ← `f-ui-settings`.
+Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements` (#31) ← `f-ui-dialogs` (#32) ← `f-ui-narrow-layouts` (#33) ← `f-ui-settings` (#34) ← `f-ui-chat`.
 
 | Item | Status |
 | --- | --- |
 | 1 Filled-control contrast | Done: `on_accent`, `title_muted`, `danger`/`on_danger` roles with a contrast test in all themes |
 | 3 Bottom-pane boundaries | Done for Output, task output, Problems (Terminal already matched) |
 | 4 Explorer badges | Done: badge column, ellipsized names, spoken status |
-| 7 Chat | Partly: Send/Queue wording, accent fill, 3 px radii. Header budgeting and approval card pending |
+| 7 Chat | Done except session-list row painting: Send/Queue wording, accent fill, 3 px radii, status-first header with a truncating title and clipped folder line, provider as a quiet label, approval card as a warning-edge panel |
 | 9 Naming and focus | Partly: task launcher, Settings gear, disabled header tooltips. Keyboard-order audit pending |
 | 10/12 small fixes | Done: platform commit hint, "New Text File", log font cap removed |
 | 12 Shared dialogs | In progress: `ui/dialog.rs` (title strip, close, footer, scrim, danger button). Migrated: document, quit, task, conflict, language-server error, safety, Explorer delete, unapplied settings, workspace replace confirmation, Git abort and revert. Pending: Git branch/clone/tags/stash/history forms, rename and language-edit review, workspace replace preview (resizable review), empty-state pattern |

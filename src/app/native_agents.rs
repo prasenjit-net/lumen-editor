@@ -518,6 +518,48 @@ mod tests {
     }
 
     #[test]
+    fn a_long_chat_title_gives_way_to_the_status_in_a_narrow_group() {
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        let id = app.view.chats.active().unwrap();
+        app.view.chats.draft_mut(id).push_str(
+            "approve: please review every file in the workspace and explain the layout in detail",
+        );
+        app.execute(Command::ChatSend(id), &ctx);
+        settle(&mut app, &ctx);
+        app.view.agents.open = false;
+        let width = 340.0_f32;
+        frame(&mut app, &ctx, width);
+        let output = frame(&mut app, &ctx, width);
+        let rects_of = |needle: &str| {
+            output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    // Right-aligned galleys extend left of their anchor.
+                    egui::Shape::Text(text) if text.galley.job.text.contains(needle) => {
+                        Some(text.galley.rect.translate(text.pos.to_vec2()))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let status = rects_of("Needs your answer")[0];
+        // The tab strip repeats the title; the header's copy shares the status row.
+        let title = rects_of("approve: please")
+            .into_iter()
+            .find(|rect| (rect.center().y - status.center().y).abs() < 6.0)
+            .expect("chat title in the header row");
+        assert!(status.right() <= width, "status stays inside the window");
+        assert!(
+            title.right() <= status.left() + 1.0,
+            "title ends at {} but status starts at {}",
+            title.right(),
+            status.left()
+        );
+    }
+
+    #[test]
     fn messages_are_told_apart_and_permissions_and_working_state_are_clear() {
         let (mut app, ctx) = fixture();
         app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);

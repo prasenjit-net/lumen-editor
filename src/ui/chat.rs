@@ -207,33 +207,43 @@ fn chat_header(
         .inner_margin(Margin::symmetric(GUTTER as i8, 7))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                provider_pill(ui, provider.label(), accent);
-                ui.add(
-                    egui::Label::new(RichText::new(title).size(13.0).strong().color(colors.text))
-                        .truncate(),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Status is placed first at the right edge; the provider and title share
+            // what is left and the title is the part that gives way.
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), 20.0),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
                     status_chip(ui, status, colors);
-                });
-            });
-            ui.label(
-                RichText::new(folder.display().to_string())
-                    .size(10.5)
-                    .color(colors.muted),
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        provider_pill(ui, provider.label(), accent);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(title).size(13.0).strong().color(colors.text),
+                            )
+                            .truncate(),
+                        );
+                    });
+                },
+            );
+            ui.add(
+                egui::Label::new(
+                    RichText::new(folder.display().to_string())
+                        .size(10.5)
+                        .color(colors.muted),
+                )
+                .truncate(),
             );
         });
 }
 
 /// Small rounded label tinted with the provider colour.
 fn provider_pill(ui: &mut egui::Ui, label: &str, accent: Color32) {
-    Frame::default()
-        .fill(accent.gamma_multiply(0.18))
-        .corner_radius(8)
-        .inner_margin(Margin::symmetric(8, 1))
-        .show(ui, |ui| {
-            ui.label(RichText::new(label).size(10.5).color(accent));
-        });
+    ui.label(
+        RichText::new(label.to_uppercase())
+            .size(10.5)
+            .strong()
+            .color(accent),
+    );
 }
 
 fn status_chip(ui: &mut egui::Ui, status: &SessionStatus, colors: &theme::Palette) {
@@ -482,11 +492,16 @@ fn approval_card(
     colors: &theme::Palette,
     commands: &mut Vec<Command>,
 ) {
-    Frame::default()
-        .fill(colors.warning.gamma_multiply(0.10))
-        .stroke(egui::Stroke::new(1.0_f32, colors.warning))
+    // A warning edge marks the request; the rest of the card stays a quiet panel.
+    let card = Frame::default()
+        .fill(colors.panel)
         .corner_radius(3)
-        .inner_margin(Margin::symmetric(12, 9))
+        .inner_margin(Margin {
+            left: 14,
+            right: 12,
+            top: 9,
+            bottom: 9,
+        })
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -558,6 +573,20 @@ fn approval_card(
                 }
             });
         });
+    let rect = card.response.rect;
+    ui.painter().rect_filled(
+        egui::Rect::from_min_max(
+            rect.left_top(),
+            egui::pos2(rect.left() + 3.0, rect.bottom()),
+        ),
+        egui::CornerRadius {
+            nw: 3,
+            sw: 3,
+            ne: 0,
+            se: 0,
+        },
+        colors.warning,
+    );
 }
 
 /// "Working…" with animated dots, or why the turn has not started.
