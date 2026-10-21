@@ -919,7 +919,7 @@ impl Workbench<'_> {
             colors.input
         };
         let text_color = if can_commit {
-            egui::Color32::WHITE
+            colors.on_accent
         } else {
             colors.muted
         };

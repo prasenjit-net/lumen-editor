@@ -130,7 +130,7 @@ impl Workbench<'_> {
                             SessionStatus::Working | SessionStatus::NeedsAttention
                         );
                         let draft = self.view.chats.draft_mut(id);
-                        composer(ui, id, draft, busy, accent, &mut commands);
+                        composer(ui, id, draft, busy, &mut commands);
                     });
                 });
             });
@@ -539,7 +539,7 @@ fn approval_card(
                 for choice in &request.choices {
                     let label = RichText::new(&choice.label).size(11.5);
                     let button = if choice.allows {
-                        egui::Button::new(label.color(Color32::WHITE)).fill(colors.accent)
+                        egui::Button::new(label.color(colors.on_accent)).fill(colors.accent)
                     } else {
                         egui::Button::new(label.color(colors.text))
                     };
@@ -649,7 +649,6 @@ fn composer(
     id: SessionId,
     draft: &mut String,
     busy: bool,
-    accent: Color32,
     commands: &mut Vec<Command>,
 ) {
     let colors = theme::palette(ui.visuals());
@@ -702,12 +701,16 @@ fn composer(
                         RichText::new(format!("{}  Send", icon::SEND))
                             .size(12.0)
                             .color(if can_send {
-                                Color32::WHITE
+                                colors.on_accent
                             } else {
                                 colors.muted
                             }),
                     )
-                    .fill(if can_send { accent } else { colors.panel })
+                    .fill(if can_send {
+                        colors.accent
+                    } else {
+                        colors.panel
+                    })
                     .corner_radius(6);
                     if ui
                         .add_enabled(can_send, send)

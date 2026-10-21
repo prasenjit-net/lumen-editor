@@ -22,6 +22,12 @@ pub(crate) struct Palette {
     /// Edge of surfaces that float above the workbench (popups, dialogs, menus).
     pub(crate) float_border: Color32,
     pub(crate) accent: Color32,
+    /// Text on a control filled with `accent` (white on blue, black on the
+    /// high-contrast yellow); pair them, never reach for plain white.
+    pub(crate) on_accent: Color32,
+    /// Secondary text on the title strip, lighter than `muted` where the strip
+    /// is darker than an ordinary panel.
+    pub(crate) title_muted: Color32,
     pub(crate) hover: Color32,
     pub(crate) input: Color32,
     pub(crate) diff_removed_bg: Color32,
@@ -70,6 +76,8 @@ impl Theme {
             border: Color32::from_rgb(43, 43, 43),
             float_border: Color32::from_rgb(69, 69, 69),
             accent: Color32::from_rgb(0, 122, 204),
+            on_accent: Color32::WHITE,
+            title_muted: Color32::from_gray(168),
             hover: Color32::from_rgb(43, 43, 43),
             input: Color32::from_rgb(49, 49, 49),
             diff_removed_bg: Color32::from_rgb(64, 37, 37),
@@ -103,6 +111,7 @@ impl Theme {
                 hover: Color32::from_gray(224),
                 active: Color32::from_rgb(190, 220, 245),
                 accent: Color32::from_rgb(0, 95, 160),
+                title_muted: Color32::from_gray(96),
                 error: Color32::from_rgb(165, 25, 25),
                 warning: Color32::from_rgb(125, 88, 0),
                 success: Color32::from_rgb(0, 112, 64),
@@ -132,6 +141,8 @@ impl Theme {
                 hover: Color32::from_gray(55),
                 active: Color32::from_rgb(0, 65, 100),
                 accent: Color32::YELLOW,
+                on_accent: Color32::BLACK,
+                title_muted: Color32::from_gray(220),
                 error: Color32::from_rgb(255, 120, 120),
                 warning: Color32::YELLOW,
                 success: Color32::GREEN,
@@ -261,6 +272,30 @@ mod tests {
                 );
             }
             assert_eq!(current(&visuals(theme)), theme);
+        }
+    }
+
+    #[test]
+    fn action_and_title_strip_text_meet_the_contrast_target_in_every_theme() {
+        for theme in [Theme::Dark, Theme::Light, Theme::HighContrast] {
+            let colors = theme.palette();
+            let pairs = [
+                ("action text on accent", colors.on_accent, colors.accent),
+                ("muted on panel", colors.muted, colors.panel),
+                ("secondary on title strip", colors.title_muted, colors.title),
+                ("primary on title strip", colors.text, colors.title),
+            ];
+            for (name, foreground, background) in pairs {
+                let ratio = contrast(foreground, background);
+                assert!(ratio >= 4.5, "{theme:?}: {name} is {ratio:.2}:1");
+            }
+            for (name, glyph) in [("success", colors.success), ("error", colors.error)] {
+                let ratio = contrast(glyph, colors.title);
+                assert!(
+                    ratio >= 3.0,
+                    "{theme:?}: {name} glyph on title is {ratio:.2}:1"
+                );
+            }
         }
     }
 

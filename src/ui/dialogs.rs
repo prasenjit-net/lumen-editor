@@ -10,7 +10,7 @@ pub(super) fn escape_pressed(ctx: &egui::Context) -> bool {
 /// The suggested, non-destructive action: filled with the accent colour.
 pub(super) fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let colors = crate::ui::theme::palette(ui.visuals());
-    ui.add(egui::Button::new(RichText::new(label).color(egui::Color32::WHITE)).fill(colors.accent))
+    ui.add(egui::Button::new(RichText::new(label).color(colors.on_accent)).fill(colors.accent))
 }
 
 /// Keep keyboard focus inside the dialog, starting on its safe default so a

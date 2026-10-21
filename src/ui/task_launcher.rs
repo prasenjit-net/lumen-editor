@@ -56,7 +56,7 @@ impl Workbench<'_> {
                         egui::Button::new(RichText::new(glyph).size(14.0).color(if shown {
                             colors.text
                         } else {
-                            colors.muted
+                            colors.title_muted
                         }))
                         .fill(egui::Color32::TRANSPARENT)
                         .stroke(egui::Stroke::NONE)
@@ -148,7 +148,7 @@ impl Workbench<'_> {
                     .color(if selected_label.is_some() {
                         colors.text
                     } else {
-                        colors.muted
+                        colors.title_muted
                     }),
                 |ui| {
                     ui.set_max_width(260.0);
