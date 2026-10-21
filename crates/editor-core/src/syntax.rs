@@ -740,6 +740,50 @@ mod tests {
         );
     }
     #[test]
+    fn javascript_and_typescript_extensions_resolve_to_javascript() {
+        for ext in ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"] {
+            let path = format!("module.{ext}");
+            assert_eq!(
+                Language::from_path(Path::new(&path)),
+                Language::JavaScript,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn esm_and_commonjs_fixtures_highlight_keywords_strings_and_comments() {
+        let esm = "import fs from 'node:fs'; // load\nexport default await fs.read(import.meta.url);\nconst t = `a${1}`;";
+        let cjs = "const x = require(\"x\");\nmodule.exports = { x }; /* done */";
+        for (source, keyword, string, comment) in [
+            (esm, "import", "'node:fs'", "// load"),
+            (cjs, "const", "\"x\"", "/* done */"),
+        ] {
+            let spans = highlight(source, Language::JavaScript);
+            for (token, kind) in [
+                (keyword, Kind::Keyword),
+                (string, Kind::String),
+                (comment, Kind::Comment),
+            ] {
+                assert!(
+                    spans
+                        .iter()
+                        .any(|s| &source[s.range.clone()] == token && s.kind == kind),
+                    "missing {token} as {kind:?}"
+                );
+            }
+        }
+        let spans = highlight(esm, Language::JavaScript);
+        for token in ["export", "default", "await"] {
+            assert!(
+                spans
+                    .iter()
+                    .any(|s| &esm[s.range.clone()] == token && s.kind == Kind::Keyword)
+            );
+        }
+    }
+
+    #[test]
     fn file_language_is_typed_and_unknown_files_remain_plain() {
         assert_eq!(
             Language::from_path(Path::new("src/main.rs")),
