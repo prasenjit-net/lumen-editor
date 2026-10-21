@@ -7,7 +7,7 @@ use crate::{app::command::Command, icon};
 use eframe::egui::{self, RichText, ScrollArea, TopBottomPanel};
 use lumen_language_services::diagnostics::DiagnosticSeverity;
 
-const DEFAULT_HEIGHT: f32 = 210.0;
+const DEFAULT_HEIGHT: f32 = 220.0;
 
 /// Where a problem points: an open document's range (from a language server), or
 /// a file location printed by a task, which may not be open.

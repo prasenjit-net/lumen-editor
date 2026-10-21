@@ -75,90 +75,95 @@ impl Workbench<'_> {
             .height_range(MIN_HEIGHT..=MAX_HEIGHT)
             .resizable(true)
             .show_separator_line(panel_divider)
-            .frame(egui::Frame::default().fill(colors.panel))
+            .frame(super::widgets::canvas(ctx))
             .show(ctx, |ui| {
-                ui.set_min_height(ui.available_height());
-                let tabs = as_panel_tabs(&entries);
-                let actions = [
-                    HeaderAction {
-                        glyph: icon::STOP,
-                        tooltip: "Stop task",
-                        command: Command::StopTaskRun(run_id),
-                        enabled: active
-                            && !matches!(
-                                self.view.task_runs.get(run_id).map(|run| &run.state),
-                                Some(RunState::Stopping)
-                            ),
-                    },
-                    HeaderAction {
-                        glyph: icon::REFRESH,
-                        tooltip: "Restart task",
-                        command: Command::RestartTaskRun(run_id),
-                        enabled: true,
-                    },
-                    HeaderAction {
-                        glyph: icon::CLEAR_ALL,
-                        tooltip: "Clear this view (the task keeps running)",
-                        command: Command::ClearTaskOutput(run_id),
-                        enabled: has_output,
-                    },
-                    HeaderAction {
-                        glyph: icon::COPY,
-                        tooltip: "Copy output",
-                        command: Command::CopyTaskOutput(run_id),
-                        enabled: has_output,
-                    },
-                    HeaderAction {
-                        glyph: icon::FLOPPY_DISK,
-                        tooltip: "Save output to a file (what Lumen retained)",
-                        command: Command::SaveTaskOutput(run_id),
-                        enabled: has_output,
-                    },
-                    HeaderAction {
-                        glyph: icon::X,
-                        tooltip: "Close this task tab",
-                        command: Command::CloseTaskRun(run_id),
-                        enabled: true,
-                    },
-                    HeaderAction {
-                        glyph: icon::CARET_DOWN,
-                        tooltip: "Hide panel (tasks keep running)",
-                        command: Command::HideTaskPanel,
-                        enabled: true,
-                    },
-                ];
-                if let Some(command) = tabbed_panel_header(ui, &tabs, &actions) {
-                    commands.push(command);
-                }
-                let Some(run) = self.view.task_runs.get(run_id) else {
-                    return;
-                };
-                ui.horizontal(|ui| {
-                    ui.add_space(10.0);
-                    let color = match run.outcome() {
-                        Some(outcome) if outcome.is_success() => colors.success,
-                        Some(RunOutcome::Cancelled) => colors.muted,
-                        Some(_) => colors.error,
-                        None => colors.text,
+                super::widgets::surface(colors.panel).show(ui, |ui| {
+                    ui.set_min_size(ui.available_size());
+                    // Claim the allocated height up-front so the log cannot resize the
+                    // persisted panel.
+                    ui.set_min_height(ui.available_height());
+                    let tabs = as_panel_tabs(&entries);
+                    let actions = [
+                        HeaderAction {
+                            glyph: icon::STOP,
+                            tooltip: "Stop task",
+                            command: Command::StopTaskRun(run_id),
+                            enabled: active
+                                && !matches!(
+                                    self.view.task_runs.get(run_id).map(|run| &run.state),
+                                    Some(RunState::Stopping)
+                                ),
+                        },
+                        HeaderAction {
+                            glyph: icon::REFRESH,
+                            tooltip: "Restart task",
+                            command: Command::RestartTaskRun(run_id),
+                            enabled: true,
+                        },
+                        HeaderAction {
+                            glyph: icon::CLEAR_ALL,
+                            tooltip: "Clear this view (the task keeps running)",
+                            command: Command::ClearTaskOutput(run_id),
+                            enabled: has_output,
+                        },
+                        HeaderAction {
+                            glyph: icon::COPY,
+                            tooltip: "Copy output",
+                            command: Command::CopyTaskOutput(run_id),
+                            enabled: has_output,
+                        },
+                        HeaderAction {
+                            glyph: icon::FLOPPY_DISK,
+                            tooltip: "Save output to a file (what Lumen retained)",
+                            command: Command::SaveTaskOutput(run_id),
+                            enabled: has_output,
+                        },
+                        HeaderAction {
+                            glyph: icon::X,
+                            tooltip: "Close this task tab",
+                            command: Command::CloseTaskRun(run_id),
+                            enabled: true,
+                        },
+                        HeaderAction {
+                            glyph: icon::CARET_DOWN,
+                            tooltip: "Hide panel (tasks keep running)",
+                            command: Command::HideTaskPanel,
+                            enabled: true,
+                        },
+                    ];
+                    if let Some(command) = tabbed_panel_header(ui, &tabs, &actions) {
+                        commands.push(command);
+                    }
+                    let Some(run) = self.view.task_runs.get(run_id) else {
+                        return;
                     };
-                    ui.label(RichText::new(status_text(run, now)).size(11.0).color(color));
-                    ui.label(
-                        RichText::new(run.command_line.clone())
-                            .size(11.0)
-                            .color(colors.muted),
-                    );
-                });
-                egui::Frame::default()
-                    .fill(colors.bg)
-                    .corner_radius(egui::CornerRadius::same(3))
-                    .inner_margin(egui::Margin::symmetric(7, 5))
-                    .show(ui, |ui| {
-                        if run.is_pty() {
-                            pty_view(ui, ctx, run, &style, &mut commands, focus_request);
-                        } else {
-                            log_view(ui, run, &font, &colors, run_id);
-                        }
+                    ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+                        let color = match run.outcome() {
+                            Some(outcome) if outcome.is_success() => colors.success,
+                            Some(RunOutcome::Cancelled) => colors.muted,
+                            Some(_) => colors.error,
+                            None => colors.text,
+                        };
+                        ui.label(RichText::new(status_text(run, now)).size(11.0).color(color));
+                        ui.label(
+                            RichText::new(run.command_line.clone())
+                                .size(11.0)
+                                .color(colors.muted),
+                        );
                     });
+                    egui::Frame::default()
+                        .fill(colors.bg)
+                        .corner_radius(egui::CornerRadius::same(3))
+                        .inner_margin(egui::Margin::symmetric(7, 5))
+                        .show(ui, |ui| {
+                            if run.is_pty() {
+                                pty_view(ui, ctx, run, &style, &mut commands, focus_request);
+                            } else {
+                                log_view(ui, run, &font, &colors, run_id);
+                            }
+                        });
+                });
             });
         for command in commands {
             self.command(command);
