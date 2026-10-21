@@ -1131,112 +1131,132 @@ impl Workbench<'_> {
             return;
         };
         let mut actions: Vec<Command> = Vec::new();
-        let modal = egui::Modal::new(egui::Id::new("git_history_op_dialog")).show(ctx, |ui| {
-            ui.set_width(460.0);
-            ui.heading(&dialog.title);
-            ui.add_space(4.0);
-            match &dialog.action {
-                HistoryAction::Merge { no_ff, .. } => {
-                    let mut value = *no_ff;
-                    if ui
-                        .checkbox(&mut value, "Always create a merge commit")
-                        .changed()
-                    {
-                        actions.push(Command::SetHistoryOption(HistoryOption::NoFastForward(
-                            value,
-                        )));
-                    }
-                }
-                HistoryAction::Reset { mode, backup, .. } => {
-                    ui.horizontal(|ui| {
-                        for (label, value) in [
-                            ("Soft", ResetMode::Soft),
-                            ("Mixed", ResetMode::Mixed),
-                            ("Hard", ResetMode::Hard),
-                        ] {
-                            if ui.selectable_label(*mode == value, label).clicked()
-                                && *mode != value
-                            {
-                                actions.push(Command::SetHistoryOption(HistoryOption::ResetMode(
-                                    value,
-                                )));
-                            }
+        let modal = super::dialog::Dialog::new(dialog.title.clone())
+            .width(460.0)
+            .show(ctx, |ui| {
+                ui.add_space(4.0);
+                match &dialog.action {
+                    HistoryAction::Merge { no_ff, .. } => {
+                        let mut value = *no_ff;
+                        if ui
+                            .checkbox(&mut value, "Always create a merge commit")
+                            .changed()
+                        {
+                            actions.push(Command::SetHistoryOption(HistoryOption::NoFastForward(
+                                value,
+                            )));
                         }
-                    });
-                    let mut value = *backup;
-                    if ui
-                        .checkbox(&mut value, "Keep the current tip on a backup branch")
-                        .changed()
-                    {
-                        actions.push(Command::SetHistoryOption(HistoryOption::Backup(value)));
                     }
-                }
-                HistoryAction::CherryPick { parent, .. } | HistoryAction::Revert { parent, .. }
-                    if dialog.parent_count > 1 =>
-                {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Merge commit: use parent").color(colors.muted));
-                        for index in 0..dialog.parent_count {
-                            if ui
-                                .selectable_label(*parent == Some(index), format!("{}", index + 1))
-                                .clicked()
-                            {
-                                actions
-                                    .push(Command::SetHistoryOption(HistoryOption::Parent(index)));
+                    HistoryAction::Reset { mode, backup, .. } => {
+                        ui.horizontal(|ui| {
+                            for (label, value) in [
+                                ("Soft", ResetMode::Soft),
+                                ("Mixed", ResetMode::Mixed),
+                                ("Hard", ResetMode::Hard),
+                            ] {
+                                if ui.selectable_label(*mode == value, label).clicked()
+                                    && *mode != value
+                                {
+                                    actions.push(Command::SetHistoryOption(
+                                        HistoryOption::ResetMode(value),
+                                    ));
+                                }
                             }
+                        });
+                        let mut value = *backup;
+                        if ui
+                            .checkbox(&mut value, "Keep the current tip on a backup branch")
+                            .changed()
+                        {
+                            actions.push(Command::SetHistoryOption(HistoryOption::Backup(value)));
                         }
-                    });
-                }
-                _ => {}
-            }
-            ui.add_space(4.0);
-            match &dialog.plan {
-                None if dialog.loading => {
-                    ui.label(RichText::new("Checking the repository…").color(colors.muted));
-                }
-                None => {}
-                Some(plan) => {
-                    for line in &plan.lines {
-                        ui.label(line);
                     }
-                    for warning in &plan.warnings {
-                        ui.label(RichText::new(warning).color(colors.warning));
+                    HistoryAction::CherryPick { parent, .. }
+                    | HistoryAction::Revert { parent, .. }
+                        if dialog.parent_count > 1 =>
+                    {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Merge commit: use parent").color(colors.muted));
+                            for index in 0..dialog.parent_count {
+                                if ui
+                                    .selectable_label(
+                                        *parent == Some(index),
+                                        format!("{}", index + 1),
+                                    )
+                                    .clicked()
+                                {
+                                    actions.push(Command::SetHistoryOption(HistoryOption::Parent(
+                                        index,
+                                    )));
+                                }
+                            }
+                        });
                     }
-                    if let Some(reason) = &plan.blocked {
-                        ui.label(RichText::new(reason).color(colors.error));
+                    _ => {}
+                }
+                ui.add_space(4.0);
+                match &dialog.plan {
+                    None if dialog.loading => {
+                        ui.label(RichText::new("Checking the repository…").color(colors.muted));
+                    }
+                    None => {}
+                    Some(plan) => {
+                        for line in &plan.lines {
+                            ui.label(line);
+                        }
+                        for warning in &plan.warnings {
+                            ui.label(RichText::new(warning).color(colors.warning));
+                        }
+                        if let Some(reason) = &plan.blocked {
+                            ui.label(RichText::new(reason).color(colors.error));
+                        }
                     }
                 }
-            }
-            if let Some(error) = &dialog.error {
-                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
-            }
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                let ready = dialog
-                    .plan
-                    .as_ref()
-                    .is_some_and(|plan| plan.blocked.is_none())
-                    && !dialog.loading;
-                let label = match &dialog.action {
-                    HistoryAction::Merge { .. } => "Merge",
-                    HistoryAction::CherryPick { .. } => "Cherry-pick",
-                    HistoryAction::Revert { .. } => "Revert",
-                    HistoryAction::Reset {
-                        mode: ResetMode::Hard,
-                        ..
-                    } => "Reset (discards changes)",
-                    HistoryAction::Reset { .. } => "Reset",
-                    HistoryAction::ForcePush { .. } => "Force push",
-                };
-                if ui.add_enabled(ready, egui::Button::new(label)).clicked() {
-                    actions.push(Command::ConfirmHistoryAction);
+                if let Some(error) = &dialog.error {
+                    ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
                 }
-                if ui.button("Cancel").clicked() {
-                    actions.push(Command::CancelHistoryAction);
-                }
+                super::dialog::footer(ui, |ui| {
+                    let ready = dialog
+                        .plan
+                        .as_ref()
+                        .is_some_and(|plan| plan.blocked.is_none())
+                        && !dialog.loading;
+                    let label = match &dialog.action {
+                        HistoryAction::Merge { .. } => "Merge",
+                        HistoryAction::CherryPick { .. } => "Cherry-pick",
+                        HistoryAction::Revert { .. } => "Revert",
+                        HistoryAction::Reset {
+                            mode: ResetMode::Hard,
+                            ..
+                        } => "Reset (discards changes)",
+                        HistoryAction::Reset { .. } => "Reset",
+                        HistoryAction::ForcePush { .. } => "Force push",
+                    };
+                    let destructive = matches!(
+                        &dialog.action,
+                        HistoryAction::Reset {
+                            mode: ResetMode::Hard,
+                            ..
+                        } | HistoryAction::ForcePush { .. }
+                    );
+                    let confirm = ui
+                        .add_enabled_ui(ready, |ui| {
+                            if destructive {
+                                super::dialog::danger_button(ui, label)
+                            } else {
+                                super::dialogs::primary_button(ui, label)
+                            }
+                        })
+                        .inner;
+                    if confirm.clicked() {
+                        actions.push(Command::ConfirmHistoryAction);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        actions.push(Command::CancelHistoryAction);
+                    }
+                });
             });
-        });
-        if modal.should_close() {
+        if modal.close_clicked || modal.dismissed {
             actions.push(Command::CancelHistoryAction);
         }
         for action in actions {
@@ -1250,141 +1270,144 @@ impl Workbench<'_> {
             return;
         };
         let mut actions: Vec<Command> = Vec::new();
-        let modal = egui::Modal::new(egui::Id::new("git_tags_dialog")).show(ctx, |ui| {
-            ui.set_width(440.0);
-            ui.heading("Tags");
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                let width = (ui.available_width() - 70.0).max(40.0);
-                ui.add(
-                    TextEdit::singleline(&mut dialog.name)
-                        .id_salt("git_tag_name")
-                        .desired_width(width)
-                        .hint_text("v1.0.0"),
-                );
-                if ui
-                    .add_enabled(!dialog.name.trim().is_empty(), egui::Button::new("Create"))
-                    .clicked()
-                {
-                    actions.push(Command::CreateTag);
-                }
-            });
-            ui.add(
-                TextEdit::singleline(&mut dialog.message)
-                    .id_salt("git_tag_message")
-                    .desired_width(f32::INFINITY)
-                    .hint_text("Message (makes it an annotated tag)"),
-            );
-            ui.label(
-                RichText::new(match &dialog.target {
-                    Some(id) => format!("On commit {}", &id[..id.len().min(7)]),
-                    None => "On the current commit".to_owned(),
-                })
-                .small()
-                .color(colors.muted),
-            );
-            ui.add_space(4.0);
-            let confirming = dialog.confirm_delete.clone();
-            ScrollArea::vertical()
-                .id_salt("git_tags_list")
-                .max_height(180.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    if dialog.tags.is_empty() {
-                        let text = if dialog.loading {
-                            "Reading tags…"
-                        } else {
-                            "No tags"
-                        };
-                        ui.label(RichText::new(text).color(colors.muted));
-                    }
-                    for tag in &dialog.tags {
-                        let kind = if tag.annotated {
-                            "annotated"
-                        } else {
-                            "lightweight"
-                        };
-                        let mut label = format!(
-                            "{}  {}  {kind}",
-                            tag.name,
-                            &tag.commit[..tag.commit.len().min(7)]
-                        );
-                        if !tag.message.is_empty() {
-                            label.push_str(&format!("  {}", tag.message));
-                        }
-                        let response = explorer_row(ui, label, 4, false)
-                            .on_hover_text(format!("{}\n{}", tag.name, tag.commit));
-                        if ui
-                            .put(
-                                egui::Rect::from_min_size(
-                                    response.rect.right_top() - egui::vec2(22.0, 0.0),
-                                    egui::vec2(22.0, response.rect.height()),
-                                ),
-                                egui::Button::new(crate::icon::X).frame(false),
-                            )
-                            .on_hover_text("Delete this tag locally")
-                            .clicked()
-                        {
-                            actions.push(Command::RequestTagDelete(tag.name.clone()));
-                        } else if ui
-                            .put(
-                                egui::Rect::from_min_size(
-                                    response.rect.right_top() - egui::vec2(44.0, 0.0),
-                                    egui::vec2(22.0, response.rect.height()),
-                                ),
-                                egui::Button::new(crate::icon::REPO_PUSH).frame(false),
-                            )
-                            .on_hover_text("Push this tag to the chosen remote")
-                            .clicked()
-                        {
-                            actions.push(Command::PushTag(tag.name.clone()));
-                        }
-                    }
-                });
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Push to").small().color(colors.muted));
-                if dialog.remotes.is_empty() {
-                    ui.label(
-                        RichText::new("no remote configured")
-                            .small()
-                            .color(colors.muted),
+        let modal = super::dialog::Dialog::new("Tags")
+            .width(440.0)
+            .show(ctx, |ui| {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let width = (ui.available_width() - 70.0).max(40.0);
+                    ui.add(
+                        TextEdit::singleline(&mut dialog.name)
+                            .id_salt("git_tag_name")
+                            .desired_width(width)
+                            .hint_text("v1.0.0"),
                     );
-                }
-                for remote in &dialog.remotes {
                     if ui
-                        .selectable_label(dialog.remote.as_deref() == Some(remote.as_str()), remote)
+                        .add_enabled(!dialog.name.trim().is_empty(), egui::Button::new("Create"))
                         .clicked()
                     {
-                        actions.push(Command::ChooseTagRemote(remote.clone()));
-                    }
-                }
-            });
-            if let Some(name) = &confirming {
-                ui.label(
-                    RichText::new(format!(
-                        "Delete tag {name}? Copies on remotes are not removed."
-                    ))
-                    .color(colors.muted),
-                );
-                ui.horizontal(|ui| {
-                    if ui.button("Delete Tag").clicked() {
-                        actions.push(Command::ConfirmTagDelete);
-                    }
-                    if ui.button("Keep").clicked() {
-                        actions.push(Command::CancelTagDelete);
+                        actions.push(Command::CreateTag);
                     }
                 });
-            }
-            if let Some(error) = &dialog.error {
+                ui.add(
+                    TextEdit::singleline(&mut dialog.message)
+                        .id_salt("git_tag_message")
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Message (makes it an annotated tag)"),
+                );
+                ui.label(
+                    RichText::new(match &dialog.target {
+                        Some(id) => format!("On commit {}", &id[..id.len().min(7)]),
+                        None => "On the current commit".to_owned(),
+                    })
+                    .small()
+                    .color(colors.muted),
+                );
                 ui.add_space(4.0);
-                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
-            }
-            ui.add_space(8.0);
-            if ui.button("Close").clicked() {
-                actions.push(Command::CloseTagsDialog);
-            }
-        });
-        if modal.should_close() {
+                let confirming = dialog.confirm_delete.clone();
+                ScrollArea::vertical()
+                    .id_salt("git_tags_list")
+                    .max_height(180.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        if dialog.tags.is_empty() {
+                            let text = if dialog.loading {
+                                "Reading tags…"
+                            } else {
+                                "No tags"
+                            };
+                            ui.label(RichText::new(text).color(colors.muted));
+                        }
+                        for tag in &dialog.tags {
+                            let kind = if tag.annotated {
+                                "annotated"
+                            } else {
+                                "lightweight"
+                            };
+                            let mut label = format!(
+                                "{}  {}  {kind}",
+                                tag.name,
+                                &tag.commit[..tag.commit.len().min(7)]
+                            );
+                            if !tag.message.is_empty() {
+                                label.push_str(&format!("  {}", tag.message));
+                            }
+                            let response = explorer_row(ui, label, 4, false)
+                                .on_hover_text(format!("{}\n{}", tag.name, tag.commit));
+                            if ui
+                                .put(
+                                    egui::Rect::from_min_size(
+                                        response.rect.right_top() - egui::vec2(22.0, 0.0),
+                                        egui::vec2(22.0, response.rect.height()),
+                                    ),
+                                    egui::Button::new(crate::icon::X).frame(false),
+                                )
+                                .on_hover_text("Delete this tag locally")
+                                .clicked()
+                            {
+                                actions.push(Command::RequestTagDelete(tag.name.clone()));
+                            } else if ui
+                                .put(
+                                    egui::Rect::from_min_size(
+                                        response.rect.right_top() - egui::vec2(44.0, 0.0),
+                                        egui::vec2(22.0, response.rect.height()),
+                                    ),
+                                    egui::Button::new(crate::icon::REPO_PUSH).frame(false),
+                                )
+                                .on_hover_text("Push this tag to the chosen remote")
+                                .clicked()
+                            {
+                                actions.push(Command::PushTag(tag.name.clone()));
+                            }
+                        }
+                    });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Push to").small().color(colors.muted));
+                    if dialog.remotes.is_empty() {
+                        ui.label(
+                            RichText::new("no remote configured")
+                                .small()
+                                .color(colors.muted),
+                        );
+                    }
+                    for remote in &dialog.remotes {
+                        if ui
+                            .selectable_label(
+                                dialog.remote.as_deref() == Some(remote.as_str()),
+                                remote,
+                            )
+                            .clicked()
+                        {
+                            actions.push(Command::ChooseTagRemote(remote.clone()));
+                        }
+                    }
+                });
+                if let Some(name) = &confirming {
+                    ui.label(
+                        RichText::new(format!(
+                            "Delete tag {name}? Copies on remotes are not removed."
+                        ))
+                        .color(colors.muted),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete Tag").clicked() {
+                            actions.push(Command::ConfirmTagDelete);
+                        }
+                        if ui.button("Keep").clicked() {
+                            actions.push(Command::CancelTagDelete);
+                        }
+                    });
+                }
+                if let Some(error) = &dialog.error {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+                }
+                ui.add_space(8.0);
+                if ui.button("Close").clicked() {
+                    actions.push(Command::CloseTagsDialog);
+                }
+            });
+        if modal.close_clicked || modal.dismissed {
             actions.push(Command::CloseTagsDialog);
         }
         for action in actions {
@@ -1398,128 +1421,130 @@ impl Workbench<'_> {
             return;
         };
         let mut actions: Vec<Command> = Vec::new();
-        let modal = egui::Modal::new(egui::Id::new("git_stash_dialog")).show(ctx, |ui| {
-            ui.set_width(440.0);
-            ui.heading("Stashes");
-            ui.label(
-                RichText::new(
-                    "A stash saves what is on disk. Unsaved editor text is not included.",
-                )
-                .color(colors.muted),
-            );
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                let width = (ui.available_width() - 70.0).max(40.0);
-                ui.add(
-                    TextEdit::singleline(&mut dialog.message)
-                        .id_salt("git_stash_message")
-                        .desired_width(width)
-                        .hint_text("Message (optional)"),
+        let modal = super::dialog::Dialog::new("Stashes")
+            .width(440.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new(
+                        "A stash saves what is on disk. Unsaved editor text is not included.",
+                    )
+                    .color(colors.muted),
                 );
-                if ui
-                    .button("Stash")
-                    .on_hover_text("Stash tracked changes and reset them")
-                    .clicked()
-                {
-                    actions.push(Command::CreateStash);
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let width = (ui.available_width() - 70.0).max(40.0);
+                    ui.add(
+                        TextEdit::singleline(&mut dialog.message)
+                            .id_salt("git_stash_message")
+                            .desired_width(width)
+                            .hint_text("Message (optional)"),
+                    );
+                    if ui
+                        .button("Stash")
+                        .on_hover_text("Stash tracked changes and reset them")
+                        .clicked()
+                    {
+                        actions.push(Command::CreateStash);
+                    }
+                });
+                ui.checkbox(&mut dialog.include_untracked, "Include untracked files");
+                ui.checkbox(
+                    &mut dialog.restore_index,
+                    "Restore staged state when applying",
+                );
+                ui.add_space(4.0);
+                let selected = dialog.selected.clone();
+                let confirming = dialog.confirm_drop.clone();
+                ScrollArea::vertical()
+                    .id_salt("git_stash_list")
+                    .max_height(180.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        if dialog.stashes.is_empty() {
+                            let text = if dialog.loading {
+                                "Reading stashes…"
+                            } else {
+                                "No stashes"
+                            };
+                            ui.label(RichText::new(text).color(colors.muted));
+                        }
+                        for stash in &dialog.stashes {
+                            let label = format!("{{{}}}  {}", stash.index, stash.message);
+                            let response =
+                                explorer_row(ui, label, 4, selected.as_deref() == Some(&stash.id))
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .on_hover_text("Show the files in this stash");
+                            if response.clicked() {
+                                actions.push(Command::SelectStash(stash.id.clone()));
+                            }
+                        }
+                    });
+                if let Some(id) = &selected {
+                    if !dialog.files.is_empty() {
+                        ui.add_space(2.0);
+                        ScrollArea::vertical()
+                            .id_salt("git_stash_files")
+                            .max_height(90.0)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                for (status, path) in &dialog.files {
+                                    ui.label(RichText::new(format!("{status}  {path}")).small());
+                                }
+                            });
+                    }
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .button("Apply")
+                            .on_hover_text("Restore the changes and keep the stash")
+                            .clicked()
+                        {
+                            actions.push(Command::ApplyStash(id.clone(), false));
+                        }
+                        if ui
+                            .button("Pop")
+                            .on_hover_text(
+                                "Restore the changes and remove the stash (kept if it conflicts)",
+                            )
+                            .clicked()
+                        {
+                            actions.push(Command::ApplyStash(id.clone(), true));
+                        }
+                        if ui
+                            .button("Drop…")
+                            .on_hover_text("Delete this stash")
+                            .clicked()
+                        {
+                            actions.push(Command::RequestStashDrop(id.clone()));
+                        }
+                    });
+                }
+                if confirming.is_some() {
+                    ui.label(
+                        RichText::new(
+                            "Delete this stash? Its changes cannot be recovered afterwards.",
+                        )
+                        .color(colors.muted),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete Stash").clicked() {
+                            actions.push(Command::ConfirmStashDrop);
+                        }
+                        if ui.button("Keep").clicked() {
+                            actions.push(Command::CancelStashDrop);
+                        }
+                    });
+                }
+                if let Some(error) = &dialog.error {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+                }
+                ui.add_space(8.0);
+                if ui.button("Close").clicked() {
+                    actions.push(Command::CloseStashDialog);
                 }
             });
-            ui.checkbox(&mut dialog.include_untracked, "Include untracked files");
-            ui.checkbox(
-                &mut dialog.restore_index,
-                "Restore staged state when applying",
-            );
-            ui.add_space(4.0);
-            let selected = dialog.selected.clone();
-            let confirming = dialog.confirm_drop.clone();
-            ScrollArea::vertical()
-                .id_salt("git_stash_list")
-                .max_height(180.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    if dialog.stashes.is_empty() {
-                        let text = if dialog.loading {
-                            "Reading stashes…"
-                        } else {
-                            "No stashes"
-                        };
-                        ui.label(RichText::new(text).color(colors.muted));
-                    }
-                    for stash in &dialog.stashes {
-                        let label = format!("{{{}}}  {}", stash.index, stash.message);
-                        let response =
-                            explorer_row(ui, label, 4, selected.as_deref() == Some(&stash.id))
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text("Show the files in this stash");
-                        if response.clicked() {
-                            actions.push(Command::SelectStash(stash.id.clone()));
-                        }
-                    }
-                });
-            if let Some(id) = &selected {
-                if !dialog.files.is_empty() {
-                    ui.add_space(2.0);
-                    ScrollArea::vertical()
-                        .id_salt("git_stash_files")
-                        .max_height(90.0)
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            for (status, path) in &dialog.files {
-                                ui.label(RichText::new(format!("{status}  {path}")).small());
-                            }
-                        });
-                }
-                ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .button("Apply")
-                        .on_hover_text("Restore the changes and keep the stash")
-                        .clicked()
-                    {
-                        actions.push(Command::ApplyStash(id.clone(), false));
-                    }
-                    if ui
-                        .button("Pop")
-                        .on_hover_text(
-                            "Restore the changes and remove the stash (kept if it conflicts)",
-                        )
-                        .clicked()
-                    {
-                        actions.push(Command::ApplyStash(id.clone(), true));
-                    }
-                    if ui
-                        .button("Drop…")
-                        .on_hover_text("Delete this stash")
-                        .clicked()
-                    {
-                        actions.push(Command::RequestStashDrop(id.clone()));
-                    }
-                });
-            }
-            if confirming.is_some() {
-                ui.label(
-                    RichText::new("Delete this stash? Its changes cannot be recovered afterwards.")
-                        .color(colors.muted),
-                );
-                ui.horizontal(|ui| {
-                    if ui.button("Delete Stash").clicked() {
-                        actions.push(Command::ConfirmStashDrop);
-                    }
-                    if ui.button("Keep").clicked() {
-                        actions.push(Command::CancelStashDrop);
-                    }
-                });
-            }
-            if let Some(error) = &dialog.error {
-                ui.add_space(4.0);
-                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
-            }
-            ui.add_space(8.0);
-            if ui.button("Close").clicked() {
-                actions.push(Command::CloseStashDialog);
-            }
-        });
-        if modal.should_close() {
+        if modal.close_clicked || modal.dismissed {
             actions.push(Command::CloseStashDialog);
         }
         for action in actions {
@@ -1742,159 +1767,160 @@ impl Workbench<'_> {
             return;
         }
         let mut actions: Vec<Command> = Vec::new();
-        let modal = egui::Modal::new(egui::Id::new("git_branch_dialog")).show(ctx, |ui| {
-            ui.set_width(440.0);
-            ui.heading("Branches");
-            ui.add_space(4.0);
-            ui.add(
-                TextEdit::singleline(&mut dialog.filter)
-                    .id_salt("git_branch_filter")
-                    .desired_width(f32::INFINITY)
-                    .hint_text("Filter branches"),
-            );
-            let filter = dialog.filter.to_lowercase();
-            let confirming = dialog.confirm_delete.clone();
-            ScrollArea::vertical()
-                .id_salt("git_branch_list")
-                .max_height(240.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    if dialog.loading && dialog.branches.is_empty() {
-                        ui.label(RichText::new("Reading branches…").color(colors.muted));
-                    }
-                    for remote in [false, true] {
-                        let mut heading_shown = false;
-                        for branch in dialog.branches.iter().filter(|b| {
-                            b.remote == remote && b.name.to_lowercase().contains(&filter)
-                        }) {
-                            if !heading_shown {
-                                source_heading(ui, if remote { "REMOTE" } else { "LOCAL" }, 0);
-                                heading_shown = true;
-                            }
-                            let mut label = branch.name.clone();
-                            if branch.current {
-                                label.push_str("  (current)");
-                            }
-                            if let Some(upstream) = &branch.upstream {
-                                label.push_str(&format!("  tracks {upstream}"));
-                            }
-                            if branch.checked_out_at.is_some() {
-                                label.push_str("  (in another worktree)");
-                            }
-                            let response = explorer_row(ui, label, 4, branch.current)
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text(match &branch.checked_out_at {
-                                    Some(path) => format!("Checked out at {}", path.display()),
-                                    None if remote => format!(
-                                        "Create a local branch tracking {} and switch to it",
-                                        branch.name
-                                    ),
-                                    None => format!("Switch to {}", branch.name),
-                                });
-                            if !branch.current {
-                                let name = branch.name.clone();
-                                let commit = branch.commit.clone();
-                                response.context_menu(|ui| {
-                                    if ui.button("Merge into current branch…").clicked() {
-                                        actions.push(Command::PlanHistoryAction(
-                                            HistoryAction::Merge {
-                                                target: commit.clone(),
-                                                no_ff: false,
-                                            },
-                                            format!("Merge {name}"),
-                                        ));
-                                        ui.close();
-                                    }
-                                });
-                            }
-                            let deletable =
-                                !remote && !branch.current && branch.checked_out_at.is_none();
-                            let delete_clicked = deletable
-                                && ui
-                                    .put(
-                                        egui::Rect::from_min_size(
-                                            response.rect.right_top() - egui::vec2(22.0, 0.0),
-                                            egui::vec2(22.0, response.rect.height()),
+        let modal = super::dialog::Dialog::new("Branches")
+            .width(440.0)
+            .show(ctx, |ui| {
+                ui.add_space(4.0);
+                ui.add(
+                    TextEdit::singleline(&mut dialog.filter)
+                        .id_salt("git_branch_filter")
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Filter branches"),
+                );
+                let filter = dialog.filter.to_lowercase();
+                let confirming = dialog.confirm_delete.clone();
+                ScrollArea::vertical()
+                    .id_salt("git_branch_list")
+                    .max_height(240.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        if dialog.loading && dialog.branches.is_empty() {
+                            ui.label(RichText::new("Reading branches…").color(colors.muted));
+                        }
+                        for remote in [false, true] {
+                            let mut heading_shown = false;
+                            for branch in dialog.branches.iter().filter(|b| {
+                                b.remote == remote && b.name.to_lowercase().contains(&filter)
+                            }) {
+                                if !heading_shown {
+                                    source_heading(ui, if remote { "REMOTE" } else { "LOCAL" }, 0);
+                                    heading_shown = true;
+                                }
+                                let mut label = branch.name.clone();
+                                if branch.current {
+                                    label.push_str("  (current)");
+                                }
+                                if let Some(upstream) = &branch.upstream {
+                                    label.push_str(&format!("  tracks {upstream}"));
+                                }
+                                if branch.checked_out_at.is_some() {
+                                    label.push_str("  (in another worktree)");
+                                }
+                                let response = explorer_row(ui, label, 4, branch.current)
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .on_hover_text(match &branch.checked_out_at {
+                                        Some(path) => format!("Checked out at {}", path.display()),
+                                        None if remote => format!(
+                                            "Create a local branch tracking {} and switch to it",
+                                            branch.name
                                         ),
-                                        egui::Button::new(crate::icon::X).frame(false),
-                                    )
-                                    .on_hover_text("Delete this branch (only if fully merged)")
-                                    .clicked();
-                            if delete_clicked {
-                                actions.push(Command::RequestDeleteBranch(branch.name.clone()));
-                            } else if response.clicked() {
-                                actions.push(Command::SwitchBranch(branch.name.clone(), remote));
+                                        None => format!("Switch to {}", branch.name),
+                                    });
+                                if !branch.current {
+                                    let name = branch.name.clone();
+                                    let commit = branch.commit.clone();
+                                    response.context_menu(|ui| {
+                                        if ui.button("Merge into current branch…").clicked() {
+                                            actions.push(Command::PlanHistoryAction(
+                                                HistoryAction::Merge {
+                                                    target: commit.clone(),
+                                                    no_ff: false,
+                                                },
+                                                format!("Merge {name}"),
+                                            ));
+                                            ui.close();
+                                        }
+                                    });
+                                }
+                                let deletable =
+                                    !remote && !branch.current && branch.checked_out_at.is_none();
+                                let delete_clicked = deletable
+                                    && ui
+                                        .put(
+                                            egui::Rect::from_min_size(
+                                                response.rect.right_top() - egui::vec2(22.0, 0.0),
+                                                egui::vec2(22.0, response.rect.height()),
+                                            ),
+                                            egui::Button::new(crate::icon::X).frame(false),
+                                        )
+                                        .on_hover_text("Delete this branch (only if fully merged)")
+                                        .clicked();
+                                if delete_clicked {
+                                    actions.push(Command::RequestDeleteBranch(branch.name.clone()));
+                                } else if response.clicked() {
+                                    actions
+                                        .push(Command::SwitchBranch(branch.name.clone(), remote));
+                                }
                             }
                         }
-                    }
-                });
-            if let Some(name) = &confirming {
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(format!(
-                        "Delete {name}? Git refuses if it has unmerged commits."
-                    ))
-                    .color(colors.muted),
-                );
+                    });
+                if let Some(name) = &confirming {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Delete {name}? Git refuses if it has unmerged commits."
+                        ))
+                        .color(colors.muted),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete Branch").clicked() {
+                            actions.push(Command::ConfirmDeleteBranch);
+                        }
+                        if ui.button("Keep").clicked() {
+                            dialog.confirm_delete = None;
+                        }
+                    });
+                }
+                ui.add_space(6.0);
+                ui.label(RichText::new("New branch from the current commit").color(colors.muted));
                 ui.horizontal(|ui| {
-                    if ui.button("Delete Branch").clicked() {
-                        actions.push(Command::ConfirmDeleteBranch);
-                    }
-                    if ui.button("Keep").clicked() {
-                        dialog.confirm_delete = None;
+                    let width = (ui.available_width() - 110.0).max(40.0);
+                    ui.add(
+                        TextEdit::singleline(&mut dialog.new_name)
+                            .id_salt("git_branch_new")
+                            .desired_width(width)
+                            .hint_text("feature/name"),
+                    );
+                    if ui
+                        .add_enabled(
+                            !dialog.new_name.trim().is_empty(),
+                            egui::Button::new("Create"),
+                        )
+                        .on_hover_text("Create the branch and switch to it")
+                        .clicked()
+                    {
+                        actions.push(Command::CreateBranch);
                     }
                 });
-            }
-            ui.add_space(6.0);
-            ui.label(RichText::new("New branch from the current commit").color(colors.muted));
-            ui.horizontal(|ui| {
-                let width = (ui.available_width() - 110.0).max(40.0);
-                ui.add(
-                    TextEdit::singleline(&mut dialog.new_name)
-                        .id_salt("git_branch_new")
-                        .desired_width(width)
-                        .hint_text("feature/name"),
-                );
-                if ui
-                    .add_enabled(
-                        !dialog.new_name.trim().is_empty(),
-                        egui::Button::new("Create"),
-                    )
-                    .on_hover_text("Create the branch and switch to it")
-                    .clicked()
-                {
-                    actions.push(Command::CreateBranch);
+                ui.label(RichText::new("Rename current branch").color(colors.muted));
+                ui.horizontal(|ui| {
+                    let width = (ui.available_width() - 110.0).max(40.0);
+                    ui.add(
+                        TextEdit::singleline(&mut dialog.rename_to)
+                            .id_salt("git_branch_rename")
+                            .desired_width(width)
+                            .hint_text("new name"),
+                    );
+                    if ui
+                        .add_enabled(
+                            !dialog.rename_to.trim().is_empty(),
+                            egui::Button::new("Rename"),
+                        )
+                        .clicked()
+                    {
+                        actions.push(Command::RenameBranch);
+                    }
+                });
+                if let Some(error) = &dialog.error {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+                }
+                ui.add_space(8.0);
+                if ui.button("Close").clicked() {
+                    actions.push(Command::CloseBranchDialog);
                 }
             });
-            ui.label(RichText::new("Rename current branch").color(colors.muted));
-            ui.horizontal(|ui| {
-                let width = (ui.available_width() - 110.0).max(40.0);
-                ui.add(
-                    TextEdit::singleline(&mut dialog.rename_to)
-                        .id_salt("git_branch_rename")
-                        .desired_width(width)
-                        .hint_text("new name"),
-                );
-                if ui
-                    .add_enabled(
-                        !dialog.rename_to.trim().is_empty(),
-                        egui::Button::new("Rename"),
-                    )
-                    .clicked()
-                {
-                    actions.push(Command::RenameBranch);
-                }
-            });
-            if let Some(error) = &dialog.error {
-                ui.add_space(4.0);
-                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
-            }
-            ui.add_space(8.0);
-            if ui.button("Close").clicked() {
-                actions.push(Command::CloseBranchDialog);
-            }
-        });
-        if modal.should_close() {
+        if modal.close_clicked || modal.dismissed {
             actions.push(Command::CloseBranchDialog);
         }
         for action in actions {
@@ -1912,77 +1938,78 @@ impl Workbench<'_> {
         let error = dialog.error.clone();
         let target = dialog.target();
         let (mut browse, mut start, mut cancel) = (false, false, false);
-        let modal = egui::Modal::new(egui::Id::new("git_clone_dialog")).show(ctx, |ui| {
-            ui.set_width(440.0);
-            ui.heading("Clone Repository");
-            ui.add_space(4.0);
-            ui.label(RichText::new("Repository URL or path").color(colors.muted));
-            let url = ui.add_enabled(
-                !running,
-                TextEdit::singleline(&mut dialog.url)
-                    .id_salt("git_clone_url")
-                    .desired_width(f32::INFINITY)
-                    .hint_text("https://host/team/project.git"),
-            );
-            if url.changed() {
-                dialog.sync_name();
-            }
-            ui.label(RichText::new("Destination folder").color(colors.muted));
-            ui.horizontal(|ui| {
-                let width = (ui.available_width() - 80.0).max(40.0);
-                ui.add_enabled(
+        let modal = super::dialog::Dialog::new("Clone Repository")
+            .width(440.0)
+            .show(ctx, |ui| {
+                ui.add_space(4.0);
+                ui.label(RichText::new("Repository URL or path").color(colors.muted));
+                let url = ui.add_enabled(
                     !running,
-                    TextEdit::singleline(&mut dialog.parent)
-                        .id_salt("git_clone_parent")
-                        .desired_width(width),
+                    TextEdit::singleline(&mut dialog.url)
+                        .id_salt("git_clone_url")
+                        .desired_width(f32::INFINITY)
+                        .hint_text("https://host/team/project.git"),
                 );
-                browse = ui
-                    .add_enabled(!running, egui::Button::new("Browse…"))
-                    .clicked();
-            });
-            ui.label(RichText::new("Folder name").color(colors.muted));
-            let name = ui.add_enabled(
-                !running,
-                TextEdit::singleline(&mut dialog.name)
-                    .id_salt("git_clone_name")
-                    .desired_width(f32::INFINITY),
-            );
-            if name.changed() {
-                dialog.name_edited = true;
-            }
-            ui.add_space(4.0);
-            match (&progress, &error, &target) {
-                (Some(progress), _, _) => {
-                    ui.label(RichText::new(progress).color(colors.muted));
+                if url.changed() {
+                    dialog.sync_name();
                 }
-                (None, Some(error), _) => {
-                    ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
-                }
-                (None, None, Ok(target)) => {
-                    ui.label(
-                        RichText::new(format!("Creates {}", target.display())).color(colors.muted),
+                ui.label(RichText::new("Destination folder").color(colors.muted));
+                ui.horizontal(|ui| {
+                    let width = (ui.available_width() - 80.0).max(40.0);
+                    ui.add_enabled(
+                        !running,
+                        TextEdit::singleline(&mut dialog.parent)
+                            .id_salt("git_clone_parent")
+                            .desired_width(width),
                     );
+                    browse = ui
+                        .add_enabled(!running, egui::Button::new("Browse…"))
+                        .clicked();
+                });
+                ui.label(RichText::new("Folder name").color(colors.muted));
+                let name = ui.add_enabled(
+                    !running,
+                    TextEdit::singleline(&mut dialog.name)
+                        .id_salt("git_clone_name")
+                        .desired_width(f32::INFINITY),
+                );
+                if name.changed() {
+                    dialog.name_edited = true;
                 }
-                (None, None, Err(reason)) if !dialog.url.is_empty() => {
-                    ui.label(RichText::new(reason).color(colors.muted));
+                ui.add_space(4.0);
+                match (&progress, &error, &target) {
+                    (Some(progress), _, _) => {
+                        ui.label(RichText::new(progress).color(colors.muted));
+                    }
+                    (None, Some(error), _) => {
+                        ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+                    }
+                    (None, None, Ok(target)) => {
+                        ui.label(
+                            RichText::new(format!("Creates {}", target.display()))
+                                .color(colors.muted),
+                        );
+                    }
+                    (None, None, Err(reason)) if !dialog.url.is_empty() => {
+                        ui.label(RichText::new(reason).color(colors.muted));
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                start = ui
-                    .add_enabled(!running && target.is_ok(), egui::Button::new("Clone"))
-                    .clicked();
-                cancel = ui
-                    .button(if running { "Cancel Clone" } else { "Cancel" })
-                    .clicked();
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    start = ui
+                        .add_enabled(!running && target.is_ok(), egui::Button::new("Clone"))
+                        .clicked();
+                    cancel = ui
+                        .button(if running { "Cancel Clone" } else { "Cancel" })
+                        .clicked();
+                });
             });
-        });
         if browse {
             self.command(Command::PickCloneDestination);
         } else if start {
             self.command(Command::StartClone);
-        } else if cancel || modal.should_close() {
+        } else if cancel || modal.close_clicked || modal.dismissed {
             self.command(Command::CancelClone);
         }
     }

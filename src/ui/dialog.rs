@@ -11,8 +11,8 @@ use eframe::egui::{self, Align, CornerRadius, Frame, Layout, Margin, RichText, S
 
 const TITLE_HEIGHT: f32 = 30.0;
 
-pub(super) struct Dialog<'a> {
-    title: &'a str,
+pub(super) struct Dialog {
+    title: String,
     width: f32,
     modal: bool,
     resizable: bool,
@@ -23,12 +23,15 @@ pub(super) struct DialogOutput<R> {
     pub inner: R,
     /// The title-strip close button was clicked; treat it as Cancel.
     pub close_clicked: bool,
+    /// A modal was dismissed with Escape or a click on its backdrop. Never a
+    /// confirmation; callers that already handle Escape themselves may ignore it.
+    pub dismissed: bool,
 }
 
-impl<'a> Dialog<'a> {
-    pub(super) fn new(title: &'a str) -> Self {
+impl Dialog {
+    pub(super) fn new(title: impl Into<String>) -> Self {
         Self {
-            title,
+            title: title.into(),
             width: 420.0,
             modal: true,
             resizable: false,
@@ -60,23 +63,24 @@ impl<'a> Dialog<'a> {
         let mut close_clicked = false;
         let content = |ui: &mut egui::Ui| {
             ui.set_width(width);
-            close_clicked = title_strip(ui, self.title);
+            close_clicked = title_strip(ui, &self.title);
             Frame::default()
                 .inner_margin(Margin::symmetric(14, 12))
                 .show(ui, |ui| body(ui))
                 .inner
         };
         if self.modal {
-            let modal = egui::Modal::new(egui::Id::new(("dialog", self.title)))
+            let modal = egui::Modal::new(egui::Id::new(("dialog", self.title.as_str())))
                 .frame(frame)
                 .backdrop_color(colors.scrim)
                 .show(ctx, content);
             DialogOutput {
+                dismissed: modal.should_close(),
                 inner: modal.inner,
                 close_clicked,
             }
         } else {
-            let response = egui::Window::new(self.title)
+            let response = egui::Window::new(self.title.as_str())
                 .title_bar(false)
                 .collapsible(false)
                 .resizable(self.resizable)
@@ -88,6 +92,7 @@ impl<'a> Dialog<'a> {
                     .and_then(|response| response.inner)
                     .expect("a visible window runs its body"),
                 close_clicked,
+                dismissed: false,
             }
         }
     }
