@@ -190,14 +190,15 @@ impl Workbench<'_> {
             }
             label
         });
-        let meta_label = match info.eol {
-            Some(eol) => format!(
+        let meta_label = match (&info.image, info.eol) {
+            (Some(summary), _) => summary.clone(),
+            (None, Some(eol)) => format!(
                 "{}{}   UTF-8   {}",
                 info.cursors,
                 info.language,
                 eol.label()
             ),
-            None => String::new(),
+            (None, None) => String::new(),
         };
         let lsp = self.view.language_server_status.as_ref().map(lsp_label);
         TopBottomPanel::bottom("status")
@@ -292,9 +293,13 @@ impl Workbench<'_> {
                                         .color(Color32::WHITE),
                                 )
                                 .on_hover_text(
-                                    info.eol
-                                        .map(|eol| eol.describe())
-                                        .unwrap_or("No document is open"),
+                                    if info.image.is_some() {
+                                        "Image dimensions, file size and format"
+                                    } else {
+                                        info.eol
+                                            .map(|eol| eol.describe())
+                                            .unwrap_or("No document is open")
+                                    },
                                 );
                             }
                             if let Some(label) = &position_label
@@ -353,6 +358,17 @@ impl Workbench<'_> {
                 ..Default::default()
             };
         };
+        if let Some(load) = &file.image {
+            use crate::model::image_asset::{ImageLoad, summary};
+            return StatusDocumentInfo {
+                image: Some(match load {
+                    ImageLoad::Loading => "Loading image…".into(),
+                    ImageLoad::Ready(image) => summary(image),
+                    ImageLoad::Failed(_) => "Unreadable image".into(),
+                }),
+                ..Default::default()
+            };
+        }
         let (position, selected, cursors) = file
             .editing
             .as_ref()
@@ -393,6 +409,7 @@ impl Workbench<'_> {
             position,
             selected,
             cursors,
+            image: None,
         }
     }
 }
@@ -404,6 +421,8 @@ struct StatusDocumentInfo {
     position: Option<(usize, usize)>,
     selected: usize,
     cursors: String,
+    /// Dimensions, size and format when the active tab is an image.
+    image: Option<String>,
 }
 
 /// Label, tooltip and whether a click opens the failure details.

@@ -147,7 +147,7 @@ impl LumenApp {
     }
 
     pub(crate) fn open_go_to_line(&mut self) {
-        if self.editor.active().is_none() || self.view.settings.open {
+        if self.editor.active().is_none_or(|file| file.is_image()) || self.view.settings.open {
             self.view.status = "Open an editor to go to a line".into();
             return;
         }

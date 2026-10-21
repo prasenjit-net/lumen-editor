@@ -237,6 +237,8 @@ pub(crate) enum Command {
     ReloadConflict(DocumentId),
     SaveConflictAs(DocumentId),
     ReviewDiskChange(DocumentId),
+    /// Show an image tab's file as text instead (the fallback for undecodable files).
+    OpenImageAsText(DocumentId),
     DismissConflict,
     CloseEditor,
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]

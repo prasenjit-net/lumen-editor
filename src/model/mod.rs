@@ -7,6 +7,7 @@ mod document;
 mod document_id;
 mod editor;
 mod file_name;
+pub(crate) mod image_asset;
 pub(crate) mod markdown_lite;
 pub(crate) mod output_log;
 pub(crate) mod search;

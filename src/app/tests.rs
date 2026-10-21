@@ -20,6 +20,7 @@ mod clipboard;
 mod editor;
 mod explorer;
 mod find;
+mod images;
 mod navigation;
 mod paste;
 mod safety;
