@@ -98,10 +98,10 @@ impl Workbench<'_> {
                                 ui.label(RichText::new(shown.display().to_string()).strong().color(colors.text));
                             }
                             ui.label(
-                                RichText::new(format!("{:>5} - {}", row.line, row.before))
+                                RichText::new(format!("{:>5} − {}", row.line, row.before))
                                     .monospace()
                                     .size(11.0)
-                                    .color(colors.error),
+                                    .color(colors.diff_removed_text),
                             );
                             ui.label(
                                 RichText::new(format!("{:>5} + {}", row.line, row.after))
