@@ -306,23 +306,38 @@ impl Workbench<'_> {
             state.confirmation_open = true;
         }
         if state.confirmation_open {
-            egui::Window::new("Confirm Workspace Replace")
-                .collapsible(false)
-                .show(ctx, |ui| {
-                    ui.label(format!(
+            let dialog = super::dialog::Dialog::new("Confirm Workspace Replace").show(ctx, |ui| {
+                ui.add(
+                    egui::Label::new(format!(
                         "Replace matches in up to {} selected file(s)?",
                         state.selected.len()
-                    ));
-                    ui.label("Files changed since search and open editor tabs will be skipped.");
-                    ui.horizontal(|ui| {
-                        if ui.button("Cancel").clicked() {
-                            state.confirmation_open = false;
-                        }
-                        if ui.button("Replace Files").clicked() {
-                            confirm = true;
-                        }
-                    });
-                });
+                    ))
+                    .wrap(),
+                );
+                ui.add(
+                    egui::Label::new(
+                        "Files changed since search and open editor tabs will be skipped.",
+                    )
+                    .wrap(),
+                );
+                super::dialog::footer(ui, |ui| {
+                    let replace = super::dialogs::primary_button(ui, "Replace Files");
+                    let cancel = ui.button("Cancel");
+                    super::dialogs::keep_focus(ui.ctx(), &[&replace, &cancel], &cancel);
+                    if replace.clicked() {
+                        Some(true)
+                    } else if cancel.clicked() || super::dialogs::escape_pressed(ui.ctx()) {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                })
+            });
+            match dialog.inner.or(dialog.close_clicked.then_some(false)) {
+                Some(true) => confirm = true,
+                Some(false) => state.confirmation_open = false,
+                None => {}
+            }
         }
         if confirm {
             self.command(Command::ApplyWorkspaceReplace);
