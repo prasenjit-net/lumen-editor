@@ -6,6 +6,7 @@ mod dialogs;
 pub(crate) mod file_index;
 mod file_operations;
 mod filesystem;
+pub(crate) mod image_files;
 pub(crate) mod language_server;
 pub(crate) mod logger;
 pub(crate) mod login_path;

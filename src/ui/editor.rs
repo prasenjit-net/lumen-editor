@@ -159,6 +159,10 @@ impl Workbench<'_> {
         };
         self.breadcrumb_bar(ui, index);
         ui.add_space(2.0);
+        if self.editor.files[index].is_image() {
+            self.image_page(ui, index);
+            return;
+        }
         let document_id = self.editor.files[index].id;
         if self.editor.files[index].disk_changed {
             ui.horizontal(|ui| {

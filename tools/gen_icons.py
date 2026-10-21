@@ -338,6 +338,17 @@ def _(g):
     g.line(left, 1.2); g.line(mirror(left), 1.2)
 
 
+@icon("MINUS")
+def _(g):
+    g.seg((3, 8), (13, 8), 1.5)
+
+
+@icon("FIT_SCREEN")
+def _(g):
+    for sx, sy, ex, ey in ((3, 3, 1, 1), (13, 3, -1, 1), (3, 13, 1, -1), (13, 13, -1, -1)):
+        g.line([(sx, sy + 3.5 * ey), (sx, sy), (sx + 3.5 * ex, sy)], 1.4)
+
+
 def build():
     names = list(icons)
     codes = {n: 0xE000 + i for i, n in enumerate(names)}

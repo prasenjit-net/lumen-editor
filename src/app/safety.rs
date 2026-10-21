@@ -213,7 +213,7 @@ impl LumenApp {
     }
 
     pub(crate) fn check_open_disk_changes(&mut self) {
-        for file in &mut self.editor.files {
+        for file in self.editor.files.iter_mut().filter(|file| !file.is_image()) {
             let Some(path) = &file.path else {
                 continue;
             };

@@ -19,6 +19,7 @@ pub(crate) mod git_history;
 pub(crate) mod git_history_ops;
 pub(crate) mod git_stash;
 pub(crate) mod git_tags;
+pub(crate) mod images;
 mod language_edits;
 mod language_services;
 pub(crate) mod native_agents;
@@ -104,6 +105,7 @@ pub(crate) struct LumenApp {
     pub(crate) terminal_session: Option<crate::services::terminal::TerminalSession>,
     /// Debug-only screenshot request (`LUMEN_CAPTURE`); `None` in normal use and tests.
     pub(crate) capture: Option<capture::Capture>,
+    pub(crate) images: images::ImageLoader,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
 }
@@ -151,6 +153,7 @@ impl Default for LumenApp {
             native_transcripts_dir: None,
             terminal_session: None,
             capture: None,
+            images: Default::default(),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
         }
@@ -223,6 +226,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.safety_details_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.workspace_replace_preview(ctx));
         self.maintain_documents(ctx);
+        self.poll_images(ctx);
         self.poll_workspace_search(ctx);
         self.poll_file_index(ctx);
         self.poll_source_control(ctx);

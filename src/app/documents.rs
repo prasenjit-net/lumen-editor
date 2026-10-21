@@ -147,6 +147,17 @@ impl LumenApp {
             self.remember_recent_file(&path);
             return;
         }
+        if crate::model::image_asset::is_image_path(&path) {
+            let document = Document::image_from_path(path.clone());
+            let id = document.id;
+            self.editor.files.push(document);
+            self.editor
+                .set_active_index(Some(self.editor.files.len() - 1));
+            self.start_image_load(id);
+            self.remember_recent_file(&path);
+            self.view.status = "Image opened".into();
+            return;
+        }
         match self.file_system.read_text(&path) {
             Ok(text) => {
                 self.editor
@@ -165,6 +176,10 @@ impl LumenApp {
         let Some(file) = self.editor.files.get_mut(index) else {
             return;
         };
+        if file.is_image() {
+            self.view.status = "Images are read-only and cannot be saved".into();
+            return;
+        }
         let same_path = file.path.as_deref() == Some(path.as_path());
         let result = if same_path {
             self.file_system
@@ -377,6 +392,10 @@ impl LumenApp {
         let Some(index) = self.editor.active_index() else {
             return;
         };
+        if self.editor.files[index].is_image() {
+            self.view.status = "Images are read-only and cannot be saved".into();
+            return;
+        }
         if let Some(path) = self.dialogs.save_as(&self.editor.files[index].name) {
             self.save_file_at(index, path);
         }

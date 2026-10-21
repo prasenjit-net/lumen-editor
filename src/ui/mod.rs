@@ -20,6 +20,7 @@ mod explorer_actions;
 mod explorer_edit;
 mod file_icons;
 mod git_history_tab;
+mod image_viewer;
 mod language_edit;
 mod language_navigation;
 mod match_highlight;

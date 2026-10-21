@@ -153,6 +153,7 @@ impl LumenApp {
             || self.view.pending_quit
             || self.view.delete_prompt.is_some()
             || self.view.explorer_edit.is_some()
+            || self.editor.active().is_some_and(|file| file.is_image())
         {
             return;
         }

@@ -371,6 +371,7 @@ impl LumenApp {
             Command::ReloadConflict(document) => self.reload_conflict(document),
             Command::SaveConflictAs(document) => self.save_conflict_as(document),
             Command::ReviewDiskChange(document) => self.review_disk_change(document),
+            Command::OpenImageAsText(document) => self.open_image_as_text(document),
             Command::DismissConflict => self.view.save_conflict = None,
             Command::RequestClose(id) => self.request_close(id),
             Command::CloseFile(id) => self.close_file(id),

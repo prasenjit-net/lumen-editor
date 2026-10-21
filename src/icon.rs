@@ -42,3 +42,5 @@ pub const WARNING: &str = "\u{e025}";
 pub const DEBUG: &str = "\u{e026}";
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub const BRACKETS_CURLY: &str = "\u{e027}";
+pub const MINUS: &str = "\u{e028}";
+pub const FIT_SCREEN: &str = "\u{e029}";

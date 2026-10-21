@@ -1,4 +1,4 @@
-use super::DocumentId;
+use super::{DocumentId, image_asset::ImageLoad};
 use lumen_editor_core::syntax::Language;
 use std::path::{Path, PathBuf};
 pub(crate) struct Document {
@@ -12,9 +12,23 @@ pub(crate) struct Document {
     pub(crate) disk_changed: bool,
     saved_text: String,
     pub(crate) editing: Option<lumen_editor_core::EditorBuffer>,
+    /// Set for image tabs, which hold pixels instead of text and are never dirty.
+    pub(crate) image: Option<ImageLoad>,
 }
 
 impl Document {
+    /// A tab for an image file whose pixels are still loading.
+    pub(crate) fn image_from_path(path: PathBuf) -> Self {
+        let mut document = Self::from_path(path, String::new());
+        document.language = Language::Plain;
+        document.image = Some(ImageLoad::Loading);
+        document
+    }
+
+    pub(crate) fn is_image(&self) -> bool {
+        self.image.is_some()
+    }
+
     pub(crate) fn from_path(path: PathBuf, text: String) -> Self {
         Self {
             id: DocumentId::allocate(),
@@ -27,6 +41,7 @@ impl Document {
             dirty: false,
             disk_changed: false,
             editing: None,
+            image: None,
         }
     }
 
@@ -86,6 +101,12 @@ impl Document {
             self.editing = None;
         }
     }
+    /// Turn an image tab into a text document of the same tab.
+    pub(crate) fn open_image_as_text(&mut self, text: String) {
+        self.image = None;
+        self.reload_from_disk(text);
+    }
+
     pub(crate) fn untitled(number: usize) -> Self {
         Self {
             id: DocumentId::allocate(),
@@ -98,6 +119,7 @@ impl Document {
             disk_changed: false,
             saved_text: String::new(),
             editing: None,
+            image: None,
         }
     }
 
