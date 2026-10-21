@@ -959,11 +959,19 @@ fn tab(
                     )
                     .on_hover_text(tooltip);
                 select = response.clicked();
+                // An unsaved tab shows its dot until the pointer is over the tab, then
+                // the same button turns into the close glyph.
+                let close_area = egui::Rect::from_min_size(
+                    egui::pos2(response.rect.right() + 8.0, response.rect.top()),
+                    egui::vec2(ACTION_SIZE, 22.0),
+                );
+                let hovered = ui.rect_contains_pointer(response.rect.union(close_area));
                 title_response = Some(response);
                 close = widgets::named(
                     ui.add_sized(
                         [ACTION_SIZE, 22.0],
-                        egui::Button::new(if dirty { "●" } else { icon::X }).frame(false),
+                        egui::Button::new(if dirty && !hovered { "●" } else { icon::X })
+                            .frame(false),
                     )
                     .on_hover_text(close_tooltip),
                     true,

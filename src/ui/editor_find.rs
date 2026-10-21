@@ -118,7 +118,10 @@ impl Workbench<'_> {
                                     }
                                     state.refresh(file);
                                     ui.label(
-                                        egui::RichText::new(if state.matches.is_empty() {
+                                        egui::RichText::new(if state.query.is_empty() {
+                                            // Nothing typed yet is not the same as nothing found.
+                                            "Type to search".into()
+                                        } else if state.matches.is_empty() {
                                             "No results".into()
                                         } else {
                                             format!(

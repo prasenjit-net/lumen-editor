@@ -217,6 +217,24 @@ fn narrow_find_gives_options_and_navigation_a_second_row() {
 }
 
 #[test]
+fn find_tells_an_empty_query_from_no_results() {
+    let (mut app, _) = test_app(TestDialogs::default());
+    let ctx = egui::Context::default();
+    configure_ui(&ctx);
+    app.new_file();
+    editor_frame(&mut app, &ctx, vec![]);
+    app.execute(Command::Find, &ctx);
+    editor_frame(&mut app, &ctx, vec![]);
+    let output = editor_frame(&mut app, &ctx, vec![]);
+    let _ = text_position(&output, "Type to search");
+    let id = app.editor.active().unwrap().id;
+    app.view.find.get_mut(&id).unwrap().query = "zzz".into();
+    editor_frame(&mut app, &ctx, vec![]);
+    let output = editor_frame(&mut app, &ctx, vec![]);
+    let _ = text_position(&output, "No results");
+}
+
+#[test]
 fn opening_find_selects_seeded_query_and_typing_does_not_edit_document() {
     let (mut app, _) = test_app(TestDialogs::default());
     let ctx = egui::Context::default();
