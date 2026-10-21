@@ -493,6 +493,97 @@ mod tests {
     }
 
     #[test]
+    fn chat_fits_an_editor_group_narrower_than_the_old_240_px_floor() {
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        app.view.agents.open = false;
+        for width in [200.0_f32, 260.0] {
+            frame(&mut app, &ctx, width);
+            let output = frame(&mut app, &ctx, width);
+            let mut found = false;
+            for clipped in &output.shapes {
+                if let egui::Shape::Text(text) = &clipped.shape
+                    && text.galley.job.text.contains("Send")
+                {
+                    found = true;
+                    let right = text.pos.x + text.galley.size().x;
+                    assert!(
+                        right <= width,
+                        "Send ends at {right}, past a {width}px window"
+                    );
+                }
+            }
+            assert!(found, "composer drawn at {width}");
+        }
+    }
+
+    #[test]
+    fn a_long_chat_title_gives_way_to_the_status_in_a_narrow_group() {
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        let id = app.view.chats.active().unwrap();
+        app.view.chats.draft_mut(id).push_str(
+            "approve: please review every file in the workspace and explain the layout in detail",
+        );
+        app.execute(Command::ChatSend(id), &ctx);
+        settle(&mut app, &ctx);
+        app.view.agents.open = false;
+        let width = 340.0_f32;
+        frame(&mut app, &ctx, width);
+        let output = frame(&mut app, &ctx, width);
+        let rects_of = |needle: &str| {
+            output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    // Right-aligned galleys extend left of their anchor.
+                    egui::Shape::Text(text) if text.galley.job.text.contains(needle) => {
+                        Some(text.galley.rect.translate(text.pos.to_vec2()))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let status = rects_of("Needs your answer")[0];
+        // The tab strip repeats the title; the header's copy shares the status row.
+        let title = rects_of("approve: please")
+            .into_iter()
+            .find(|rect| (rect.center().y - status.center().y).abs() < 6.0)
+            .expect("chat title in the header row");
+        assert!(status.right() <= width, "status stays inside the window");
+        assert!(
+            title.right() <= status.left() + 1.0,
+            "title ends at {} but status starts at {}",
+            title.right(),
+            status.left()
+        );
+    }
+
+    #[test]
+    fn session_rows_have_a_spoken_name_with_their_status() {
+        let (mut app, ctx) = fixture();
+        ctx.enable_accesskit();
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        settle(&mut app, &ctx);
+        let mut labels = Vec::new();
+        for _ in 0..3 {
+            let output = frame(&mut app, &ctx, 1000.0);
+            labels.extend(
+                output
+                    .platform_output
+                    .accesskit_update
+                    .iter()
+                    .flat_map(|update| update.nodes.iter())
+                    .filter_map(|(_, node)| node.label().map(str::to_owned)),
+            );
+        }
+        assert!(
+            labels.iter().any(|label| label.starts_with("New chat, ")),
+            "{labels:?}"
+        );
+    }
+
+    #[test]
     fn messages_are_told_apart_and_permissions_and_working_state_are_clear() {
         let (mut app, ctx) = fixture();
         app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
@@ -507,7 +598,8 @@ mod tests {
             assert!(has_text(&output, "Codex"), "agent label at {width}");
             assert!(has_text(&output, "Permission needed"), "{width}");
             assert!(has_text(&output, "Needs your answer"), "status at {width}");
-            assert!(has_text(&output, "Send"), "composer at {width}");
+            // The turn is waiting on a permission, so a new message queues.
+            assert!(has_text(&output, "Queue"), "composer at {width}");
             assert!(
                 has_text(&output, "Model"),
                 "settings above the composer at {width}"

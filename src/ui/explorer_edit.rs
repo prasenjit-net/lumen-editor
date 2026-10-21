@@ -72,22 +72,54 @@ impl Workbench<'_> {
                         .is_some_and(|file| file.starts_with(&path))
             })
             .count();
-        let mut confirm = false;
-        let mut cancel = false;
-        let modal = egui::Modal::new(egui::Id::new("explorer_delete")).show(ctx, |ui| {
-            ui.set_width(360.0);
-            ui.heading(format!("Delete {}?", display_name(&path)));
-            ui.label(path.display().to_string());
-            ui.label(RichText::new("This item and its contents will move to Trash/Recycle Bin. Restore them there if needed.").color(colors.muted));
-            if dirty > 0 { ui.label(format!("{dirty} unsaved editor buffer(s) will remain open as untitled files so your edits are not lost.")); }
-            if let Some(error) = &prompt.error { ui.label(RichText::new(error).color(ui.visuals().error_fg_color)); }
-            ui.add_space(8.0);
-            ui.horizontal(|ui| { confirm = ui.button(if cfg!(target_os = "windows") { "Move to Recycle Bin" } else { "Move to Trash" }).clicked(); cancel = ui.button("Cancel").clicked(); });
+        let error = prompt.error.clone();
+        let title = format!("Delete {}?", display_name(&path));
+        let dialog = super::dialog::Dialog::new(&title).width(380.0).show(ctx, |ui| {
+            ui.add(egui::Label::new(RichText::new(path.display().to_string()).monospace()).wrap());
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "This item and its contents will move to Trash/Recycle Bin. Restore them there if needed.",
+                    )
+                    .color(colors.muted),
+                )
+                .wrap(),
+            );
+            if dirty > 0 {
+                ui.add(
+                    egui::Label::new(format!(
+                        "{dirty} unsaved editor buffer(s) will remain open as untitled files so your edits are not lost."
+                    ))
+                    .wrap(),
+                );
+            }
+            if let Some(error) = &error {
+                ui.add(egui::Label::new(RichText::new(error).color(colors.error)).wrap());
+            }
+            super::dialog::footer(ui, |ui| {
+                let confirm = super::dialog::danger_button(
+                    ui,
+                    if cfg!(target_os = "windows") {
+                        "Move to Recycle Bin"
+                    } else {
+                        "Move to Trash"
+                    },
+                );
+                let cancel = ui.button("Cancel");
+                super::dialogs::keep_focus(ui.ctx(), &[&confirm, &cancel], &cancel);
+                if confirm.clicked() {
+                    Some(true)
+                } else if cancel.clicked() || super::dialogs::escape_pressed(ui.ctx()) {
+                    Some(false)
+                } else {
+                    None
+                }
+            })
         });
-        if cancel || modal.should_close() {
-            self.view.delete_prompt = None;
-        } else if confirm {
-            self.command(Command::ConfirmDelete);
+        match dialog.inner.or(dialog.close_clicked.then_some(false)) {
+            Some(true) => self.command(Command::ConfirmDelete),
+            Some(false) => self.view.delete_prompt = None,
+            None => {}
         }
     }
 }

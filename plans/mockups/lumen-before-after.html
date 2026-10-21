@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumen UI Concept</title>
+<style>
+@font-face{font-family:LumenMockIcons;src:url(data:font/ttf;base64,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) format('truetype')}
+:root{
+  --pg-bg:#f6f6f6;--pg-card:#ffffff;--pg-text:#1f1f1f;--pg-muted:#5f5f5f;--pg-border:#d9d9d9;--pg-accent:#005fa0;--pg-accent-soft:#e3eef7;
+  --pg-before:#8a8a8a;--pg-after:#007acc;--pg-pin:#e8590c;--pg-pin-text:#fff;--pg-keep:#2f7d4f;--pg-validate:#8a6d00;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --pg-bg:#141414;--pg-card:#1d1d1d;--pg-text:#e6e6e6;--pg-muted:#a3a3a3;--pg-border:#333;--pg-accent:#4aa3e0;--pg-accent-soft:#16324a;
+    --pg-before:#8a8a8a;--pg-after:#3794ff;--pg-pin:#ff7a29;--pg-pin-text:#111;--pg-keep:#5cc489;--pg-validate:#e0bd4a;color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --pg-bg:#141414;--pg-card:#1d1d1d;--pg-text:#e6e6e6;--pg-muted:#a3a3a3;--pg-border:#333;--pg-accent:#4aa3e0;--pg-accent-soft:#16324a;
+  --pg-before:#8a8a8a;--pg-after:#3794ff;--pg-pin:#ff7a29;--pg-pin-text:#111;--pg-keep:#5cc489;--pg-validate:#e0bd4a;color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--pg-bg);color:var(--pg-text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+.page{max-width:1480px;margin:0 auto;padding:20px 16px 40px}
+.intro h1{font-size:20px;margin:0 0 4px;font-weight:600}
+.intro p{margin:0;color:var(--pg-muted);max-width:900px}
+.intro code{font:12.5px ui-monospace,Menlo,Consolas,monospace;background:var(--pg-accent-soft);padding:1px 5px;border-radius:3px;color:var(--pg-text)}
+.howto{display:flex;flex-wrap:wrap;gap:6px 18px;margin:10px 0 0;padding:0;list-style:none;color:var(--pg-muted);font-size:13px}
+.howto li::before{content:"→ ";color:var(--pg-accent)}
+.controls{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;margin:16px -16px 14px;padding:10px 16px;background:color-mix(in srgb,var(--pg-bg) 92%,transparent);backdrop-filter:blur(6px);border-bottom:1px solid var(--pg-border)}
+.group{display:flex;align-items:center;gap:8px}
+.group[hidden]{display:none}
+.group > span{font-size:12px;color:var(--pg-muted);text-transform:uppercase;letter-spacing:.05em}
+.seg{display:inline-flex;border:1px solid var(--pg-border);border-radius:6px;overflow:hidden;background:var(--pg-card)}
+.seg button{border:0;background:none;color:var(--pg-text);font:inherit;font-size:13px;padding:5px 11px;cursor:pointer}
+.seg button + button{border-left:1px solid var(--pg-border)}
+.seg button[aria-pressed="true"]{background:var(--pg-accent);color:#fff}
+.seg button:focus-visible,.check input:focus-visible{outline:2px solid var(--pg-accent);outline-offset:2px}
+.check{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+.compare{display:grid;gap:16px;grid-template-columns:1fr}
+.compare.side{grid-template-columns:repeat(2,minmax(0,1fr))}
+.compare figure{margin:0;min-width:0}
+.compare figcaption{display:flex;align-items:center;gap:8px;margin:0 0 6px;font-size:13px;font-weight:600}
+.compare figcaption small{font-weight:400;color:var(--pg-muted)}
+.dot{width:9px;height:9px;border-radius:50%;flex:none}
+.dot.before{background:var(--pg-before)}.dot.after{background:var(--pg-after)}
+.compare.only-before figure.after,.compare.only-after figure.before{display:none}
+.compare:not(.side) figure{max-width:1040px;width:100%;margin:0 auto}
+.wrap{position:relative}
+.overlay{position:absolute;inset:0;pointer-events:none;z-index:5}
+.pin{position:absolute;width:20px;height:20px;border-radius:50%;background:var(--pg-pin);color:var(--pg-pin-text);font:700 11px/20px -apple-system,system-ui,sans-serif;text-align:center;box-shadow:0 0 0 2px var(--pg-card),0 2px 6px rgba(0,0,0,.35);pointer-events:auto;cursor:help}
+body.no-pins .pin{display:none}
+.pin.off{width:auto;padding:0 6px;border-radius:10px}
+.hlbox{position:absolute;border:2px solid var(--pg-pin);border-radius:4px;box-shadow:0 0 0 3px color-mix(in srgb,var(--pg-pin) 30%,transparent)}
+.legend{margin-top:18px;background:var(--pg-card);border:1px solid var(--pg-border);border-radius:8px;padding:14px 16px}
+.legend h2{font-size:15px;margin:0 0 2px}
+.legend > p{margin:0 0 10px;color:var(--pg-muted);font-size:13px}
+.notes{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:8px}
+.note{display:grid;grid-template-columns:24px 1fr;gap:4px 10px;padding:10px;border:1px solid var(--pg-border);border-radius:6px;cursor:default;outline:none}
+.note:hover,.note:focus-visible,.note.active{border-color:var(--pg-pin);background:color-mix(in srgb,var(--pg-pin) 7%,var(--pg-card))}
+.note .pin{position:static;box-shadow:none;cursor:inherit}
+.note h3{margin:0;font-size:14px;font-weight:600;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.chip{font-size:11px;font-weight:600;padding:1px 7px;border-radius:10px;border:1px solid var(--pg-border);color:var(--pg-muted);white-space:nowrap}
+.chip.p0{border-color:#d13438;color:#d13438}
+.chip.keep{border-color:var(--pg-keep);color:var(--pg-keep)}
+.chip.validate{border-color:var(--pg-validate);color:var(--pg-validate)}
+.chip.metric{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:500}
+.ba{grid-column:2;display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:13px}
+.ba b{font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
+.ba b.b{color:var(--pg-before)}.ba b.a{color:var(--pg-after)}
+.ba span{color:var(--pg-muted)}
+.foot{margin-top:14px;color:var(--pg-muted);font-size:12.5px}
+@media (max-width:1099px){.compare.side{grid-template-columns:1fr}}
+@media (max-width:520px){.notes{grid-template-columns:1fr}.controls{gap:8px}.seg button{padding:5px 8px}}
+
+/* ---------- Lumen mock ---------- */
+.lm{
+  --bg:#1e1e1e;--panel:#252526;--rail:#333;--title:#3c3c3c;--text:#ccc;--muted:#9d9d9d;--title-muted:#a8a8a8;--border:#2b2b2b;--float-border:#454545;
+  --input:#313131;--active:#04395e;--hover:#2b2b2b;--accent:#007acc;--on-accent:#fff;--canvas:#181818;--tab:#2d2d2d;--status:#007acc;
+  --codex:#4ebea0;--claude:#d98c62;--warning:#cca700;--error:#f48771;--success:#23d18b;--info:#75beff;--danger:#c42b1c;--on-danger:#fff;
+  --kw:#c586c0;--str:#ce9178;--fn:#dcdcaa;--scrim:rgba(0,0,0,.4);--shadow:0 8px 24px rgba(0,0,0,.55);
+  container-type:inline-size;position:relative;height:560px;display:flex;flex-direction:column;overflow:hidden;
+  background:var(--canvas);color:var(--text);border-radius:8px;box-shadow:0 0 0 1px var(--pg-border);
+  font:12.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;text-align:left;
+}
+.lm[data-theme="light"]{
+  --bg:#fff;--panel:#f3f3f3;--rail:#e6e6e6;--title:#ddd;--text:#282828;--muted:#606060;--title-muted:#606060;--border:#bebebe;--float-border:#a0a0a0;
+  --input:#fff;--active:#bedcf5;--hover:#e0e0e0;--accent:#005fa0;--on-accent:#fff;--canvas:#dadada;--tab:#ececec;--status:#007acc;
+  --codex:#007864;--claude:#a85428;--warning:#7d5800;--error:#a51919;--success:#007040;--info:#005fa0;--danger:#b3261e;--on-danger:#fff;
+  --kw:#af00db;--str:#a31515;--fn:#795e26;--scrim:rgba(0,0,0,.22);--shadow:0 8px 24px rgba(0,0,0,.25);
+}
+.lm[data-theme="hc"]{
+  --bg:#000;--panel:#000;--rail:#000;--title:#000;--text:#fff;--muted:#dcdcdc;--title-muted:#dcdcdc;--border:#fff;--float-border:#fff;
+  --input:#000;--active:#004164;--hover:#373737;--accent:#ff0;--on-accent:#000;--canvas:#fff;--tab:#000;--status:#007acc;
+  --codex:#00ffbe;--claude:#ffaa5a;--warning:#ff0;--error:#ff7878;--success:#0f0;--info:#0ff;--danger:#ff7878;--on-danger:#000;
+  --kw:#ff80ff;--str:#ff0;--fn:#ffff9a;--scrim:rgba(0,0,0,.55);--shadow:0 8px 24px rgba(0,0,0,.6);
+}
+/* Before: action text is always white, as in the current code. */
+.lm.before{--on-accent:#fff;--on-danger:#fff}
+.lm *{box-sizing:border-box}
+.lm button,.lm input,.lm textarea{font:inherit;color:inherit}
+.lm button{border:1px solid transparent;border-radius:3px;background:transparent;min-height:22px;padding:2px 6px;white-space:nowrap;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+.lm button:hover:not(:disabled){background:var(--hover)}
+.lm button:disabled{opacity:.45;cursor:default}
+.lm.after button:focus-visible,.lm.after .focus-demo{outline:2px solid var(--accent);outline-offset:-1px}
+.lm input[type=checkbox]{accent-color:var(--accent);margin:0 7px 0 0}
+.lm input[type=text],.lm textarea{border:1px solid var(--border);border-radius:3px;background:var(--input);padding:3px 7px;min-width:0}
+.lm ::placeholder{color:var(--muted);opacity:1}
+.li{font-family:LumenMockIcons;font-style:normal;display:inline-flex;align-items:center;justify-content:center;font-size:14px;width:16px;flex:none;line-height:1}
+.lm .icon-action{width:26px;height:22px;padding:0;justify-content:center;flex:none}
+.lm .muted{color:var(--muted)}
+.lm .small{font-size:11px}
+.lm .mono{font-family:Menlo,Consolas,monospace}
+.lm .ellipsis{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.lm .row{display:flex;align-items:center;gap:6px;min-width:0}
+.lm .spacer{flex:1;min-width:0}
+.lm .filled{background:var(--accent);color:var(--on-accent);padding:2px 11px}
+.lm .filled:hover:not(:disabled){background:var(--accent);filter:brightness(1.12)}
+.lm .danger{background:var(--danger);color:var(--on-danger);padding:2px 11px}
+.lm .danger:hover:not(:disabled){background:var(--danger);filter:brightness(1.12)}
+.lm .plain{border-color:var(--border);background:var(--input);padding:2px 11px}
+
+/* window chrome */
+.lm .topbar{height:30px;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px 0 10px;background:var(--title);min-width:0;position:relative}
+.lm .c-title{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);white-space:nowrap;font-size:12.5px;pointer-events:none}
+.lm .traffic{display:flex;gap:7px;width:62px;flex:none}
+.lm .traffic i{width:11px;height:11px;border-radius:50%;background:#ff5f57}
+.lm .traffic i:nth-child(2){background:#febc2e}.lm .traffic i:nth-child(3){background:#28c840}
+.lm .top-title{flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lm .top-gap{flex:1;min-width:0;align-self:stretch}
+.lm .launcher{display:flex;align-items:center;gap:0;flex:none}
+.lm .task-pick{font-size:11px;padding:2px 6px;margin-right:2px}
+.lm .topbar .dim{color:var(--muted)}
+.lm.after .topbar .dim{color:var(--title-muted)}
+.lm .run{color:var(--success)}.lm .stop{color:var(--error)}
+.lm .toggle-gap{width:14px}
+.lm .workspace{display:flex;flex:1;min-height:0;gap:2px;padding:2px}
+.lm .rail{width:44px;flex:none;background:var(--rail);border-radius:5px;display:flex;flex-direction:column;align-items:center;padding:4px 0}
+.lm .rail button{width:42px;height:40px;border-radius:0;color:var(--muted);justify-content:center;border-left:2px solid transparent}
+.lm .rail button.on{color:var(--text);border-left-color:var(--accent)}
+.lm .rail .li{font-size:21px;width:24px}
+.lm .sidebar{width:190px;flex:none;min-width:0;border-radius:5px;background:var(--panel);overflow:hidden;display:flex;flex-direction:column}
+.lm .pane-header{height:32px;flex:none;display:flex;align-items:center;gap:2px;padding:0 4px 0 14px;min-width:0}
+.lm .pane-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;letter-spacing:.02em}
+.lm .main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.lm .statusbar{display:flex;align-items:center;gap:14px;height:22px;flex:none;padding:0 8px;background:var(--status);color:#fff;font-size:11px;overflow:hidden;white-space:nowrap}
+.lm .statusbar > span{flex:none}
+.lm.after .statusbar .st-msg{flex:1 1 auto;min-width:40px;overflow:hidden;text-overflow:ellipsis}
+.lm.after .statusbar .meta{overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
+@container (max-width:620px){.lm.after .statusbar .meta{display:none}}
+
+/* explorer */
+.lm .tree{padding-top:2px;overflow:hidden}
+.lm .tree-row{width:100%;display:flex;gap:5px;height:22px;align-items:center;border-radius:0;padding:0 8px 0 0;overflow:hidden;justify-content:flex-start}
+.lm .tree-row.sel{background:var(--active)}
+.lm .tree-label{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-align:left}
+.lm.after .tree-label{text-overflow:ellipsis}
+.lm .folder{color:var(--warning)}.lm .file-ic{color:var(--info)}
+.lm .git-badge{font-size:11px;font-weight:600;color:var(--info);width:14px;text-align:center;flex:none}
+
+/* editor */
+.lm .editor-pane{border-radius:5px;background:var(--bg);flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;position:relative}
+.lm .tabs{height:32px;flex:none;display:flex;align-items:stretch;background:var(--tab);gap:1px;padding-right:4px}
+.lm .tab{display:flex;align-items:center;gap:6px;padding:0 4px 0 10px;font-size:12px;min-width:0;max-width:230px;color:var(--muted)}
+.lm .tab.sel{border-top:1px solid var(--accent);background:var(--bg);border-radius:3px 3px 0 0;color:var(--text)}
+.lm .tab .x,.lm .tab .dirty-dot{width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:3px;flex:none}
+.lm .tab .dirty-dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--text)}
+.lm .tab.dirty .x{display:none}
+.lm.after .tab.dirty:hover .x{display:inline-flex}
+.lm.after .tab.dirty:hover .dirty-dot{display:none}
+.lm .tab-plus{margin-left:auto;align-self:center}
+.lm .crumbs{padding:4px 10px;color:var(--muted);font-size:11px;flex:none;display:flex;align-items:center;gap:2px;white-space:nowrap;overflow:hidden}
+.lm .code{font:12px/20px Menlo,Consolas,monospace;white-space:pre;overflow:hidden;padding:4px 0;flex:1}
+.lm .cl{display:flex}
+.lm .ln{width:40px;text-align:right;padding-right:12px;color:var(--muted);flex:none}
+.lm .kw{color:var(--kw)}.lm .str{color:var(--str)}.lm .fn{color:var(--fn)}
+
+/* bottom panel */
+.lm .bottom{height:132px;flex:none;background:var(--panel);overflow:hidden;display:flex;flex-direction:column;border-radius:5px}
+.lm .bottom.flat{border-radius:0;margin:0 -2px -2px}
+.lm .bottom .pane-header{padding-left:6px}
+.lm .btab{font-size:11px;border-radius:0;border-bottom:1px solid transparent;padding:2px 8px;min-height:24px}
+.lm .btab.on{border-bottom-color:var(--accent)}
+.lm .log{background:var(--bg);margin:0 3px 3px;padding:6px 10px;font:11.5px/19px Menlo,Consolas,monospace;flex:1;overflow:hidden;white-space:pre}
+.lm .bottom:not(.flat) .log{border-radius:3px}
+.lm .bottom.flat .log{margin:0}
+
+/* settings */
+.lm .s-toolbar{padding:0 12px 8px;flex:none}
+.lm .s-search{width:100%;margin:2px 0 7px}
+.lm .s-toolbar .row{flex-wrap:wrap;gap:4px}
+.lm .seg-in{display:inline-flex;border:1px solid var(--border);border-radius:3px;overflow:hidden}
+.lm .seg-in button{border-radius:0;min-height:20px;padding:1px 10px}
+.lm .seg-in button.on{background:var(--active)}
+.lm .filter{font-size:11px;border-color:var(--border);border-radius:10px;padding:0 9px;min-height:20px}
+.lm .on-plain{background:var(--active)}
+.lm .vsep{width:1px;height:16px;background:var(--border);margin:0 6px}
+.lm .s-body{display:flex;flex:1;min-height:0;padding:0 12px;gap:12px}
+.lm .cats{width:120px;flex:none;border-right:1px solid var(--border);padding-right:8px;overflow:hidden}
+.lm .cats button{display:flex;width:100%;margin-bottom:1px;font-size:12px}
+.lm .cats button.on{background:var(--active)}
+@container (max-width:600px){.lm .cats{display:none}}
+.lm .s-results{flex:1;min-width:0;overflow:auto;padding-bottom:8px}
+.lm .s-section{font-size:14px;margin:4px 0 4px;font-weight:600;display:flex;align-items:center;gap:8px}
+.lm .s-section .tag{font-size:10.5px;font-weight:500;color:var(--muted);border:1px solid var(--border);border-radius:9px;padding:0 7px}
+.lm .setting{padding:7px 0 8px;border-bottom:1px solid var(--border)}
+.lm.before .setting{padding:8px 0 10px}
+.lm .s-name{font-weight:600}
+.lm .s-help{margin:2px 0 3px;color:var(--muted);font-size:11.5px}
+.lm .s-meta{font-size:11px;color:var(--muted)}
+.lm .s-ctl{display:flex;align-items:center;min-height:22px}
+.lm.after .setting.pending{border-left:2px solid var(--accent);padding-left:8px}
+.lm .pending-tag{font-size:10.5px;color:var(--info);border:1px solid currentColor;border-radius:9px;padding:0 6px;margin-left:8px;font-weight:500}
+.lm .s-details{font-size:11px;padding:0 6px;min-height:18px;color:var(--muted)}
+.lm .s-note{font-size:11px;color:var(--muted);margin:0 0 4px}
+.lm .unavailable{opacity:.5}
+.lm .s-foot{display:flex;gap:6px;align-items:center;border-top:1px solid var(--border);padding:6px 12px;flex:none}
+
+/* chat */
+.lm .chat-head{padding:6px 12px 6px;background:var(--panel);flex:none}
+.lm .pill{color:var(--codex);background:color-mix(in srgb,var(--codex) 16%,transparent);padding:1px 8px;border-radius:8px;font-size:11px;flex:none}
+.lm .prov{color:var(--codex);font-size:11px;font-weight:600;flex:none;letter-spacing:.02em}
+.lm .chat-title{font-weight:600;min-width:0}
+.lm .chat-state{color:var(--warning);font-size:11px;flex:none;display:inline-flex;align-items:center;gap:4px}
+.lm .transcript{flex:1;min-height:0;overflow:hidden;padding:10px 14px}
+.lm .msg{max-width:640px;margin:0 auto 10px}
+.lm .user-msg{padding:8px 11px;background:var(--input);border-radius:6px}
+.lm.after .user-msg{border-radius:3px;padding:7px 10px}
+.lm .msg-label{font-size:11px;color:var(--muted);margin-bottom:3px}
+.lm .tool{display:flex;align-items:center;gap:5px;margin:5px 0;color:var(--muted);font-size:11.5px}
+.lm .approval{border:1px solid var(--warning);border-radius:6px;padding:8px 10px;margin-top:8px}
+.lm.after .approval{border:0;border-left:2px solid var(--warning);border-radius:0;background:var(--panel)}
+.lm .cmd{background:var(--bg);border:1px solid var(--border);padding:4px 6px;margin:5px 0;font:11.5px/1.5 Menlo,Consolas,monospace}
+.lm .composer-area{padding:6px 14px 10px;flex:none}
+.lm .composer{background:var(--input);border:1px solid var(--accent);border-radius:8px;padding:7px 10px;max-width:640px;margin:0 auto}
+.lm.after .composer{border-radius:3px}
+.lm .composer textarea{width:100%;resize:none;height:38px;border:0;background:transparent;padding:0;font-size:13px}
+.lm .hint{font-size:10.5px;color:var(--muted);flex:1;min-width:0}
+.lm .send-before{background:var(--codex);color:#fff;border-radius:6px;padding:2px 10px}
+.lm .send-before:hover:not(:disabled){background:var(--codex);filter:brightness(1.1)}
+.lm .stop-txt{color:var(--error)}
+.lm .queued{font-size:11px;margin:0 auto 4px;max-width:640px;color:var(--info);min-height:15px}
+.lm .sessions{width:200px}
+@container (max-width:600px){.lm .sessions{display:none}}
+.lm .session{padding:7px 9px;margin:2px 6px 6px;border-radius:3px}
+.lm .session.on{background:var(--active);border-left:3px solid var(--codex)}
+.lm .session .t{font-size:12px}
+.lm .session .m{font-size:11px;color:var(--muted);margin-top:2px}
+
+/* dialogs */
+.lm .scrim{position:absolute;inset:0;background:var(--scrim);z-index:3}
+.lm .dlg{position:absolute;z-index:4;left:50%;top:46%;transform:translate(-50%,-50%);width:min(360px,calc(100% - 32px));background:var(--panel);border:1px solid var(--float-border);border-radius:6px;box-shadow:var(--shadow)}
+.lm .dlg .egui-title{padding:6px 10px;font-weight:600;border-bottom:1px solid var(--border);font-size:12.5px}
+.lm .dlg .heading{font-size:17px;margin:0 0 6px;font-weight:500}
+.lm .dlg .d-body{padding:10px 12px 8px;line-height:1.5}
+.lm .dlg .d-btns{display:flex;gap:6px;padding:4px 12px 12px}
+.lm .dlg .d-strip{height:30px;display:flex;align-items:center;padding:0 4px 0 12px;background:var(--tab);border-bottom:1px solid var(--border);border-radius:6px 6px 0 0;font-weight:600;font-size:12px}
+.lm .dlg .d-foot{display:flex;gap:6px;padding:4px 12px 12px;align-items:center}
+.lm .dlg .path{font:11.5px Menlo,Consolas,monospace;color:var(--muted);overflow-wrap:anywhere}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="intro">
+    <h1>Lumen UI/UX concept: before and after</h1>
+    <p>Companion to <code>plans/ui-ux-visual-improvement-plan.md</code>. The <b>Before</b> side reconstructs the current build (<code>1ef372f</code>); the <b>After</b> side shows the proposed change. Both are HTML approximations for discussion, not pixel specifications.</p>
+    <ul class="howto">
+      <li>Pick a screen and a theme</li>
+      <li>Lettered markers point at each change; hover a marker or a list entry to outline it on both sides</li>
+      <li>Most controls respond: click tabs, files, checkboxes and buttons</li>
+    </ul>
+  </header>
+
+  <div class="controls" role="toolbar" aria-label="Mockup options">
+    <div class="group"><span id="lbl-scene">Screen</span><div class="seg" role="group" aria-labelledby="lbl-scene" data-control="scene">
+      <button type="button" data-value="workbench">Workbench</button><button type="button" data-value="settings">Settings</button><button type="button" data-value="chat">Agent chat</button><button type="button" data-value="dialogs">Dialogs</button>
+    </div></div>
+    <div class="group" id="dialog-group" hidden><span id="lbl-dialog">Dialog</span><div class="seg" role="group" aria-labelledby="lbl-dialog" data-control="dialog">
+      <button type="button" data-value="unsaved">Unsaved changes</button><button type="button" data-value="delete">Delete file</button>
+    </div></div>
+    <div class="group"><span id="lbl-theme">Theme</span><div class="seg" role="group" aria-labelledby="lbl-theme" data-control="theme">
+      <button type="button" data-value="dark">Dark</button><button type="button" data-value="light">Light</button><button type="button" data-value="hc">High contrast</button>
+    </div></div>
+    <div class="group"><span id="lbl-view">View</span><div class="seg" role="group" aria-labelledby="lbl-view" data-control="view">
+      <button type="button" data-value="side">Side by side</button><button type="button" data-value="before">Before</button><button type="button" data-value="after">After</button>
+    </div></div>
+    <label class="check"><input type="checkbox" id="pins" checked> Show markers</label>
+  </div>
+
+  <main class="compare" id="compare">
+    <figure class="before">
+      <figcaption><span class="dot before"></span>Before <small>current build</small></figcaption>
+      <div class="wrap"><div class="lm before" id="mock-before" aria-label="Current UI reconstruction"></div><div class="overlay" aria-hidden="true"></div></div>
+    </figure>
+    <figure class="after">
+      <figcaption><span class="dot after"></span>After <small>proposed</small></figcaption>
+      <div class="wrap"><div class="lm after" id="mock-after" aria-label="Proposed UI"></div><div class="overlay" aria-hidden="true"></div></div>
+    </figure>
+  </main>
+
+  <section class="legend" aria-labelledby="legend-title">
+    <h2 id="legend-title">What changes on this screen</h2>
+    <p id="legend-sub"></p>
+    <ol class="notes" id="notes"></ol>
+  </section>
+  <p class="foot">Colours come from <code>src/ui/theme.rs</code>; contrast ratios are sRGB relative-luminance calculations from those values. Fonts, icons and spacing are close to Lumen but not exact. Language-server UI is omitted because it is off by default.</p>
+</div>
+
+<script>
+(() => {
+  const ICONS={file:0xe000,newFile:0xe001,code:0xe002,files:0xe004,folder:0xe007,openFolder:0xe008,newFolder:0xe009,more:0xe00a,down:0xe00b,right:0xe00c,check:0xe00d,close:0xe00e,plus:0xe00f,refresh:0xe010,terminal:0xe014,history:0xe015,output:0xe016,agent:0xe017,send:0xe018,stop:0xe019,clear:0xe01a,collapse:0xe01c,settings:0xe01d,git:0xe01e,search:0xe01f,play:0xe020,left:0xe021,rightPanel:0xe022,bottom:0xe023,error:0xe024,warning:0xe025,debug:0xe026};
+  const icon=n=>`<span class="li" aria-hidden="true">${String.fromCodePoint(ICONS[n]||ICONS.file)}</span>`;
+  const act=(n,label,extra='')=>`<button type="button" class="icon-action ${extra}" aria-label="${label}" title="${label}">${icon(n)}</button>`;
+  const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  /* Each note: letter, plan item, priority, title, before, after, optional metric/kind. */
+  const SCENES={
+    workbench:{
+      sub:'Editor workspace with Explorer, tabs, the bottom panel and the macOS title strip.',
+      notes:[
+        {id:'A',item:1,pri:'P0',title:'Readable title-strip controls',metric:'4.07 → 4.64:1',before:'Muted text #9d9d9d on the title strip #3c3c3c is 4.07:1 — the inactive panel toggles and “Select task”.',after:'A title-strip secondary colour (#a8a8a8). Muted text on ordinary panels already passes and stays as it is.'},
+        {id:'B',item:10,pri:'P2',title:'Window title stays visible',before:'The centred title is dropped whenever it would touch the launcher: always below 700 px wide, and for long titles well beyond that.',after:'The title sits between the traffic lights and the launcher and truncates with an ellipsis.'},
+        {id:'C',item:4,pri:'P1',title:'Git status gets its own column',before:'“M” is appended to the filename and clipped away on long names.',after:'Fixed badge column; the name ellipsizes; full name and status in the tooltip.'},
+        {id:'D',item:8,pri:'P1',title:'Unsaved tabs keep a close target',before:'A dot replaces the close button on an unsaved tab.',after:'The dot stays; hovering the tab shows the close button in the same place (hover “theme.rs”).'},
+        {id:'E',item:3,pri:'P1',title:'One shape for every bottom panel',before:'Output and task output are flat, while Terminal and Problems are rounded — click Terminal and Output to see the shape jump.',after:'Every bottom tab uses the same rounded pane surface.'},
+        {id:'F',item:9,pri:'P1',title:'Visible keyboard focus',before:'Icon buttons only show a hover fill, and have no spoken name.',after:'A focus ring distinct from hover (shown on Refresh), plus accessible names for icon-only buttons.'},
+        {id:'G',item:10,pri:'P2',kind:'validate',title:'Status bar keeps its priorities',before:'A long message and editor facts can run off the right edge.',after:'The message truncates first; problems and position stay; secondary facts drop in a fixed order.'}
+      ]},
+    settings:{
+      sub:'Settings editor with a pending draft and the language-server section that the default build cannot use.',
+      notes:[
+        {id:'A',item:6,pri:'P1',title:'One label per setting',before:'Name, technical ID, help, a checkbox repeating the name and a metadata line on every row.',after:'Checkbox and name on one line, help below, ID / scope / default under Details.'},
+        {id:'B',item:6,pri:'P1',title:'Scope apart from filters',before:'User, Project, Modified, Pending and Clear sit in one run of buttons.',after:'User | Project is a segmented scope switch, separated from the Modified and Pending filters.'},
+        {id:'C',item:6,pri:'P1',title:'Unapplied changes look unapplied',before:'A draft shows only in small metadata text.',after:'Accent edge, a Pending tag and Draft vs Live values; the footer counts pending changes. Toggle a checkbox to try it.'},
+        {id:'D',item:1,pri:'P0',title:'Apply is the emphasised action',metric:'HC 1.07 → 19.6:1',before:'Apply looks like Cancel. Where Lumen does fill a primary button, it uses white text, which fails on High Contrast yellow.',after:'Apply is filled with a theme-defined text colour: white on blue, black on yellow in High Contrast.'},
+        {id:'E',item:6,pri:'P1',title:'Compiled-out features are marked',before:'Language-server settings look editable, but this build has no language server.',after:'The section is disabled and says “Not available in this build”; saved values are kept.'}
+      ]},
+    chat:{
+      sub:'A native agent chat waiting for approval while the user types a follow-up.',
+      notes:[
+        {id:'A',item:1,pri:'P0',title:'Readable Send button',metric:'2.28 → 4.51:1',before:'White on Codex green is 2.28:1 (Claude orange 2.67:1).',after:'Send uses the accent fill with its tested text colour; the provider colour stays as a label.'},
+        {id:'B',item:7,pri:'P1',title:'Workbench-style chat header',before:'Provider pill, title and status share one line, and the status can be pushed out.',after:'Status is reserved at the right first, the title truncates, and the folder sits on a clipped second line.'},
+        {id:'C',item:7,pri:'P1',title:'Say “Queue” when it queues',before:'The button says Send while a turn is running; queuing is explained only in a tooltip.',after:'The label changes to Queue, with Stop beside it. Press Enter or Queue to add a message.'},
+        {id:'D',item:2,pri:'P1',title:'Workbench corner radii',before:'Chat uses 4 to 8 px corners for messages, the composer and buttons.',after:'3 px for inputs, messages and buttons, like the rest of the workbench.'},
+        {id:'E',item:7,pri:'P1',title:'Approval stays readable',before:'A full warning border; Allow once uses white text on the accent.',after:'A warning edge marks the request; choices keep their order and defaults, with tested button colours.'}
+      ]},
+    dialogs:{
+      sub:'Two of the 25 dialog call sites. Switch between them with the Dialog control above.',
+      notes:[
+        {id:'A',item:12,pri:'P2',title:'One dialog anatomy',before:'Windows get egui’s title bar, Modals a large heading; buttons sit on the left in each dialog’s own order.',after:'A shared dialog(): title strip with close, body, and a right-aligned footer — used by all 25 dialogs.'},
+        {id:'B',item:1,pri:'P0',title:'Tested action colours',metric:'HC 1.07 → 19.6:1',before:'Save is white on the accent (fails in High Contrast); Move to Trash looks like any other button.',after:'Primary uses the accent pair, destructive a red pair with at least 4.5:1 text.'},
+        {id:'C',item:12,pri:'P2',title:'Blocking prompts dim the workbench',before:'Unsaved changes is a plain window without a scrim; Delete is a modal with one.',after:'Every blocking confirmation is modal, with the same scrim.'},
+        {id:'D',item:9,pri:'P1',title:'Visible safe default',before:'Default focus is not drawn distinctly from hover.',after:'The default button shows the focus ring; Escape still cancels. Delete defaults to Cancel.'},
+        {id:'E',item:2,kind:'keep',title:'Floating elevation (already shipped)',before:'Lighter border and drop shadow from floating_frame().',after:'Unchanged — this is the depth chosen for popups and dialogs.'}
+      ]}
+  };
+
+  const state={scene:'workbench',theme:'dark',view:innerWidth>=1100?'side':'after',dialog:'unsaved',hl:null};
+  /* Deep links: #scene=settings&theme=hc&view=after&dialog=delete */
+  const OPTIONS={scene:Object.keys(SCENES),theme:['dark','light','hc'],view:['side','before','after'],dialog:['unsaved','delete']};
+  for(const [k,v] of new URLSearchParams(location.hash.slice(1)))if(OPTIONS[k]&&OPTIONS[k].includes(v))state[k]=v;
+  const side={before:mkSide(),after:mkSide()};
+  function mkSide(){return {bottom:'OUTPUT',values:[true,false,true],saved:[true,true,true],queued:0,draft:'Also check narrow widths.',details:-1,approval:null,selected:'workspace_search_diff_preview.rs'};}
+
+  /* ---------- window chrome ---------- */
+  /* shown: which panels are open, so closed toggles use the dim title-strip colour */
+  function topbar(after,title,shown,notes=false){
+    const n=id=>notes?` data-note="${id}"`:'';
+    const t=(n,label,on)=>act(n,label,on?'':'dim');
+    return `<header class="topbar"><span class="traffic" aria-hidden="true"><i></i><i></i><i></i></span>
+      ${after?`<span class="top-title"${n('B')}>${esc(title)}</span>`:`<span class="top-gap"${n('B')}></span><span class="c-title">${esc(title)}</span>`}
+      <div class="launcher">
+        <button type="button" class="task-pick dim"${n('A')}>Select task ${icon('down')}</button>
+        <button type="button" class="icon-action run" disabled aria-label="Run task">${icon('play')}</button>
+        <button type="button" class="icon-action stop" disabled aria-label="Stop task">${icon('stop')}</button>
+        <span class="toggle-gap"></span>
+        ${t('left','Toggle left sidebar',shown.left)}${t('rightPanel','Toggle right panel',shown.right)}${t('bottom','Toggle bottom panel',shown.bottom)}
+      </div></header>`;
+  }
+  /* Current rule in chrome.rs: the launcher reserves min(350, width/2) and the centred
+     title is drawn only when it ends 8px before that reserve. */
+  function applyTitleRule(){
+    const bar=mocks.before.querySelector('.topbar');const t=bar&&bar.querySelector('.c-title');
+    if(!t)return;const w=bar.clientWidth;
+    t.style.visibility=(w/2+t.scrollWidth/2+8<w-Math.min(350,w/2))?'visible':'hidden';
+  }
+  function rail(on){
+    const b=(n,label,key)=>`<button type="button" class="${on===key?'on':''}" data-scene="${key||''}" aria-label="${label}" title="${label}">${icon(n)}</button>`;
+    return `<nav class="rail" aria-label="Activity bar">${b('files','Explorer','workbench')}${b('search','Search')}${b('git','Source Control')}${b('debug','Tasks')}<span class="spacer"></span>${b('agent','Coding agents','chat')}${b('settings','Settings','settings')}</nav>`;
+  }
+  function statusbar(after,msg,notes=false){
+    return `<footer class="statusbar"${notes?' data-note="G"':''}><span class="st-msg">${esc(msg)}</span><span>${icon('error')} 0  ${icon('warning')} 0</span><span>Ln 4, Col 5 (12 selected)</span><span class="meta">2 cursors   Rust   UTF-8   LF   Spaces: 4</span></footer>`;
+  }
+
+  /* ---------- workbench ---------- */
+  const TREE=[['change','openFolder',0],['src','openFolder',1],['ui','openFolder',2],['workspace_search_diff_preview.rs','code',3,'M'],['editor_shared.rs','code',3,'M'],['theme.rs','code',3],['widgets.rs','code',3],['plans','folder',1],['Cargo.toml','file',1],['README.md','file',1]];
+  function explorer(after,st,notes=true){
+    const rows=TREE.map(([name,ic,depth,badge])=>{
+      const isFolder=ic==='folder'||ic==='openFolder';
+      const sel=st.selected===name;
+      const label=after?esc(name):esc(name)+(badge?'  '+badge:'');
+      const note=notes&&name==='workspace_search_diff_preview.rs'?' data-note="C"':'';
+      return `<button type="button" class="tree-row ${sel?'sel':''}" data-file="${isFolder?'':esc(name)}" style="padding-left:${8+depth*12}px" title="${esc(name)}${badge?' · Modified':''}"${note}><span class="${isFolder?'folder':'file-ic'}">${icon(ic)}</span><span class="tree-label">${label}</span>${after&&badge?`<span class="git-badge" aria-label="Modified">${badge}</span>`:''}</button>`;
+    }).join('');
+    const refresh=`<button type="button" class="icon-action ${after?'focus-demo':''}" aria-label="Refresh Explorer" title="Refresh Explorer"${notes?' data-note="F"':''}>${icon('refresh')}</button>`;
+    return `<aside class="sidebar"><div class="pane-header"><span class="pane-title">EXPLORER</span>${act('newFile','New File')}${act('newFolder','New Folder')}${refresh}${act('collapse','Collapse Folders')}</div><div class="tree">${rows}</div></aside>`;
+  }
+  const CODE=[
+    '<span class="kw">use</span> crate::ui::theme;','',
+    '<span class="kw">pub fn</span> <span class="fn">draw_preview</span>(ui: &amp;<span class="kw">mut</span> egui::Ui) {',
+    '    <span class="kw">let</span> colors = theme::palette(ui.visuals());',
+    '    <span class="kw">let</span> title = <span class="str">"Workspace changes"</span>;',
+    '    panel_header(ui, title, &amp;actions);','',
+    '    <span class="kw">for</span> change <span class="kw">in</span> &amp;changes {',
+    '        draw_change_row(ui, change, &amp;colors);','    }','}'];
+  function editor(after,st,notes=true){
+    const file=st.selected||'workspace_search_diff_preview.rs';
+    return `<section class="editor-pane"><div class="tabs">
+        <div class="tab sel">${icon('code')}<span class="ellipsis">${esc(file)}</span><span class="x">${icon('close')}</span></div>
+        <div class="tab dirty"${notes?' data-note="D"':''} title="theme.rs — unsaved">${icon('code')}<span class="ellipsis">theme.rs</span><span class="dirty-dot" aria-label="Unsaved"></span><span class="x" aria-label="Close">${icon('close')}</span></div>
+        ${act('plus','New Text File','tab-plus')}</div>
+      <div class="crumbs ellipsis">change ${icon('right')} src ${icon('right')} ui ${icon('right')} ${esc(file)}</div>
+      <div class="code">${CODE.map((l,i)=>`<div class="cl"><span class="ln">${i+1}</span><span>${l||' '}</span></div>`).join('')}</div></section>`;
+  }
+  const LOGS={TERMINAL:'lumen&gt; cargo check\n    Finished `dev` profile in 0.42s\nlumen&gt; ',OUTPUT:'10:24:08 [INFO] editor: Opened folder change\n10:24:09 [INFO] editor: File opened\n10:24:12 [INFO] git: 2 modified files',PROBLEMS:'No problems have been detected in the workspace.'};
+  function bottom(after,st,notes=true){
+    const flat=!after&&st.bottom==='OUTPUT';
+    return `<section class="bottom ${flat?'flat':''}"${notes?' data-note="E"':''}><div class="pane-header">${['TERMINAL','OUTPUT','PROBLEMS'].map(n=>`<button type="button" class="btab ${st.bottom===n?'on':''}" data-bottom="${n}">${n}</button>`).join('')}<span class="spacer"></span>${act('clear','Clear')}${act('close','Hide Panel')}</div><div class="log">${LOGS[st.bottom]}</div></section>`;
+  }
+  function workbench(after,st){
+    return `${topbar(after,(st.selected||'')+' — change',{left:true,bottom:true},true)}<div class="workspace">${rail('workbench')}${explorer(after,st)}<main class="main">${editor(after,st)}${bottom(after,st)}</main></div>${statusbar(after,'Opened workspace_search_diff_preview.rs from Quick Open',true)}`;
+  }
+
+  /* ---------- settings ---------- */
+  const SETTINGS=[['Auto Closing Brackets','editor.auto_closing_brackets','Insert a matching bracket or wrap the selection in a pair.'],['Bracket Matching','editor.bracket_matching','Outline the bracket that matches the one next to the caret.'],['Detect Indentation','editor.detect_indentation','Infer indentation from the first lines of each file.']];
+  function settingRow(after,st,i){
+    const [name,id,help]=SETTINGS[i];const pend=st.values[i]!==st.saved[i];
+    const notes=[i===0?'A':'',pend?'C':''].filter(Boolean).join(' ');
+    const dn=notes?` data-note="${notes}"`:'';
+    const box=`<input type="checkbox" data-check="${i}" ${st.values[i]?'checked':''}>`;
+    if(!after){
+      return `<div class="setting"${dn}><div class="s-name">${name}</div><div class="small muted mono">${id}</div><div class="s-help">${help}</div><label class="s-ctl">${box}${name}</label><div class="s-meta row">Effective: ${st.saved[i]} · Default · ${pend?'Draft: '+st.values[i]:'Live'} ${act('settings','Setting actions')}</div></div>`;
+    }
+    return `<div class="setting ${pend?'pending':''}"${dn}><label class="s-ctl s-name">${box}${name}${pend?'<span class="pending-tag">Pending</span>':''}</label><div class="s-help">${help}</div><div class="row s-meta"><span>${pend?`Draft: ${st.values[i]?'On':'Off'} · Live: ${st.saved[i]?'On':'Off'}`:`${st.saved[i]?'On':'Off'} · Default`}</span><span class="spacer"></span><button type="button" class="s-details" data-details="${i}">Details</button></div>${st.details===i?`<div class="s-meta mono">${id} · User scope · default: on</div>`:''}</div>`;
+  }
+  function lspSection(after){
+    if(!after){
+      return `<div class="s-section">Language Server</div>
+        <div class="setting" data-note="E"><div class="s-name">Rust Language Server</div><div class="small muted mono">language.rust.enabled</div><div class="s-help">Start rust-analyzer for Rust files.</div><label class="s-ctl"><input type="checkbox" checked>Rust Language Server</label><div class="s-meta row">Effective: true · Default · Live ${act('settings','Setting actions')}</div></div>
+        <div class="setting"><div class="s-name">Rust Server Path</div><div class="small muted mono">language.rust.server_path</div><div class="s-help">Absolute path to the server; empty searches PATH.</div><input type="text" placeholder="rust-analyzer" style="width:100%"></div>`;
+    }
+    return `<div class="s-section" data-note="E">Language Server <span class="tag">Not available in this build</span></div>
+      <p class="s-note">This build was compiled without the <span class="mono">language-server</span> feature. Saved values are kept and apply again in a build that has it.</p>
+      <div class="setting unavailable"><label class="s-ctl s-name"><input type="checkbox" checked disabled>Rust Language Server</label><div class="s-help">Start rust-analyzer for Rust files.</div></div>
+      <div class="setting unavailable"><div class="s-name">Rust Server Path</div><input type="text" placeholder="rust-analyzer" disabled style="width:100%;margin-top:3px"></div>`;
+  }
+  function settings(after,st){
+    const pending=st.values.filter((v,i)=>v!==st.saved[i]).length;
+    const toolbar=after
+      ?`<div class="row" data-note="B"><span class="seg-in" role="group" aria-label="Scope"><button type="button" class="on">User</button><button type="button">Project</button></span><span class="vsep"></span><button type="button" class="filter">Modified</button><button type="button" class="filter on-plain">Pending · ${pending}</button><span class="spacer"></span><span class="small muted">5 settings</span></div>`
+      :`<div class="row" data-note="B"><button type="button" class="on-plain">User</button><button type="button">Project</button><button type="button">Modified</button><button type="button">Pending</button><button type="button">Clear</button></div><div class="small muted" style="margin-top:3px">~/.lumen/settings.toml · 5 settings found</div>`;
+    const apply=`<button type="button" class="${after?'filled':'plain'}" data-apply ${pending?'':'disabled'} data-note="D">Apply</button>`;
+    return `${topbar(after,'Settings — change',{})}<div class="workspace">${rail('settings')}<main class="main"><section class="editor-pane">
+      <div class="tabs"><div class="tab">${icon('code')}<span>theme.rs</span></div><div class="tab sel">${icon('settings')}<span>Settings</span><span class="x">${icon('close')}</span></div></div>
+      <div class="pane-header"><span class="pane-title">SETTINGS</span>${act('file','Open settings.toml')}${act('refresh','Reload')}</div>
+      <div class="s-toolbar"><input type="text" class="s-search" placeholder="Search settings" aria-label="Search settings">${toolbar}</div>
+      <div class="s-body"><nav class="cats" aria-label="Categories"><button type="button">All Settings</button><button type="button" class="on">Editor</button><button type="button">Files</button><button type="button">Appearance</button><button type="button">Workbench</button><button type="button">Terminal</button><button type="button">Language Server</button></nav>
+      <div class="s-results"><div class="s-section">Editor</div>${SETTINGS.map((_,i)=>settingRow(after,st,i)).join('')}${lspSection(after)}</div></div>
+      <div class="s-foot">${apply}<button type="button" class="plain" data-cancel ${pending?'':'disabled'}>Cancel</button><span class="small muted">${pending?pending+' pending change'+(pending>1?'s':''):'No pending changes'}</span></div>
+    </section></main></div>${statusbar(after,'Settings · User scope')}`;
+  }
+
+  /* ---------- chat ---------- */
+  function chat(after,st){
+    const head=after
+      ?`<div class="chat-head" data-note="B"><div class="row"><span class="prov">CODEX</span><span class="chat-title ellipsis">Review the workbench layout and suggest improvements</span><span class="spacer"></span><span class="chat-state">${icon('warning')}Needs your answer</span></div><div class="small muted ellipsis">~/CodeProjects/change</div></div>`
+      :`<div class="chat-head" data-note="B"><div class="row"><span class="pill">Codex</span><span class="chat-title ellipsis" style="flex:1">Review the workbench layout and suggest improvements</span><span class="chat-state">Needs your answer</span></div><div class="small muted">~/CodeProjects/change</div></div>`;
+    const approval=st.approval
+      ?`<div class="approval"><div class="row">${icon('check')} ${esc(st.approval)} · preview only</div></div>`
+      :`<div class="approval" data-note="E"><div class="row" style="color:var(--warning)">${icon('warning')}<span>Permission needed</span></div><div style="margin-top:3px">Run the layout checks</div><div class="cmd">cargo test --workspace</div><div class="row" style="flex-wrap:wrap"><button type="button" class="filled" data-approval="Allowed once">Allow once</button><button type="button" class="plain" data-approval="Declined">Decline</button><span class="small muted">This request only</span></div></div>`;
+    const sendBtn=after
+      ?`<button type="button" class="filled" data-send data-note="A C">${icon('send')} Queue</button>`
+      :`<button type="button" class="send-before" data-send data-note="A C">${icon('send')} Send</button>`;
+    const stopBtn=`<button type="button" class="stop-txt">${icon('stop')} Stop</button>`;
+    return `${topbar(after,'Review the workbench layout — change',{right:true})}<div class="workspace">${rail('chat')}<main class="main"><section class="editor-pane">
+      <div class="tabs"><div class="tab">${icon('code')}<span>theme.rs</span></div><div class="tab sel">${icon('agent')}<span class="ellipsis">Review the workbench layout</span><span class="x">${icon('close')}</span></div></div>
+      ${head}
+      <div class="transcript"><div class="msg user-msg" data-note="D"><div class="msg-label">You</div>Check the UI and suggest improvements to the panel layout.</div>
+      <div class="msg"><div class="msg-label" style="color:var(--codex)">Codex</div>The panels share a clear style. I'm checking spacing, readable controls and long filenames.<div class="tool">${icon('check')} Read theme.rs and widgets.rs</div>${approval}</div></div>
+      <div class="composer-area"><div class="queued" aria-live="polite">${st.queued?`${st.queued} message${st.queued>1?'s':''} queued`:''}</div>
+      <div class="composer"><textarea data-composer aria-label="Message the agent" placeholder="The agent is working - type to queue the next message…">${esc(st.draft)}</textarea>
+      <div class="row"><span class="hint">${after?'Enter to queue · runs after the current turn · Shift+Enter for a new line':'Enter to send · Shift+Enter for a new line'}</span>${stopBtn}${sendBtn}</div></div></div>
+    </section></main>
+    <aside class="sidebar sessions"><div class="pane-header"><span class="pane-title">AGENT SESSIONS</span>${act('plus','New chat')}${act('close','Close panel')}</div>
+      <div class="session on"><div class="t ellipsis">Review the workbench layout</div><div class="m">Codex · Needs your answer</div></div>
+      <div class="session"><div class="t ellipsis">Explore task output styling</div><div class="m">Claude · Idle · 2h</div></div></aside>
+    </div>${statusbar(after,'Agent is waiting for approval')}`;
+  }
+
+  /* ---------- dialogs ---------- */
+  function dialog(after){
+    const blur=(st)=>`${topbar(after,'theme.rs — change',{left:true,bottom:true})}<div class="workspace">${rail('workbench')}${explorer(after,st,false)}<main class="main">${editor(after,st,false)}${bottom(after,st,false)}</main></div>${statusbar(after,'Ready')}`;
+    const base=blur(mkSide());
+    const unsaved=state.dialog==='unsaved';
+    let box;
+    if(unsaved&&!after){
+      box=`<div class="dlg" data-note="A E"><div class="egui-title">Unsaved changes</div><div class="d-body">Save changes to theme.rs?<br><span class="muted">Your edits will be lost if you don't save.</span></div><div class="d-btns"><button type="button" class="filled" data-note="B D">Save</button><button type="button" class="plain">Don't Save</button><button type="button" class="plain">Cancel</button></div></div>`;
+    }else if(!after){
+      box=`<div class="dlg" data-note="A E"><div class="d-body"><div class="heading">Delete theme.rs?</div><div class="path">~/CodeProjects/change/src/ui/theme.rs</div><div class="muted" style="margin-top:6px">This item and its contents will move to Trash. Restore them there if needed.</div></div><div class="d-btns"><button type="button" class="plain" data-note="B D">Move to Trash</button><button type="button" class="plain">Cancel</button></div></div>`;
+    }else if(unsaved){
+      box=`<div class="dlg" role="dialog" aria-label="Unsaved changes" data-note="A E"><div class="d-strip"><span class="spacer">Unsaved changes</span>${act('close','Close (Escape)')}</div><div class="d-body">Save changes to <b>theme.rs</b>?<br><span class="muted">Your edits will be lost if you don't save.</span></div><div class="d-foot"><button type="button" class="plain">Don't Save</button><span class="spacer"></span><button type="button" class="plain">Cancel</button><button type="button" class="filled focus-demo" data-note="B D">Save</button></div></div>`;
+    }else{
+      box=`<div class="dlg" role="dialog" aria-label="Delete theme.rs?" data-note="A E"><div class="d-strip"><span class="spacer">Delete theme.rs?</span>${act('close','Close (Escape)')}</div><div class="d-body"><div class="path">~/CodeProjects/change/src/ui/theme.rs</div><div class="muted" style="margin-top:6px">This item and its contents will move to Trash. Restore them there if needed.</div></div><div class="d-foot"><span class="spacer"></span><button type="button" class="plain focus-demo" data-note="D">Cancel</button><button type="button" class="danger" data-note="B">${icon('warning')} Move to Trash</button></div></div>`;
+    }
+    const scrim=(after||!unsaved)?`<div class="scrim" data-note="C"></div>`:`<div style="position:absolute;inset:0;z-index:2" data-note="C"></div>`;
+    return base+scrim+box;
+  }
+
+  /* ---------- render ---------- */
+  const mocks={before:document.getElementById('mock-before'),after:document.getElementById('mock-after')};
+  function renderSide(which){
+    const el=mocks[which];const after=which==='after';const st=side[which];
+    el.dataset.theme=state.theme;
+    el.innerHTML=state.scene==='settings'?settings(after,st):state.scene==='chat'?chat(after,st):state.scene==='dialogs'?dialog(after):workbench(after,st);
+  }
+  function renderLegend(){
+    const sc=SCENES[state.scene];
+    document.getElementById('legend-sub').textContent=sc.sub;
+    document.getElementById('notes').innerHTML=sc.notes.map(n=>{
+      const chips=[n.kind==='keep'?'<span class="chip keep">Keep</span>':`<span class="chip ${n.pri==='P0'?'p0':''}">Item ${n.item} · ${n.pri}</span>`,n.kind==='validate'?'<span class="chip validate">Validate first</span>':'',n.metric?`<span class="chip metric">${n.metric}</span>`:''].join('');
+      return `<li class="note" tabindex="0" data-for="${n.id}"><span class="pin">${n.id}</span><h3>${esc(n.title)} ${chips}</h3><div class="ba"><b class="b">Before</b><span>${esc(n.before)}</span><b class="a">After</b><span>${esc(n.after)}</span></div></li>`;
+    }).join('');
+  }
+  function targets(wrap,id){
+    return [...wrap.querySelectorAll('.lm [data-note]')].filter(e=>e.dataset.note.split(' ').includes(id)).filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;});
+  }
+  /* The part of an element not clipped by scrolling ancestors; `off` when it is scrolled out of view. */
+  function visibleRect(el){
+    const r=el.getBoundingClientRect();let L=r.left,T=r.top,R=r.right,B=r.bottom,clip=null;
+    for(let p=el.parentElement;p;p=p.parentElement){
+      const cs=getComputedStyle(p);
+      if(cs.overflowX!=='visible'||cs.overflowY!=='visible'){const q=p.getBoundingClientRect();L=Math.max(L,q.left);T=Math.max(T,q.top);R=Math.min(R,q.right);B=Math.min(B,q.bottom);if(!clip)clip=q;}
+      if(p.classList.contains('lm'))break;
+    }
+    if(R>L&&B>T)return {left:L,top:T,right:R,bottom:B,width:R-L,height:B-T};
+    return {off:r.top>=(clip?clip.bottom:0)?'down':'up',clip};
+  }
+  function paintOverlay(wrap){
+    const ov=wrap.querySelector('.overlay');const box=wrap.getBoundingClientRect();
+    if(!box.width){ov.innerHTML='';return;}
+    let html='';const placed=[];
+    for(const n of SCENES[state.scene].notes){
+      const els=targets(wrap,n.id);if(!els.length)continue;
+      const v=visibleRect(els[0]);
+      let r=v,label=n.id,cls='pin';
+      if(v.off){const c=v.clip;r=v.off==='down'?{right:c.right,top:c.bottom-22}:{right:c.right,top:c.top+8};label=n.id+(v.off==='down'?' ↓':' ↑');cls='pin off';}
+      let x=Math.min(Math.max(r.right-box.left-(v.off?40:12),2),box.width-(v.off?40:22));
+      let y=Math.min(Math.max(r.top-box.top-8,2),box.height-22);
+      // Notes that share an element would stack exactly; step them left.
+      while(placed.some(p=>Math.abs(p.x-x)<20&&Math.abs(p.y-y)<20)){x-=24;if(x<2){x=Math.min(Math.max(r.right-box.left-12,2),box.width-22);y+=24;}}
+      placed.push({x,y});
+      html+=`<span class="${cls}" data-for="${n.id}" style="left:${x}px;top:${y}px" title="${esc(n.title)}${v.off?' (scroll to see)':''}">${label}</span>`;
+      if(state.hl===n.id){for(const e of els){const q=visibleRect(e);if(q.off)continue;html+=`<span class="hlbox" style="left:${q.left-box.left-3}px;top:${q.top-box.top-3}px;width:${q.width+6}px;height:${q.height+6}px"></span>`;}}
+    }
+    ov.innerHTML=html;
+  }
+  function paintAll(){applyTitleRule();document.querySelectorAll('.wrap').forEach(paintOverlay);document.querySelectorAll('.note').forEach(n=>n.classList.toggle('active',n.dataset.for===state.hl));}
+  function syncControls(){
+    document.querySelectorAll('[data-control]').forEach(g=>g.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(state[g.dataset.control]===b.dataset.value))));
+    document.getElementById('dialog-group').hidden=state.scene!=='dialogs';
+    const cmp=document.getElementById('compare');cmp.className='compare '+(state.view==='side'?'side':'only-'+state.view);
+  }
+  function render(){syncControls();renderSide('before');renderSide('after');renderLegend();requestAnimationFrame(paintAll);}
+
+  /* ---------- events ---------- */
+  document.querySelectorAll('[data-control]').forEach(g=>g.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state[g.dataset.control]=b.dataset.value;state.hl=null;history.replaceState(null,'','#'+new URLSearchParams({scene:state.scene,theme:state.theme,view:state.view,dialog:state.dialog}));render();}));
+  document.getElementById('pins').addEventListener('change',e=>document.body.classList.toggle('no-pins',!e.target.checked));
+  const setHl=id=>{if(state.hl===id)return;state.hl=id;paintAll();};
+  document.addEventListener('mouseover',e=>{const t=e.target.closest('.pin,.note');setHl(t?t.dataset.for:null);});
+  document.getElementById('notes').addEventListener('focusin',e=>{const t=e.target.closest('.note');if(t)setHl(t.dataset.for);});
+  document.getElementById('notes').addEventListener('focusout',()=>setHl(null));
+  for(const [which,el] of Object.entries(mocks)){
+    const st=side[which];const rerender=()=>{renderSide(which);requestAnimationFrame(paintAll);};
+    el.addEventListener('click',e=>{
+      const b=e.target.closest('button');if(!b||b.disabled)return;
+      if(b.dataset.scene){state.scene=b.dataset.scene;state.hl=null;render();return;}
+      if(b.dataset.bottom){st.bottom=b.dataset.bottom;rerender();return;}
+      if(b.dataset.file){st.selected=b.dataset.file;rerender();return;}
+      if(b.dataset.details){st.details=st.details===+b.dataset.details?-1:+b.dataset.details;rerender();return;}
+      if(b.hasAttribute('data-apply')){st.saved=[...st.values];rerender();return;}
+      if(b.hasAttribute('data-cancel')){st.values=[...st.saved];rerender();return;}
+      if(b.dataset.approval){st.approval=b.dataset.approval;rerender();return;}
+      if(b.hasAttribute('data-send')){if(st.draft.trim()){st.queued++;st.draft='';rerender();}return;}
+    });
+    el.addEventListener('change',e=>{if(e.target.dataset.check===undefined)return;st.values[+e.target.dataset.check]=e.target.checked;rerender();});
+    el.addEventListener('input',e=>{if(e.target.hasAttribute('data-composer'))st.draft=e.target.value;});
+    el.addEventListener('keydown',e=>{if(e.target.hasAttribute('data-composer')&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();el.querySelector('[data-send]').click();}});
+  }
+  new ResizeObserver(()=>paintAll()).observe(document.getElementById('compare'));
+  Object.values(mocks).forEach(el=>el.addEventListener('scroll',paintAll,{capture:true,passive:true}));
+  if(document.fonts&&document.fonts.ready)document.fonts.ready.then(paintAll);
+  render();
+})();
+</script>
+</body>
+</html>

@@ -59,6 +59,14 @@ fn label_rect(output: &egui::FullOutput, label: &str) -> egui::Rect {
         })
         .unwrap_or_else(|| panic!("missing {label}"))
 }
+fn label_rect_opt(output: &egui::FullOutput, label: &str) -> Option<egui::Rect> {
+    output.shapes.iter().find_map(|shape| match &shape.shape {
+        egui::Shape::Text(text) if text.galley.job.text.contains(label) => {
+            Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+        }
+        _ => None,
+    })
+}
 fn click(app: &mut LumenApp, ctx: &egui::Context, width: f32, pos: egui::Pos2) {
     for pressed in [true, false] {
         frame(
@@ -190,6 +198,35 @@ fn settings_is_revealed_in_overflow_and_dirty_markers_keep_close_confirmation() 
     assert_eq!(app.editor.files.len(), 30);
     assert!(app.editor.files[0].dirty);
     assert_eq!(app.editor.files[0].text, "untouched");
+}
+
+#[test]
+fn a_dirty_tab_shows_its_dot_until_hovered_then_the_close_glyph_in_the_same_place() {
+    let (mut app, ctx) = fixture(2);
+    app.editor.files[0].dirty = true;
+    app.editor.set_active_index(Some(0));
+    for _ in 0..3 {
+        frame(&mut app, &ctx, 600.0, vec![]);
+    }
+    let (_, output) = frame(&mut app, &ctx, 600.0, vec![]);
+    let dot = label_rect(&output, "●");
+    let title = label_rect(&output, "file_0.rs");
+    frame(
+        &mut app,
+        &ctx,
+        600.0,
+        vec![egui::Event::PointerMoved(title.center())],
+    );
+    let (_, hovered) = frame(&mut app, &ctx, 600.0, vec![]);
+    assert!(
+        label_rect_opt(&hovered, "●").is_none(),
+        "dot gives way to the close glyph"
+    );
+    let close = label_rect(&hovered, crate::icon::X);
+    assert!(
+        (close.center().x - dot.center().x).abs() < 1.0,
+        "close glyph replaces the dot in the same hit target"
+    );
 }
 
 #[test]

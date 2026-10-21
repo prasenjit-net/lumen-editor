@@ -300,6 +300,8 @@ impl Workbench<'_> {
         let mut chosen = None;
         egui::Window::new("Command Palette")
             .open(&mut open)
+            // A quick input has no title strip: the hint in the field says what it is.
+            .title_bar(false)
             .collapsible(false)
             .resizable(false)
             .default_width(width)

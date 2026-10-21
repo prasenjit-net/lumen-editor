@@ -2199,6 +2199,7 @@ dependencies = [
  "chrono",
  "eframe",
  "ignore",
+ "image",
  "libc",
  "lumen-agent-claude",
  "lumen-agent-codex",

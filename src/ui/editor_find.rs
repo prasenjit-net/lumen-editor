@@ -45,6 +45,8 @@ impl Workbench<'_> {
             }
         }
         let width = ui.available_width().min(620.0);
+        // Below this the query would be squeezed to nothing beside the controls.
+        let narrow = width < 460.0;
         ui.horizontal(|ui| {
             ui.add_space((ui.available_width() - width).max(0.0));
             ui.allocate_ui_with_layout(
@@ -73,7 +75,11 @@ impl Workbench<'_> {
                                     let mut input = TextEdit::singleline(&mut state.query)
                                         .id(find_input_id(document))
                                         .hint_text("Find")
-                                        .desired_width((width - 340.0).max(40.0))
+                                        .desired_width(if narrow {
+                                            (width - 48.0).max(40.0)
+                                        } else {
+                                            (width - 340.0).max(40.0)
+                                        })
                                         .show(ui);
                                     if state.focus {
                                         input.response.request_focus();
@@ -92,6 +98,10 @@ impl Workbench<'_> {
                                         state.current = 0;
                                         state.refresh(file);
                                     }
+                                    if narrow {
+                                        // Options and navigation get a deliberate second row.
+                                        ui.end_row();
+                                    }
                                     let changed = ui
                                         .selectable_label(state.options.match_case, "Aa")
                                         .on_hover_text("Match Case")
@@ -108,7 +118,10 @@ impl Workbench<'_> {
                                     }
                                     state.refresh(file);
                                     ui.label(
-                                        egui::RichText::new(if state.matches.is_empty() {
+                                        egui::RichText::new(if state.query.is_empty() {
+                                            // Nothing typed yet is not the same as nothing found.
+                                            "Type to search".into()
+                                        } else if state.matches.is_empty() {
                                             "No results".into()
                                         } else {
                                             format!(
@@ -117,7 +130,7 @@ impl Workbench<'_> {
                                                 state.matches.len()
                                             )
                                         })
-                                        .size(11.0)
+                                        .size(crate::ui::theme::META_SIZE)
                                         .color(colors.muted),
                                     );
                                     let matches = !state.matches.is_empty();

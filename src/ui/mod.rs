@@ -7,6 +7,7 @@ mod chat;
 mod chrome;
 #[cfg(feature = "shared-editor")]
 mod completion;
+mod dialog;
 mod dialogs;
 mod editor;
 mod editor_find;

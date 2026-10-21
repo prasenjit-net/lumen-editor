@@ -468,7 +468,6 @@ impl Command {
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows", test))]
     pub(crate) fn from_menu_id(id: &str) -> Option<Self> {
         Some(match id {
             "settings" => Self::Settings,

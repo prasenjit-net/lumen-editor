@@ -15,29 +15,47 @@ impl Workbench<'_> {
         if !self.view.settings.pending_quit {
             return;
         }
-        egui::Window::new("Unapplied settings")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.label("Settings drafts have not been applied. Quitting will discard them.");
-                ui.label("Reopen any previously edited project to apply its retained draft.");
-                ui.horizontal(|ui| {
-                    let keep = super::dialogs::primary_button(ui, "Keep Editing");
-                    let discard = ui.button("Discard Settings and Continue");
-                    let cancel = ui.button("Cancel");
-                    super::dialogs::keep_focus(ui.ctx(), &[&keep, &discard, &cancel], &keep);
-                    if keep.clicked() {
-                        self.view.settings.pending_quit = false;
-                        self.command(Command::Settings);
-                    } else if discard.clicked() {
-                        self.command(Command::DiscardSettingsAndQuit);
-                    } else if cancel.clicked() || super::dialogs::escape_pressed(ui.ctx()) {
-                        self.view.settings.pending_quit = false;
-                        self.view.focus_editor = true;
-                    }
-                });
-            });
+        let dialog = super::dialog::Dialog::new("Unapplied settings").show(ctx, |ui| {
+            ui.add(
+                egui::Label::new(
+                    "Settings drafts have not been applied. Quitting will discard them.",
+                )
+                .wrap(),
+            );
+            ui.add(
+                egui::Label::new(
+                    "Reopen any previously edited project to apply its retained draft.",
+                )
+                .wrap(),
+            );
+            super::dialog::footer(ui, |ui| {
+                let keep = super::dialogs::primary_button(ui, "Keep Editing");
+                let cancel = ui.button("Cancel");
+                let discard = ui.button("Discard Settings and Continue");
+                super::dialogs::keep_focus(ui.ctx(), &[&keep, &discard, &cancel], &keep);
+                if keep.clicked() {
+                    Some(0)
+                } else if discard.clicked() {
+                    Some(1)
+                } else if cancel.clicked() || super::dialogs::escape_pressed(ui.ctx()) {
+                    Some(2)
+                } else {
+                    None
+                }
+            })
+        });
+        match dialog.inner.or(dialog.close_clicked.then_some(2)) {
+            Some(0) => {
+                self.view.settings.pending_quit = false;
+                self.command(Command::Settings);
+            }
+            Some(1) => self.command(Command::DiscardSettingsAndQuit),
+            Some(_) => {
+                self.view.settings.pending_quit = false;
+                self.view.focus_editor = true;
+            }
+            None => {}
+        }
     }
     pub(super) fn settings_page(&mut self, ui: &mut egui::Ui) {
         let actions = [
@@ -101,7 +119,13 @@ impl Workbench<'_> {
                         });
                 }
                 egui::CentralPanel::default()
-                    .frame(egui::Frame::NONE)
+                    // Keep rows (and a pending draft's edge) off the category divider.
+                    .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                        left: 12,
+                        right: 0,
+                        top: 0,
+                        bottom: 0,
+                    }))
                     .show_inside(ui, |ui| {
                         results(
                             ui,
@@ -149,17 +173,26 @@ fn toolbar(ui: &mut egui::Ui, state: &mut SettingsState, wide: bool) {
     }
     ui.add_space(6.0);
     ui.horizontal_wrapped(|ui| {
+        // Scope chooses which file edits go to; the filters below only narrow the list.
         ui.selectable_value(&mut state.scope, Scope::User, "User");
         ui.add_enabled_ui(state.root.is_some(), |ui| {
             ui.selectable_value(&mut state.scope, Scope::Project, "Project");
         })
         .response
         .on_hover_text("Project overrides User settings. Open a folder to enable this scope.");
-        if ui.small_button("Modified").clicked() {
-            state.query = "@modified".into();
-        }
-        if ui.small_button("Pending").clicked() {
-            state.query = "@pending".into();
+        ui.separator();
+        let pending = state.selected().pending();
+        for (label, filter) in [
+            ("Modified".to_owned(), "@modified"),
+            (format!("Pending · {pending}"), "@pending"),
+        ] {
+            let on = state.query.trim() == filter;
+            if ui
+                .selectable_label(on, RichText::new(label).small())
+                .clicked()
+            {
+                state.query = if on { String::new() } else { filter.into() };
+            }
         }
         if ui.small_button("Clear").clicked() {
             state.query.clear();
@@ -226,11 +259,21 @@ fn results(
                     ui.label(
                         RichText::new(category)
                             .strong()
-                            .size(16.0)
+                            .size(crate::ui::theme::SECTION_HEADING_SIZE)
                             .color(colors.text),
                     );
                     if category == "Language" {
-                        language_server_status(ui, language_server);
+                        if cfg!(feature = "language-server") {
+                            language_server_status(ui, language_server);
+                        } else {
+                            ui.label(
+                                RichText::new(
+                                    "Not available in this build. Saved values are kept and apply again in a build with language server support.",
+                                )
+                                .small()
+                                .color(colors.muted),
+                            );
+                        }
                     }
                 }
                 ui.push_id(setting.id, |ui| setting_row(ui, state, setting));
@@ -276,64 +319,132 @@ fn language_server_status(ui: &mut egui::Ui, summary: Option<&LanguageServerSumm
         );
     }
 }
+/// Settings whose feature is not compiled into this build: still listed so saved
+/// values are visible and survive, but not editable.
+fn unavailable_in_this_build(setting: &Setting) -> bool {
+    !cfg!(feature = "language-server") && setting.id.starts_with("language.")
+}
+
 fn setting_row(ui: &mut egui::Ui, state: &mut SettingsState, setting: &Setting) {
     let colors = crate::ui::theme::palette(ui.visuals());
     let modified = state.selected().persisted.contains_key(setting.id);
     let pending =
         state.selected().draft.get(setting.id) != state.selected().persisted.get(setting.id);
-    ui.add_space(8.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new(setting.name).strong());
-        if modified {
-            ui.label(RichText::new("Modified").small().color(colors.muted));
-        }
-        if pending {
-            ui.label(RichText::new("Pending").small().color(colors.muted));
-        }
-    });
-    ui.label(RichText::new(setting.id).small().color(colors.muted));
-    ui.label(setting.help);
-    let (effective, origin) = state.effective(setting, None);
-    let mut value = state
-        .selected()
-        .draft
-        .get(setting.id)
-        .cloned()
-        .unwrap_or_else(|| match state.scope {
-            Scope::User => setting.default_value(),
-            Scope::Project => lumen_settings_core::resolve(setting, &state.user.persisted, None).0,
-        });
-    let changed = control(ui, setting, &mut value);
-    if changed {
-        state.selected_mut().draft.insert(setting.id.into(), value);
-    }
-    ui.horizontal_wrapped(|ui| {
-        ui.label(
-            RichText::new(format!("Effective: {effective} · {origin} · Live"))
-                .small()
-                .color(colors.muted),
-        );
-        ui.menu_button(icon::GEAR, |ui| {
-            if ui.button("Remove Override (inherit)").clicked() {
-                state.selected_mut().draft.remove(setting.id);
-                ui.close();
+    let unavailable = unavailable_in_this_build(setting);
+    let details_id = ui.id().with(("setting_details", setting.id));
+    let show_details = ui
+        .data(|data| data.get_temp::<bool>(details_id))
+        .unwrap_or(false);
+    ui.add_space(6.0);
+    let top = ui.cursor().top();
+    let left = ui.cursor().left();
+    ui.add_enabled_ui(!unavailable, |ui| {
+        let (effective, origin) = state.effective(setting, None);
+        let mut value = state
+            .selected()
+            .draft
+            .get(setting.id)
+            .cloned()
+            .unwrap_or_else(|| match state.scope {
+                Scope::User => setting.default_value(),
+                Scope::Project => {
+                    lumen_settings_core::resolve(setting, &state.user.persisted, None).0
+                }
+            });
+        // One visible label per setting: a boolean's checkbox carries the name, any
+        // other control gets the name above it.
+        ui.horizontal_wrapped(|ui| {
+            if !matches!(setting.control, Control::Bool) {
+                ui.label(RichText::new(setting.name).strong());
             }
-            if ui.button("Set Built-in Default").clicked() {
+            let changed = control(ui, setting, &mut value);
+            if changed {
                 state
                     .selected_mut()
                     .draft
-                    .insert(setting.id.into(), setting.default_value());
-                ui.close();
+                    .insert(setting.id.into(), value.clone());
             }
-            if ui.button("Copy Setting ID").clicked() {
-                ui.ctx().copy_text(setting.id.into());
-                ui.close();
+            if pending {
+                ui.label(RichText::new("Pending").small().color(colors.info));
+            } else if modified {
+                ui.label(RichText::new("Modified").small().color(colors.muted));
             }
-        })
-        .response
-        .on_hover_text("Setting actions");
+        });
+        ui.add(egui::Label::new(RichText::new(setting.help).color(colors.muted)).wrap());
+        ui.horizontal_wrapped(|ui| {
+            let status = if pending {
+                format!("Draft: {value} · Live: {effective}")
+            } else {
+                format!("Live: {effective}")
+            };
+            ui.label(RichText::new(status).small().color(colors.muted));
+            let toggle = ui
+                .add(
+                    egui::Button::new(
+                        RichText::new(if show_details {
+                            "Hide details"
+                        } else {
+                            "Details"
+                        })
+                        .small()
+                        .color(colors.muted),
+                    )
+                    .frame(false),
+                )
+                .on_hover_text("Show the setting ID, where its value comes from, and its default");
+            if toggle.clicked() {
+                ui.data_mut(|data| data.insert_temp(details_id, !show_details));
+            }
+            let gear = ui.menu_button(icon::GEAR, |ui| {
+                if ui.button("Remove Override (inherit)").clicked() {
+                    state.selected_mut().draft.remove(setting.id);
+                    ui.close();
+                }
+                if ui.button("Set Built-in Default").clicked() {
+                    state
+                        .selected_mut()
+                        .draft
+                        .insert(setting.id.into(), setting.default_value());
+                    ui.close();
+                }
+                if ui.button("Copy Setting ID").clicked() {
+                    ui.ctx().copy_text(setting.id.into());
+                    ui.close();
+                }
+            });
+            super::widgets::named(
+                gear.response.on_hover_text("Setting actions"),
+                true,
+                "Setting actions",
+            );
+        });
+        if show_details {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!(
+                        "{} · {} scope · {origin} · default: {}",
+                        setting.id,
+                        state.scope.label(),
+                        setting.default_value()
+                    ))
+                    .small()
+                    .monospace()
+                    .color(colors.muted),
+                )
+                .selectable(true)
+                .wrap(),
+            );
+        }
     });
-    ui.add_space(8.0);
+    if pending {
+        // A draft that is not live yet reads differently from a saved value.
+        ui.painter().vline(
+            left - 6.0,
+            top..=ui.cursor().top(),
+            egui::Stroke::new(2.0_f32, colors.accent),
+        );
+    }
+    ui.add_space(6.0);
     ui.separator();
 }
 fn control(ui: &mut egui::Ui, setting: &Setting, value: &mut Value) -> bool {
@@ -377,7 +488,11 @@ fn footer(ui: &mut egui::Ui, state: &mut SettingsState) -> Option<Command> {
     ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {
         if ui
-            .add_enabled(can_save, egui::Button::new("Apply"))
+            .add_enabled(
+                can_save,
+                egui::Button::new(RichText::new("Apply").color(colors.on_accent))
+                    .fill(colors.accent),
+            )
             .clicked()
         {
             command = Some(Command::ApplySettings);
@@ -389,9 +504,13 @@ fn footer(ui: &mut egui::Ui, state: &mut SettingsState) -> Option<Command> {
             state.selected_mut().draft = state.selected().persisted.clone();
         }
         ui.label(
-            RichText::new(format!("{pending} pending changes"))
-                .small()
-                .color(colors.muted),
+            RichText::new(match pending {
+                0 => "No pending changes".to_owned(),
+                1 => "1 pending change".to_owned(),
+                n => format!("{n} pending changes"),
+            })
+            .small()
+            .color(colors.muted),
         );
     });
     ScrollArea::vertical()
@@ -527,5 +646,100 @@ mod tests {
                 assert!(shape.pos.y >= 0.0 && shape.pos.y + shape.galley.size().y <= 600.0);
             }
         }
+    }
+
+    fn texts(output: &egui::FullOutput) -> Vec<String> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn open_settings(query: &str) -> (crate::app::LumenApp, egui::Context) {
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let mut app = crate::app::LumenApp::default();
+        app.view.settings.open = true;
+        app.view.settings.query = query.into();
+        (app, ctx)
+    }
+
+    #[test]
+    fn a_boolean_setting_shows_its_name_once_and_keeps_metadata_in_details() {
+        let setting = catalog()
+            .find(|setting| {
+                matches!(setting.control, Control::Bool) && setting.id.starts_with("editor.")
+            })
+            .expect("a boolean editor setting");
+        let (mut app, ctx) = open_settings(&format!("@id:{}", setting.id));
+        let output = frame(&mut app, &ctx, 900.0, vec![]);
+        let all = texts(&output);
+        assert_eq!(
+            all.iter()
+                .filter(|text| text.as_str() == setting.name)
+                .count(),
+            1,
+            "{} appears once: {all:?}",
+            setting.name
+        );
+        assert!(
+            !all.iter()
+                .any(|text| text.contains(setting.id) && !text.starts_with("@id:")),
+            "the technical ID waits behind Details"
+        );
+        assert!(all.iter().any(|text| text == "Details"));
+    }
+
+    #[test]
+    fn a_pending_draft_shows_draft_and_live_values() {
+        let setting = catalog()
+            .find(|setting| {
+                matches!(setting.control, Control::Bool) && setting.id.starts_with("editor.")
+            })
+            .expect("a boolean editor setting");
+        let (mut app, ctx) = open_settings(&format!("@id:{}", setting.id));
+        let live = match setting.default_value() {
+            Value::Bool(value) => value,
+            other => panic!("{other:?}"),
+        };
+        app.view
+            .settings
+            .user
+            .draft
+            .insert(setting.id.into(), Value::Bool(!live));
+        let output = frame(&mut app, &ctx, 900.0, vec![]);
+        let all = texts(&output);
+        assert!(all.iter().any(|text| text == "Pending"), "{all:?}");
+        assert!(
+            all.iter()
+                .any(|text| text.starts_with("Draft:") && text.contains("Live:")),
+            "{all:?}"
+        );
+    }
+
+    #[cfg(not(feature = "language-server"))]
+    #[test]
+    fn language_server_settings_are_marked_unavailable_without_the_feature() {
+        let language = catalog()
+            .find(|setting| setting.id.starts_with("language."))
+            .expect("a language setting");
+        assert!(unavailable_in_this_build(language));
+        assert!(!unavailable_in_this_build(
+            catalog()
+                .find(|setting| setting.id.starts_with("editor."))
+                .unwrap()
+        ));
+        let (mut app, ctx) = open_settings("");
+        app.view.settings.category = "Language".into();
+        let output = frame(&mut app, &ctx, 900.0, vec![]);
+        assert!(
+            texts(&output)
+                .iter()
+                .any(|text| text.starts_with("Not available in this build")),
+        );
     }
 }

@@ -128,6 +128,16 @@ impl Workbench<'_> {
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
                         Sense::click(),
                     );
+                    // Custom-painted rows still need a spoken name and state, and a
+                    // keyboard focus ring that is not the selection fill.
+                    response.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::WidgetType::SelectableLabel,
+                            true,
+                            selected,
+                            format!("{}, {}", record.title, status_text(&status)),
+                        )
+                    });
                     if ui.is_rect_visible(rect) {
                         let fill = if selected {
                             colors.active
@@ -137,6 +147,14 @@ impl Workbench<'_> {
                             egui::Color32::TRANSPARENT
                         };
                         ui.painter().rect_filled(rect, 3.0, fill);
+                        if response.has_focus() {
+                            ui.painter().rect_stroke(
+                                rect.shrink(1.0),
+                                3.0,
+                                Stroke::new(1.0_f32, colors.accent),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
                         ui.painter().rect_filled(
                             egui::Rect::from_min_size(
                                 rect.min + egui::vec2(2.0, 4.0),

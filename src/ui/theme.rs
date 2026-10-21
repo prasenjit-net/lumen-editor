@@ -7,6 +7,12 @@ pub(crate) enum Theme {
     HighContrast,
 }
 
+/// Text size for metadata, secondary labels and compact controls (the most common
+/// size in the workbench).
+pub(crate) const META_SIZE: f32 = 11.0;
+/// Text size for section headings inside pages such as Settings.
+pub(crate) const SECTION_HEADING_SIZE: f32 = 16.0;
+
 #[derive(Clone, Copy)]
 pub(crate) struct Palette {
     pub(crate) bg: Color32,
@@ -22,6 +28,17 @@ pub(crate) struct Palette {
     /// Edge of surfaces that float above the workbench (popups, dialogs, menus).
     pub(crate) float_border: Color32,
     pub(crate) accent: Color32,
+    /// Text on a control filled with `accent` (white on blue, black on the
+    /// high-contrast yellow); pair them, never reach for plain white.
+    pub(crate) on_accent: Color32,
+    /// Fill for destructive confirmation buttons and the text drawn on it.
+    pub(crate) danger: Color32,
+    pub(crate) on_danger: Color32,
+    /// Dim layer drawn over the workbench behind a blocking dialog.
+    pub(crate) scrim: Color32,
+    /// Secondary text on the title strip, lighter than `muted` where the strip
+    /// is darker than an ordinary panel.
+    pub(crate) title_muted: Color32,
     pub(crate) hover: Color32,
     pub(crate) input: Color32,
     pub(crate) diff_removed_bg: Color32,
@@ -70,6 +87,11 @@ impl Theme {
             border: Color32::from_rgb(43, 43, 43),
             float_border: Color32::from_rgb(69, 69, 69),
             accent: Color32::from_rgb(0, 122, 204),
+            on_accent: Color32::WHITE,
+            danger: Color32::from_rgb(196, 43, 28),
+            on_danger: Color32::WHITE,
+            scrim: Color32::from_black_alpha(100),
+            title_muted: Color32::from_gray(168),
             hover: Color32::from_rgb(43, 43, 43),
             input: Color32::from_rgb(49, 49, 49),
             diff_removed_bg: Color32::from_rgb(64, 37, 37),
@@ -103,6 +125,9 @@ impl Theme {
                 hover: Color32::from_gray(224),
                 active: Color32::from_rgb(190, 220, 245),
                 accent: Color32::from_rgb(0, 95, 160),
+                title_muted: Color32::from_gray(96),
+                danger: Color32::from_rgb(179, 38, 30),
+                scrim: Color32::from_black_alpha(56),
                 error: Color32::from_rgb(165, 25, 25),
                 warning: Color32::from_rgb(125, 88, 0),
                 success: Color32::from_rgb(0, 112, 64),
@@ -132,6 +157,11 @@ impl Theme {
                 hover: Color32::from_gray(55),
                 active: Color32::from_rgb(0, 65, 100),
                 accent: Color32::YELLOW,
+                on_accent: Color32::BLACK,
+                danger: Color32::from_rgb(255, 120, 120),
+                on_danger: Color32::BLACK,
+                scrim: Color32::from_black_alpha(140),
+                title_muted: Color32::from_gray(220),
                 error: Color32::from_rgb(255, 120, 120),
                 warning: Color32::YELLOW,
                 success: Color32::GREEN,
@@ -265,6 +295,41 @@ mod tests {
     }
 
     #[test]
+    fn action_and_title_strip_text_meet_the_contrast_target_in_every_theme() {
+        for theme in [Theme::Dark, Theme::Light, Theme::HighContrast] {
+            let colors = theme.palette();
+            let pairs = [
+                ("action text on accent", colors.on_accent, colors.accent),
+                ("action text on danger", colors.on_danger, colors.danger),
+                ("muted on panel", colors.muted, colors.panel),
+                ("secondary on title strip", colors.title_muted, colors.title),
+                ("primary on title strip", colors.text, colors.title),
+            ];
+            for (name, foreground, background) in pairs {
+                let ratio = contrast(foreground, background);
+                assert!(ratio >= 4.5, "{theme:?}: {name} is {ratio:.2}:1");
+            }
+            for (name, glyph) in [("success", colors.success), ("error", colors.error)] {
+                let ratio = contrast(glyph, colors.title);
+                assert!(
+                    ratio >= 3.0,
+                    "{theme:?}: {name} glyph on title is {ratio:.2}:1"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn egui_semantic_text_colors_follow_the_palette_in_every_theme() {
+        for theme in [Theme::Dark, Theme::Light, Theme::HighContrast] {
+            let visuals = visuals(theme);
+            let colors = theme.palette();
+            assert_eq!(visuals.error_fg_color, colors.error, "{theme:?}");
+            assert_eq!(visuals.warn_fg_color, colors.warning, "{theme:?}");
+        }
+    }
+
+    #[test]
     fn explicit_editor_override_does_not_change_context_or_widget_identity() {
         use crate::app::LumenApp;
         let ctx = egui::Context::default();
@@ -392,6 +457,10 @@ pub(crate) fn visuals(theme: Theme) -> egui::Visuals {
     visuals.extreme_bg_color = colors.bg;
     visuals.weak_text_color = Some(colors.muted);
     visuals.hyperlink_color = colors.accent;
+    // egui draws its own error and warning text (validation, DragValue limits) from
+    // these; keep them on the workbench palette.
+    visuals.error_fg_color = colors.error;
+    visuals.warn_fg_color = colors.warning;
     // Text fields use noninteractive visuals when idle. Define all five states
     // so buttons, inputs, menus and selections share the same palette and radius.
     for widget in [
