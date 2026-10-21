@@ -560,6 +560,30 @@ mod tests {
     }
 
     #[test]
+    fn session_rows_have_a_spoken_name_with_their_status() {
+        let (mut app, ctx) = fixture();
+        ctx.enable_accesskit();
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        settle(&mut app, &ctx);
+        let mut labels = Vec::new();
+        for _ in 0..3 {
+            let output = frame(&mut app, &ctx, 1000.0);
+            labels.extend(
+                output
+                    .platform_output
+                    .accesskit_update
+                    .iter()
+                    .flat_map(|update| update.nodes.iter())
+                    .filter_map(|(_, node)| node.label().map(str::to_owned)),
+            );
+        }
+        assert!(
+            labels.iter().any(|label| label.starts_with("New chat, ")),
+            "{labels:?}"
+        );
+    }
+
+    #[test]
     fn messages_are_told_apart_and_permissions_and_working_state_are_clear() {
         let (mut app, ctx) = fixture();
         app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
