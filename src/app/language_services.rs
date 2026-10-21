@@ -149,7 +149,7 @@ impl LumenApp {
             return;
         };
         self.view.language_navigation.open = false;
-        self.open_file(location.path.clone());
+        self.open_file_unpinned(location.path.clone());
         let Some(document) = self
             .editor
             .active()

@@ -179,6 +179,7 @@ impl eframe::App for LumenApp {
             }
             None => {}
         }
+        self.editor.pin_touched();
         self.sync_project_settings();
         self.apply_workbench_settings(ctx);
         self.refresh_language_server_status(ctx);

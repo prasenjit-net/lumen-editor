@@ -1,7 +1,9 @@
 use super::{Document, DocumentId};
 mod groups;
+mod unpinned;
 pub(crate) use groups::GroupState;
 use std::path::PathBuf;
+use unpinned::UnpinnedTab;
 pub(crate) struct EditorState {
     pub(crate) files: Vec<Document>,
     /// Index into `files`. Private on purpose: callers ask for the active
@@ -9,6 +11,7 @@ pub(crate) struct EditorState {
     /// (for example with several editor groups) without touching every caller.
     active_file: Option<usize>,
     groups: GroupState,
+    unpinned: Vec<UnpinnedTab>,
     pub(crate) workspace: Option<PathBuf>,
     pub(crate) next_untitled: usize,
 }
@@ -18,6 +21,7 @@ impl Default for EditorState {
             files: Vec::new(),
             active_file: None,
             groups: GroupState::default(),
+            unpinned: Vec::new(),
             workspace: None,
             next_untitled: 1,
         }

@@ -25,6 +25,7 @@ mod paste;
 mod safety;
 #[cfg(feature = "shared-editor")]
 mod shared;
+mod unpinned;
 mod viewport;
 mod workspace_search;
 

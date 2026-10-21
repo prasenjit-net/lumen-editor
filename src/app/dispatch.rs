@@ -339,6 +339,8 @@ impl LumenApp {
             | Command::CollapseFolders
             | Command::RefreshExplorer
             | Command::ActivateActivity(_)
+            | Command::PinTab(_)
+            | Command::PinActiveTab
             | Command::ShowWorkspaceSearch => {
                 command.apply_local(&mut self.editor, &mut self.view);
             }
@@ -372,6 +374,7 @@ impl LumenApp {
             Command::OpenFolder => self.choose_folder(),
             Command::CloseFolder => self.close_folder(),
             Command::OpenPath(path) => self.open_file(path),
+            Command::OpenPathUnpinned(path) => self.open_file_unpinned(path),
             Command::RevealInExplorer(path) => self.reveal_in_explorer(path),
             Command::OpenRecentFolder(path) => {
                 self.view.navigation.mode = None;

@@ -290,6 +290,11 @@ pub(crate) enum Command {
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     SelectAll,
     OpenPath(PathBuf),
+    /// Open in the group's replaceable (italic) tab.
+    OpenPathUnpinned(PathBuf),
+    /// Make an unpinned tab permanent ("Keep Open").
+    PinTab(DocumentId),
+    PinActiveTab,
     /// Open a previously used workspace folder.
     OpenRecentFolder(PathBuf),
     ShowRecentFolders,
@@ -377,6 +382,12 @@ impl Command {
                     editor.new_file();
                     view.focus_editor = true;
                     view.status = "New untitled file".into();
+                }
+            }
+            Self::PinTab(id) => editor.pin(id),
+            Self::PinActiveTab => {
+                if let Some(id) = editor.active_id() {
+                    editor.pin(id);
                 }
             }
             Self::RequestClose(id) => {
