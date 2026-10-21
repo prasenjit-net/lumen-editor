@@ -170,7 +170,9 @@ impl Workbench<'_> {
                                                         ui.add(
                                                             egui::Button::new(
                                                                 RichText::new(&label)
-                                                                    .size(crate::ui::theme::META_SIZE)
+                                                                    .size(
+                                                                        crate::ui::theme::META_SIZE,
+                                                                    )
                                                                     .color(color),
                                                             )
                                                             .frame(false)
@@ -219,33 +221,6 @@ impl Workbench<'_> {
                                                             row.column,
                                                         ));
                                                     }
-                                                }
-                                            }
-                                            // Agent fixes work on an open document's range;
-                                            // a task's printed location has neither.
-                                            if let ProblemTarget::Document { id, range } =
-                                                &row.target
-                                            {
-                                                let fix = ui
-                                                    .add(
-                                                        egui::Button::new(icon::AGENT)
-                                                            .small()
-                                                            .frame(false),
-                                                    )
-                                                    .on_hover_text(
-                                                        "Fix with agent: prefill a request in the agent panel",
-                                                    );
-                                                if super::widgets::named(
-                                                    fix,
-                                                    true,
-                                                    "Fix this problem with the agent",
-                                                )
-                                                .clicked()
-                                                {
-                                                    self.command(Command::FixProblemWithAgent(
-                                                        *id,
-                                                        range.clone(),
-                                                    ));
                                                 }
                                             }
                                         });
@@ -467,15 +442,10 @@ mod tests {
     }
 
     #[test]
-    fn long_messages_truncate_and_keep_the_agent_action_visible() {
+    fn long_messages_truncate_without_overflowing() {
         let mut app = app(&"very long diagnostic ".repeat(40));
         for width in [320.0, 600.0, 1200.0] {
             let all = texts(&mut app, width);
-            let (_, _, action_right) = all
-                .iter()
-                .find(|(text, ..)| text == crate::icon::AGENT)
-                .unwrap_or_else(|| panic!("agent action missing at {width}"));
-            assert!(*action_right <= width, "action offscreen at {width}");
             let (message, _, message_right) = all
                 .iter()
                 .find(|(text, ..)| text.contains("very long diagnostic"))

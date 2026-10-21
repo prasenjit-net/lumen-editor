@@ -160,7 +160,6 @@ impl Workbench<'_> {
                 | FormatDocument
                 | ShowSignatureHelp
                 | ShowDocumentSymbols
-                | AskAgentAboutSelection
         );
         if matches!(command, Save) && self.view.task_editors.active().is_some() {
             return None;
@@ -242,9 +241,7 @@ impl Workbench<'_> {
         {
             return Some("Open a folder first");
         }
-        if matches!(command, ToggleAgentPanel | AskAgentAboutSelection)
-            && !self.view.settings.boolean("agent.enabled")
-        {
+        if matches!(command, ToggleAgentPanel) && !self.view.settings.boolean("agent.enabled") {
             return Some("Enable coding agents in Settings");
         }
         let capability = match command {
@@ -617,10 +614,6 @@ fn palette_commands() -> Vec<(String, Command)> {
         (
             format!("{}  View: Coding Agents", icon::AGENT),
             Command::ToggleAgentPanel,
-        ),
-        (
-            format!("{}  Agent: Ask About Selection", icon::AGENT),
-            Command::AskAgentAboutSelection,
         ),
         (
             format!("{}  View: Output", icon::OUTPUT),

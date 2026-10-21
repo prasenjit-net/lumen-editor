@@ -1,10 +1,5 @@
 //! Application orchestration: shared commands, workflows and frame ordering.
-pub(crate) mod agent;
-pub(crate) mod agent_changes;
-pub(crate) mod agent_context;
-pub(crate) mod agent_history;
 pub(crate) mod agent_hub;
-pub(crate) mod agent_permission;
 pub(crate) mod capture;
 pub(crate) mod chat_tabs;
 mod cli_open;
@@ -14,8 +9,6 @@ pub(crate) mod completion;
 mod dispatch;
 mod documents;
 pub(crate) mod editor_action;
-pub(crate) mod editor_clipboard;
-pub(crate) mod editor_input;
 mod events;
 mod explorer_ops;
 pub(crate) mod find;
@@ -104,7 +97,6 @@ pub(crate) struct LumenApp {
     /// Last status/terminal text mirrored into the log, to log changes once.
     pub(crate) logged_status: String,
     pub(crate) logged_terminal_error: Option<String>,
-    pub(crate) agent_runtime: agent::AgentRuntime,
     /// Where the native-agent session index is saved; `None` in tests.
     pub(crate) native_agents_store: Option<std::path::PathBuf>,
     /// Folder of cached conversations; `None` in tests.
@@ -155,7 +147,6 @@ impl Default for LumenApp {
             language_server_ready_at: None,
             logged_status: String::new(),
             logged_terminal_error: None,
-            agent_runtime: Default::default(),
             native_agents_store: None,
             native_transcripts_dir: None,
             terminal_session: None,
@@ -243,7 +234,6 @@ impl eframe::App for LumenApp {
         self.poll_history_op(ctx);
         self.poll_tags(ctx);
         self.poll_terminal(ctx);
-        self.poll_agents(ctx);
         self.poll_native_agents(ctx);
         self.log_status_changes();
         self.sync_output();

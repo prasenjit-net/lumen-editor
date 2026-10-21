@@ -148,7 +148,6 @@ fn revealing_a_find_target_opens_the_fold_without_changing_selection() {
     assert!(!buffer.is_dirty());
 }
 
-#[cfg(feature = "shaped")]
 #[test]
 fn shaped_folding_uses_the_same_source_to_visual_mapping() {
     let (_, mut buffer, ctx) = fixture(TEXT);

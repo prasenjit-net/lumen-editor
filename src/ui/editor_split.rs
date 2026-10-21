@@ -145,7 +145,6 @@ impl Workbench<'_> {
         // The one-shot "focus the editor" request belongs to the focused group.
         let wants_focus = self.view.focus_editor;
         let mut still_wanted = wants_focus;
-        #[cfg(feature = "shared-editor")]
         {
             self.view.group_surfaces.resize_with(2, || None);
             self.view.group_surfaces[real_focus] = self.view.shared_surface.take();
@@ -155,7 +154,6 @@ impl Workbench<'_> {
                 new_focus = group;
             }
             self.editor.focus_group(group);
-            #[cfg(feature = "shared-editor")]
             {
                 self.view.shared_surface = self.view.group_surfaces[group].take();
             }
@@ -174,14 +172,12 @@ impl Workbench<'_> {
                 // Left set only if the focused group did not get to use it.
                 still_wanted = self.view.focus_editor;
             }
-            #[cfg(feature = "shared-editor")]
             {
                 self.view.group_surfaces[group] = self.view.shared_surface.take();
             }
         }
         self.view.focus_editor = still_wanted;
         self.editor.focus_group(new_focus);
-        #[cfg(feature = "shared-editor")]
         {
             self.view.shared_surface = self.view.group_surfaces[new_focus].take();
         }
@@ -257,10 +253,7 @@ mod tests {
     /// Two files per group, each with distinctive text.
     fn split_app() -> (LumenApp, egui::Context) {
         let mut app = LumenApp::default();
-        #[cfg(feature = "shared-editor")]
-        {
-            app.view.shared_editor = true;
-        }
+        {}
         for (name, text) in [
             ("aaa.rs", "LEFTONE"),
             ("bbb.rs", "LEFTTWO"),
@@ -1018,10 +1011,7 @@ mod perf_probe {
     #[ignore = "profiling loop"]
     fn big_file_loop() {
         let mut app = LumenApp::default();
-        #[cfg(feature = "shared-editor")]
-        {
-            app.view.shared_editor = true;
-        }
+        {}
         app.editor
             .files
             .push(Document::from_path("big.rs".into(), source(30_000)));
@@ -1061,10 +1051,7 @@ mod perf_probe {
         for name in ["big.rs", "big.txt"] {
             for lines in [10_000usize, 50_000, 200_000] {
                 let mut app = LumenApp::default();
-                #[cfg(feature = "shared-editor")]
-                {
-                    app.view.shared_editor = true;
-                }
+                {}
                 let text = source(lines);
                 app.editor
                     .files
@@ -1127,10 +1114,7 @@ mod perf_probe {
             std::fs::write(&path, source(lines)).unwrap();
             let bytes = std::fs::metadata(&path).unwrap().len();
             let mut app = LumenApp::default();
-            #[cfg(feature = "shared-editor")]
-            {
-                app.view.shared_editor = true;
-            }
+            {}
             let ctx = egui::Context::default();
             crate::ui::theme::configure_ui(&ctx);
             let start = Instant::now();
@@ -1173,10 +1157,7 @@ mod perf_probe {
         let end = Instant::now() + std::time::Duration::from_secs(25);
         while Instant::now() < end {
             let mut app = LumenApp::default();
-            #[cfg(feature = "shared-editor")]
-            {
-                app.view.shared_editor = true;
-            }
+            {}
             let ctx = egui::Context::default();
             crate::ui::theme::configure_ui(&ctx);
             app.open_file(path.clone());

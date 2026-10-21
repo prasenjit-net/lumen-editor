@@ -1,4 +1,4 @@
-//! Explicitly runs the shaped workbench, alongside the unchanged legacy suite.
+//! Shared-editor workbench behavior: core-owned history, selections and clipboard.
 use super::editor::editor_frame;
 use super::*;
 use crate::app::editor_action::{EditorAction, text_widget_id};
@@ -6,7 +6,6 @@ use lumen_editor_core::{EditorBuffer, Selection};
 
 fn fixture(text: &str) -> (LumenApp, MemoryFileSystem, egui::Context) {
     let (mut app, storage) = test_app(TestDialogs::default());
-    app.view.shared_editor = true;
     storage
         .0
         .borrow_mut()
@@ -51,7 +50,6 @@ fn edit_command(app: &mut LumenApp, ctx: &egui::Context, action: EditorAction) {
 fn default_view_renders_document_core_without_an_opt_in_toggle() {
     let (mut app, _) = test_app(TestDialogs::default());
     app.view = crate::app::view_state::ViewState::default();
-    assert!(app.view.shared_editor);
     app.new_file();
     let ctx = egui::Context::default();
     configure_ui(&ctx);
@@ -469,7 +467,6 @@ fn ordered_line_clipboard_after_typing_navigation_and_paste_is_not_deferred() {
         ],
     );
     assert_eq!(buffer(&app).text(), "é 🌍\r\né 🌍\r\nnext!");
-    assert!(app.view.pending_text_input.is_none());
 }
 
 #[test]

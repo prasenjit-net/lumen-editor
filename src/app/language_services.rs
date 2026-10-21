@@ -928,7 +928,6 @@ impl LumenApp {
             .editor
             .active()
             .filter(|document| document.id == document_id)?;
-        #[cfg(feature = "shared-editor")]
         let byte = document
             .editing
             .as_ref()
@@ -936,8 +935,6 @@ impl LumenApp {
                 buffer.selections().selections()[buffer.selections().primary_index()].head
             })
             .unwrap_or(0);
-        #[cfg(not(feature = "shared-editor"))]
-        let byte = 0;
         let Ok(position) = lumen_language_services::byte_to_position(&document.text, byte) else {
             self.view.status = "Could not map the caret for the language server.".into();
             return None;
@@ -1063,21 +1060,13 @@ impl LumenApp {
     /// Caret byte of the active document's primary selection, only when it is a
     /// plain caret equal to `expected`; replies for a moved caret are dropped.
     pub(super) fn caret_is_still_at(&self, expected: Option<usize>) -> Option<usize> {
-        #[cfg(feature = "shared-editor")]
-        {
-            let buffer = self.editor.active()?.editing.as_ref()?;
-            let set = buffer.selections();
-            let selection = set.selections()[set.primary_index()];
-            (set.selections().len() == 1
-                && selection.anchor == selection.head
-                && Some(selection.head) == expected)
-                .then_some(selection.head)
-        }
-        #[cfg(not(feature = "shared-editor"))]
-        {
-            let _ = expected;
-            None
-        }
+        let buffer = self.editor.active()?.editing.as_ref()?;
+        let set = buffer.selections();
+        let selection = set.selections()[set.primary_index()];
+        (set.selections().len() == 1
+            && selection.anchor == selection.head
+            && Some(selection.head) == expected)
+            .then_some(selection.head)
     }
 
     fn apply_completion_response(&mut self, message: &serde_json::Value, caret: Option<usize>) {
@@ -1271,7 +1260,6 @@ impl LumenApp {
                 match lumen_language_services::incoming::parse_hover_response(message) {
                     Ok(Some(hover)) => {
                         // Only show it if the caret is still where it was asked.
-                        #[cfg(feature = "shared-editor")]
                         {
                             let anchor = self
                                 .caret_is_still_at(request.caret)
@@ -2314,7 +2302,6 @@ mod tests {
             .collect()
     }
 
-    #[cfg(feature = "shared-editor")]
     fn completion_app(text: &str, caret: usize) -> (LumenApp, RecordedMessages, QueuedEvents) {
         let (mut app, messages, events) = rust_app();
         app.editor.files[0].text = text.into();
@@ -2331,7 +2318,6 @@ mod tests {
         (app, messages, events)
     }
 
-    #[cfg(feature = "shared-editor")]
     #[test]
     fn completion_request_reply_opens_a_session_and_stale_replies_do_not() {
         let (mut app, messages, events) = completion_app("x.pu", 4);
@@ -2384,7 +2370,6 @@ mod tests {
         assert!(request_ids(&messages, "textDocument/signatureHelp").is_empty());
     }
 
-    #[cfg(feature = "shared-editor")]
     #[test]
     fn hover_reply_is_anchored_to_the_requested_caret_and_dropped_if_it_moved() {
         let (mut app, messages, events) = completion_app("let value = 1;", 5);
@@ -2423,7 +2408,6 @@ mod tests {
         assert_eq!(selections.selections()[selections.primary_index()].head, 9);
     }
 
-    #[cfg(feature = "shared-editor")]
     #[test]
     fn signature_help_reply_is_stored_for_its_revision() {
         let (mut app, messages, events) = completion_app("f(", 2);
@@ -2456,7 +2440,6 @@ mod tests {
     }
 
     /// Workspace with an open `a.rs` and a closed `b.rs`, both using `foo`.
-    #[cfg(feature = "shared-editor")]
     fn rename_app() -> (LumenApp, RecordedMessages, QueuedEvents, std::path::PathBuf) {
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let base = std::env::temp_dir().join(format!(
@@ -2482,7 +2465,6 @@ mod tests {
         (app, messages, events, base)
     }
 
-    #[cfg(feature = "shared-editor")]
     fn set_caret(app: &mut LumenApp, byte: usize) {
         app.editor.files[0]
             .editing
@@ -2492,7 +2474,6 @@ mod tests {
             .unwrap();
     }
 
-    #[cfg(feature = "shared-editor")]
     fn rename_edit(base: &std::path::Path) -> serde_json::Value {
         let range = |l: u32, s: u32, e: u32| serde_json::json!({"start":{"line":l,"character":s},"end":{"line":l,"character":e}});
         serde_json::json!({"changes":{
@@ -2509,7 +2490,6 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "shared-editor")]
     #[test]
     fn references_always_open_the_picker_even_for_one_location() {
         let (mut app, messages, events, base) = rename_app();
@@ -2529,7 +2509,6 @@ mod tests {
         std::fs::remove_dir_all(&base).unwrap();
     }
 
-    #[cfg(feature = "shared-editor")]
     #[test]
     fn formatting_applies_as_one_undo_step_and_ignores_stale_replies() {
         let (mut app, messages, events, base) = rename_app();
@@ -2566,7 +2545,6 @@ mod tests {
         std::fs::remove_dir_all(&base).unwrap();
     }
 
-    #[cfg(feature = "shared-editor")]
     #[test]
     fn rename_is_previewed_validated_and_applied_across_open_and_closed_files() {
         let (mut app, messages, events, base) = rename_app();
@@ -2615,7 +2593,6 @@ mod tests {
         std::fs::remove_dir_all(&base).unwrap();
     }
 
-    #[cfg(feature = "shared-editor")]
     #[test]
     fn rename_apply_refuses_when_files_changed_after_the_preview() {
         let (mut app, messages, events, base) = rename_app();
@@ -2658,7 +2635,6 @@ mod tests {
         std::fs::remove_dir_all(&base).unwrap();
     }
 
-    #[cfg(feature = "shared-editor")]
     #[test]
     fn rename_rejects_outside_workspace_and_file_operations() {
         let (mut app, _messages, _events, base) = rename_app();

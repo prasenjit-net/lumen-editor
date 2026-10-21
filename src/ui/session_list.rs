@@ -1,4 +1,4 @@
-//! The right-hand agent panel in native mode: one list of sessions from every
+//! The right-hand agent panel: one list of sessions from every
 //! provider, subtly colour-coded, that opens chats as editor tabs. It starts and
 //! lists conversations; the conversation itself lives in the chat tab.
 use super::{
@@ -36,7 +36,13 @@ pub(super) fn age_text(now: u64, then: u64) -> String {
 }
 
 impl Workbench<'_> {
-    pub(crate) fn session_list_panel(&mut self, ctx: &egui::Context) {
+    pub(crate) fn agent_panel(&mut self, ctx: &egui::Context) {
+        if !self.view.agents.open
+            || !self.view.settings.boolean("agent.enabled")
+            || self.view.native_agents.is_none()
+        {
+            return;
+        }
         let colors = theme::palette(&ctx.style().visuals);
         let mut commands: Vec<Command> = Vec::new();
         SidePanel::right("agent_panel")

@@ -44,10 +44,7 @@ fn main() {
                     .collect();
                 buffer.set_selections(selections, 0).unwrap();
             }
-            #[cfg(feature = "shaped")]
             let mut surface = EditorSurface::with_shaper(lumen_editor_surface::Shaper::default());
-            #[cfg(not(feature = "shaped"))]
-            let mut surface = EditorSurface::default();
             let mut timings = Vec::new();
             for frame in 0..4 {
                 let start = Instant::now();
@@ -81,10 +78,7 @@ fn main() {
 fn tab_switch_probe() {
     for rows in [10_000, 50_000] {
         let ctx = Context::default();
-        #[cfg(feature = "shaped")]
         let mut surface = EditorSurface::with_shaper(lumen_editor_surface::Shaper::default());
-        #[cfg(not(feature = "shaped"))]
-        let mut surface = EditorSurface::default();
         let mut large = EditorBuffer::new("let value = office_ffi + 123; // é\n".repeat(rows));
         let mut small = EditorBuffer::new("small tab\n".into());
         let mut render = |buffer: &mut EditorBuffer, tab| {

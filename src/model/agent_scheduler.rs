@@ -9,8 +9,6 @@
 //! waits for the user (approval/question) it gives the slot back but keeps the
 //! lease, because the agent is mid-edit; answering re-acquires a slot first.
 //! Pure state: the controller turns [`Dispatch`]es into backend operations.
-// Wired to the agent controller in a later step.
-#![allow(dead_code)]
 use lumen_agent_core::SessionId;
 use std::path::{Path, PathBuf};
 
@@ -41,8 +39,6 @@ pub(crate) enum Phase {
     WaitingForUser,
     /// Answered, waiting for a slot to continue.
     Resuming,
-    /// Recording changes: slot and lease still held.
-    Finishing,
 }
 
 /// A turn the scheduler has just allowed to start (or continue).
@@ -91,6 +87,7 @@ impl Scheduler {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn set_slots(&mut self, slots: usize) {
         self.slots = slots.max(1);
     }
@@ -233,15 +230,6 @@ impl Scheduler {
         }
     }
 
-    /// The agent is done; changes are being recorded. Slot and lease stay held.
-    pub(crate) fn finishing(&mut self, ticket: Ticket) {
-        if let Some(entry) = self.entry_mut(ticket)
-            && entry.phase == Phase::Executing
-        {
-            entry.phase = Phase::Finishing;
-        }
-    }
-
     /// Every ending - finished, failed, interrupted, crashed, cancelled - ends here
     /// and releases everything the turn held. Returns whether it existed.
     pub(crate) fn finish(&mut self, ticket: Ticket) -> bool {
@@ -262,19 +250,12 @@ impl Scheduler {
         dropped
     }
 
-    /// Turns of a session in order, for the queue shown under its composer.
-    pub(crate) fn session_tickets(&self, session: SessionId) -> Vec<Ticket> {
-        self.entries
-            .iter()
-            .filter(|e| e.session == session)
-            .map(|e| e.ticket)
-            .collect()
-    }
-
+    #[cfg(test)]
     pub(crate) fn holds_lease(&self, ticket: Ticket) -> bool {
         self.entry(ticket).is_some_and(|e| e.holds_lease)
     }
 
+    #[cfg(test)]
     pub(crate) fn holds_slot(&self, ticket: Ticket) -> bool {
         self.entry(ticket).is_some_and(|e| e.holds_slot)
     }
@@ -382,19 +363,6 @@ mod tests {
         assert_eq!(started(&resumed), [editing]);
         assert!(!resumed[0].fresh);
         assert_eq!(scheduler.phase(editing), Some(Phase::Executing));
-    }
-
-    #[test]
-    fn finishing_holds_both_resources_until_the_end() {
-        let mut scheduler = Scheduler::new(1);
-        let turn = scheduler.submit(SessionId(1), dir("repo"), true);
-        let next = scheduler.submit(SessionId(2), dir("repo"), true);
-        scheduler.schedule();
-        scheduler.finishing(turn);
-        assert!(scheduler.holds_lease(turn) && scheduler.holds_slot(turn));
-        assert!(scheduler.schedule().is_empty());
-        scheduler.finish(turn);
-        assert_eq!(started(&scheduler.schedule()), [next]);
     }
 
     #[test]

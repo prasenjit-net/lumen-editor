@@ -1,6 +1,6 @@
 //! Agent chat tab: header, transcript, approvals, queue and composer for one
 //! session. Reads the hub through `ViewState` and only issues typed commands.
-use super::{Workbench, agent_panel, theme};
+use super::{Workbench, agent_message, theme};
 use crate::{
     app::{
         agent_hub::{QueuedPrompt, SessionStatus},
@@ -353,7 +353,7 @@ fn agent_block(
             egui::Label::new(RichText::new(text).size(11.5).color(colors.muted)).selectable(true),
         );
     } else {
-        agent_panel::agent_message(ui, text);
+        agent_message::agent_message(ui, text);
     }
 }
 

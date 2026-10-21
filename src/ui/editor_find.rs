@@ -1,10 +1,6 @@
 use super::Workbench;
-use crate::{
-    app::find::{FindState, find_input_id},
-    icon,
-    model::DocumentId,
-};
-use eframe::egui::{self, Frame, Margin, Stroke, StrokeKind, TextEdit};
+use crate::{app::find::find_input_id, icon, model::DocumentId};
+use eframe::egui::{self, Frame, Margin, TextEdit};
 
 impl Workbench<'_> {
     pub(super) fn editor_find_bar(&mut self, ui: &mut egui::Ui, document: DocumentId) {
@@ -191,67 +187,5 @@ impl Workbench<'_> {
                 },
             );
         });
-    }
-}
-
-pub(super) fn paint_find(
-    ui: &egui::Ui,
-    output: &egui::text_edit::TextEditOutput,
-    state: &FindState,
-    reveal: bool,
-) {
-    let colors = crate::ui::theme::palette(ui.visuals());
-    if !state.open {
-        return;
-    }
-    let painter = ui.painter_at(output.text_clip_rect.intersect(ui.clip_rect()));
-    let mut row_start = 0;
-    let rows: Vec<_> = output
-        .galley
-        .rows
-        .iter()
-        .map(|row| {
-            let start = row_start;
-            let end = start + row.char_count_excluding_newline();
-            row_start += row.char_count_including_newline();
-            (row, start, end)
-        })
-        .collect();
-    for (index, range) in state.character_matches.iter().enumerate() {
-        let first_row = rows.partition_point(|(_, _, end)| *end <= range.start);
-        let mut revealed = false;
-        for (row, row_start, row_end) in &rows[first_row..] {
-            if *row_start >= range.end {
-                break;
-            }
-            let left = range.start.max(*row_start);
-            let right = range.end.min(*row_end);
-            if left < right {
-                let rect = egui::Rect::from_min_max(
-                    egui::pos2(row.x_offset(left - *row_start), row.min_y()),
-                    egui::pos2(row.x_offset(right - *row_start), row.max_y()),
-                )
-                .translate(output.galley_pos.to_vec2());
-                if painter.clip_rect().intersects(rect) {
-                    painter.rect_stroke(
-                        rect,
-                        1,
-                        Stroke::new(
-                            if index == state.current {
-                                2.0_f32
-                            } else {
-                                1.0_f32
-                            },
-                            colors.accent,
-                        ),
-                        StrokeKind::Inside,
-                    );
-                }
-                if reveal && index == state.current && !revealed {
-                    ui.scroll_to_rect(rect, None);
-                    revealed = true;
-                }
-            }
-        }
     }
 }

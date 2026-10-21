@@ -5,13 +5,11 @@ use crate::{
     services::workspace_search::{SearchFile, SearchHit, SearchRequest, SearchResult},
 };
 
-#[cfg(feature = "shared-editor")]
 #[test]
 fn opening_workspace_hit_selects_match_on_click_release() {
     use lumen_editor_core::Selection;
 
     let (mut app, _, path) = prepared();
-    app.view.shared_editor = true;
     let ctx = egui::Context::default();
     configure_ui(&ctx);
     app.open_workspace_hit(path.clone(), 7..12);
@@ -41,11 +39,9 @@ fn opening_workspace_hit_selects_match_on_click_release() {
     assert!(!document.dirty);
 }
 
-#[cfg(feature = "shared-editor")]
 #[test]
 fn opening_distant_workspace_hit_reveals_it_in_editor_viewport() {
     let (mut app, storage, path) = prepared();
-    app.view.shared_editor = true;
     let text = format!("{}target", "line\n".repeat(100));
     let start = text.len() - "target".len();
     storage

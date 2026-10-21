@@ -1,5 +1,4 @@
 //! Replaceable filesystem, dialog and clipboard boundaries.
-pub(crate) mod agent_process;
 pub(crate) mod agent_sessions_store;
 pub(crate) mod agent_transcripts_store;
 mod clipboard;
@@ -9,6 +8,7 @@ mod file_operations;
 mod filesystem;
 pub(crate) mod language_server;
 pub(crate) mod logger;
+pub(crate) mod login_path;
 pub(crate) mod native_agent_launcher;
 pub(crate) mod process_tree;
 pub(crate) mod recent_files;
@@ -22,7 +22,6 @@ pub(crate) mod task_trust;
 pub(crate) mod tasks;
 pub(crate) mod terminal;
 pub(crate) mod workspace_search;
-pub(crate) mod workspace_snapshot;
 pub(crate) use clipboard::{ClipboardRead, ClipboardRequestId, ClipboardService, NativeClipboard};
 pub(crate) use dialogs::{FileDialogs, NativeDialogs};
 pub(crate) use filesystem::{FileSystem, LocalFileSystem};

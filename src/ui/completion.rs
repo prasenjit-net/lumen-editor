@@ -364,7 +364,6 @@ mod tests {
 
     fn app_with_hover(caret: usize) -> (LumenApp, egui::Context) {
         let mut app = LumenApp::default();
-        app.view.shared_editor = true;
         app.editor.new_file();
         app.editor.files[0].text = "let value = 1;\n".into();
         app.editor.files[0].enable_shared_editing();

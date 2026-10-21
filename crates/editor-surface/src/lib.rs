@@ -6,7 +6,6 @@ mod folding;
 mod geometry;
 mod gutter;
 mod input;
-#[cfg(feature = "shaped")]
 mod shaping;
 mod visual_navigation;
 
@@ -20,10 +19,8 @@ use lumen_editor_core::{
     CaretAffinity, Composition, EditorBuffer, FoldRange, Indentation, SelectionClipboard,
 };
 use lumen_language_services::TokenClass;
-#[cfg(feature = "shaped")]
 pub use shaping::Shaper;
 use std::cell::RefCell;
-#[cfg(feature = "shaped")]
 use std::sync::Arc;
 use std::{collections::BTreeSet, ops::Range};
 use unicode_segmentation::UnicodeSegmentation;
@@ -57,9 +54,7 @@ pub struct EditorSurface {
     fold_suspended: bool,
     diff_lines: Option<(BTreeSet<usize>, Color32)>,
     pub notice: Option<String>,
-    #[cfg(feature = "shaped")]
     shaper: Option<Shaper>,
-    #[cfg(feature = "shaped")]
     shape_cache: RefCell<Option<CachedShape>>,
     /// Recently displayed layouts, reused while their inputs are unchanged.
     geometry_cache: RefCell<Vec<CachedGeometry>>,
@@ -153,7 +148,6 @@ struct CachedGeometry {
     fonts: egui::FontDefinitions,
 }
 
-#[cfg(feature = "shaped")]
 struct CachedShape {
     visual: Arc<str>,
     typography: Typography,
@@ -245,7 +239,6 @@ impl EditorSurface {
         if self.typography != typography {
             self.typography = typography;
             self.vertical_goals = None;
-            #[cfg(feature = "shaped")]
             self.shape_cache.borrow_mut().take();
         }
         true
@@ -260,7 +253,6 @@ impl EditorSurface {
     pub fn reveal(&mut self, byte: usize) {
         self.reveal = Some(byte);
     }
-    #[cfg(feature = "shaped")]
     pub fn with_shaper(shaper: Shaper) -> Self {
         Self {
             shaper: Some(shaper),
@@ -321,14 +313,10 @@ impl EditorSurface {
                 semantic: self.semantic.clone(),
                 // A shaper draws the text itself; egui's whole-document layout
                 // would only be thrown away.
-                #[cfg(feature = "shaped")]
                 galley: self.shaper.is_none(),
-                #[cfg(not(feature = "shaped"))]
-                galley: true,
             },
             &folds,
         );
-        #[cfg(feature = "shaped")]
         let geometry = {
             let mut geometry = geometry;
             if let Some(shaper) = &self.shaper {
@@ -387,7 +375,6 @@ impl EditorSurface {
         self.reveal_hidden_selections(buffer);
         self.reveal_hidden_target(buffer.text());
         if self.widget.is_some_and(|widget| widget != id) {
-            #[cfg(feature = "shaped")]
             self.shape_cache.borrow_mut().take();
             buffer.break_undo_group();
             if self.composition.is_some() {
@@ -739,9 +726,3 @@ impl SyntaxPalette {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(all(test, feature = "shaping-probe"))]
-mod shaping_probe;
-
-#[cfg(all(test, feature = "cosmic-probe"))]
-mod cosmic_probe;

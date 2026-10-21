@@ -6,12 +6,9 @@ impl LumenApp {
         if matches!(
             command,
             Command::Copy | Command::Cut | Command::CopyPath(_, _)
-        ) {
-            self.view.text_clipboard.clear();
-            #[cfg(feature = "shared-editor")]
-            if let Some(surface) = &mut self.view.shared_surface {
-                surface.clear_clipboard();
-            }
+        ) && let Some(surface) = &mut self.view.shared_surface
+        {
+            surface.clear_clipboard();
         }
         let explorer_clipboard = self.view.explorer_focused
             && self.view.explorer_edit.is_none()
@@ -170,33 +167,6 @@ impl LumenApp {
                 self.show_problems();
             }
             Command::ToggleAgentPanel => self.toggle_agent_panel(),
-            Command::SelectAgent(kind) => self.select_agent(kind),
-            Command::SendAgentPrompt => self.send_agent_prompt(ctx),
-            Command::CancelAgentTurn => self.cancel_agent_turn(),
-            Command::NewAgentSession => self.new_agent_session(),
-            Command::RetryAgent => self.retry_agent(ctx),
-            Command::AuthenticateAgent(method) => self.authenticate_agent(&method),
-            Command::AnswerAgentPermission(kind, id, option) => {
-                self.answer_agent_permission(kind, &id, option.as_deref());
-            }
-            Command::AgentChanges(kind, action) => self.apply_change_action(kind, action),
-            Command::AskAgentAboutSelection => self.ask_agent_about_selection(),
-            Command::AddFileToAgent(path) => self.add_file_to_agent(path),
-            Command::FixProblemWithAgent(document, range) => {
-                self.fix_problem_with_agent(document, range);
-            }
-            Command::RemoveAgentAttachment(kind, index) => {
-                self.remove_agent_attachment(kind, index);
-            }
-            Command::SetAgentConfig(kind, id, value) => self.set_agent_config(kind, &id, &value),
-            Command::ConfirmAgentConfig(accepted) => self.confirm_agent_config(accepted),
-            Command::PickAgentMention(kind, relative) => self.pick_agent_mention(kind, &relative),
-            Command::PickSlash(kind, name) => self.pick_agent_command(kind, &name),
-            Command::ResolveUnsavedFiles(choice) => self.resolve_unsaved_choice(choice, ctx),
-            Command::ToggleAgentHistory => self.toggle_agent_history(ctx),
-            Command::MoreAgentHistory => self.more_agent_history(ctx),
-            Command::ResumeAgentSession(kind, id) => self.resume_agent_session(kind, &id, ctx),
-            Command::AllowAgentNpx => self.allow_agent_npx(ctx),
             Command::ToggleOutput => {
                 super::output::clear_text_selection(ctx);
                 self.toggle_output();
@@ -551,7 +521,6 @@ impl LumenApp {
     /// explorer and from any text widget that held keyboard focus.
     pub(super) fn enter_page_tab(&mut self, ctx: &egui::Context) {
         self.view.explorer_focused = false;
-        super::editor_input::cancel_input(&mut self.view);
         self.view.pending_editor_action = None;
         if let Some(file) = self.editor.active() {
             let id = super::editor_action::text_widget_id(file.id);

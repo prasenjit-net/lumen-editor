@@ -80,19 +80,17 @@ impl LumenApp {
         let editor_focused = self.editor.active().is_some_and(|file| {
             ctx.memory(|memory| memory.has_focus(super::editor_action::text_widget_id(file.id)))
         });
-        if !editor_focused && !terminal_focused {
-            #[cfg(feature = "shared-editor")]
-            if ctx.input(|input| {
+        if !editor_focused
+            && !terminal_focused
+            && ctx.input(|input| {
                 input
                     .events
                     .iter()
                     .any(|event| matches!(event, egui::Event::Copy | egui::Event::Cut))
-            }) && let Some(surface) = &mut self.view.shared_surface
-            {
-                surface.clear_clipboard();
-            }
-            self.view.text_clipboard.observe_input(ctx);
-            super::editor_input::cancel_input(&mut self.view);
+            })
+            && let Some(surface) = &mut self.view.shared_surface
+        {
+            surface.clear_clipboard();
         }
         let find = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::F);
         let replace = egui::KeyboardShortcut::new(

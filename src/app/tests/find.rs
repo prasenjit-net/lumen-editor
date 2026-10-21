@@ -1,6 +1,6 @@
 use super::{
     TestDialogs, configure_ui,
-    editor::{editor_frame, pointer, select, text_position},
+    editor::{editor_frame, pointer, select, set_text, text_position},
     test_app,
 };
 use crate::app::{command::Command, find::find_input_id};
@@ -27,7 +27,7 @@ fn find_seeds_selection_navigates_wraps_and_escape_returns_focus() {
     app.new_file();
     editor_frame(&mut app, &ctx, vec![]);
     editor_frame(&mut app, &ctx, vec![egui::Event::Text("é É é".into())]);
-    select(&app, &ctx, 0, 1);
+    select(&mut app, &ctx, 0, 1);
     app.execute(Command::Find, &ctx);
     editor_frame(&mut app, &ctx, vec![]);
     let id = app.editor.active().unwrap().id;
@@ -113,8 +113,7 @@ fn stale_or_blocked_replacement_is_cancelled_without_mutation() {
     state.query = "keep".into();
     state.replacement = "bad".into();
     state.queue_replace(&app.editor.files[0], true);
-    app.editor.files[0].text.push('!');
-    app.editor.files[0].record_text_change();
+    set_text(&mut app, "keep!");
     editor_frame(&mut app, &ctx, vec![]);
     assert_eq!(app.editor.files[0].text, "keep!");
     app.view
@@ -242,7 +241,7 @@ fn opening_find_selects_seeded_query_and_typing_does_not_edit_document() {
     app.new_file();
     editor_frame(&mut app, &ctx, vec![]);
     editor_frame(&mut app, &ctx, vec![egui::Event::Text("cat dog".into())]);
-    select(&app, &ctx, 1, 1);
+    select(&mut app, &ctx, 1, 1);
     app.execute(Command::Find, &ctx);
     editor_frame(&mut app, &ctx, vec![]);
     let id = app.editor.active().unwrap().id;

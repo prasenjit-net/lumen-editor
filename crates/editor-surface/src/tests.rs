@@ -127,7 +127,6 @@ mod accessibility;
 mod commands;
 mod folding;
 mod ime;
-#[cfg(feature = "shaped")]
 mod shaped;
 mod typing;
 

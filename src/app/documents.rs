@@ -303,7 +303,6 @@ impl LumenApp {
                 file.reload_from_disk(text);
                 self.view.pending_editor_action = None;
                 self.view.editor_paste_target = None;
-                super::editor_input::cancel_input(&mut self.view);
                 self.view.status =
                     "Reloaded external file; unsaved edits in this tab were discarded".into();
             }

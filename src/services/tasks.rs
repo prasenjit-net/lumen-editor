@@ -2,8 +2,6 @@
 //! containment refusal, conflict check against the text the draft was loaded from,
 //! staged atomic replace, no-clobber create) so task drafts never overwrite
 //! concurrent edits. Parsing, validation and TOML edits live in `lumen-task-core`.
-// The controller and task editor that call this arrive in later phases.
-#![allow(dead_code)]
 use std::path::{Path, PathBuf};
 
 use lumen_task_core::{Issue, TaskDef, TaskFile};

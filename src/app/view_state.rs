@@ -381,6 +381,12 @@ impl Activity {
     }
 }
 
+/// Whether the right-hand agent session list is showing.
+#[derive(Default)]
+pub(crate) struct AgentsView {
+    pub(crate) open: bool,
+}
+
 pub(crate) struct ViewState {
     pub(crate) clone_dialog: Option<super::git_clone::CloneDialog>,
     pub(crate) branch_dialog: Option<super::git_branches::BranchDialog>,
@@ -408,13 +414,9 @@ pub(crate) struct ViewState {
     pub(crate) task_quit: Option<super::task_runs::PendingTaskQuit>,
     /// A definition awaiting delete confirmation.
     pub(crate) task_delete_prompt: Option<lumen_task_core::TaskKey>,
-    #[cfg(feature = "shared-editor")]
-    pub(crate) shared_editor: bool,
-    #[cfg(feature = "shared-editor")]
     pub(crate) shared_surface: Option<lumen_editor_surface::EditorSurface>,
     /// Live editor surface of each editor group while the editor is split; the
     /// focused group's lives in `shared_surface` between frames.
-    #[cfg(feature = "shared-editor")]
     pub(crate) group_surfaces: Vec<Option<lumen_editor_surface::EditorSurface>>,
     /// Set while a non-first editor group draws, so it shows no Settings/Diff tab.
     pub(crate) hide_virtual_tabs: bool,
@@ -428,12 +430,8 @@ pub(crate) struct ViewState {
     pub(crate) split_vertical: bool,
     /// Share of the editor area given to the first group when split (0..1).
     pub(crate) split_ratio: f32,
-    #[cfg(feature = "shared-editor")]
     pub(crate) shared_output: Option<lumen_editor_surface::SurfaceOutput>,
-    #[cfg(feature = "shared-editor")]
     pub(crate) shared_paste_selection: Option<lumen_editor_core::SelectionSet>,
-    pub(crate) pending_text_input: Option<super::editor_input::PendingTextInput>,
-    pub(crate) text_clipboard: super::editor_clipboard::TextClipboard,
     pub(crate) find: std::collections::HashMap<crate::model::DocumentId, super::find::FindState>,
     pub(crate) pending_editor_action: Option<super::editor_action::PendingEditorAction>,
     pub(crate) editor_paste_target: Option<super::editor_action::PasteTarget>,
@@ -464,7 +462,7 @@ pub(crate) struct ViewState {
     /// What the bottom panel showed when it was last hidden with its toggle.
     pub(crate) bottom_restore: Option<super::output::BottomView>,
     pub(crate) output: OutputView,
-    pub(crate) agents: super::agent::AgentsView,
+    pub(crate) agents: AgentsView,
     pub(crate) language_server_document: Option<crate::model::DocumentId>,
     pub(crate) language_server_status: Option<LanguageServerStatus>,
     /// Latest semantic tokens per document; valid only for the stored revision.
@@ -584,11 +582,7 @@ impl Default for ViewState {
             history_op_dialog: None,
             tags_dialog: None,
             settings: Default::default(),
-            #[cfg(feature = "shared-editor")]
-            shared_editor: true,
-            #[cfg(feature = "shared-editor")]
             shared_surface: None,
-            #[cfg(feature = "shared-editor")]
             group_surfaces: Vec::new(),
             hide_virtual_tabs: false,
             task_editors: Default::default(),
@@ -607,12 +601,8 @@ impl Default for ViewState {
             tab_drop_request: None,
             split_vertical: false,
             split_ratio: 0.5,
-            #[cfg(feature = "shared-editor")]
             shared_output: None,
-            #[cfg(feature = "shared-editor")]
             shared_paste_selection: None,
-            pending_text_input: None,
-            text_clipboard: Default::default(),
             find: Default::default(),
             pending_editor_action: None,
             editor_paste_target: None,

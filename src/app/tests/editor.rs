@@ -1,11 +1,8 @@
 use super::{TestDialogs, configure_ui, test_app};
+use crate::app::LumenApp;
 use crate::app::{command::Command, editor_action::EditorAction};
-use crate::{app::LumenApp, model::DocumentId};
 use eframe::egui;
-
-fn text_id(document: DocumentId) -> egui::Id {
-    egui::Id::new(("editor_text", document))
-}
+use lumen_editor_core::Selection;
 
 pub(super) fn editor_frame(
     app: &mut LumenApp,
@@ -76,48 +73,6 @@ fn undo() -> egui::Event {
 }
 
 #[test]
-fn tabs_keep_independent_text_cursor_and_undo_state() {
-    let (mut app, _) = test_app(TestDialogs::default());
-    let ctx = egui::Context::default();
-    configure_ui(&ctx);
-    app.new_file();
-    let first = app.editor.active().unwrap().id;
-    editor_frame(&mut app, &ctx, vec![]);
-    editor_frame(&mut app, &ctx, vec![egui::Event::Text("alpha".into())]);
-    editor_frame(&mut app, &ctx, vec![]);
-    let mut state = egui::text_edit::TextEditState::load(&ctx, text_id(first)).unwrap();
-    state
-        .cursor
-        .set_char_range(Some(egui::text::CCursorRange::one(
-            egui::text::CCursor::new(2),
-        )));
-    state.store(&ctx, text_id(first));
-
-    app.new_file();
-    let second = app.editor.active().unwrap().id;
-    assert_ne!(first, second);
-    editor_frame(&mut app, &ctx, vec![]);
-    editor_frame(&mut app, &ctx, vec![egui::Event::Text("beta".into())]);
-    editor_frame(&mut app, &ctx, vec![]);
-    editor_frame(&mut app, &ctx, vec![undo()]);
-    assert_eq!(app.editor.files[0].text, "alpha");
-    assert_eq!(app.editor.files[1].text, "");
-
-    app.editor.set_active_index(Some(0));
-    app.view.focus_editor = true;
-    editor_frame(&mut app, &ctx, vec![]);
-    let state = egui::text_edit::TextEditState::load(&ctx, text_id(first)).unwrap();
-    assert_eq!(state.cursor.char_range().unwrap().primary.index, 2);
-    editor_frame(&mut app, &ctx, vec![undo()]);
-    // egui includes cursor moves in history: first restore the pre-move cursor,
-    // then undo the text insertion. Both entries must belong to this document.
-    assert_eq!(app.editor.files[0].text, "alpha");
-    editor_frame(&mut app, &ctx, vec![undo()]);
-    assert_eq!(app.editor.files[0].text, "");
-    assert_eq!(app.editor.files[1].text, "");
-}
-
-#[test]
 fn undo_to_saved_contents_clears_dirty_and_redirty_on_edit() {
     let (mut app, _) = test_app(TestDialogs::default());
     let ctx = egui::Context::default();
@@ -153,58 +108,44 @@ fn document_identity_survives_rename_and_tab_index_changes() {
     assert_ne!(app.editor.files[1].id, second);
 }
 
-#[test]
-fn clicking_a_tab_transfers_keyboard_input_to_its_document() {
-    let (mut app, _) = test_app(TestDialogs::default());
-    let ctx = egui::Context::default();
-    configure_ui(&ctx);
-    app.new_file();
-    editor_frame(&mut app, &ctx, vec![]);
-    app.new_file();
-    editor_frame(&mut app, &ctx, vec![]);
-    let output = editor_frame(&mut app, &ctx, vec![]);
-
-    let position = output
-        .shapes
-        .iter()
-        .find_map(|shape| match &shape.shape {
-            egui::epaint::Shape::Text(text) if text.galley.text().contains("untitled-1") => {
-                Some(text.pos + text.galley.size() * 0.5)
-            }
-            _ => None,
-        })
-        .expect("first tab title is rendered");
-    for pressed in [true, false] {
-        editor_frame(
-            &mut app,
-            &ctx,
-            vec![
-                egui::Event::PointerMoved(position),
-                egui::Event::PointerButton {
-                    pos: position,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
-        );
-    }
-    assert_eq!(app.editor.active_index(), Some(0));
-    editor_frame(&mut app, &ctx, vec![egui::Event::Text("first".into())]);
-    assert_eq!(app.editor.files[0].text, "first");
-    assert_eq!(app.editor.files[1].text, "");
+/// Replace the active document's text through its editing core, as an outside edit would.
+pub(super) fn set_text(app: &mut LumenApp, text: &str) {
+    let index = app.editor.active_index().unwrap();
+    let document = &mut app.editor.files[index];
+    document
+        .editing
+        .as_mut()
+        .unwrap()
+        .replace_document(text)
+        .unwrap();
+    document.sync_shared_editing();
 }
 
-pub(super) fn select(app: &LumenApp, ctx: &egui::Context, start: usize, end: usize) {
-    let id = text_id(app.editor.active().unwrap().id);
-    let mut state = egui::text_edit::TextEditState::load(ctx, id).unwrap();
-    state
-        .cursor
-        .set_char_range(Some(egui::text::CCursorRange::two(
-            egui::text::CCursor::new(start),
-            egui::text::CCursor::new(end),
-        )));
-    state.store(ctx, id);
+/// Advance the active document's revision while leaving its text unchanged.
+pub(super) fn touch_revision(app: &mut LumenApp) {
+    let original = app.editor.active().unwrap().text.clone();
+    set_text(app, &format!("{original}x"));
+    set_text(app, &original);
+}
+
+/// Select the character range `start..end` (the caret when equal) in the active document.
+pub(super) fn select(app: &mut LumenApp, _: &egui::Context, start: usize, end: usize) {
+    let index = app.editor.active_index().unwrap();
+    let document = &mut app.editor.files[index];
+    let byte = |characters: usize| {
+        document
+            .text
+            .char_indices()
+            .nth(characters)
+            .map_or(document.text.len(), |(byte, _)| byte)
+    };
+    let (anchor, head) = (byte(start), byte(end));
+    document
+        .editing
+        .as_mut()
+        .unwrap()
+        .set_selections(vec![Selection { anchor, head }], 0)
+        .unwrap();
 }
 
 #[test]
@@ -216,7 +157,7 @@ fn targeted_clipboard_and_undo_use_the_widget_history() {
     editor_frame(&mut app, &ctx, vec![]);
     editor_frame(&mut app, &ctx, vec![egui::Event::Text("héllo 🌍".into())]);
     editor_frame(&mut app, &ctx, vec![]);
-    select(&app, &ctx, 0, 5);
+    select(&mut app, &ctx, 0, 5);
     editor_frame(&mut app, &ctx, vec![]);
     let document = app.editor.active().unwrap().id;
     app.execute(Command::EditorAction(document, EditorAction::Copy), &ctx);
@@ -241,7 +182,7 @@ fn queued_editor_action_cannot_edit_a_different_tab_or_modal() {
     app.new_file();
     editor_frame(&mut app, &ctx, vec![]);
     editor_frame(&mut app, &ctx, vec![egui::Event::Text("keep".into())]);
-    select(&app, &ctx, 0, 4);
+    select(&mut app, &ctx, 0, 4);
     let document = app.editor.active().unwrap().id;
     app.execute(Command::EditorAction(document, EditorAction::Cut), &ctx);
     app.new_file();
@@ -325,44 +266,6 @@ pub(super) fn pointer(
 }
 
 #[test]
-fn context_menu_select_all_reaches_the_editor_after_popup_closes() {
-    let (mut app, _) = test_app(TestDialogs::default());
-    let ctx = egui::Context::default();
-    configure_ui(&ctx);
-    app.new_file();
-    editor_frame(&mut app, &ctx, vec![]);
-    let output = editor_frame(
-        &mut app,
-        &ctx,
-        vec![egui::Event::Text("menu fixture".into())],
-    );
-    let position = text_position(&output, "menu fixture");
-    for pressed in [true, false] {
-        editor_frame(
-            &mut app,
-            &ctx,
-            pointer(position, egui::PointerButton::Secondary, pressed),
-        );
-    }
-    let output = editor_frame(&mut app, &ctx, vec![]);
-    let position = text_position(&output, "Select All");
-    for pressed in [true, false] {
-        editor_frame(
-            &mut app,
-            &ctx,
-            pointer(position, egui::PointerButton::Primary, pressed),
-        );
-    }
-    editor_frame(&mut app, &ctx, vec![]);
-    editor_frame(
-        &mut app,
-        &ctx,
-        vec![egui::Event::Text("replacement".into())],
-    );
-    assert_eq!(app.editor.active().unwrap().text, "replacement");
-}
-
-#[test]
 fn blank_editor_space_accepts_clicks_and_opens_the_context_menu() {
     let (mut app, _) = test_app(TestDialogs::default());
     let ctx = egui::Context::default();
@@ -370,7 +273,7 @@ fn blank_editor_space_accepts_clicks_and_opens_the_context_menu() {
     app.new_file();
     editor_frame(&mut app, &ctx, vec![]);
     editor_frame(&mut app, &ctx, vec![egui::Event::Text("first line".into())]);
-    select(&app, &ctx, 0, 0);
+    select(&mut app, &ctx, 0, 0);
     let position = egui::pos2(900.0, 500.0);
     for pressed in [true, false] {
         editor_frame(
@@ -390,74 +293,4 @@ fn blank_editor_space_accepts_clicks_and_opens_the_context_menu() {
     }
     let output = editor_frame(&mut app, &ctx, vec![]);
     text_position(&output, "Select All");
-}
-
-#[test]
-fn right_click_preserves_selection_and_context_copy_uses_it() {
-    let (mut app, _) = test_app(TestDialogs::default());
-    let ctx = egui::Context::default();
-    configure_ui(&ctx);
-    app.new_file();
-    editor_frame(&mut app, &ctx, vec![]);
-    editor_frame(
-        &mut app,
-        &ctx,
-        vec![egui::Event::Text("héllo 🌍 and more".into())],
-    );
-    select(&app, &ctx, 7, 0);
-    let output = editor_frame(&mut app, &ctx, vec![]);
-    let id = text_id(app.editor.active().unwrap().id);
-    let original = egui::text_edit::TextEditState::load(&ctx, id)
-        .unwrap()
-        .cursor
-        .char_range()
-        .unwrap();
-    let position = text_position(&output, "héllo 🌍 and more");
-    for pressed in [true, false] {
-        editor_frame(
-            &mut app,
-            &ctx,
-            pointer(position, egui::PointerButton::Secondary, pressed),
-        );
-        let current = egui::text_edit::TextEditState::load(&ctx, id)
-            .unwrap()
-            .cursor
-            .char_range()
-            .unwrap();
-        assert_eq!(
-            current, original,
-            "right-click must preserve selection on press and release"
-        );
-    }
-    let output = editor_frame(&mut app, &ctx, vec![]);
-    let position = text_position(&output, "Copy");
-    for pressed in [true, false] {
-        editor_frame(
-            &mut app,
-            &ctx,
-            pointer(position, egui::PointerButton::Primary, pressed),
-        );
-    }
-    let output = editor_frame(&mut app, &ctx, vec![]);
-    assert!(output.platform_output.commands.iter().any(|command| {
-        matches!(command, egui::OutputCommand::CopyText(text) if text == "héllo 🌍")
-    }));
-    assert_eq!(app.editor.active().unwrap().text, "héllo 🌍 and more");
-    let position = text_position(&output, "héllo 🌍 and more");
-    for pressed in [true, false] {
-        editor_frame(
-            &mut app,
-            &ctx,
-            pointer(position, egui::PointerButton::Primary, pressed),
-        );
-    }
-    assert!(
-        egui::text_edit::TextEditState::load(&ctx, id)
-            .unwrap()
-            .cursor
-            .char_range()
-            .unwrap()
-            .is_empty(),
-        "ordinary left-click must still move the caret"
-    );
 }

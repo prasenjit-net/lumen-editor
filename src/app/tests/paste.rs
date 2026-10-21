@@ -1,7 +1,7 @@
 //! Clipboard-request snapshots, separate from ordinary direct paste events.
 use super::{
     TestDialogs, configure_ui,
-    editor::{editor_frame, select},
+    editor::{editor_frame, select, set_text, touch_revision},
     test_app,
 };
 use crate::app::{
@@ -11,6 +11,15 @@ use crate::app::{
 };
 use eframe::egui;
 
+/// Primary selection as character offsets.
+fn primary_range(app: &LumenApp) -> std::ops::Range<usize> {
+    let document = app.editor.active().unwrap();
+    let set = document.editing.as_ref().unwrap().selections();
+    let range = set.selections()[set.primary_index()].range();
+    let characters = |byte: usize| document.text[..byte].chars().count();
+    characters(range.start)..characters(range.end)
+}
+
 fn fixture() -> (LumenApp, egui::Context) {
     let (mut app, _) = test_app(TestDialogs::default());
     let ctx = egui::Context::default();
@@ -19,7 +28,7 @@ fn fixture() -> (LumenApp, egui::Context) {
     app.editor.files[0].text = "é 🌍 original".into();
     app.editor.files[0].mark_saved("test.txt".into());
     editor_frame(&mut app, &ctx, vec![]);
-    select(&app, &ctx, 4, 12);
+    select(&mut app, &ctx, 4, 12);
     editor_frame(&mut app, &ctx, vec![]);
     (app, ctx)
 }
@@ -61,14 +70,7 @@ fn keyboard_paste_empty_or_failed_read_leaves_selection_and_content_untouched() 
         );
         assert_eq!(app.editor.files[0].text, "é 🌍 original");
         assert!(!app.editor.files[0].dirty);
-        let selection =
-            egui::text_edit::TextEditState::load(&ctx, text_widget_id(app.editor.files[0].id))
-                .unwrap()
-                .cursor
-                .char_range()
-                .unwrap();
-        assert_eq!(selection.sorted_cursors()[0].index, 4);
-        assert_eq!(selection.sorted_cursors()[1].index, 12);
+        assert_eq!(primary_range(&app), 4..12);
         assert!(app.view.status.contains("Clipboard") || app.view.status.contains("clipboard"));
     }
 }
@@ -172,7 +174,7 @@ fn native_and_popup_paste_replace_only_the_captured_selection_and_support_undo()
 fn revision_change_cancels_paste_even_if_content_is_restored() {
     let (mut app, ctx) = fixture();
     request(&mut app, &ctx, false);
-    app.editor.files[0].record_text_change();
+    touch_revision(&mut app);
     deliver(&mut app, &ctx);
     assert_eq!(app.editor.files[0].text, "é 🌍 original");
     assert!(!app.editor.files[0].dirty);
@@ -187,10 +189,10 @@ fn selection_movement_and_focus_round_trips_do_not_reactivate_a_cancelled_reques
         if focus {
             ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("another_input")));
         } else {
-            select(&app, &ctx, 0, 0);
+            select(&mut app, &ctx, 0, 0);
         }
         editor_frame(&mut app, &ctx, vec![]);
-        select(&app, &ctx, 4, 12);
+        select(&mut app, &ctx, 4, 12);
         ctx.memory_mut(|memory| memory.request_focus(text_widget_id(app.editor.files[0].id)));
         deliver(&mut app, &ctx);
         assert_eq!(app.editor.files[0].text, "é 🌍 original");
@@ -222,7 +224,6 @@ fn text_before_clipboard_response_cancels_the_paste_but_keeps_typing() {
     );
     assert_eq!(app.editor.files[0].text, "é 🌍 typed");
     assert!(app.view.editor_paste_target.is_none());
-    assert!(app.view.pending_text_input.is_none());
 }
 
 #[test]
@@ -404,7 +405,7 @@ fn tagged_response_after_focus_or_revision_change_is_not_delivered() {
         if find {
             app.execute(Command::Find, &ctx);
         } else {
-            app.editor.files[0].record_text_change();
+            touch_revision(&mut app);
         }
         clipboard.complete(id, Ok(Some("wrong".into())));
         editor_frame(&mut app, &ctx, vec![]);
@@ -429,7 +430,6 @@ fn duplicate_result_and_platform_event_do_not_double_apply_a_tagged_paste() {
         vec![egui::Event::Paste("platform copy".into())],
     );
     assert_eq!(app.editor.files[0].text, "é 🌍 new");
-    assert!(app.view.pending_text_input.is_none());
 }
 
 #[test]
@@ -450,11 +450,10 @@ fn stale_empty_or_error_result_does_not_clear_the_current_request() {
 #[test]
 fn service_line_paste_matches_crlf_provenance_and_restores_column() {
     let (mut app, ctx, clipboard) = service_fixture();
-    app.editor.files[0].text = "é 🌍\r\nnext".into();
-    app.editor.files[0].record_text_change();
-    select(&app, &ctx, 2, 2);
+    set_text(&mut app, "é 🌍\r\nnext");
+    select(&mut app, &ctx, 2, 2);
     editor_frame(&mut app, &ctx, vec![egui::Event::Copy]);
-    select(&app, &ctx, 7, 7);
+    select(&mut app, &ctx, 7, 7);
     request(&mut app, &ctx, false);
     clipboard.complete(
         app.view.editor_paste_target.unwrap().request,
@@ -462,7 +461,5 @@ fn service_line_paste_matches_crlf_provenance_and_restores_column() {
     );
     editor_frame(&mut app, &ctx, vec![]);
     assert_eq!(app.editor.files[0].text, "é 🌍\r\né 🌍\r\nnext");
-    let state =
-        egui::text_edit::TextEditState::load(&ctx, text_widget_id(app.editor.files[0].id)).unwrap();
-    assert_eq!(state.cursor.char_range().unwrap().primary.index, 12);
+    assert_eq!(primary_range(&app).end, 12);
 }

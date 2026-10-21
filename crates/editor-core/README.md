@@ -7,7 +7,7 @@ byte spans; it does not own document edits or history.
 Pure text/selection/transaction core; no UI or filesystem dependencies. It is a
 workspace member and shared logical-line policy dependency. The default application
 uses this core exclusively for document edits/history; no document TextEdit history
-exists alongside it. `--no-default-features` retains the legacy TextEdit backend.
+exists alongside it.
 Default promotion was explicitly requested while native acceptance remains pending.
 
 - Endpoints are UTF-8 byte offsets on extended grapheme boundaries (including
@@ -27,7 +27,7 @@ Default promotion was explicitly requested while native acceptance remains pendi
 Full snapshots and linear scans are correctness-spike choices, not a measured
 large-file design. Native IME/clipboard/accessibility validation and
 runtime acceptance remains pending. Default workbench integration is implemented;
-the legacy backend is still available with default features disabled.
+the legacy TextEdit backend has been removed.
 
 The surface spike now exercises this core with actual multi-location input.
 Horizontal movement/Shift extension and deletion operate on complete graphemes;

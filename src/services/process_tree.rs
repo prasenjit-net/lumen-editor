@@ -6,16 +6,12 @@
 //! deliberately detached descendant (its own `setsid`) escapes; on Windows the tree
 //! is found by `taskkill /T`, not a Job Object, so descendants started after the
 //! call can escape. Neither is a sandbox.
-// Used by the agent and task runners; some entry points are only used by one.
-#![allow(dead_code)]
 #[cfg(windows)]
 use std::process::Stdio;
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
-    process::{Child, Command},
-    thread,
-    time::Duration,
+    process::Command,
 };
 
 /// Put the child in its own process group (Unix) so the whole tree can be killed.
@@ -73,24 +69,6 @@ pub(crate) fn force_kill_process_tree(pid: u32) -> bool {
     }
 }
 
-/// Kill the child and everything it started (npx -> node -> agent -> tools).
-pub(crate) fn kill_process_tree(child: &Child) {
-    #[cfg(unix)]
-    {
-        terminate_process_tree(child.id());
-        thread::sleep(Duration::from_millis(30));
-        force_kill_process_tree(child.id());
-    }
-    #[cfg(windows)]
-    {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-}
-
 /// Find an executable the way a shell would. On Windows, bare names also try
 /// `PATHEXT`-style suffixes, which is how `npx` becomes `npx.cmd`.
 pub(crate) fn resolve_program(name: &str, path_var: Option<&OsStr>) -> Option<PathBuf> {
@@ -112,4 +90,27 @@ pub(crate) fn resolve_program(name: &str, path_var: Option<&OsStr>) -> Option<Pa
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn programs_resolve_from_path_and_explicit_paths_must_exist() {
+        let directory = tempfile::tempdir().unwrap();
+        let tool = directory
+            .path()
+            .join(if cfg!(windows) { "tool.cmd" } else { "tool" });
+        std::fs::write(&tool, "").unwrap();
+        let path = std::env::join_paths([directory.path()]).unwrap();
+        assert_eq!(resolve_program("tool", Some(&path)), Some(tool.clone()));
+        assert_eq!(resolve_program("missing", Some(&path)), None);
+        assert_eq!(resolve_program("tool", None), None);
+        assert_eq!(resolve_program(tool.to_str().unwrap(), None), Some(tool));
+        assert_eq!(
+            resolve_program(directory.path().join("nope").to_str().unwrap(), None),
+            None
+        );
+    }
 }

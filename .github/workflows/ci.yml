@@ -34,9 +34,6 @@ jobs:
       - name: Verify integrated terminal PTY
         if: runner.os == 'Linux'
         run: cargo test --locked services::terminal::tests
-      - name: Test legacy editor
-        if: runner.os == 'macOS'
-        run: cargo test --workspace --no-default-features --locked
       - name: Bundle macOS app
         if: runner.os == 'macOS'
         run: cargo xtask bundle

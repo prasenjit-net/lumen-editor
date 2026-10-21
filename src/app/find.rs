@@ -1,4 +1,4 @@
-use super::{LumenApp, editor_action::text_widget_id};
+use super::LumenApp;
 use crate::model::{
     Document, DocumentId,
     search::{SearchOptions, find_matches, replace_matches},
@@ -29,7 +29,6 @@ struct FindEdit {
 }
 
 impl FindState {
-    #[cfg(feature = "shared-editor")]
     pub(crate) fn prepare_shared(
         &mut self,
         document: &mut Document,
@@ -145,83 +144,6 @@ impl FindState {
 
 pub(crate) fn find_input_id(document: DocumentId) -> egui::Id {
     egui::Id::new(("editor_find", document))
-}
-
-pub(crate) fn prepare_find(
-    state: &mut FindState,
-    document: &Document,
-    ctx: &egui::Context,
-    blocked: bool,
-) -> bool {
-    if blocked {
-        state.pending = None;
-        return false;
-    }
-    // A button-release frame surrenders TextEdit focus as an outside click.
-    // Deliver replacement on the next frame, just like popup edit commands.
-    if state.pending.is_some()
-        && ctx.input(|input| input.pointer.any_pressed() || input.pointer.any_released())
-    {
-        ctx.request_repaint();
-        return false;
-    }
-    let id = text_widget_id(document.id);
-    let Some(mut widget) = egui::text_edit::TextEditState::load(ctx, id) else {
-        return false;
-    };
-    if let Some(edit) = state.pending.take() {
-        if edit.revision != document.revision || document.text.get(edit.range.clone()).is_none() {
-            return false;
-        }
-        let before = widget.cursor.char_range().unwrap_or_default();
-        let mut history = widget.undoer();
-        history.add_undo(&(before, document.text.clone()));
-        widget.set_undoer(history);
-        widget
-            .cursor
-            .set_char_range(Some(character_range(&document.text, &edit.range)));
-        widget.store(ctx, id);
-        ctx.memory_mut(|memory| memory.request_focus(id));
-        ctx.input_mut(|input| input.events.push(egui::Event::Paste(edit.replacement)));
-        return true;
-    }
-    if state.reveal {
-        state.reveal = false;
-        // While the find input owns focus, highlights are a preview, not edits
-        // to TextEdit's selection/history. Adopt the result when Find closes.
-        if !state.open
-            && let Some(range) = state.matches.get(state.current)
-        {
-            widget
-                .cursor
-                .set_char_range(Some(character_range(&document.text, range)));
-            widget.store(ctx, id);
-        }
-    }
-    false
-}
-
-pub(crate) fn finish_replace(
-    output: &egui::text_edit::TextEditOutput,
-    document: &Document,
-    ctx: &egui::Context,
-) {
-    let mut widget = output.state.clone();
-    let mut history = widget.undoer();
-    history.add_undo(&(
-        widget.cursor.char_range().unwrap_or_default(),
-        document.text.clone(),
-    ));
-    widget.set_undoer(history);
-    widget.store(ctx, text_widget_id(document.id));
-    ctx.memory_mut(|memory| memory.request_focus(find_input_id(document.id)));
-}
-
-fn character_range(text: &str, range: &Range<usize>) -> egui::text::CCursorRange {
-    egui::text::CCursorRange::two(
-        egui::text::CCursor::new(text[..range.start].chars().count()),
-        egui::text::CCursor::new(text[..range.end].chars().count()),
-    )
 }
 
 impl LumenApp {

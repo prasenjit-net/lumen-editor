@@ -1,4 +1,3 @@
-use super::agent::AgentKind;
 use super::editor_action::EditorAction;
 use super::tab_commands::TabMove;
 use super::view_state::{Activity, ClosedTab, ExplorerEdit, MAX_CLOSED_TABS, ViewState};
@@ -110,36 +109,6 @@ pub(crate) enum Command {
     ToggleBottomPanel,
     ToggleOutput,
     ToggleAgentPanel,
-    SelectAgent(AgentKind),
-    SendAgentPrompt,
-    CancelAgentTurn,
-    NewAgentSession,
-    RetryAgent,
-    AuthenticateAgent(String),
-    /// Answer a queued permission request; `None` declines it.
-    AnswerAgentPermission(
-        AgentKind,
-        lumen_agent_protocol::rpc::RequestId,
-        Option<String>,
-    ),
-    AllowAgentNpx,
-    ToggleAgentHistory,
-    MoreAgentHistory,
-    ResumeAgentSession(AgentKind, String),
-    ResolveUnsavedFiles(super::agent::UnsavedChoice),
-    /// Attach the editor selection (or current file) to the next agent message.
-    AskAgentAboutSelection,
-    AddFileToAgent(PathBuf),
-    FixProblemWithAgent(DocumentId, Range<usize>),
-    RemoveAgentAttachment(AgentKind, usize),
-    /// Set a session option (mode, model, ...). Risky values ask first.
-    SetAgentConfig(AgentKind, String, String),
-    ConfirmAgentConfig(bool),
-    /// Complete the `@` mention or `/` command being typed.
-    PickAgentMention(AgentKind, String),
-    PickSlash(AgentKind, String),
-    /// Review, revert or dismiss what the agent changed.
-    AgentChanges(AgentKind, super::agent_changes::ChangeAction),
     ShowOutput,
     ShowProblems,
     ShowTerminal,
@@ -512,7 +481,6 @@ impl Command {
 
 /// Primary caret of the document, or the start when it has no live editor state.
 fn caret_byte(document: &Document) -> usize {
-    #[cfg(feature = "shared-editor")]
     if let Some(buffer) = document.editing.as_ref() {
         let selections = buffer.selections();
         return selections.selections()[selections.primary_index()].head;

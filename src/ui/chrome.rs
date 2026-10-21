@@ -353,7 +353,6 @@ impl Workbench<'_> {
                 ..Default::default()
             };
         };
-        #[cfg(feature = "shared-editor")]
         let (position, selected, cursors) = file
             .editing
             .as_ref()
@@ -388,8 +387,6 @@ impl Workbench<'_> {
                 )
             })
             .unwrap_or((None, 0, String::new()));
-        #[cfg(not(feature = "shared-editor"))]
-        let (position, selected, cursors) = (None, 0, String::new());
         StatusDocumentInfo {
             language: file.language.as_str().to_owned(),
             eol: Some(crate::model::status_info::detect_line_ending(&file.text)),
@@ -529,7 +526,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "shared-editor")]
     #[test]
     fn narrow_status_bars_drop_language_facts_but_keep_the_cursor_position() {
         let mut app = app_with("a\nb\n");
