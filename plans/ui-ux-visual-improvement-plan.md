@@ -261,6 +261,21 @@ Either way, keep fixture content in the repository (a small workspace with long 
 - Review pass on the same baseline: re-checked the cited constants and call sites against source (Find `width - 340`, task form 130 px labels, chat 240 px floor, 350 px launcher reserve, 13 px log cap, 620 px save-conflict width, dialog call-site counts); added the title-strip contrast pair, run/stop naming, compiled-out settings, dialog inventory and capture tooling; rebuilt the concept mockup.
 - No application source, assets, settings or native behavior changed. No Windows runtime, fresh live screenshots, packaging or feature-enabled language-server validation is claimed.
 
+## Implementation status
+
+Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements` (#31) ← `f-ui-dialogs`.
+
+| Item | Status |
+| --- | --- |
+| 1 Filled-control contrast | Done: `on_accent`, `title_muted`, `danger`/`on_danger` roles with a contrast test in all themes |
+| 3 Bottom-pane boundaries | Done for Output, task output, Problems (Terminal already matched) |
+| 4 Explorer badges | Done: badge column, ellipsized names, spoken status |
+| 7 Chat | Partly: Send/Queue wording, accent fill, 3 px radii. Header budgeting and approval card pending |
+| 9 Naming and focus | Partly: task launcher, Settings gear, disabled header tooltips. Keyboard-order audit pending |
+| 10/12 small fixes | Done: platform commit hint, "New Text File", log font cap removed |
+| 12 Shared dialogs | In progress: `ui/dialog.rs` (title strip, close, footer, scrim, danger button). Migrated: document, quit, task, conflict, language-server error, safety, Explorer delete, unapplied settings, workspace replace confirmation, Git abort and revert. Pending: Git branch/clone/tags/stash/history forms, rename and language-edit review, workspace replace preview (resizable review), empty-state pattern |
+| 2, 5, 6, 8, 11 and Phase 0 | Not started |
+
 ## Scope boundaries
 
 This plan does not add new editor engines, Git operations, debug support, language servers, agent integrations, search algorithms or filesystem features. It does not change permission policy, command semantics, data persistence or document mutation rules. Preserve the app/model/service boundaries and typed commands while changing presentation. Any newly discovered functional defect belongs in a separate issue rather than being silently included in visual cleanup.

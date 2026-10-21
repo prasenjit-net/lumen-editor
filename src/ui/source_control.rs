@@ -1999,26 +1999,35 @@ impl Workbench<'_> {
             .as_ref()
             .and_then(|snapshot| snapshot.state.label())
             .unwrap_or("The operation");
-        let (mut confirm, mut cancel) = (false, false);
-        let modal = egui::Modal::new(egui::Id::new("source_control_abort")).show(ctx, |ui| {
-            ui.set_width(400.0);
-            ui.heading("Abort and go back?");
-            ui.label(
-                RichText::new(format!(
-                    "{label} will be stopped and Git will try to return to the state before it began. Changes you made while resolving conflicts are discarded, and Git may be unable to restore uncommitted changes that existed beforehand."
-                ))
-                .color(colors.muted),
-            );
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                confirm = ui.button("Abort").clicked();
-                cancel = ui.button("Keep Going").clicked();
+        let dialog = super::dialog::Dialog::new("Abort and go back?")
+            .width(420.0)
+            .show(ctx, |ui| {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(format!(
+                            "{label} will be stopped and Git will try to return to the state before it began. Changes you made while resolving conflicts are discarded, and Git may be unable to restore uncommitted changes that existed beforehand."
+                        ))
+                        .color(colors.muted),
+                    )
+                    .wrap(),
+                );
+                super::dialog::footer(ui, |ui| {
+                    let abort = super::dialog::danger_button(ui, "Abort");
+                    let keep = ui.button("Keep Going");
+                    super::dialogs::keep_focus(ui.ctx(), &[&abort, &keep], &keep);
+                    if abort.clicked() {
+                        Some(true)
+                    } else if keep.clicked() || super::dialogs::escape_pressed(ui.ctx()) {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                })
             });
-        });
-        if cancel || modal.should_close() {
-            self.command(Command::CancelOperationAbort);
-        } else if confirm {
-            self.command(Command::ConfirmOperationAbort);
+        match dialog.inner.or(dialog.close_clicked.then_some(false)) {
+            Some(true) => self.command(Command::ConfirmOperationAbort),
+            Some(false) => self.command(Command::CancelOperationAbort),
+            None => {}
         }
     }
 
@@ -2029,34 +2038,53 @@ impl Workbench<'_> {
         };
         let paths = prompt.paths.clone();
         let error = prompt.error.clone();
-        let mut confirm = false;
-        let mut cancel = false;
-        let modal = egui::Modal::new(egui::Id::new("source_control_revert")).show(ctx, |ui| {
-            ui.set_width(400.0);
-            let count = paths.len();
-            ui.heading(if count == 1 { "Discard changes to this file?" } else { "Discard changes to these files?" });
-            ui.label(RichText::new("This restores the tracked file and its staged state from HEAD. This cannot be undone in Lumen.").color(colors.muted));
+        let loading = self.view.source_control.loading;
+        let count = paths.len();
+        let title = if count == 1 {
+            "Discard changes to this file?"
+        } else {
+            "Discard changes to these files?"
+        };
+        let dialog = super::dialog::Dialog::new(title).width(420.0).show(ctx, |ui| {
+            ui.add(
+                egui::Label::new(
+                    RichText::new("This restores the tracked file and its staged state from HEAD. This cannot be undone in Lumen.")
+                        .color(colors.muted),
+                )
+                .wrap(),
+            );
             ui.label(RichText::new("Untracked files are not removed.").color(colors.muted));
             ui.add_space(6.0);
             for path in paths.iter().take(4) {
-                ui.label(path.display().to_string());
+                ui.add(egui::Label::new(RichText::new(path.display().to_string()).monospace()).truncate());
             }
             if count > 4 {
                 ui.label(RichText::new(format!("…and {} more", count - 4)).color(colors.muted));
             }
             if let Some(error) = &error {
-                ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+                ui.add(egui::Label::new(RichText::new(error).color(colors.error)).wrap());
             }
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                confirm = ui.add_enabled(!self.view.source_control.loading, egui::Button::new("Discard Changes")).clicked();
-                cancel = ui.button("Cancel").clicked();
-            });
+            super::dialog::footer(ui, |ui| {
+                let discard = ui
+                    .add_enabled_ui(!loading, |ui| {
+                        super::dialog::danger_button(ui, "Discard Changes")
+                    })
+                    .inner;
+                let cancel = ui.button("Cancel");
+                super::dialogs::keep_focus(ui.ctx(), &[&discard, &cancel], &cancel);
+                if discard.clicked() {
+                    Some(true)
+                } else if cancel.clicked() || super::dialogs::escape_pressed(ui.ctx()) {
+                    Some(false)
+                } else {
+                    None
+                }
+            })
         });
-        if cancel || modal.should_close() {
-            self.view.source_control.revert_prompt = None;
-        } else if confirm {
-            self.command(Command::ConfirmSourceRevert);
+        match dialog.inner.or(dialog.close_clicked.then_some(false)) {
+            Some(true) => self.command(Command::ConfirmSourceRevert),
+            Some(false) => self.view.source_control.revert_prompt = None,
+            None => {}
         }
     }
 
