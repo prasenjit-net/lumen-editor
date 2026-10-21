@@ -4,6 +4,18 @@ use super::view_state::{Activity, ExplorerSelection, SaveConflict};
 use crate::model::{Document, display_name};
 use eframe::egui;
 use std::path::PathBuf;
+
+/// How an open request treats the tab it produces. Which entry points use which
+/// mode is decided at the call sites: Explorer single-click, quick open,
+/// workspace-search results and language navigation open unpinned; everything
+/// else (Open File, CLI, Explorer double-click/Enter, session restore, new
+/// files) opens pinned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpenMode {
+    Unpinned,
+    Pinned,
+}
+
 impl LumenApp {
     pub(crate) fn request_quit(&mut self, ctx: &egui::Context) {
         if self.guard_quit_for_tasks() {
@@ -124,7 +136,20 @@ impl LumenApp {
         self.view.status = format!("Closed folder {}", display_name(&folder));
     }
 
+    /// Open `path` as a permanent tab.
     pub(crate) fn open_file(&mut self, path: PathBuf) {
+        self.open_file_as(path, OpenMode::Pinned);
+    }
+
+    /// Open `path` in the group's replaceable tab (or pinned when the
+    /// `workbench.enable_preview` setting is off).
+    pub(crate) fn open_file_unpinned(&mut self, path: PathBuf) {
+        self.open_file_as(path, OpenMode::Unpinned);
+    }
+
+    pub(crate) fn open_file_as(&mut self, path: PathBuf, mode: OpenMode) {
+        let unpinned =
+            mode == OpenMode::Unpinned && self.view.settings.boolean("workbench.enable_preview");
         self.view.leave_page_tabs();
         if let Some(diff) = &mut self.view.source_control.diff {
             diff.active = false;
@@ -144,16 +169,35 @@ impl LumenApp {
             .position(|file| file.path.as_deref() == Some(path.as_path()))
         {
             self.editor.set_active_index(Some(index));
+            // Opening a file that is already a permanent tab never demotes it;
+            // an explicit (pinned) open of the unpinned tab keeps it open.
+            if !unpinned {
+                let id = self.editor.files[index].id;
+                self.editor.pin(id);
+            }
             self.remember_recent_file(&path);
             return;
         }
         match self.file_system.read_text(&path) {
             Ok(text) => {
-                self.editor
-                    .files
-                    .push(Document::from_path(path.clone(), text));
-                self.editor
-                    .set_active_index(Some(self.editor.files.len() - 1));
+                let document = Document::from_path(path.clone(), text);
+                let id = document.id;
+                let replaced = if unpinned {
+                    self.editor.unpinned_in_focused_group()
+                } else {
+                    None
+                };
+                if let Some(old) = replaced {
+                    self.view.find.remove(&old);
+                    self.editor.replace_unpinned(old, document);
+                } else {
+                    self.editor.files.push(document);
+                    self.editor
+                        .set_active_index(Some(self.editor.files.len() - 1));
+                    if unpinned {
+                        self.editor.mark_unpinned(id);
+                    }
+                }
                 self.remember_recent_file(&path);
                 self.view.status = "File opened".into();
             }

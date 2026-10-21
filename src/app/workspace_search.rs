@@ -36,7 +36,7 @@ pub(crate) enum ReplaceScope {
 
 impl LumenApp {
     pub(crate) fn open_workspace_hit(&mut self, path: PathBuf, range: Range<usize>) {
-        self.open_file(path.clone());
+        self.open_file_unpinned(path.clone());
         let Some(file) = self
             .editor
             .active()

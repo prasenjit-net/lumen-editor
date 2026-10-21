@@ -24,6 +24,16 @@ pub(crate) const SCHEMA: SectionSchema = SectionSchema {
             document: false,
         },
         Setting {
+            id: "workbench.enable_preview",
+            default: DefaultValue::Bool(true),
+            name: "Unpinned Tabs",
+            category: "Workbench",
+            help: "Opening a file with a single click in the Explorer, quick open or search results uses one replaceable (italic) tab per editor group. Editing it or double-clicking pins it. Turn off to open every file in a permanent tab.",
+            aliases: "preview tab single click transient italic pinned keep open",
+            control: Control::Bool,
+            document: false,
+        },
+        Setting {
             id: "workbench.reopen_last_folder",
             default: DefaultValue::Bool(false),
             name: "Reopen Last Folder",

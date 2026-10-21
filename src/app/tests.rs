@@ -24,6 +24,7 @@ mod navigation;
 mod paste;
 mod safety;
 mod shared;
+mod unpinned;
 mod viewport;
 mod workspace_search;
 

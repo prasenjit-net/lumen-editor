@@ -150,7 +150,13 @@ impl Workbench<'_> {
             self.explorer_row_actions(&response, path, false);
             if response.clicked() {
                 self.view.explorer_selection = Some(ExplorerSelection::File(path.to_path_buf()));
-                self.command(Command::OpenPath(path.to_path_buf()));
+                // The first click opens immediately in the replaceable tab; the
+                // second click of a double-click upgrades it to a permanent one.
+                self.command(if response.double_clicked() {
+                    Command::OpenPath(path.to_path_buf())
+                } else {
+                    Command::OpenPathUnpinned(path.to_path_buf())
+                });
             }
         }
     }

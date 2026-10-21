@@ -283,43 +283,57 @@ impl Workbench<'_> {
         let mut close_chat: Option<lumen_agent_core::SessionId> = None;
         let mut open_diff = false;
         let mut close_diff = false;
-        let strip = ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.allocate_ui_with_layout(
-                egui::vec2(sizing.viewport, HEIGHT),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ScrollArea::horizontal()
-                        .id_salt("editor_tabs")
-                        .animated(false)
-                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                        .auto_shrink([false, true])
-                        .max_height(HEIGHT)
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
+        let strip =
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.allocate_ui_with_layout(
+                    egui::vec2(sizing.viewport, HEIGHT),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ScrollArea::horizontal()
+                            .id_salt("editor_tabs")
+                            .animated(false)
+                            .scroll_bar_visibility(
+                                egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                            )
+                            .auto_shrink([false, true])
+                            .max_height(HEIGHT)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = GAP;
                                 let mut tab_rects: Vec<egui::Rect> = Vec::new();
                                 let mut dragged_tab: Option<(usize, bool)> = None;
                                 for (tab_index, &file_index) in visible_files.iter().enumerate() {
                                     let file = &self.editor.files[file_index];
                                     let selected = active == Some(TabTarget::Document(file.id));
+                                    let unpinned = self.editor.is_unpinned(file.id);
                                     let response = tab(
                                         ui,
                                         &titles[tab_index],
                                         sizing.widths[tab_index],
                                         selected,
-                                        &file.path.as_ref().map_or_else(
-                                            || file.name.clone(),
-                                            |path| path.display().to_string(),
-                                        ),
+                                        &{
+                                            let name = file.path.as_ref().map_or_else(
+                                                || file.name.clone(),
+                                                |path| path.display().to_string(),
+                                            );
+                                            if unpinned {
+                                                format!(
+                                                    "{name} (unpinned, double-click to keep open)"
+                                                )
+                                            } else {
+                                                name
+                                            }
+                                        },
                                         "Close editor",
-                                        file.dirty,
+                                        TabMarks { dirty: file.dirty, unpinned },
                                     );
                                     response.title.context_menu(|ui| {
                                         tab_menu(
                                             ui,
                                             TabMenuTarget {
                                                 id: file.id,
+                                                unpinned,
                                                 path: file.path.as_deref(),
                                                 position: tab_index,
                                                 count: visible_files.len(),
@@ -333,6 +347,9 @@ impl Workbench<'_> {
                                     });
                                     if response.select {
                                         select = Some(file_index);
+                                    }
+                                    if unpinned && response.title.double_clicked() {
+                                        menu_command = Some(Command::PinTab(file.id));
                                     }
                                     if response.close {
                                         close = Some(file.id);
@@ -412,7 +429,7 @@ impl Workbench<'_> {
                                         selected,
                                         &diff.path.display().to_string(),
                                         "Close diff editor",
-                                        dirty,
+                                        TabMarks { dirty, unpinned: false },
                                     );
                                     open_diff = response.select;
                                     close_diff = response.close;
@@ -430,7 +447,7 @@ impl Workbench<'_> {
                                         selected,
                                         "Settings",
                                         "Close Settings (drafts retained)",
-                                        false,
+                                        TabMarks { dirty: false, unpinned: false },
                                     );
                                     open_settings = response.select;
                                     close_settings = response.close;
@@ -447,7 +464,7 @@ impl Workbench<'_> {
                                         selected,
                                         "Commit history of the repository",
                                         "Close History",
-                                        false,
+                                        TabMarks { dirty: false, unpinned: false },
                                     );
                                     open_history = response.select;
                                     close_history = response.close;
@@ -471,10 +488,14 @@ impl Workbench<'_> {
                                         selected,
                                         &tooltip,
                                         "Close task editor",
-                                        self.view
-                                            .task_editors
-                                            .get(*id)
-                                            .is_some_and(|tab| tab.dirty()),
+                                        TabMarks {
+                                            dirty: self
+                                                .view
+                                                .task_editors
+                                                .get(*id)
+                                                .is_some_and(|tab| tab.dirty()),
+                                            unpinned: false,
+                                        },
                                     );
                                     if response.select {
                                         open_task = Some(*id);
@@ -497,7 +518,7 @@ impl Workbench<'_> {
                                         selected,
                                         &self.chat_tooltip(*id),
                                         "Close chat (the session stays in the list)",
-                                        attention,
+                                        TabMarks { dirty: attention, unpinned: false },
                                     );
                                     if response.select {
                                         open_chat = Some(*id);
@@ -510,100 +531,104 @@ impl Workbench<'_> {
                                     }
                                 }
                             });
+                            });
+                    },
+                );
+                if sizing.overflow {
+                    ui.spacing_mut().button_padding.x = 2.0;
+                    ui.spacing_mut().interact_size.x = ACTION_SIZE;
+                    ui.menu_button(icon::CARET_DOWN, |ui| {
+                        ui.set_max_width(360.0);
+                        ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                            for (tab_index, &file_index) in visible_files.iter().enumerate() {
+                                let file = &self.editor.files[file_index];
+                                let title = format!(
+                                    "{}{}",
+                                    titles[tab_index],
+                                    if file.dirty { " ●" } else { "" }
+                                );
+                                if ui
+                                    .selectable_label(
+                                        active == Some(TabTarget::Document(file.id)),
+                                        title,
+                                    )
+                                    .on_hover_text(file.path.as_ref().map_or_else(
+                                        || file.name.clone(),
+                                        |path| path.display().to_string(),
+                                    ))
+                                    .clicked()
+                                {
+                                    select = Some(file_index);
+                                    ui.close();
+                                }
+                            }
+                            if let Some(diff) = self
+                                .view
+                                .source_control
+                                .diff
+                                .as_ref()
+                                .filter(|_| !hide_virtual)
+                                && ui
+                                    .selectable_label(
+                                        active == Some(TabTarget::Diff),
+                                        format!("{} (Diff)", diff.path.display()),
+                                    )
+                                    .clicked()
+                            {
+                                open_diff = true;
+                                ui.close();
+                            }
+                            if settings_tab
+                                && ui.selectable_label(settings_open, "Settings").clicked()
+                            {
+                                open_settings = true;
+                                ui.close();
+                            }
+                            if let Some(title) = history_title.as_ref().filter(|_| history_tab)
+                                && ui
+                                    .selectable_label(active == Some(TabTarget::History), title)
+                                    .clicked()
+                            {
+                                open_history = true;
+                                ui.close();
+                            }
+                            for (id, title) in &task_tabs {
+                                if ui
+                                    .selectable_label(
+                                        active == Some(TabTarget::TaskEditor(*id)),
+                                        title,
+                                    )
+                                    .clicked()
+                                {
+                                    open_task = Some(*id);
+                                    ui.close();
+                                }
+                            }
+                            for (id, title) in &chat_tabs {
+                                if ui
+                                    .selectable_label(active == Some(TabTarget::Chat(*id)), title)
+                                    .clicked()
+                                {
+                                    open_chat = Some(*id);
+                                    ui.close();
+                                }
+                            }
                         });
-                },
-            );
-            if sizing.overflow {
-                ui.spacing_mut().button_padding.x = 2.0;
-                ui.spacing_mut().interact_size.x = ACTION_SIZE;
-                ui.menu_button(icon::CARET_DOWN, |ui| {
-                    ui.set_max_width(360.0);
-                    ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                        for (tab_index, &file_index) in visible_files.iter().enumerate() {
-                            let file = &self.editor.files[file_index];
-                            let title = format!(
-                                "{}{}",
-                                titles[tab_index],
-                                if file.dirty { " ●" } else { "" }
-                            );
-                            if ui
-                                .selectable_label(
-                                    active == Some(TabTarget::Document(file.id)),
-                                    title,
-                                )
-                                .on_hover_text(file.path.as_ref().map_or_else(
-                                    || file.name.clone(),
-                                    |path| path.display().to_string(),
-                                ))
-                                .clicked()
-                            {
-                                select = Some(file_index);
-                                ui.close();
-                            }
-                        }
-                        if let Some(diff) = self
-                            .view
-                            .source_control
-                            .diff
-                            .as_ref()
-                            .filter(|_| !hide_virtual)
-                            && ui
-                                .selectable_label(
-                                    active == Some(TabTarget::Diff),
-                                    format!("{} (Diff)", diff.path.display()),
-                                )
-                                .clicked()
-                        {
-                            open_diff = true;
-                            ui.close();
-                        }
-                        if settings_tab && ui.selectable_label(settings_open, "Settings").clicked()
-                        {
-                            open_settings = true;
-                            ui.close();
-                        }
-                        if let Some(title) = history_title.as_ref().filter(|_| history_tab)
-                            && ui
-                                .selectable_label(active == Some(TabTarget::History), title)
-                                .clicked()
-                        {
-                            open_history = true;
-                            ui.close();
-                        }
-                        for (id, title) in &task_tabs {
-                            if ui
-                                .selectable_label(active == Some(TabTarget::TaskEditor(*id)), title)
-                                .clicked()
-                            {
-                                open_task = Some(*id);
-                                ui.close();
-                            }
-                        }
-                        for (id, title) in &chat_tabs {
-                            if ui
-                                .selectable_label(active == Some(TabTarget::Chat(*id)), title)
-                                .clicked()
-                            {
-                                open_chat = Some(*id);
-                                ui.close();
-                            }
-                        }
-                    });
-                })
-                .response
-                .on_hover_text("Open editors — including hidden tabs");
-            }
-            if ui
-                .add_sized(
-                    [ACTION_SIZE, 22.0],
-                    egui::Button::new(icon::PLUS).frame(false),
-                )
-                .on_hover_text("New text file")
-                .clicked()
-            {
-                self.command(Command::NewUntitled);
-            }
-        });
+                    })
+                    .response
+                    .on_hover_text("Open editors — including hidden tabs");
+                }
+                if ui
+                    .add_sized(
+                        [ACTION_SIZE, 22.0],
+                        egui::Button::new(icon::PLUS).frame(false),
+                    )
+                    .on_hover_text("New text file")
+                    .clicked()
+                {
+                    self.command(Command::NewUntitled);
+                }
+            });
         if let Some(index) = select {
             // Choosing the current editor from the dropdown must reveal it too,
             // even if the user has manually scrolled its header out of view.
@@ -779,6 +804,7 @@ fn drive_tab_drag(
 
 struct TabMenuTarget<'a> {
     id: DocumentId,
+    unpinned: bool,
     path: Option<&'a Path>,
     /// Position among the visible tabs, and how many there are.
     position: usize,
@@ -810,6 +836,10 @@ fn tab_menu(
             ui.close();
         }
     };
+    if target.unpinned {
+        item(ui, "Keep Open", true, "", Command::PinTab(target.id));
+        ui.separator();
+    }
     item(ui, "Close", true, "", Command::RequestClose(target.id));
     item(
         ui,
@@ -910,6 +940,14 @@ fn tab_menu(
     );
 }
 
+/// Per-tab state drawn on the title and close button.
+#[derive(Clone, Copy)]
+struct TabMarks {
+    dirty: bool,
+    /// Replaceable tab: the title is italic.
+    unpinned: bool,
+}
+
 struct TabResponse {
     rect: egui::Rect,
     select: bool,
@@ -927,7 +965,7 @@ fn tab(
     selected: bool,
     tooltip: &str,
     close_tooltip: &str,
-    dirty: bool,
+    marks: TabMarks,
 ) -> TabResponse {
     let colors = crate::ui::theme::palette(ui.visuals());
     let mut select = false;
@@ -948,11 +986,14 @@ fn tab(
                 let response = ui
                     .add_sized(
                         [width - 50.0, 22.0],
-                        egui::Button::new(RichText::new(title).color(if selected {
-                            colors.text
-                        } else {
-                            colors.muted
-                        }))
+                        egui::Button::new({
+                            let text = RichText::new(title).color(if selected {
+                                colors.text
+                            } else {
+                                colors.muted
+                            });
+                            if marks.unpinned { text.italics() } else { text }
+                        })
                         .frame(false)
                         .truncate()
                         .sense(egui::Sense::click_and_drag()),
@@ -970,8 +1011,12 @@ fn tab(
                 close = widgets::named(
                     ui.add_sized(
                         [ACTION_SIZE, 22.0],
-                        egui::Button::new(if dirty && !hovered { "●" } else { icon::X })
-                            .frame(false),
+                        egui::Button::new(if marks.dirty && !hovered {
+                            "●"
+                        } else {
+                            icon::X
+                        })
+                        .frame(false),
                     )
                     .on_hover_text(close_tooltip),
                     true,

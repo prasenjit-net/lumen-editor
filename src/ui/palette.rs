@@ -537,6 +537,7 @@ fn palette_commands() -> Vec<(String, Command)> {
             Command::OpenFile,
         ),
         (format!("{}  Go to File", icon::FILE), Command::QuickOpen),
+        ("View: Keep Editor Open".into(), Command::PinActiveTab),
         ("Go to Line/Column".into(), Command::GoToLine),
         ("Go to Definition".into(), Command::GoToDefinition),
         ("Show Hover".into(), Command::ShowHover),

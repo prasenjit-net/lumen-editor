@@ -179,7 +179,7 @@ impl LumenApp {
     }
 
     pub(crate) fn open_quick_path(&mut self, path: PathBuf) {
-        self.open_file(path.clone());
+        self.open_file_unpinned(path.clone());
         if self
             .editor
             .active()
