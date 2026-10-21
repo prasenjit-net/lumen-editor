@@ -3,17 +3,11 @@
 //! Each answer is a typed command; cancelling any of them changes nothing.
 use super::{
     Workbench,
+    dialog::{Dialog, danger_button, footer},
     dialogs::{escape_pressed, keep_focus, primary_button},
 };
 use crate::app::command::Command;
-use eframe::egui::{self, RichText, Vec2};
-
-fn centered(title: &str) -> egui::Window<'_> {
-    egui::Window::new(title)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-}
+use eframe::egui::{self, RichText};
 
 impl Workbench<'_> {
     /// Review a workspace task before its first run, and offer to save dirty files.
@@ -48,8 +42,7 @@ impl Workbench<'_> {
             .collect();
         let dirty = pending.dirty_files.clone();
         let mut answer = None;
-        centered(title).show(ctx, |ui| {
-            ui.set_max_width(480.0);
+        let dialog = Dialog::new(title).width(480.0).show(ctx, |ui| {
             ui.add(egui::Label::new(RichText::new(format!("Run '{label}'?")).strong()).wrap());
             if task_count > 1 {
                 ui.label(
@@ -105,8 +98,7 @@ impl Workbench<'_> {
                     .wrap(),
                 );
             }
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
+            footer(ui, |ui| {
                 if dirty.is_empty() {
                     let run = primary_button(ui, "Run");
                     let cancel = ui.button("Cancel");
@@ -118,8 +110,8 @@ impl Workbench<'_> {
                     }
                 } else {
                     let save = primary_button(ui, "Save All and Run");
-                    let run = ui.button("Run without Saving");
                     let cancel = ui.button("Cancel");
+                    let run = ui.button("Run without Saving");
                     keep_focus(ui.ctx(), &[&save, &run, &cancel], &save);
                     if save.clicked() {
                         answer = Some(Command::ConfirmTaskRun(true));
@@ -131,6 +123,9 @@ impl Workbench<'_> {
                 }
             });
         });
+        if dialog.close_clicked {
+            answer = Some(Command::CancelTaskRun);
+        }
         if let Some(command) = answer {
             self.command(command);
         }
@@ -146,8 +141,7 @@ impl Workbench<'_> {
         let title = pending.key.id.clone();
         let complete = pending.complete();
         let mut answer = None;
-        centered("Run task").show(ctx, |ui| {
-            ui.set_max_width(440.0);
+        let dialog = Dialog::new("Run task").width(440.0).show(ctx, |ui| {
             ui.add(
                 egui::Label::new(RichText::new(format!("Inputs for '{title}'")).strong()).wrap(),
             );
@@ -188,8 +182,7 @@ impl Workbench<'_> {
                 }
                 ui.add_space(4.0);
             }
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
+            footer(ui, |ui| {
                 ui.add_enabled_ui(complete, |ui| {
                     if primary_button(ui, "Run").clicked() {
                         answer = Some(Command::SubmitTaskInputs);
@@ -200,6 +193,9 @@ impl Workbench<'_> {
                 }
             });
         });
+        if dialog.close_clicked {
+            answer = Some(Command::CancelTaskInputs);
+        }
         if let Some(command) = answer {
             self.command(command);
         }
@@ -221,8 +217,7 @@ impl Workbench<'_> {
             return;
         };
         let mut answer = None;
-        centered("Task is running").show(ctx, |ui| {
-            ui.set_max_width(420.0);
+        let dialog = Dialog::new("Task is running").show(ctx, |ui| {
             ui.add(
                 egui::Label::new(format!(
                     "'{title}' is still running. Stop it and close its tab?"
@@ -233,9 +228,8 @@ impl Workbench<'_> {
                 RichText::new("Its process and everything it started will be stopped.")
                     .color(colors.muted),
             );
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                let stop = primary_button(ui, "Stop and Close");
+            footer(ui, |ui| {
+                let stop = danger_button(ui, "Stop and Close");
                 let cancel = ui.button("Cancel");
                 keep_focus(ui.ctx(), &[&stop, &cancel], &cancel);
                 if stop.clicked() {
@@ -245,6 +239,9 @@ impl Workbench<'_> {
                 }
             });
         });
+        if dialog.close_clicked {
+            answer = Some(Command::CancelCloseTaskRun);
+        }
         if let Some(command) = answer {
             self.command(command);
         }
@@ -258,37 +255,40 @@ impl Workbench<'_> {
         let stopping = pending.stopping;
         let names: Vec<String> = self.workspace_run_titles();
         let mut answer = None;
-        centered("Tasks are running").show(ctx, |ui| {
-            ui.set_max_width(440.0);
-            ui.add(
-                egui::Label::new(format!(
-                    "These tasks belong to the current folder: {}.",
-                    names.join(", ")
-                ))
-                .wrap(),
-            );
-            ui.label(
-                RichText::new(if stopping {
-                    "Stopping them…"
-                } else {
-                    "Stop them and switch folders, or stay where you are?"
-                })
-                .color(colors.muted),
-            );
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.add_enabled_ui(!stopping, |ui| {
-                    let stop = primary_button(ui, "Stop Tasks and Switch");
-                    let cancel = ui.button("Cancel");
-                    keep_focus(ui.ctx(), &[&stop, &cancel], &cancel);
-                    if stop.clicked() {
-                        answer = Some(Command::ConfirmWorkspaceSwitch);
-                    } else if cancel.clicked() || escape_pressed(ui.ctx()) {
-                        answer = Some(Command::CancelWorkspaceSwitch);
-                    }
+        let dialog = Dialog::new("Tasks are running")
+            .width(440.0)
+            .show(ctx, |ui| {
+                ui.add(
+                    egui::Label::new(format!(
+                        "These tasks belong to the current folder: {}.",
+                        names.join(", ")
+                    ))
+                    .wrap(),
+                );
+                ui.label(
+                    RichText::new(if stopping {
+                        "Stopping them…"
+                    } else {
+                        "Stop them and switch folders, or stay where you are?"
+                    })
+                    .color(colors.muted),
+                );
+                footer(ui, |ui| {
+                    ui.add_enabled_ui(!stopping, |ui| {
+                        let stop = danger_button(ui, "Stop Tasks and Switch");
+                        let cancel = ui.button("Cancel");
+                        keep_focus(ui.ctx(), &[&stop, &cancel], &cancel);
+                        if stop.clicked() {
+                            answer = Some(Command::ConfirmWorkspaceSwitch);
+                        } else if cancel.clicked() || escape_pressed(ui.ctx()) {
+                            answer = Some(Command::CancelWorkspaceSwitch);
+                        }
+                    });
                 });
             });
-        });
+        if dialog.close_clicked && !stopping {
+            answer = Some(Command::CancelWorkspaceSwitch);
+        }
         if let Some(command) = answer {
             self.command(command);
         }
@@ -309,31 +309,34 @@ impl Workbench<'_> {
             .map(|run| self.view.task_runs.title(run.id))
             .collect();
         let mut answer = None;
-        centered("Tasks are running").show(ctx, |ui| {
-            ui.set_max_width(440.0);
-            ui.add(egui::Label::new(format!("Still running: {}.", names.join(", "))).wrap());
-            ui.label(
-                RichText::new(if stopping {
-                    "Stopping them, then quitting…"
-                } else {
-                    "Quitting stops them and everything they started."
-                })
-                .color(colors.muted),
-            );
-            ui.add_space(10.0);
-            ui.add_enabled_ui(!stopping, |ui| {
-                ui.horizontal(|ui| {
-                    let stop = primary_button(ui, "Stop Tasks and Quit");
-                    let cancel = ui.button("Cancel");
-                    keep_focus(ui.ctx(), &[&stop, &cancel], &cancel);
-                    if stop.clicked() {
-                        answer = Some(Command::ConfirmTaskQuit);
-                    } else if cancel.clicked() || escape_pressed(ui.ctx()) {
-                        answer = Some(Command::CancelTaskQuit);
-                    }
+        let dialog = Dialog::new("Tasks are running")
+            .width(440.0)
+            .show(ctx, |ui| {
+                ui.add(egui::Label::new(format!("Still running: {}.", names.join(", "))).wrap());
+                ui.label(
+                    RichText::new(if stopping {
+                        "Stopping them, then quitting…"
+                    } else {
+                        "Quitting stops them and everything they started."
+                    })
+                    .color(colors.muted),
+                );
+                ui.add_enabled_ui(!stopping, |ui| {
+                    footer(ui, |ui| {
+                        let stop = danger_button(ui, "Stop Tasks and Quit");
+                        let cancel = ui.button("Cancel");
+                        keep_focus(ui.ctx(), &[&stop, &cancel], &cancel);
+                        if stop.clicked() {
+                            answer = Some(Command::ConfirmTaskQuit);
+                        } else if cancel.clicked() || escape_pressed(ui.ctx()) {
+                            answer = Some(Command::CancelTaskQuit);
+                        }
+                    });
                 });
             });
-        });
+        if dialog.close_clicked && !stopping {
+            answer = Some(Command::CancelTaskQuit);
+        }
         if let Some(command) = answer {
             self.command(command);
         }
