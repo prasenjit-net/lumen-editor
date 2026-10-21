@@ -17,8 +17,8 @@ const TOGGLE_SIZE: (f32, f32) = (26.0, 22.0);
 /// Gap between the launcher and the panel toggles.
 const TOGGLE_GAP: f32 = 16.0;
 
-/// Longest the selected task's name may be, in characters, before it is cut.
-const MAX_LABEL_CHARS: usize = 24;
+/// Widest the selected task's name may be, as drawn, before it is cut.
+const MAX_LABEL_WIDTH: f32 = 150.0;
 
 impl Workbench<'_> {
     /// Panel visibility toggles: left sidebar, right agent panel, bottom panel.
@@ -90,13 +90,12 @@ impl Workbench<'_> {
             .and_then(|key| self.view.tasks.get(key))
             .map(|task| task.label.clone());
         let label = match &selected_label {
-            Some(name) if name.chars().count() > MAX_LABEL_CHARS => {
-                format!(
-                    "{}…",
-                    name.chars().take(MAX_LABEL_CHARS).collect::<String>()
-                )
-            }
-            Some(name) => name.clone(),
+            Some(name) => super::widgets::ellipsize(
+                ui,
+                name,
+                &egui::FontId::proportional(11.0),
+                MAX_LABEL_WIDTH,
+            ),
             None => "Select task".into(),
         };
         let mut commands = Vec::new();

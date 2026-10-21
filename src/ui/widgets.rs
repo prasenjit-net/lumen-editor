@@ -344,6 +344,34 @@ pub(crate) fn menu_entries(ui: &mut egui::Ui, entries: &[MenuEntry]) -> Option<C
     chosen
 }
 
+/// `text` cut with an ellipsis so it is no wider than `max_width` when drawn in
+/// `font`; unchanged when it already fits. Measures glyphs, not characters.
+pub(crate) fn ellipsize(ui: &egui::Ui, text: &str, font: &FontId, max_width: f32) -> String {
+    let measure = |candidate: &str| {
+        ui.fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap(candidate.to_owned(), font.clone(), Color32::WHITE)
+                .size()
+                .x
+        })
+    };
+    if measure(text) <= max_width {
+        return text.to_owned();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let (mut low, mut high) = (0, chars.len());
+    while low < high {
+        let mid = (low + high).div_ceil(2);
+        let candidate: String = chars[..mid].iter().collect::<String>() + "…";
+        if measure(&candidate) <= max_width {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    chars[..low].iter().collect::<String>() + "…"
+}
+
 /// Lay `text` out on one line no wider than `max_width`, ending in an ellipsis
 /// when it does not fit. Long branch, path and error text must never widen a pane.
 pub(crate) fn fit_galley(
@@ -738,6 +766,39 @@ mod tests {
                 "{spoken:?}"
             );
         }
+    }
+
+    #[test]
+    fn ellipsize_measures_rendered_width_not_characters() {
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        let font = FontId::proportional(11.0);
+        let measure = |ui: &egui::Ui, text: &str| {
+            ui.fonts_mut(|fonts| {
+                fonts
+                    .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
+                    .size()
+                    .x
+            })
+        };
+        ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                assert_eq!(ellipsize(ui, "Build", &font, 150.0), "Build");
+                let wide = "W".repeat(40);
+                let narrow = "i".repeat(40);
+                let cut_wide = ellipsize(ui, &wide, &font, 100.0);
+                let cut_narrow = ellipsize(ui, &narrow, &font, 100.0);
+                for cut in [&cut_wide, &cut_narrow] {
+                    assert!(cut.ends_with('…'));
+                    assert!(measure(ui, cut) <= 100.0, "{cut} is {}", measure(ui, cut));
+                }
+                assert!(
+                    cut_narrow.chars().count() > cut_wide.chars().count(),
+                    "narrow glyphs keep more characters in the same width"
+                );
+                assert_eq!(ellipsize(ui, "anything", &font, 0.0), "…");
+            });
+        });
     }
 
     fn actions() -> [HeaderAction; 3] {

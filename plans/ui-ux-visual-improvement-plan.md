@@ -263,7 +263,7 @@ Either way, keep fixture content in the repository (a small workspace with long 
 
 ## Implementation status
 
-Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements` (#31) ← `f-ui-dialogs` (#32) ← `f-ui-narrow-layouts` (#33) ← `f-ui-settings` (#34) ← `f-ui-chat` (#35) ← `f-ui-editor`.
+Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements` (#31) ← `f-ui-dialogs` (#32) ← `f-ui-narrow-layouts` (#33) ← `f-ui-settings` (#34) ← `f-ui-chat` (#35) ← `f-ui-editor` (#37) ← `f-ui-chrome`.
 
 | Item | Status |
 | --- | --- |
@@ -277,6 +277,7 @@ Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements
 | 5 Narrow layouts | Done for Find (second row below 460 px), task forms (stacked labels), chat (no width floor, hint truncates), task-output header (overflow menu below 520 px). Settings toolbar and status bar pending |
 | 6 Settings | Done: one label per setting, details behind a toggle, scope apart from filters (filters toggle), accent edge and Draft/Live for pending, filled Apply, language-server settings marked unavailable when the feature is off. Narrow category picker unchanged |
 | 8 Editor focus, tabs, search | Partly: unsaved tabs show a dot and turn it into the close glyph on hover (same hit target); Find tells an empty query from no results. The focused group already has an outline; an inactive-selection treatment inside the editor surface is not done. Workspace search already separates searching, cancelled and error states |
+| 10 Chrome and status | Done: macOS title fits between traffic lights and launcher (ellipsis, not hidden), task name measured in rendered width, status bar drops language/EOL then server state before position and problem counts. Activity-bar/toggle entry points kept |
 | 2, 11 and Phase 0 | Not started |
 
 ## Scope boundaries

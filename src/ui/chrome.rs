@@ -7,6 +7,22 @@ use eframe::egui::{FontId, Vec2};
 /// Room the title bar reserves for the task launcher.
 #[cfg(target_os = "macos")]
 const LAUNCHER_WIDTH: f32 = 350.0;
+/// Narrowest span worth drawing a title in.
+#[cfg(target_os = "macos")]
+const MIN_TITLE_WIDTH: f32 = 48.0;
+/// Space AppKit keeps for the real traffic-light buttons.
+#[cfg(target_os = "macos")]
+const TRAFFIC_LIGHTS: f32 = 80.0;
+
+/// Horizontal span available to the window title between the traffic lights and
+/// the task launcher, with a small gap on each side.
+#[cfg(target_os = "macos")]
+fn title_span(rect: egui::Rect, launcher_width: f32) -> (f32, f32) {
+    (
+        rect.left() + TRAFFIC_LIGHTS + 8.0,
+        rect.right() - launcher_width - 8.0,
+    )
+}
 
 impl Workbench<'_> {
     pub(crate) fn title_bar(&mut self, ctx: &egui::Context) {
@@ -37,22 +53,29 @@ impl Workbench<'_> {
                 // The launcher sits at the right edge; the centered title yields
                 // when the two would overlap.
                 let launcher_width = LAUNCHER_WIDTH.min(rect.width() / 2.0);
-                let title_galley = ui.painter().layout_no_wrap(
-                    self.view.window_title.clone(),
-                    FontId::proportional(13.0),
-                    colors.text,
-                );
-                if rect.center().x + title_galley.size().x / 2.0 + 8.0
-                    < rect.right() - launcher_width
-                {
+                // The title lives between the traffic lights and the launcher: centred
+                // when it fits there, otherwise cut with an ellipsis rather than hidden.
+                let (left, right) = title_span(rect, launcher_width);
+                if right - left >= MIN_TITLE_WIDTH {
+                    let title_galley = super::widgets::fit_galley(
+                        ui,
+                        &self.view.window_title,
+                        FontId::proportional(13.0),
+                        colors.text,
+                        right - left,
+                    );
+                    let size = title_galley.size();
+                    let x =
+                        (rect.center().x - size.x / 2.0).clamp(left, (right - size.x).max(left));
                     ui.painter().galley(
-                        rect.center() - title_galley.size() / 2.0,
+                        egui::pos2(x, rect.center().y - size.y / 2.0),
                         title_galley,
                         colors.text,
                     );
                 }
                 // Leave the leftmost 80px to AppKit's real traffic-light buttons.
-                let drag_rect = egui::Rect::from_min_max(rect.min + Vec2::new(80.0, 0.0), rect.max);
+                let drag_rect =
+                    egui::Rect::from_min_max(rect.min + Vec2::new(TRAFFIC_LIGHTS, 0.0), rect.max);
                 let response = ui.interact(
                     drag_rect,
                     ui.id().with("window_drag"),
@@ -201,15 +224,33 @@ impl Workbench<'_> {
                         let problems_width = width(ui, &problems_label) + 2.0 * gap;
                         // Reserve the right-hand facts first so a long transient
                         // message can never push them (or the counts) off screen.
-                        let mut right = width(ui, &meta_label) + gap;
-                        if let Some(label) = &position_label {
-                            right += width(ui, label) + gap;
-                        }
-                        if let Some((label, ..)) = &lsp {
-                            right += width(ui, label) + gap;
-                        }
+                        // Under pressure the language/EOL facts go first, then the
+                        // language-server state; the cursor position and the problem
+                        // counts always stay.
+                        let right_width = |ui: &egui::Ui, meta: bool, server: bool| {
+                            let mut right = gap;
+                            if meta {
+                                right += width(ui, &meta_label) + gap;
+                            }
+                            if let Some(label) = &position_label {
+                                right += width(ui, label) + gap;
+                            }
+                            if server && let Some((label, ..)) = &lsp {
+                                right += width(ui, label) + gap;
+                            }
+                            right
+                        };
                         let total = ui.available_width();
-                        let right = right.min(total * 0.7);
+                        let budget = total * 0.7;
+                        let mut show_meta = true;
+                        let mut show_server = true;
+                        if right_width(ui, show_meta, show_server) > budget {
+                            show_meta = false;
+                        }
+                        if right_width(ui, show_meta, show_server) > budget {
+                            show_server = false;
+                        }
+                        let right = right_width(ui, show_meta, show_server).min(budget);
                         let left = (total - right - gap).max(0.0);
                         ui.allocate_ui_with_layout(
                             egui::vec2(left, 22.0),
@@ -244,12 +285,16 @@ impl Workbench<'_> {
                             },
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new(&meta_label).size(11.0).color(Color32::WHITE))
+                            if show_meta {
+                                ui.label(
+                                    RichText::new(&meta_label).size(11.0).color(Color32::WHITE),
+                                )
                                 .on_hover_text(
                                     info.eol
                                         .map(|eol| eol.describe())
                                         .unwrap_or("No document is open"),
                                 );
+                            }
                             if let Some(label) = &position_label
                                 && ui
                                     .add(
@@ -263,7 +308,7 @@ impl Workbench<'_> {
                             {
                                 self.command(Command::GoToLine);
                             }
-                            if let Some((label, tooltip, is_error)) = &lsp {
+                            if show_server && let Some((label, tooltip, is_error)) = &lsp {
                                 let response = ui
                                     .add(
                                         egui::Label::new(
@@ -476,5 +521,69 @@ mod tests {
                 .expect("meta label");
             assert!(*right <= width + 0.5, "{shown:?} ends at {right} > {width}");
         }
+    }
+
+    #[cfg(feature = "shared-editor")]
+    #[test]
+    fn narrow_status_bars_drop_language_facts_but_keep_the_cursor_position() {
+        let mut app = app_with("a\nb\n");
+        // The cursor position comes from the shared editing buffer.
+        app.editor.files[0].enable_shared_editing();
+        let wide = status_texts(&mut app, 1000.0);
+        assert!(wide.iter().any(|(text, ..)| text.starts_with("Ln ")));
+        assert!(wide.iter().any(|(text, ..)| text.contains("UTF-8")));
+        let narrow = status_texts(&mut app, 240.0);
+        assert!(
+            narrow.iter().any(|(text, ..)| text.starts_with("Ln ")),
+            "position stays: {narrow:?}"
+        );
+        assert!(
+            narrow.iter().all(|(text, ..)| !text.contains("UTF-8")),
+            "language and line-ending facts go first"
+        );
+        for (text, _, right) in &narrow {
+            assert!(*right <= 240.5, "{text:?} ends at {right}");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_mac_title_is_cut_with_an_ellipsis_instead_of_hidden() {
+        let mut app = LumenApp::default();
+        app.editor.new_file();
+        app.editor.files[0].name =
+            "a_remarkably_long_document_name_that_cannot_fit_beside_the_launcher.rs".into();
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let width = 640.0_f32;
+        let mut output = None;
+        for _ in 0..2 {
+            output = Some(ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 200.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| app.render_component(ctx, |workbench| workbench.title_bar(ctx)),
+            ));
+        }
+        let shown = output
+            .unwrap()
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text.contains("a_remarkably") => {
+                    Some((text.galley.elided, text.pos.x + text.galley.rect.max.x))
+                }
+                _ => None,
+            });
+        let (elided, right) = shown.expect("the title is drawn, not hidden");
+        assert!(elided, "a title that does not fit ends in an ellipsis");
+        assert!(
+            right <= width - super::LAUNCHER_WIDTH.min(width / 2.0),
+            "{right}"
+        );
     }
 }
