@@ -135,7 +135,7 @@ impl Workbench<'_> {
                     self.command(Command::OpenFolder);
                 }
                 if ui
-                    .button(format!("{}  New File", icon::FILE_PLUS))
+                    .button(format!("{}  New Text File", icon::FILE_PLUS))
                     .clicked()
                 {
                     self.command(Command::NewUntitled);

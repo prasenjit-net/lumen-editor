@@ -52,11 +52,7 @@ impl Workbench<'_> {
             return;
         };
         let colors = theme::palette(&ctx.style().visuals);
-        let font_size = self
-            .view
-            .settings
-            .number("terminal.font_size", None)
-            .min(13.0);
+        let font_size = self.view.settings.number("terminal.font_size", None);
         let font = FontId::monospace(font_size);
         let panel_divider = self.view.settings.boolean("terminal.panel_divider");
         let entries = self.bottom_tab_entries(ActiveBottom::Run);

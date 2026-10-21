@@ -682,7 +682,10 @@ impl Workbench<'_> {
             TextEdit::multiline(&mut self.view.source_control.commit_message)
                 .id_salt("source_control_commit_message")
                 .desired_rows(3)
-                .hint_text("Message (Cmd/Ctrl+Enter to commit)"),
+                .hint_text(format!(
+                    "Message ({} to commit)",
+                    super::shortcut::primary("Enter")
+                )),
         );
         if self.view.source_control.commit_focus {
             response.request_focus();

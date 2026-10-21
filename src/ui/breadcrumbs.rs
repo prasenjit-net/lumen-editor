@@ -274,8 +274,11 @@ mod tests {
                 _ => None,
             })
             .expect("recent entry");
-        let new_file = text_rect(&output, &format!("{}  New File", crate::icon::FILE_PLUS))
-            .expect("New File button");
+        let new_file = text_rect(
+            &output,
+            &format!("{}  New Text File", crate::icon::FILE_PLUS),
+        )
+        .expect("New Text File button");
         for target in [recent.center(), new_file.center()] {
             for pressed in [true, false] {
                 frame(
@@ -301,7 +304,7 @@ mod tests {
         assert_eq!(
             app.editor.files.len(),
             1,
-            "New File opened one untitled buffer"
+            "New Text File opened one untitled buffer"
         );
         assert!(app.editor.files[0].path.is_none());
     }

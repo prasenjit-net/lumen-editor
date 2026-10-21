@@ -60,11 +60,7 @@ impl Workbench<'_> {
         if !self.view.output.open {
             return;
         }
-        let font_size = self
-            .view
-            .settings
-            .number("terminal.font_size", None)
-            .min(13.0);
+        let font_size = self.view.settings.number("terminal.font_size", None);
         let font = FontId::monospace(font_size);
         let panel_divider = self.view.settings.boolean("terminal.panel_divider");
         TopBottomPanel::bottom("terminal")
