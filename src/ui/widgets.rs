@@ -781,7 +781,7 @@ mod tests {
                     .x
             })
         };
-        ctx.run(egui::RawInput::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 assert_eq!(ellipsize(ui, "Build", &font, 150.0), "Build");
                 let wide = "W".repeat(40);
