@@ -271,7 +271,7 @@ fn empty_state(
     accent: Color32,
     colors: &theme::Palette,
 ) {
-    ui.add_space(48.0);
+    ui.add_space(super::widgets::empty_state_top(ui).min(48.0));
     ui.vertical_centered(|ui| {
         ui.label(RichText::new(icon::AGENT).size(26.0).color(accent));
         ui.add_space(4.0);

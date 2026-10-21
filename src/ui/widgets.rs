@@ -344,6 +344,12 @@ pub(crate) fn menu_entries(ui: &mut egui::Ui, entries: &[MenuEntry]) -> Option<C
     chosen
 }
 
+/// Gap above an empty state's content: generous in a tall pane, small enough in a
+/// short split group that the title and its actions are not pushed out of view.
+pub(crate) fn empty_state_top(ui: &egui::Ui) -> f32 {
+    (ui.available_height() * 0.2).clamp(12.0, 130.0)
+}
+
 /// `text` cut with an ellipsis so it is no wider than `max_width` when drawn in
 /// `font`; unchanged when it already fits. Measures glyphs, not characters.
 pub(crate) fn ellipsize(ui: &egui::Ui, text: &str, font: &FontId, max_width: f32) -> String {
@@ -799,6 +805,29 @@ mod tests {
                 assert_eq!(ellipsize(ui, "anything", &font, 0.0), "…");
             });
         });
+    }
+
+    #[test]
+    fn empty_state_gap_shrinks_in_short_panes() {
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        let mut gaps = Vec::new();
+        for height in [120.0_f32, 400.0, 1200.0] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, height),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| gaps.push(empty_state_top(ui)));
+                },
+            );
+        }
+        assert!(gaps[0] < gaps[1] && gaps[1] < gaps[2], "{gaps:?}");
+        assert!(gaps[0] >= 12.0 && gaps[2] <= 130.0, "{gaps:?}");
     }
 
     fn actions() -> [HeaderAction; 3] {

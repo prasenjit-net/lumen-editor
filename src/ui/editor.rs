@@ -113,7 +113,7 @@ impl Workbench<'_> {
         }
         let Some(index) = self.editor.active_index() else {
             ui.vertical_centered(|ui| {
-                ui.add_space(130.0);
+                ui.add_space(super::widgets::empty_state_top(ui));
                 ui.label(
                     RichText::new("LUMEN")
                         .size(28.0)
