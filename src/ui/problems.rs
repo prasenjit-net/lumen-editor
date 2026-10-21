@@ -130,7 +130,7 @@ impl Workbench<'_> {
                                             ui.label(
                                                 RichText::new(&row.file)
                                                     .strong()
-                                                    .size(11.0)
+                                                    .size(crate::ui::theme::META_SIZE)
                                                     .color(colors.text),
                                             );
                                             previous_file = Some(row.file.clone());
@@ -170,7 +170,7 @@ impl Workbench<'_> {
                                                         ui.add(
                                                             egui::Button::new(
                                                                 RichText::new(&label)
-                                                                    .size(11.0)
+                                                                    .size(crate::ui::theme::META_SIZE)
                                                                     .color(color),
                                                             )
                                                             .frame(false)
@@ -260,7 +260,7 @@ impl Workbench<'_> {
                                                 } else {
                                                     "No problems match the current filters."
                                                 })
-                                                .size(11.0)
+                                                .size(crate::ui::theme::META_SIZE)
                                                 .color(colors.muted),
                                             )
                                             .wrap(),

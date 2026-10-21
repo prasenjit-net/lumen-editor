@@ -37,9 +37,13 @@ pub(crate) fn panel_header_with_menu(
     let colors = crate::ui::theme::palette(ui.visuals());
     header_row(ui, actions, menu, |ui| {
         ui.add(
-            egui::Label::new(RichText::new(title).size(11.0).color(colors.text))
-                .halign(egui::Align::LEFT)
-                .truncate(),
+            egui::Label::new(
+                RichText::new(title)
+                    .size(crate::ui::theme::META_SIZE)
+                    .color(colors.text),
+            )
+            .halign(egui::Align::LEFT)
+            .truncate(),
         );
         None
     })
@@ -99,13 +103,15 @@ pub(crate) fn tabbed_panel_header_with_menu(
                         .scope(|ui| {
                             ui.set_max_width(MAX_TAB_WIDTH);
                             ui.add(
-                                egui::Label::new(RichText::new(tab.label).size(11.0).color(
-                                    if tab.active {
-                                        colors.text
-                                    } else {
-                                        colors.muted
-                                    },
-                                ))
+                                egui::Label::new(
+                                    RichText::new(tab.label)
+                                        .size(crate::ui::theme::META_SIZE)
+                                        .color(if tab.active {
+                                            colors.text
+                                        } else {
+                                            colors.muted
+                                        }),
+                                )
                                 // A selectable label would start a text selection on click, and
                                 // that selection would then sweep over whatever panel replaces it.
                                 .selectable(false)
@@ -314,7 +320,11 @@ pub(crate) fn menu_entries(ui: &mut egui::Ui, entries: &[MenuEntry]) -> Option<C
     for entry in entries {
         match entry {
             MenuEntry::Caption(text) => {
-                ui.label(RichText::new(text).size(11.0).color(colors.muted));
+                ui.label(
+                    RichText::new(text)
+                        .size(crate::ui::theme::META_SIZE)
+                        .color(colors.muted),
+                );
                 ui.separator();
             }
             MenuEntry::Separator => {

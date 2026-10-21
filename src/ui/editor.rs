@@ -46,7 +46,11 @@ impl Workbench<'_> {
                 continue;
             }
             ui.add_space(18.0);
-            ui.label(RichText::new(title).size(11.0).color(colors.muted));
+            ui.label(
+                RichText::new(title)
+                    .size(crate::ui::theme::META_SIZE)
+                    .color(colors.muted),
+            );
             for path in paths {
                 let name = display_name(&path);
                 let parent = path
@@ -146,7 +150,7 @@ impl Workbench<'_> {
                         super::shortcut::primary("O"),
                         super::shortcut::primary("N")
                     ))
-                    .size(11.0)
+                    .size(crate::ui::theme::META_SIZE)
                     .color(colors.muted),
                 );
                 self.recent_files_list(ui);
@@ -160,7 +164,7 @@ impl Workbench<'_> {
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new("File changed on disk")
-                        .size(11.0)
+                        .size(crate::ui::theme::META_SIZE)
                         .color(colors.muted),
                 );
                 if ui.small_button("Review Changes").clicked() {
@@ -191,7 +195,7 @@ impl Workbench<'_> {
                                     egui::Label::new(
                                         RichText::new(hover)
                                             .monospace()
-                                            .size(11.0)
+                                            .size(crate::ui::theme::META_SIZE)
                                             .color(colors.text),
                                     )
                                     .wrap(),

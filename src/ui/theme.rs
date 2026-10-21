@@ -7,6 +7,12 @@ pub(crate) enum Theme {
     HighContrast,
 }
 
+/// Text size for metadata, secondary labels and compact controls (the most common
+/// size in the workbench).
+pub(crate) const META_SIZE: f32 = 11.0;
+/// Text size for section headings inside pages such as Settings.
+pub(crate) const SECTION_HEADING_SIZE: f32 = 16.0;
+
 #[derive(Clone, Copy)]
 pub(crate) struct Palette {
     pub(crate) bg: Color32,
@@ -314,6 +320,16 @@ mod tests {
     }
 
     #[test]
+    fn egui_semantic_text_colors_follow_the_palette_in_every_theme() {
+        for theme in [Theme::Dark, Theme::Light, Theme::HighContrast] {
+            let visuals = visuals(theme);
+            let colors = theme.palette();
+            assert_eq!(visuals.error_fg_color, colors.error, "{theme:?}");
+            assert_eq!(visuals.warn_fg_color, colors.warning, "{theme:?}");
+        }
+    }
+
+    #[test]
     fn explicit_editor_override_does_not_change_context_or_widget_identity() {
         use crate::app::LumenApp;
         let ctx = egui::Context::default();
@@ -441,6 +457,10 @@ pub(crate) fn visuals(theme: Theme) -> egui::Visuals {
     visuals.extreme_bg_color = colors.bg;
     visuals.weak_text_color = Some(colors.muted);
     visuals.hyperlink_color = colors.accent;
+    // egui draws its own error and warning text (validation, DragValue limits) from
+    // these; keep them on the workbench palette.
+    visuals.error_fg_color = colors.error;
+    visuals.warn_fg_color = colors.warning;
     // Text fields use noninteractive visuals when idle. Define all five states
     // so buttons, inputs, menus and selections share the same palette and radius.
     for widget in [

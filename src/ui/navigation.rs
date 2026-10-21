@@ -94,7 +94,7 @@ impl Workbench<'_> {
                     NavigationMode::GoToLine => {
                         ui.label(
                             RichText::new("Line and column are 1-based; out-of-range values stop at the document end.")
-                                .size(11.0)
+                                .size(crate::ui::theme::META_SIZE)
                                 .color(colors.muted),
                         );
                         if enter {
@@ -147,16 +147,24 @@ fn show_quick_results(
     } else {
         "Recent files and workspace matches"
     };
-    ui.label(RichText::new(hint).size(11.0).color(colors.muted));
+    ui.label(
+        RichText::new(hint)
+            .size(crate::ui::theme::META_SIZE)
+            .color(colors.muted),
+    );
     if nav.errors > 0 {
         ui.label(
             RichText::new(format!("{} paths could not be indexed", nav.errors))
-                .size(11.0)
+                .size(crate::ui::theme::META_SIZE)
                 .color(colors.muted),
         );
     }
     if let Some(warning) = &nav.recent_warning {
-        ui.label(RichText::new(warning).size(11.0).color(colors.muted));
+        ui.label(
+            RichText::new(warning)
+                .size(crate::ui::theme::META_SIZE)
+                .color(colors.muted),
+        );
     }
     egui::ScrollArea::vertical()
         .max_height(330.0)
@@ -220,7 +228,11 @@ fn show_folder_results(
         .map(Command::OpenRecentFolder);
     ui.add_space(4.0);
     if let Some(warning) = &nav.recent_warning {
-        ui.label(RichText::new(warning).size(11.0).color(colors.muted));
+        ui.label(
+            RichText::new(warning)
+                .size(crate::ui::theme::META_SIZE)
+                .color(colors.muted),
+        );
     }
     egui::ScrollArea::vertical()
         .max_height(330.0)

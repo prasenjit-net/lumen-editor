@@ -130,7 +130,7 @@ impl Workbench<'_> {
                                                 state.matches.len()
                                             )
                                         })
-                                        .size(11.0)
+                                        .size(crate::ui::theme::META_SIZE)
                                         .color(colors.muted),
                                     );
                                     let matches = !state.matches.is_empty();

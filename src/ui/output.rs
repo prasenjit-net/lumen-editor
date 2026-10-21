@@ -116,7 +116,7 @@ impl Workbench<'_> {
                                         ui.label(
                                             egui::RichText::new("No output yet.")
                                                 .color(colors.muted)
-                                                .size(11.0),
+                                                .size(crate::ui::theme::META_SIZE),
                                         );
                                     }
                                     ui.spacing_mut().item_spacing.y = 1.0;

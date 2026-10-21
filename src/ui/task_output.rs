@@ -183,10 +183,14 @@ impl Workbench<'_> {
                             Some(_) => colors.error,
                             None => colors.text,
                         };
-                        ui.label(RichText::new(status_text(run, now)).size(11.0).color(color));
+                        ui.label(
+                            RichText::new(status_text(run, now))
+                                .size(crate::ui::theme::META_SIZE)
+                                .color(color),
+                        );
                         ui.label(
                             RichText::new(run.command_line.clone())
-                                .size(11.0)
+                                .size(crate::ui::theme::META_SIZE)
                                 .color(colors.muted),
                         );
                     });
@@ -245,7 +249,7 @@ fn pty_view(
                 } else {
                     "The task produced no output."
                 })
-                .size(11.0)
+                .size(crate::ui::theme::META_SIZE)
                 .color(colors.muted),
             );
         }
@@ -307,7 +311,7 @@ fn log_view(
             } else {
                 "The task produced no output."
             })
-            .size(11.0)
+            .size(crate::ui::theme::META_SIZE)
             .color(colors.muted),
         );
         return;

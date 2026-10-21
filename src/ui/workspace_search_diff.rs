@@ -55,7 +55,7 @@ pub(super) fn show_hunk(
         ui.label(
             RichText::new("Long group · excerpts around each match")
                 .color(colors.muted)
-                .size(11.0),
+                .size(crate::ui::theme::META_SIZE),
         );
         let Some(rows) = hits
             .iter()

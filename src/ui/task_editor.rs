@@ -94,7 +94,7 @@ fn form(
                 .as_ref()
                 .map_or_else(|| "no file".to_string(), |path| path.display().to_string())
         ))
-        .size(11.0)
+        .size(crate::ui::theme::META_SIZE)
         .color(colors.muted),
     );
     if let Some(error) = tab.error.clone() {
@@ -212,7 +212,7 @@ fn form(
                             "Each line is one argument, so a line like \"build --release\" is \
                              passed as a single word.",
                         )
-                        .size(11.0)
+                        .size(crate::ui::theme::META_SIZE)
                         .color(colors.warning),
                     );
                     if ui.small_button("Split on spaces").clicked() {
@@ -357,17 +357,25 @@ fn form(
     } else {
         format!("{} problem(s); fix them to save.", issues.len())
     };
-    ui.label(RichText::new(summary).size(11.0).color(colors.muted));
+    ui.label(
+        RichText::new(summary)
+            .size(crate::ui::theme::META_SIZE)
+            .color(colors.muted),
+    );
     if issues.is_empty()
         && let Ok(text) = lumen_task_core::new_file(&tab.draft)
     {
         ui.add_space(6.0);
         ui.label(
             RichText::new("Will be written as")
-                .size(11.0)
+                .size(crate::ui::theme::META_SIZE)
                 .color(colors.muted),
         );
-        ui.label(RichText::new(text).monospace().size(11.0));
+        ui.label(
+            RichText::new(text)
+                .monospace()
+                .size(crate::ui::theme::META_SIZE),
+        );
     }
 }
 
@@ -392,8 +400,12 @@ fn row(
             .filter(|issue| fields.iter().any(|field| issue.field.starts_with(field)))
         {
             ui.add(
-                egui::Label::new(RichText::new(&issue.message).size(11.0).color(colors.error))
-                    .wrap(),
+                egui::Label::new(
+                    RichText::new(&issue.message)
+                        .size(crate::ui::theme::META_SIZE)
+                        .color(colors.error),
+                )
+                .wrap(),
             );
         }
     };

@@ -253,7 +253,7 @@ fn results(
                     ui.label(
                         RichText::new(category)
                             .strong()
-                            .size(16.0)
+                            .size(crate::ui::theme::SECTION_HEADING_SIZE)
                             .color(colors.text),
                     );
                     if category == "Language" {

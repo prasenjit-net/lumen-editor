@@ -100,13 +100,13 @@ impl Workbench<'_> {
                             ui.label(
                                 RichText::new(format!("{:>5} − {}", row.line, row.before))
                                     .monospace()
-                                    .size(11.0)
+                                    .size(crate::ui::theme::META_SIZE)
                                     .color(colors.diff_removed_text),
                             );
                             ui.label(
                                 RichText::new(format!("{:>5} + {}", row.line, row.after))
                                     .monospace()
-                                    .size(11.0)
+                                    .size(crate::ui::theme::META_SIZE)
                                     .color(colors.diff_added_text),
                             );
                         }

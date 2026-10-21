@@ -146,7 +146,7 @@ impl Workbench<'_> {
             });
             let menu = ui.menu_button(
                 RichText::new(format!("{label}  {}", icon::CARET_DOWN))
-                    .size(11.0)
+                    .size(crate::ui::theme::META_SIZE)
                     .color(if selected_label.is_some() {
                         colors.text
                     } else {

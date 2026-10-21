@@ -118,7 +118,7 @@ impl Workbench<'_> {
                             progress.scanned, progress.matches
                         ))
                         .color(colors.muted)
-                        .size(11.0),
+                        .size(crate::ui::theme::META_SIZE),
                     )
                     .truncate(),
                 )
@@ -128,7 +128,11 @@ impl Workbench<'_> {
                 ui.label(format!("Replaced in {} file(s)", state.replaced_files));
             }
             for error in state.report.iter().take(5) {
-                ui.label(RichText::new(error).color(colors.muted).size(11.0));
+                ui.label(
+                    RichText::new(error)
+                        .color(colors.muted)
+                        .size(crate::ui::theme::META_SIZE),
+                );
             }
             if state.report.len() > 5 {
                 ui.label(format!(
@@ -141,7 +145,7 @@ impl Workbench<'_> {
                 ui.label(
                     RichText::new(format!("{count} results in {} files", results.files.len()))
                         .color(colors.muted)
-                        .size(11.0),
+                        .size(crate::ui::theme::META_SIZE),
                 )
                 .on_hover_text(format!(
                     "{} files scanned · {} entries skipped\n{} symlinks/internal directories · {} ignored/excluded entries · {} binary, non-UTF-8 or over 2 MiB\nEntries inside skipped directories are not counted.",
@@ -173,7 +177,7 @@ impl Workbench<'_> {
                             results.errors[0]
                         ))
                         .color(colors.muted)
-                        .size(11.0),
+                        .size(crate::ui::theme::META_SIZE),
                     );
                 }
                 let rows = visible_rows(
@@ -383,18 +387,18 @@ fn show_workspace_replace_preview(
                 hunks.len()
             ))
             .color(colors.muted)
-            .size(11.0),
+            .size(crate::ui::theme::META_SIZE),
         );
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new("− Removed")
                     .color(colors.diff_removed_text)
-                    .size(11.0),
+                    .size(crate::ui::theme::META_SIZE),
             );
             ui.label(
                 RichText::new("+ Replacement")
                     .color(colors.diff_added_text)
-                    .size(11.0),
+                    .size(crate::ui::theme::META_SIZE),
             );
         });
         show_preview_hunk_page(ui, &hunks, state.preview_page, &state.replacement);
@@ -402,7 +406,7 @@ fn show_workspace_replace_preview(
             egui::Label::new(
                 RichText::new("Unchanged lines are shown for context. Long groups use per-match excerpts; full files are checked before writing.")
                     .color(colors.muted)
-                    .size(11.0),
+                    .size(crate::ui::theme::META_SIZE),
             )
             .wrap(),
         );
@@ -455,7 +459,7 @@ fn show_preview_hunk_page(
                         hunk.hits.len()
                     ))
                     .color(colors.muted)
-                    .size(11.0),
+                    .size(crate::ui::theme::META_SIZE),
                 );
                 super::workspace_search_diff::show_hunk(
                     ui,

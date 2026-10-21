@@ -261,7 +261,7 @@ impl Workbench<'_> {
                                     ui.add(
                                         egui::Label::new(
                                             RichText::new(&self.view.status)
-                                                .size(11.0)
+                                                .size(crate::ui::theme::META_SIZE)
                                                 .color(Color32::WHITE),
                                         )
                                         .truncate(),
@@ -272,7 +272,7 @@ impl Workbench<'_> {
                                     .add(
                                         egui::Button::new(
                                             RichText::new(&problems_label)
-                                                .size(11.0)
+                                                .size(crate::ui::theme::META_SIZE)
                                                 .color(Color32::WHITE),
                                         )
                                         .frame(false),
@@ -287,7 +287,9 @@ impl Workbench<'_> {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if show_meta {
                                 ui.label(
-                                    RichText::new(&meta_label).size(11.0).color(Color32::WHITE),
+                                    RichText::new(&meta_label)
+                                        .size(crate::ui::theme::META_SIZE)
+                                        .color(Color32::WHITE),
                                 )
                                 .on_hover_text(
                                     info.eol
@@ -299,7 +301,9 @@ impl Workbench<'_> {
                                 && ui
                                     .add(
                                         egui::Label::new(
-                                            RichText::new(label).size(11.0).color(Color32::WHITE),
+                                            RichText::new(label)
+                                                .size(crate::ui::theme::META_SIZE)
+                                                .color(Color32::WHITE),
                                         )
                                         .sense(egui::Sense::click()),
                                     )
@@ -312,7 +316,9 @@ impl Workbench<'_> {
                                 let response = ui
                                     .add(
                                         egui::Label::new(
-                                            RichText::new(label).size(11.0).color(Color32::WHITE),
+                                            RichText::new(label)
+                                                .size(crate::ui::theme::META_SIZE)
+                                                .color(Color32::WHITE),
                                         )
                                         .sense(egui::Sense::click()),
                                     )

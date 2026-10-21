@@ -170,7 +170,11 @@ impl Workbench<'_> {
                                 ItemKind::Plan(entries) => plan_card(ui, entries, &colors),
                                 ItemKind::Error(text) => notice_card(ui, text, colors.error),
                                 ItemKind::Notice(text) => {
-                                    ui.label(RichText::new(text).size(11.0).color(colors.muted));
+                                    ui.label(
+                                        RichText::new(text)
+                                            .size(crate::ui::theme::META_SIZE)
+                                            .color(colors.muted),
+                                    );
                                 }
                             }
                         }
@@ -258,7 +262,14 @@ fn status_chip(ui: &mut egui::Ui, status: &SessionStatus, colors: &theme::Palett
         SessionStatus::Failed(_) => "Failed".to_string(),
         other => status_text(other),
     };
-    let response = ui.add(egui::Label::new(RichText::new(text).size(11.0).color(color)).truncate());
+    let response = ui.add(
+        egui::Label::new(
+            RichText::new(text)
+                .size(crate::ui::theme::META_SIZE)
+                .color(color),
+        )
+        .truncate(),
+    );
     if let SessionStatus::Failed(message) = status {
         response.on_hover_text(message);
     }
@@ -394,7 +405,7 @@ fn tool_row(ui: &mut egui::Ui, item_id: &str, call: &ToolCall, colors: &theme::P
                             } else {
                                 icon::CARET_RIGHT
                             })
-                            .size(11.0)
+                            .size(crate::ui::theme::META_SIZE)
                             .color(colors.muted),
                         );
                     }
@@ -416,7 +427,7 @@ fn tool_row(ui: &mut egui::Ui, item_id: &str, call: &ToolCall, colors: &theme::P
                             egui::Label::new(
                                 RichText::new(text)
                                     .monospace()
-                                    .size(11.0)
+                                    .size(crate::ui::theme::META_SIZE)
                                     .color(colors.muted),
                             )
                             .selectable(true),
@@ -460,7 +471,11 @@ fn plan_card(
                     PlanStatus::Pending => ("○", colors.muted),
                 };
                 ui.horizontal_top(|ui| {
-                    ui.label(RichText::new(mark).size(11.0).color(color));
+                    ui.label(
+                        RichText::new(mark)
+                            .size(crate::ui::theme::META_SIZE)
+                            .color(color),
+                    );
                     ui.add(
                         egui::Label::new(RichText::new(&entry.text).size(11.5).color(colors.text))
                             .selectable(true),
@@ -546,7 +561,7 @@ fn approval_card(
             for path in &request.paths {
                 ui.label(
                     RichText::new(format!("{} {}", icon::FILE, path.display()))
-                        .size(11.0)
+                        .size(crate::ui::theme::META_SIZE)
                         .color(colors.muted),
                 );
             }
@@ -635,8 +650,12 @@ fn queue_list<'a>(
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Queued").size(10.0).color(colors.muted));
                     ui.add(
-                        egui::Label::new(RichText::new(text).size(11.0).color(colors.text))
-                            .truncate(),
+                        egui::Label::new(
+                            RichText::new(text)
+                                .size(crate::ui::theme::META_SIZE)
+                                .color(colors.text),
+                        )
+                        .truncate(),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
@@ -840,7 +859,7 @@ fn config_row(
                         .map_or(option.current.as_str(), |c| c.label.as_str());
                     ui.add_enabled_ui(enabled, |ui| {
                         egui::ComboBox::from_id_salt(("chat_option", id.0, &option.id))
-                            .selected_text(RichText::new(current).size(11.0))
+                            .selected_text(RichText::new(current).size(crate::ui::theme::META_SIZE))
                             .show_ui(ui, |ui| {
                                 for choice in &option.choices {
                                     let selected = choice.value == option.current;

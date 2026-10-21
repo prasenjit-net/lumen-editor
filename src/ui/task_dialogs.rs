@@ -47,27 +47,35 @@ impl Workbench<'_> {
             if task_count > 1 {
                 ui.label(
                     RichText::new(format!("This starts {task_count} tasks."))
-                        .size(11.0)
+                        .size(crate::ui::theme::META_SIZE)
                         .color(colors.muted),
                 );
             }
             for (name, command_line, cwd, env_names) in &items {
                 ui.add_space(4.0);
                 if items.len() > 1 {
-                    ui.label(RichText::new(name).strong().size(11.0));
+                    ui.label(
+                        RichText::new(name)
+                            .strong()
+                            .size(crate::ui::theme::META_SIZE),
+                    );
                 }
-                ui.label(RichText::new("Command").size(11.0).color(colors.muted));
+                ui.label(
+                    RichText::new("Command")
+                        .size(crate::ui::theme::META_SIZE)
+                        .color(colors.muted),
+                );
                 ui.add(egui::Label::new(RichText::new(command_line).monospace()).wrap());
                 ui.label(
                     RichText::new("Working directory")
-                        .size(11.0)
+                        .size(crate::ui::theme::META_SIZE)
                         .color(colors.muted),
                 );
                 ui.add(egui::Label::new(RichText::new(cwd).monospace()).wrap());
                 if !env_names.is_empty() {
                     ui.label(
                         RichText::new(format!("Sets: {}", env_names.join(", ")))
-                            .size(11.0)
+                            .size(crate::ui::theme::META_SIZE)
                             .color(colors.muted),
                     );
                 }
@@ -147,7 +155,11 @@ impl Workbench<'_> {
             );
             ui.add_space(6.0);
             for (index, prompt) in pending.prompts.iter_mut().enumerate() {
-                ui.label(RichText::new(&prompt.prompt).size(11.0).color(colors.muted));
+                ui.label(
+                    RichText::new(&prompt.prompt)
+                        .size(crate::ui::theme::META_SIZE)
+                        .color(colors.muted),
+                );
                 match prompt.kind {
                     lumen_task_core::InputKind::Choice => {
                         egui::ComboBox::from_id_salt(("task_input", index))
@@ -174,7 +186,7 @@ impl Workbench<'_> {
                         if kind == lumen_task_core::InputKind::Secret {
                             ui.label(
                                 RichText::new("Used for this run only; never saved or shown.")
-                                    .size(11.0)
+                                    .size(crate::ui::theme::META_SIZE)
                                     .color(colors.muted),
                             );
                         }

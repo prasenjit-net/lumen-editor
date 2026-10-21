@@ -153,7 +153,7 @@ impl Workbench<'_> {
                                 egui::Label::new(
                                     RichText::new(&hover)
                                         .monospace()
-                                        .size(11.0)
+                                        .size(crate::ui::theme::META_SIZE)
                                         .color(colors.text),
                                 )
                                 .wrap(),
