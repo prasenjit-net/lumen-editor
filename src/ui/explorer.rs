@@ -38,6 +38,14 @@ impl Workbench<'_> {
             .next()
     }
 
+    /// Full path, plus the Git status the row's badge letter stands for.
+    fn explorer_tooltip(&self, path: &Path, directory: bool) -> String {
+        match self.git_badge(path, directory) {
+            Some(badge) => format!("{} · {}", path.display(), widgets::git_badge_label(badge)),
+            None => path.display().to_string(),
+        }
+    }
+
     pub(crate) fn explorer(&mut self, ui: &mut egui::Ui) {
         let colors = crate::ui::theme::palette(ui.visuals());
         let Some(root) = self.editor.workspace.clone() else {
@@ -92,20 +100,15 @@ impl Workbench<'_> {
                     icon::CARET_RIGHT
                 }),
                 Some(file_icons::for_folder(path, expanded)),
-                format!(
-                    "{}{}",
-                    display_name(path),
-                    self.git_badge(path, true)
-                        .map(|badge| format!("  {badge}"))
-                        .unwrap_or_default()
-                ),
+                display_name(path),
+                self.git_badge(path, true),
                 depth * 14 + 4,
                 self.view
                     .explorer_selection
                     .as_ref()
                     .is_some_and(|selection| selection.path() == path),
             );
-            let response = response.on_hover_text(path.display().to_string());
+            let response = response.on_hover_text(self.explorer_tooltip(path, true));
             self.explorer_row_actions(&response, path, true);
             if response.clicked() {
                 self.view.explorer_selection =
@@ -138,17 +141,12 @@ impl Workbench<'_> {
                 ui,
                 None,
                 Some(file_icons::for_file(path)),
-                format!(
-                    "{}{}",
-                    display_name(path),
-                    self.git_badge(path, false)
-                        .map(|badge| format!("  {badge}"))
-                        .unwrap_or_default()
-                ),
+                display_name(path),
+                self.git_badge(path, false),
                 depth * 14 + 20,
                 open,
             );
-            let response = response.on_hover_text(path.display().to_string());
+            let response = response.on_hover_text(self.explorer_tooltip(path, false));
             self.explorer_row_actions(&response, path, false);
             if response.clicked() {
                 self.view.explorer_selection = Some(ExplorerSelection::File(path.to_path_buf()));

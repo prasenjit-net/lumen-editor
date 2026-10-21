@@ -485,16 +485,34 @@ pub(crate) fn explorer_row(
     indent: usize,
     selected: bool,
 ) -> egui::Response {
-    explorer_row_with_icon(ui, None, None, text, indent, selected)
+    explorer_row_with_icon(ui, None, None, text, None, indent, selected)
+}
+
+/// Width reserved at a row's right edge for its Git status letter.
+const BADGE_COLUMN: f32 = 20.0;
+
+/// Spoken form of a Git status letter drawn in an Explorer row.
+pub(crate) fn git_badge_label(badge: char) -> &'static str {
+    match badge {
+        '!' => "Conflict",
+        'U' => "Untracked",
+        'A' => "Added",
+        'D' => "Deleted",
+        'S' => "Staged",
+        _ => "Modified",
+    }
 }
 
 /// An explorer row with an optional disclosure caret and a coloured file or
-/// folder icon ahead of the label. `indent` is where the row's first element starts.
+/// folder icon ahead of the label, and a Git status letter in its own column at
+/// the right edge. The name is cut with an ellipsis before it can reach the
+/// badge. `indent` is where the row's first element starts.
 pub(crate) fn explorer_row_with_icon(
     ui: &mut egui::Ui,
     caret: Option<&str>,
     file_icon: Option<crate::ui::file_icons::FileIcon>,
     text: String,
+    badge: Option<char>,
     indent: usize,
     selected: bool,
 ) -> egui::Response {
@@ -521,8 +539,12 @@ pub(crate) fn explorer_row_with_icon(
             egui::StrokeKind::Inside,
         );
     }
+    let spoken = match badge {
+        Some(badge) => format!("{text}, {}", git_badge_label(badge)),
+        None => text.clone(),
+    };
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &text)
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &spoken)
     });
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     let mut x = rect.left() + indent as f32;
@@ -546,13 +568,28 @@ pub(crate) fn explorer_row_with_icon(
         );
         x += 20.0;
     }
-    painter.text(
-        egui::pos2(x, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        text,
+    let badge_width = if badge.is_some() { BADGE_COLUMN } else { 0.0 };
+    let name = fit_galley(
+        ui,
+        &text,
         FontId::proportional(13.0),
         colors.text,
+        rect.right() - badge_width - x - 6.0,
     );
+    painter.galley(
+        egui::pos2(x, rect.center().y - name.size().y / 2.0),
+        name,
+        colors.text,
+    );
+    if let Some(badge) = badge {
+        painter.text(
+            egui::pos2(rect.right() - BADGE_COLUMN / 2.0 - 2.0, rect.center().y),
+            egui::Align2::CENTER_CENTER,
+            badge,
+            FontId::proportional(11.5),
+            crate::ui::theme::change_color(&colors, badge),
+        );
+    }
     response
 }
 pub(crate) fn icon_button(ui: &mut egui::Ui, icon: &str, selected: bool) -> egui::Response {
@@ -622,6 +659,74 @@ mod tests {
         assert!(nodes.iter().any(|node| {
             node.label() == Some("main.rs") && format!("{:?}", node.toggled()) == "Some(True)"
         }));
+    }
+
+    #[test]
+    fn long_explorer_names_ellipsize_before_the_git_badge_at_every_sidebar_width() {
+        let long = "a_very_long_nested_component_file_name_for_the_sidebar.rs";
+        for width in [180.0_f32, 240.0, 600.0] {
+            let ctx = egui::Context::default();
+            configure_ui(&ctx);
+            ctx.enable_accesskit();
+            let mut row = egui::Rect::NOTHING;
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 120.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE)
+                        .show(ctx, |ui| {
+                            row = explorer_row_with_icon(
+                                ui,
+                                None,
+                                None,
+                                long.into(),
+                                Some('M'),
+                                28,
+                                false,
+                            )
+                            .rect;
+                        });
+                },
+            );
+            let mut name_right = None;
+            let mut badge_left = None;
+            for clipped in &output.shapes {
+                if let egui::Shape::Text(text) = &clipped.shape {
+                    let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                    match text.galley.text() {
+                        "M" => badge_left = Some(rect.left()),
+                        name if name.starts_with("a_very") => name_right = Some(rect.right()),
+                        _ => {}
+                    }
+                }
+            }
+            let (name_right, badge_left) = (name_right.expect("name"), badge_left.expect("badge"));
+            assert!(
+                name_right <= badge_left,
+                "{width}: name ends {name_right}, badge starts {badge_left}"
+            );
+            assert!(
+                badge_left + 4.0 <= row.right(),
+                "{width}: badge inside the row"
+            );
+            let spoken: Vec<_> = output
+                .platform_output
+                .accesskit_update
+                .iter()
+                .flat_map(|update| update.nodes.iter())
+                .filter_map(|(_, node)| node.label().map(str::to_owned))
+                .collect();
+            assert!(
+                spoken.iter().any(|label| label.ends_with(", Modified")),
+                "{spoken:?}"
+            );
+        }
     }
 
     fn actions() -> [HeaderAction; 3] {
