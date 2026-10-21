@@ -1,0 +1,6 @@
+label=Kotlin
+extensions=kt kts
+lexer=code
+line_comment=//
+block_comment=true
+keywords=as break class continue do else for fun if in interface is object package return super this throw try typealias val var when while by catch constructor delegate dynamic field file finally get import init param property receiver set setparam value where abstract annotation companion const crossinline data enum external final infix inline inner internal lateinit noinline open operator out override private protected public reified sealed suspend tailrec vararg true false null
