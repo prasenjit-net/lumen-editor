@@ -31,6 +31,9 @@ resolver = "3"
 [features]
 default = ["shared-editor"]
 shared-editor = ["dep:lumen-editor-surface", "lumen-editor-surface/shaped"]
+# Language-server integration (diagnostics, completion, navigation). Off for now:
+# without it no server is ever started and editors use the built-in syntax highlighting.
+language-server = []
 
 [dependencies]
 eframe = "0.33"

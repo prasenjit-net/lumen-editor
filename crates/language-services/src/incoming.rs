@@ -551,7 +551,8 @@ pub fn parse_semantic_tokens_response(message: &Value) -> Result<Vec<u32>, Incom
 }
 
 /// Decode `textDocument/publishDiagnostics` against the exact synchronized
-/// text. Invalid UTF-16 or UTF-8 boundaries reject the whole notification.
+/// text. A malformed payload rejects the notification; a diagnostic whose range
+/// does not fit the text (bad UTF-16 offset or boundary, past the end) is dropped.
 pub fn parse_publish_diagnostics(
     message: &Value,
     text: &str,
@@ -573,10 +574,18 @@ pub fn parse_publish_diagnostics(
         .get("diagnostics")
         .and_then(Value::as_array)
         .ok_or(IncomingError::InvalidPayload)?;
-    let diagnostics = entries
-        .iter()
-        .map(|entry| parse_diagnostic(entry, text))
-        .collect::<Result<Vec<_>, _>>()?;
+    // A range that does not fit the current text is skipped on its own: servers
+    // keep republishing unversioned diagnostics (compiler output from the last
+    // save) whose positions an edit can strand past the end, and one stale entry
+    // must not hide the server's current errors in the same notification.
+    let mut diagnostics = Vec::with_capacity(entries.len());
+    for entry in entries {
+        match parse_diagnostic(entry, text) {
+            Ok(diagnostic) => diagnostics.push(diagnostic),
+            Err(IncomingError::InvalidRange) => {}
+            Err(error) => return Err(error),
+        }
+    }
     Ok(PublishedDiagnostics {
         uri,
         version,
@@ -655,13 +664,23 @@ mod tests {
     }
 
     #[test]
-    fn malformed_ranges_are_rejected_without_partial_results() {
+    fn a_stale_out_of_range_diagnostic_is_dropped_without_hiding_the_rest() {
         let message = json!({"method":"textDocument/publishDiagnostics","params":{
-            "uri":"file:///x", "diagnostics":[{"range":{"start":{"line":0,"character":5},"end":{"line":0,"character":6}},"message":"bad"}]
+            "uri":"file:///x", "diagnostics":[
+                {"range":{"start":{"line":9,"character":0},"end":{"line":9,"character":1}},"message":"stale"},
+                {"range":{"start":{"line":0,"character":5},"end":{"line":0,"character":6}},"message":"split emoji"},
+                {"range":{"start":{"line":0,"character":2},"end":{"line":0,"character":2}},"message":"current"}
+            ]
+        }});
+        let parsed = parse_publish_diagnostics(&message, "😀 ").unwrap();
+        assert_eq!(parsed.diagnostics.len(), 1);
+        assert_eq!(parsed.diagnostics[0].message, "current");
+        let malformed = json!({"method":"textDocument/publishDiagnostics","params":{
+            "uri":"file:///x", "diagnostics":[{"range":{"start":{"line":0}},"message":"bad"}]
         }});
         assert_eq!(
-            parse_publish_diagnostics(&message, "😀"),
-            Err(IncomingError::InvalidRange)
+            parse_publish_diagnostics(&malformed, "x"),
+            Err(IncomingError::InvalidPayload)
         );
     }
 

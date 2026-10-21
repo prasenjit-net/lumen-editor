@@ -280,6 +280,9 @@ pub(crate) struct LocalLanguageServer;
 
 impl LanguageServerService for LocalLanguageServer {
     fn availability(&self, language: &LanguageDescriptor) -> ServerAvailability {
+        if !cfg!(feature = "language-server") {
+            return ServerAvailability::NotSupported;
+        }
         let Some(server) = language.server else {
             return ServerAvailability::NotSupported;
         };
@@ -436,6 +439,7 @@ mod tests {
     /// Live checks against real servers; run with
     /// `cargo test live_ -- --ignored --nocapture` (add `~/go/bin` to PATH for gopls).
     #[test]
+    #[cfg(feature = "language-server")]
     #[ignore = "requires rust-analyzer and a Rust toolchain on PATH"]
     fn live_rust_analyzer_publishes_diagnostics_for_a_broken_file() {
         live_diagnostics(
@@ -450,6 +454,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "language-server")]
     #[ignore = "requires gopls and a Go toolchain on PATH"]
     fn live_gopls_publishes_diagnostics_for_a_broken_file() {
         live_diagnostics(
@@ -460,6 +465,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "language-server")]
     fn live_diagnostics(
         language_id: lumen_language_services::LanguageId,
         project_files: &[(&str, &str)],
@@ -573,6 +579,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "language-server")]
     #[ignore = "requires rust-analyzer and a Rust toolchain on PATH"]
     fn live_rust_analyzer_completes_and_shows_signature_help() {
         live_completion(
@@ -589,6 +596,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "language-server")]
     #[ignore = "requires gopls and a Go toolchain on PATH"]
     fn live_gopls_completes_and_shows_signature_help() {
         live_completion(
@@ -602,6 +610,7 @@ mod tests {
     }
 
     /// `completion` and `signature` are (anchor text whose end is the caret, expected substring).
+    #[cfg(feature = "language-server")]
     fn live_completion(
         language_id: lumen_language_services::LanguageId,
         project_files: &[(&str, &str)],
@@ -739,6 +748,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "language-server")]
     #[ignore = "requires gopls and a Go toolchain on PATH"]
     fn live_gopls_renames_and_formats() {
         live_edits(
