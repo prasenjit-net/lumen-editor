@@ -5,7 +5,6 @@
 //! events into each session's reducer, settles operations and starts whatever the
 //! scheduler now allows. Backends never queue turns - the hub keeps each session's
 //! queue - and a backend only ever sees one active turn per session.
-// Replaces the ACP controller in `agent.rs` once the workbench switches over.
 #![allow(dead_code)]
 use crate::model::{
     agent_registry::Registry,

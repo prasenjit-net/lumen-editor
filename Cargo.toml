@@ -29,8 +29,6 @@ default-members = ["."]
 resolver = "3"
 
 [features]
-default = ["shared-editor"]
-shared-editor = ["dep:lumen-editor-surface", "lumen-editor-surface/shaped"]
 # Language-server integration (diagnostics, completion, navigation). Off for now:
 # without it no server is ever started and editors use the built-in syntax highlighting.
 language-server = []
@@ -50,10 +48,9 @@ toml_edit = "0.25"
 lumen-agent-claude = { path = "crates/agent-claude" }
 lumen-agent-codex = { path = "crates/agent-codex" }
 lumen-agent-core = { path = "crates/agent-core" }
-lumen-agent-protocol = { path = "crates/agent-protocol" }
 lumen-settings-core = { path = "crates/settings-core" }
 lumen-editor-core = { path = "crates/editor-core" }
-lumen-editor-surface = { path = "crates/editor-surface", optional = true }
+lumen-editor-surface = { path = "crates/editor-surface" }
 lumen-language-services = { path = "crates/language-services" }
 lumen-terminal-core = { path = "crates/terminal-core" }
 lumen-task-core = { path = "crates/task-core" }

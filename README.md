@@ -40,7 +40,7 @@ Lumen is under active development. The default editor uses a shared Rust editing
 | Git | Status badges, staged/working diffs, staging, hunk staging, commits, amend, confirmed discard, push and fast-forward pull |
 | Terminal | Integrated PTY shell with terminal emulation and configurable typography/colors |
 | Tasks | Project and personal tasks in `tasks.toml`: guided editor, dependency groups, terminal or captured output tabs, background services, inputs |
-| Coding agents | Native Claude Code and Codex sessions in one list, with chats in editor tabs, permission cards, per-session model/effort/permission settings and cached transcripts; the older ACP adapter panel remains as a fallback |
+| Coding agents | Native Claude Code and Codex sessions in one list, with chats in editor tabs, permission cards, per-session model/effort/permission settings and cached transcripts |
 | Settings | Searchable User/Project configuration, sparse TOML overrides, themes and editor/terminal preferences |
 | File safety | Dirty-buffer prompts, optional Auto Save, recovery snapshots, external-change detection, staged file writes |
 
@@ -290,7 +290,7 @@ Not implemented: clickable links inside the output text, multi-line custom match
 
 ## Coding agents
 
-Open **Agent Sessions** with `Cmd/Ctrl+Shift+A`. By default Lumen talks directly to your installed `claude` (Claude Code) and `codex` command-line programs; both are optional and use the provider’s own CLI login, so you must install and sign in to them separately. Nothing is started until you create or resume a session.
+Open **Agent Sessions** with `Cmd/Ctrl+Shift+A`. Lumen talks directly to your installed `claude` (Claude Code) and `codex` command-line programs; both are optional and use the provider’s own CLI login, so you must install and sign in to them separately. Nothing is started until you create or resume a session.
 
 ### Sessions and chats
 
@@ -306,20 +306,9 @@ Sending a prompt shares that context with the selected provider; authentication,
 
 | Setting | Purpose |
 | --- | --- |
-| Native Agents (`agent.native.enabled`) | On by default; turn off, or start with `LUMEN_NATIVE_AGENTS=0`, to use the older panel. Takes effect after restart |
 | Claude Code Program / Codex Program | Absolute path of the executable when it is not on the GUI’s `PATH`. Honored only in User settings, never in project files |
-| Codex Start Mode, Unsaved Files, Follow Locations, Track Changes | Behavior of the older adapter-based panel |
 
-### Older ACP adapter panel
-
-With native agents off, Lumen uses Agent Client Protocol adapters instead, pinned to:
-
-```text
-@agentclientprotocol/claude-agent-acp@0.92.0
-@agentclientprotocol/codex-acp@2.2.2
-```
-
-Install an adapter and expose `claude-agent-acp` or `codex-acp` on `PATH`, or use the panel’s download flow through `npx` (Node.js 22 or newer; downloads need session consent). That panel adds file or selection attachments, agent-provided configuration choices, and review/revert of reported file changes; these are not yet part of the native path.
+The older Agent Client Protocol adapter panel (file and selection attachments, agent-provided configuration choices, review and revert of reported file changes) has been removed. Those features are not part of the native path. Old `agent.*` adapter keys in a settings file are kept and reported as unknown settings.
 
 Native integration is newer and still being completed. See the [gap review](plans/native-agent-implementation-gap-review.md), [agent integration plan](plans/agent-integration-acp-plan.md) and [acceptance checklist](plans/agent-acceptance-checklist.md) for what is and is not done.
 
@@ -452,7 +441,6 @@ Track remaining work in the [core feature roadmap](plans/vscode-core-feature-roa
 | `crates/language-services/` | Language registry and language-service protocol/data support |
 | `crates/agent-core/` | Common native agent interface: sessions, operations, events, configuration and a test contract |
 | `crates/agent-claude/`, `crates/agent-codex/` | Native Claude Code (stream-json) and Codex (app-server) backends over stdio |
-| `crates/agent-protocol/` | ACP protocol support for the older adapter panel |
 | `crates/terminal-core/` | Terminal emulation integration |
 | `crates/task-core/` | Task schema, TOML parsing/editing, validation, variable resolution and dependency planning; no I/O |
 | `xtask/` | Packaging/version helpers, separate from runtime code |
@@ -476,24 +464,7 @@ cargo check --target x86_64-pc-windows-gnu
 cargo xtask bundle
 ```
 
-The Windows cross-check requires the Rust target and a working MinGW C toolchain for native dependencies. [CI](.github/workflows/ci.yml) runs workspace tests on Linux, macOS, and Windows, plus formatting/Clippy, legacy tests, and macOS bundling. Native UI validation remains separate.
-
-### Legacy editor and standalone fixture
-
-The optional single-selection egui TextEdit fallback is available for comparison:
-
-```sh
-cargo run --no-default-features
-cargo xtask bundle --offline --legacy-editor
-```
-
-The latter produces `target/Lumen Legacy.app`. `--shared-editor` produces a separately named `Lumen Experimental.app` using the same shared backend as the standard build. The legacy editor does not offer the shared backend’s complete editing/folding feature set.
-
-An in-memory editor fixture can be run independently of workbench documents:
-
-```sh
-cargo run -p lumen-editor-surface --example spike --features shaped
-```
+The Windows cross-check requires the Rust target and a working MinGW C toolchain for native dependencies. [CI](.github/workflows/ci.yml) runs workspace tests on Linux, macOS, and Windows, plus formatting/Clippy and macOS bundling. Native UI validation remains separate.
 
 ### Releases and attribution
 

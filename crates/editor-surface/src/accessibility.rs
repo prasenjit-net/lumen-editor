@@ -20,7 +20,6 @@ pub(crate) fn publish(
         .ctx()
         .layer_transform_to_global(ui.layer_id())
         .unwrap_or_default();
-    #[cfg(feature = "shaped")]
     if geometry.shaped.is_some() {
         publish_shaped(ui, response, geometry, buffer);
         return;
@@ -44,7 +43,6 @@ pub(crate) fn publish(
     });
 }
 
-#[cfg(feature = "shaped")]
 fn publish_shaped(ui: &Ui, response: &Response, geometry: &TextGeometry, buffer: &EditorBuffer) {
     use egui::accesskit::{NodeId, TextDirection, TextPosition, TextSelection};
     let shaped = geometry.shaped.as_ref().unwrap();

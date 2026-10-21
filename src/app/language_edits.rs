@@ -341,7 +341,6 @@ impl LumenApp {
 }
 
 /// Open buffers are edited through the document core, the sole history owner.
-#[cfg(feature = "shared-editor")]
 fn apply_edits_to_document(
     document: &mut crate::model::Document,
     edits: &[lumen_language_services::incoming::TextEdit],
@@ -353,13 +352,4 @@ fn apply_edits_to_document(
     let changed = super::workspace_edit::apply_to_buffer(buffer, edits)?;
     document.sync_shared_editing();
     Ok(changed)
-}
-
-/// The legacy widget editor owns its own history, so server edits are refused.
-#[cfg(not(feature = "shared-editor"))]
-fn apply_edits_to_document(
-    _document: &mut crate::model::Document,
-    _edits: &[lumen_language_services::incoming::TextEdit],
-) -> Result<bool, &'static str> {
-    Err("language-server edits need the shared editor")
 }

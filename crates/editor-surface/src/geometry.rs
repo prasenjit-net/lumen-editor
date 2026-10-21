@@ -126,9 +126,7 @@ pub struct TextGeometry {
     graphemes: Arc<Vec<usize>>,
     preedit: Option<(Range<usize>, usize)>,
     syntax_spans: Arc<Vec<SyntaxSpan>>,
-    #[cfg(feature = "shaped")]
     syntax_palette: Option<crate::SyntaxPalette>,
-    #[cfg(feature = "shaped")]
     pub(crate) shaped: Option<Arc<crate::shaping::ShapedLayout>>,
     visual_offsets: Arc<Vec<usize>>,
     folded: Arc<Vec<Range<usize>>>,
@@ -306,9 +304,7 @@ impl TextGeometry {
             preedit: preedit
                 .map(|composition| (composition.replacement_range(), composition.preedit().len())),
             syntax_spans: Arc::new(syntax_spans),
-            #[cfg(feature = "shaped")]
             syntax_palette: syntax.map(|(_, palette)| palette),
-            #[cfg(feature = "shaped")]
             shaped: None,
             visual_offsets: Arc::new(visual_offsets),
             folded: Arc::new(folded.to_vec()),
@@ -354,7 +350,6 @@ impl TextGeometry {
     }
 
     pub fn caret_with_affinity(&self, byte: usize, affinity: CaretAffinity) -> Rect {
-        #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
             return shaped.caret_with_affinity(
                 self.visual_byte(self.cursor(byte).index),
@@ -382,7 +377,6 @@ impl TextGeometry {
         affinity: CaretAffinity,
         right: bool,
     ) -> Option<(usize, CaretAffinity)> {
-        #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
             let (target, affinity) = shaped.visual_step(
                 self.visual_text(),
@@ -403,18 +397,10 @@ impl TextGeometry {
     }
 
     pub(crate) fn is_shaped(&self) -> bool {
-        #[cfg(feature = "shaped")]
-        {
-            self.shaped.is_some()
-        }
-        #[cfg(not(feature = "shaped"))]
-        {
-            false
-        }
+        self.shaped.is_some()
     }
 
     pub(crate) fn visual_caret(&self, index: usize) -> Rect {
-        #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
             return shaped.caret(self.visual_byte(index), self.origin);
         }
@@ -458,7 +444,6 @@ impl TextGeometry {
     }
 
     pub fn size(&self) -> Vec2 {
-        #[cfg(feature = "shaped")]
         if self.shaped.is_some() {
             return self.row_rects().iter().fold(Vec2::ZERO, |size, row| {
                 egui::vec2(
@@ -483,7 +468,6 @@ impl TextGeometry {
     }
 
     pub fn row_rects(&self) -> Vec<Rect> {
-        #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
             return shaped.rows(self.origin);
         }
@@ -507,7 +491,6 @@ impl TextGeometry {
         };
         let start = index(range.start);
         let end = index(range.end);
-        #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
             return shaped.selection(self.visual_byte(start)..self.visual_byte(end), self.origin);
         }
@@ -546,16 +529,12 @@ impl TextGeometry {
     /// Shape the rows inside `clip` before anything is measured or drawn, so
     /// selection and row geometry for what is visible are exact.
     pub(crate) fn prepare_visible(&self, clip: Rect) {
-        #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
             shaped.prepare(self.origin.y, clip.top(), clip.bottom());
         }
-        #[cfg(not(feature = "shaped"))]
-        let _ = clip;
     }
 
     pub(crate) fn paint(&self, ui: &Ui, painter: &egui::Painter) {
-        #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
             shaped.paint(
                 ui,
@@ -574,7 +553,6 @@ impl TextGeometry {
     }
 
     fn hit_character(&self, pointer: Pos2) -> usize {
-        #[cfg(feature = "shaped")]
         if let Some(shaped) = &self.shaped {
             let byte = shaped.hit(self.visual_text(), pointer - self.origin);
             return self
@@ -585,7 +563,6 @@ impl TextGeometry {
         self.galley().cursor_from_pos(pointer - self.origin).index
     }
 
-    #[cfg(feature = "shaped")]
     pub(crate) fn visual_byte(&self, character: usize) -> usize {
         self.visual_offsets[character]
     }

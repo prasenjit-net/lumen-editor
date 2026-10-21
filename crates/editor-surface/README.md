@@ -1,21 +1,9 @@
 # Shared editor surface
 
-The default example is the original egui-only geometry fixture:
-
-```sh
-cargo run -p lumen-editor-surface --example spike
-```
-
-To use the new cosmic-text/Swash renderer:
-
-```sh
-cargo run -p lumen-editor-surface --example spike --features shaped -- 900
-```
-
-Both examples edit memory only. The full workbench uses this shaped surface by
-default with `cargo run` from the project root. It supports real open/save
-operations; use disposable buffers for native acceptance testing, which remains
-pending. `cargo run --no-default-features` retains the legacy TextEdit backend.
+The full workbench uses this shaped surface with `cargo run` from the project
+root. It supports real open/save operations; use disposable buffers for native
+acceptance testing, which remains pending. Profiling: `cargo run --release -p
+lumen-editor-surface --example profile`.
 
 Implemented:
 
@@ -41,27 +29,12 @@ Implemented:
 - Lexical syntax spans color the shared egui and shaped paint paths without
   changing their source mapping, editing state, selection or undo history.
 
-The standalone example uses eframe's clipboard transport, including its CRLF
-normalization. The workbench retains injected tagged clipboard services and their
-documented synchronous-reread latency/snapshot race. Internal metadata is session-
-only; identical externally copied payloads cannot be distinguished.
+The workbench uses injected tagged clipboard services with a documented
+synchronous-reread latency/snapshot race. Internal metadata is session-only;
+identical externally copied payloads cannot be distinguished.
 
-Synthetic screenshot mode (not native IME proof):
-
-```sh
-cargo run -p lumen-editor-surface --example spike --features shaped -- 900 --ime-preview
-```
-
-Optional isolated probes:
-
-```sh
-cargo test -p lumen-editor-surface --features shaping-probe
-cargo test -p lumen-editor-surface --features cosmic-probe
-```
-
-The pinned newer-egui Arabic source-index defect still rejects that candidate.
-The cosmic probe passes bounded source/Arabic caret checks; font coverage and
-visual correctness are separate checks. The user reported passing native macOS
+The pinned newer-egui Arabic source-index defect rejected that candidate (see
+`plans/editor-backend-decision.md`). The user reported passing native macOS
 checks for the earlier egui-only prototype; new shaped IME/AT checks remain open.
 
 Implemented experimentally: core affinity/visual grapheme arrows, independent

@@ -23,7 +23,6 @@ mod find;
 mod navigation;
 mod paste;
 mod safety;
-#[cfg(feature = "shared-editor")]
 mod shared;
 mod viewport;
 mod workspace_search;
@@ -186,12 +185,6 @@ fn test_app(dialogs: TestDialogs) -> (LumenApp, MemoryFileSystem) {
         clipboard: Box::<TestClipboard>::default(),
         recovery_store: Box::new(MemoryRecoveryStore::default()),
         ..Default::default()
-    };
-    #[cfg(feature = "shared-editor")]
-    let app = {
-        let mut app = app;
-        app.view.shared_editor = false;
-        app
     };
     (app, storage)
 }

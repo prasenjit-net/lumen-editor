@@ -1,8 +1,12 @@
-//! Feature-gated workbench adapter. The document core owns every mutation/history.
+//! Workbench adapter for the shared editor. The document core owns every mutation/history.
 use super::Workbench;
 use crate::app::editor_action::{blocked, prepare_action, text_widget_id};
 use crate::icon;
 use eframe::egui::{self, Frame, Stroke, StrokeKind};
+
+fn gutter_id(document: crate::model::DocumentId) -> egui::Id {
+    egui::Id::new(("editor_gutter", document))
+}
 
 impl Workbench<'_> {
     pub(super) fn editor_shared(&mut self, ui: &mut egui::Ui, index: usize) {
@@ -27,7 +31,7 @@ impl Workbench<'_> {
                 &definitions,
             ))
         });
-        surface.set_gutter_id(super::editor_gutter::gutter_id(document));
+        surface.set_gutter_id(gutter_id(document));
         let fold_state = self.view.fold_tabs.entry(document).or_default();
         fold_state.refresh(
             &self.editor.files[index].text,

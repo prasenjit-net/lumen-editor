@@ -113,3 +113,26 @@ pub(crate) fn resolve_program(name: &str, path_var: Option<&OsStr>) -> Option<Pa
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn programs_resolve_from_path_and_explicit_paths_must_exist() {
+        let directory = tempfile::tempdir().unwrap();
+        let tool = directory
+            .path()
+            .join(if cfg!(windows) { "tool.cmd" } else { "tool" });
+        std::fs::write(&tool, "").unwrap();
+        let path = std::env::join_paths([directory.path()]).unwrap();
+        assert_eq!(resolve_program("tool", Some(&path)), Some(tool.clone()));
+        assert_eq!(resolve_program("missing", Some(&path)), None);
+        assert_eq!(resolve_program("tool", None), None);
+        assert_eq!(resolve_program(tool.to_str().unwrap(), None), Some(tool));
+        assert_eq!(
+            resolve_program(directory.path().join("nope").to_str().unwrap(), None),
+            None
+        );
+    }
+}

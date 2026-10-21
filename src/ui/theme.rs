@@ -65,7 +65,6 @@ impl Theme {
             _ => Self::Dark,
         }
     }
-    #[cfg(feature = "shared-editor")]
     pub(crate) fn scheme(self) -> &'static str {
         match self {
             Self::Dark => "lumen-dark",
@@ -205,7 +204,6 @@ pub(crate) fn editor_theme(scheme: &str, visuals: &egui::Visuals) -> Theme {
     }
 }
 
-#[cfg(feature = "shared-editor")]
 pub(crate) fn syntax_palette(scheme: &str) -> lumen_editor_surface::SyntaxPalette {
     match scheme {
         "lumen-light" => lumen_editor_surface::SyntaxPalette {
@@ -238,148 +236,6 @@ pub(crate) fn syntax_palette(scheme: &str) -> lumen_editor_surface::SyntaxPalett
             property: Color32::from_rgb(156, 220, 254),
             tag: Color32::from_rgb(86, 156, 214),
         },
-    }
-}
-
-#[cfg(all(test, feature = "shared-editor"))]
-mod tests {
-    use super::*;
-
-    fn contrast(a: Color32, b: Color32) -> f32 {
-        let luminance = |color: Color32| {
-            let channel = |c: u8| {
-                let c = c as f32 / 255.0;
-                if c <= 0.04045 {
-                    c / 12.92
-                } else {
-                    ((c + 0.055) / 1.055).powf(2.4)
-                }
-            };
-            0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
-        };
-        let (a, b) = (luminance(a), luminance(b));
-        (a.max(b) + 0.05) / (a.min(b) + 0.05)
-    }
-
-    #[test]
-    fn schemes_pair_readable_syntax_and_surfaces() {
-        for theme in [Theme::Dark, Theme::Light, Theme::HighContrast] {
-            let colors = theme.palette();
-            let syntax = syntax_palette(theme.scheme());
-            for foreground in [
-                colors.text,
-                colors.muted,
-                syntax.comment,
-                syntax.string,
-                syntax.number,
-                syntax.keyword,
-                syntax.type_name,
-                syntax.function,
-                syntax.property,
-                syntax.tag,
-            ] {
-                assert!(
-                    contrast(foreground, colors.bg) >= 4.5,
-                    "{theme:?}: {foreground:?}"
-                );
-            }
-            assert!(contrast(colors.text, colors.active) >= 4.5);
-            for status in [colors.error, colors.warning] {
-                assert!(
-                    contrast(status, colors.panel) >= 4.5,
-                    "{theme:?}: {status:?}"
-                );
-            }
-            assert_eq!(current(&visuals(theme)), theme);
-        }
-    }
-
-    #[test]
-    fn action_and_title_strip_text_meet_the_contrast_target_in_every_theme() {
-        for theme in [Theme::Dark, Theme::Light, Theme::HighContrast] {
-            let colors = theme.palette();
-            let pairs = [
-                ("action text on accent", colors.on_accent, colors.accent),
-                ("action text on danger", colors.on_danger, colors.danger),
-                ("muted on panel", colors.muted, colors.panel),
-                ("secondary on title strip", colors.title_muted, colors.title),
-                ("primary on title strip", colors.text, colors.title),
-            ];
-            for (name, foreground, background) in pairs {
-                let ratio = contrast(foreground, background);
-                assert!(ratio >= 4.5, "{theme:?}: {name} is {ratio:.2}:1");
-            }
-            for (name, glyph) in [("success", colors.success), ("error", colors.error)] {
-                let ratio = contrast(glyph, colors.title);
-                assert!(
-                    ratio >= 3.0,
-                    "{theme:?}: {name} glyph on title is {ratio:.2}:1"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn egui_semantic_text_colors_follow_the_palette_in_every_theme() {
-        for theme in [Theme::Dark, Theme::Light, Theme::HighContrast] {
-            let visuals = visuals(theme);
-            let colors = theme.palette();
-            assert_eq!(visuals.error_fg_color, colors.error, "{theme:?}");
-            assert_eq!(visuals.warn_fg_color, colors.warning, "{theme:?}");
-        }
-    }
-
-    #[test]
-    fn explicit_editor_override_does_not_change_context_or_widget_identity() {
-        use crate::app::LumenApp;
-        let ctx = egui::Context::default();
-        configure_theme(&ctx, Theme::HighContrast, false);
-        let mut app = LumenApp::default();
-        app.editor.new_file();
-        app.view.focus_editor = true;
-        app.view.settings.user.persisted.insert(
-            "editor.color_scheme".into(),
-            lumen_settings_core::Value::Choice("lumen-light".into()),
-        );
-        let mut output = None;
-        for _ in 0..2 {
-            output = Some(ctx.run(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(800.0, 600.0),
-                    )),
-                    ..Default::default()
-                },
-                |ctx| {
-                    app.render_component(ctx, |workbench| workbench.editor(ctx));
-                },
-            ));
-        }
-        assert_eq!(current(&ctx.style().visuals), Theme::HighContrast);
-        assert!(output.unwrap().shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == Color32::WHITE && rect.rect.height() > 100.0)));
-        assert!(!app.editor.files[0].dirty);
-        assert!(ctx.memory(
-            |memory| memory.has_focus(crate::app::editor_action::text_widget_id(
-                app.editor.files[0].id
-            ))
-        ));
-    }
-
-    #[test]
-    fn named_code_schemes_have_distinct_keyword_colors_and_safe_default() {
-        assert_ne!(
-            syntax_palette("lumen-dark").keyword,
-            syntax_palette("lumen-light").keyword
-        );
-        assert_ne!(
-            syntax_palette("lumen-light").keyword,
-            syntax_palette("lumen-high-contrast").keyword
-        );
-        assert_eq!(
-            syntax_palette("unknown").keyword,
-            syntax_palette("lumen-dark").keyword
-        );
     }
 }
 
@@ -558,3 +414,145 @@ const HIGH_CONTRAST: [Color32; 16] = [
     Color32::from_rgb(120, 255, 255),
     Color32::WHITE,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn contrast(a: Color32, b: Color32) -> f32 {
+        let luminance = |color: Color32| {
+            let channel = |c: u8| {
+                let c = c as f32 / 255.0;
+                if c <= 0.04045 {
+                    c / 12.92
+                } else {
+                    ((c + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
+        };
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    #[test]
+    fn schemes_pair_readable_syntax_and_surfaces() {
+        for theme in [Theme::Dark, Theme::Light, Theme::HighContrast] {
+            let colors = theme.palette();
+            let syntax = syntax_palette(theme.scheme());
+            for foreground in [
+                colors.text,
+                colors.muted,
+                syntax.comment,
+                syntax.string,
+                syntax.number,
+                syntax.keyword,
+                syntax.type_name,
+                syntax.function,
+                syntax.property,
+                syntax.tag,
+            ] {
+                assert!(
+                    contrast(foreground, colors.bg) >= 4.5,
+                    "{theme:?}: {foreground:?}"
+                );
+            }
+            assert!(contrast(colors.text, colors.active) >= 4.5);
+            for status in [colors.error, colors.warning] {
+                assert!(
+                    contrast(status, colors.panel) >= 4.5,
+                    "{theme:?}: {status:?}"
+                );
+            }
+            assert_eq!(current(&visuals(theme)), theme);
+        }
+    }
+
+    #[test]
+    fn action_and_title_strip_text_meet_the_contrast_target_in_every_theme() {
+        for theme in [Theme::Dark, Theme::Light, Theme::HighContrast] {
+            let colors = theme.palette();
+            let pairs = [
+                ("action text on accent", colors.on_accent, colors.accent),
+                ("action text on danger", colors.on_danger, colors.danger),
+                ("muted on panel", colors.muted, colors.panel),
+                ("secondary on title strip", colors.title_muted, colors.title),
+                ("primary on title strip", colors.text, colors.title),
+            ];
+            for (name, foreground, background) in pairs {
+                let ratio = contrast(foreground, background);
+                assert!(ratio >= 4.5, "{theme:?}: {name} is {ratio:.2}:1");
+            }
+            for (name, glyph) in [("success", colors.success), ("error", colors.error)] {
+                let ratio = contrast(glyph, colors.title);
+                assert!(
+                    ratio >= 3.0,
+                    "{theme:?}: {name} glyph on title is {ratio:.2}:1"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn egui_semantic_text_colors_follow_the_palette_in_every_theme() {
+        for theme in [Theme::Dark, Theme::Light, Theme::HighContrast] {
+            let visuals = visuals(theme);
+            let colors = theme.palette();
+            assert_eq!(visuals.error_fg_color, colors.error, "{theme:?}");
+            assert_eq!(visuals.warn_fg_color, colors.warning, "{theme:?}");
+        }
+    }
+
+    #[test]
+    fn explicit_editor_override_does_not_change_context_or_widget_identity() {
+        use crate::app::LumenApp;
+        let ctx = egui::Context::default();
+        configure_theme(&ctx, Theme::HighContrast, false);
+        let mut app = LumenApp::default();
+        app.editor.new_file();
+        app.view.focus_editor = true;
+        app.view.settings.user.persisted.insert(
+            "editor.color_scheme".into(),
+            lumen_settings_core::Value::Choice("lumen-light".into()),
+        );
+        let mut output = None;
+        for _ in 0..2 {
+            output = Some(ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    app.render_component(ctx, |workbench| workbench.editor(ctx));
+                },
+            ));
+        }
+        assert_eq!(current(&ctx.style().visuals), Theme::HighContrast);
+        assert!(output.unwrap().shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == Color32::WHITE && rect.rect.height() > 100.0)));
+        assert!(!app.editor.files[0].dirty);
+        assert!(ctx.memory(
+            |memory| memory.has_focus(crate::app::editor_action::text_widget_id(
+                app.editor.files[0].id
+            ))
+        ));
+    }
+
+    #[test]
+    fn named_code_schemes_have_distinct_keyword_colors_and_safe_default() {
+        assert_ne!(
+            syntax_palette("lumen-dark").keyword,
+            syntax_palette("lumen-light").keyword
+        );
+        assert_ne!(
+            syntax_palette("lumen-light").keyword,
+            syntax_palette("lumen-high-contrast").keyword
+        );
+        assert_eq!(
+            syntax_palette("unknown").keyword,
+            syntax_palette("lumen-dark").keyword
+        );
+    }
+}

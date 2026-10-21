@@ -11,7 +11,6 @@ pub(crate) struct Document {
     pub(crate) dirty: bool,
     pub(crate) disk_changed: bool,
     saved_text: String,
-    #[cfg(feature = "shared-editor")]
     pub(crate) editing: Option<lumen_editor_core::EditorBuffer>,
 }
 
@@ -27,7 +26,6 @@ impl Document {
             text,
             dirty: false,
             disk_changed: false,
-            #[cfg(feature = "shared-editor")]
             editing: None,
         }
     }
@@ -37,16 +35,14 @@ impl Document {
         self.saved_text.clone_from(&self.text);
         self.dirty = false;
         self.disk_changed = false;
-        #[cfg(feature = "shared-editor")]
         if let Some(buffer) = &mut self.editing {
             buffer.mark_saved();
         }
     }
 
-    /// TextEdit remains the single editing/history authority during migration.
-    /// Observe its completed edit, including undo/redo, against saved contents.
+    /// Test helper: account for a direct edit of `text` against the saved contents.
+    #[cfg(test)]
     pub(crate) fn record_text_change(&mut self) {
-        #[cfg(feature = "shared-editor")]
         debug_assert!(
             self.editing.is_none(),
             "Shared documents must synchronize their core, not edit the snapshot"
@@ -86,7 +82,6 @@ impl Document {
         self.dirty = false;
         self.disk_changed = false;
         self.revision = self.revision.wrapping_add(1);
-        #[cfg(feature = "shared-editor")]
         {
             self.editing = None;
         }
@@ -102,12 +97,10 @@ impl Document {
             dirty: false,
             disk_changed: false,
             saved_text: String::new(),
-            #[cfg(feature = "shared-editor")]
             editing: None,
         }
     }
 
-    #[cfg(feature = "shared-editor")]
     pub(crate) fn enable_shared_editing(&mut self) {
         if self.editing.is_none() {
             let mut buffer = lumen_editor_core::EditorBuffer::new(self.saved_text.clone());
@@ -118,7 +111,6 @@ impl Document {
         }
     }
 
-    #[cfg(feature = "shared-editor")]
     pub(crate) fn sync_shared_editing(&mut self) {
         if let Some(buffer) = &self.editing {
             if self.revision != buffer.revision() {
@@ -156,7 +148,7 @@ mod language_tests {
     }
 }
 
-#[cfg(all(test, feature = "shared-editor"))]
+#[cfg(test)]
 mod synchronization_tests {
     use super::*;
 

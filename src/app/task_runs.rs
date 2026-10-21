@@ -773,8 +773,8 @@ impl LumenApp {
         if !self.task_login_path {
             return None;
         }
-        Some(crate::services::agent_process::merge_path(
-            crate::services::agent_process::cached_login_path().map(|path| path.as_os_str()),
+        Some(crate::services::login_path::merge_path(
+            crate::services::login_path::cached_login_path().map(|path| path.as_os_str()),
             std::env::var_os("PATH").as_deref(),
         ))
     }

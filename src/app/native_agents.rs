@@ -27,6 +27,15 @@ fn program(configured: &str, default: &str) -> String {
 }
 
 impl LumenApp {
+    pub(crate) fn toggle_agent_panel(&mut self) {
+        if !self.view.settings.boolean("agent.enabled") {
+            self.view.status = "Coding agents are turned off in Settings (agent.enabled)".into();
+            self.view.agents.open = false;
+            return;
+        }
+        self.view.agents.open = !self.view.agents.open;
+    }
+
     /// Turn on the native Codex / Claude Code integration. Providers are launched
     /// lazily, so this costs nothing until a chat sends its first message.
     pub(crate) fn enable_native_agents(
@@ -36,8 +45,8 @@ impl LumenApp {
     ) {
         use crate::services::native_agent_launcher::NativeChildLauncher;
         use lumen_agent_core::api::AgentBackend;
-        let path = crate::services::agent_process::merge_path(
-            crate::services::agent_process::cached_login_path().map(|p| p.as_os_str()),
+        let path = crate::services::login_path::merge_path(
+            crate::services::login_path::cached_login_path().map(|p| p.as_os_str()),
             std::env::var_os("PATH").as_deref(),
         );
         // Programs are chosen in User settings only, never by a project file.

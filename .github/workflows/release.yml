@@ -70,7 +70,6 @@ jobs:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: cargo run --locked --package xtask -- set-version "$RELEASE_VERSION"
       - run: cargo test --workspace --locked
-      - run: cargo test --workspace --no-default-features --locked
       - run: cargo xtask bundle --release
       - name: Package macOS downloads
         shell: bash

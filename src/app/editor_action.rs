@@ -41,7 +41,7 @@ pub(crate) fn request_paste(view: &mut ViewState, document: &Document, ctx: &egu
     let Some(selection) = current_selection(document, ctx) else {
         return;
     };
-    if blocked(view) || view.pending_text_input.is_some() {
+    if blocked(view) {
         view.status = "Paste cancelled: finish the current editor input first".into();
         return;
     }
@@ -54,7 +54,6 @@ pub(crate) fn request_paste(view: &mut ViewState, document: &Document, ctx: &egu
         cancelled: false,
     });
     view.clipboard_read = Some(request);
-    #[cfg(feature = "shared-editor")]
     {
         view.shared_paste_selection = document
             .editing
@@ -67,7 +66,6 @@ pub(crate) fn current_selection(
     document: &Document,
     ctx: &egui::Context,
 ) -> Option<egui::text::CCursorRange> {
-    #[cfg(feature = "shared-editor")]
     if let Some(buffer) = &document.editing {
         let set = buffer.selections();
         let selection = set.selections()[set.primary_index()];
@@ -104,7 +102,6 @@ pub(crate) fn validate_paste(view: &mut ViewState, active: Option<&Document>, ct
         let selection = active
             .filter(|document| document.id == target.document)
             .and_then(|document| current_selection(document, ctx));
-        #[cfg(feature = "shared-editor")]
         {
             target.cancelled |= view
                 .shared_paste_selection
@@ -151,8 +148,7 @@ pub(crate) fn validate_paste(view: &mut ViewState, active: Option<&Document>, ct
                 .get(&target.document)
                 .is_some_and(|find| find.focus)
             || !ctx.memory(|memory| memory.has_focus(id))
-            || interrupted
-            || view.pending_text_input.is_some();
+            || interrupted;
         if delivered && target.cancelled {
             ctx.input_mut(|input| {
                 input
@@ -190,9 +186,6 @@ pub(crate) fn prepare_action(view: &mut ViewState, document: &Document, ctx: &eg
         && !blocked(view)
     {
         view.explorer_focused = false;
-        if matches!(pending.action, EditorAction::Copy | EditorAction::Cut) {
-            view.text_clipboard.clear();
-        }
         ctx.memory_mut(|memory| memory.request_focus(text_widget_id(document.id)));
         if pending.action == EditorAction::Paste {
             request_paste(view, document, ctx);

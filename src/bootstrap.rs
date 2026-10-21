@@ -52,7 +52,6 @@ pub(crate) fn run() -> eframe::Result<()> {
             }));
             let mut app = LumenApp::default();
             app.capture = crate::app::capture::Capture::from_env();
-            #[cfg(feature = "shared-editor")]
             {
                 app.view.shared_surface = Some(lumen_editor_surface::EditorSurface::with_shaper(
                     lumen_editor_surface::Shaper::new(&platform::editor_fonts::definitions(_fonts)),
@@ -71,15 +70,10 @@ pub(crate) fn run() -> eframe::Result<()> {
                 app.reopen_last_folder_if_enabled();
             }
             app.restore_recovery();
-            // Native agents are the default; the setting or LUMEN_NATIVE_AGENTS=0 turns them off.
-            let native = app.view.settings.boolean("agent.native.enabled")
-                && std::env::var_os("LUMEN_NATIVE_AGENTS").is_none_or(|v| v != "0");
-            if native {
-                app.enable_native_agents(
-                    &cc.egui_ctx,
-                    crate::services::agent_sessions_store::user_path(),
-                );
-            }
+            app.enable_native_agents(
+                &cc.egui_ctx,
+                crate::services::agent_sessions_store::user_path(),
+            );
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             {
                 let menu = platform::native_menu::NativeMenu::new(&cc.egui_ctx)?;

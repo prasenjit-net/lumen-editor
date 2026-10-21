@@ -2,14 +2,6 @@ use std::{env, error::Error, fs, path::PathBuf, process::Command};
 
 mod version;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum BundleEditor {
-    #[default]
-    Standard,
-    Experimental,
-    Legacy,
-}
-
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
@@ -30,29 +22,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("bundle") => {
             let mut release = false;
             let mut offline = false;
-            let mut editor = BundleEditor::Standard;
             for arg in args {
                 match arg.as_str() {
                     "--release" => release = true,
                     "--offline" => offline = true,
-                    "--shared-editor" | "--legacy-editor" => {
-                        if editor != BundleEditor::Standard {
-                            return Err("Select only one editor bundle option.".into());
-                        }
-                        editor = if arg == "--shared-editor" {
-                            BundleEditor::Experimental
-                        } else {
-                            BundleEditor::Legacy
-                        };
-                    }
                     _ => return Err(format!("Unknown option: {arg}").into()),
                 }
             }
-            bundle(release, offline, editor)
+            bundle(release, offline)
         }
         None | Some("--help" | "-h") => {
             println!(
-                "Usage: cargo xtask bundle [--release] [--offline] [--shared-editor | --legacy-editor]\n       cargo xtask bump-version <major|minor|patch>\n       cargo xtask set-version <major.minor.patch>\n\nPackage target/Lumen.app, or update the application version in Cargo.toml, Cargo.lock, and Info.plist."
+                "Usage: cargo xtask bundle [--release] [--offline]\n       cargo xtask bump-version <major|minor|patch>\n       cargo xtask set-version <major.minor.patch>\n\nPackage target/Lumen.app, or update the application version in Cargo.toml, Cargo.lock, and Info.plist."
             );
             Ok(())
         }
@@ -60,7 +41,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn bundle(release: bool, offline: bool, editor: BundleEditor) -> Result<(), Box<dyn Error>> {
+fn bundle(release: bool, offline: bool) -> Result<(), Box<dyn Error>> {
     if env::consts::OS != "macos" {
         return Err(
             "The .app bundler requires macOS. On Windows, use cargo build --release.".into(),
@@ -102,14 +83,13 @@ fn bundle(release: bool, offline: bool, editor: BundleEditor) -> Result<(), Box<
     if offline {
         build.arg("--offline");
     }
-    build.args(editor_feature_args(editor));
     if !build.status()?.success() {
         return Err("Editor build failed; the existing app bundle was left unchanged.".into());
     }
 
     let profile = if release { "release" } else { "debug" };
     let executable = target.join(&host).join(profile).join("lumen-editor");
-    let app = target.join(bundle_name(editor));
+    let app = target.join("Lumen.app");
     let contents = app.join("Contents");
     let macos = contents.join("MacOS");
     let resources = contents.join("Resources");
@@ -124,7 +104,6 @@ fn bundle(release: bool, offline: bool, editor: BundleEditor) -> Result<(), Box<
         icns_from_png(&fs::read(root.join("assets/icons/lumen.png"))?)?,
     )?;
     let plist = fs::read_to_string(root.join("assets/macos/Info.plist"))?;
-    let plist = bundle_plist(&plist, editor);
     fs::write(contents.join("Info.plist"), plist)?;
     println!("Built {} ({profile})", app.display());
     Ok(())
@@ -156,74 +135,9 @@ fn workspace_root() -> Result<PathBuf, Box<dyn Error>> {
         .to_path_buf())
 }
 
-fn editor_feature_args(editor: BundleEditor) -> &'static [&'static str] {
-    match editor {
-        BundleEditor::Standard => &[],
-        BundleEditor::Experimental => &["--features", "shared-editor"],
-        BundleEditor::Legacy => &["--no-default-features"],
-    }
-}
-
-fn bundle_name(editor: BundleEditor) -> &'static str {
-    match editor {
-        BundleEditor::Standard => "Lumen.app",
-        BundleEditor::Experimental => "Lumen Experimental.app",
-        BundleEditor::Legacy => "Lumen Legacy.app",
-    }
-}
-
-fn bundle_plist(plist: &str, editor: BundleEditor) -> String {
-    if editor != BundleEditor::Standard {
-        let (name, identifier) = match editor {
-            BundleEditor::Experimental => (
-                "<string>Lumen Experimental</string>",
-                "<string>dev.lumen.editor.experimental</string>",
-            ),
-            BundleEditor::Legacy => (
-                "<string>Lumen Legacy</string>",
-                "<string>dev.lumen.editor.legacy</string>",
-            ),
-            BundleEditor::Standard => unreachable!(),
-        };
-        plist
-            .replace("<string>Lumen</string>", name)
-            .replace("<string>dev.lumen.editor</string>", identifier)
-    } else {
-        plist.to_owned()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn experimental_bundle_has_separate_identity_and_preserves_executable_metadata() {
-        let original = include_str!("../../assets/macos/Info.plist");
-        assert_eq!(bundle_plist(original, BundleEditor::Standard), original);
-        assert_ne!(
-            bundle_name(BundleEditor::Standard),
-            bundle_name(BundleEditor::Experimental)
-        );
-        let experimental = bundle_plist(original, BundleEditor::Experimental);
-        assert!(experimental.contains("<string>dev.lumen.editor.experimental</string>"));
-        assert!(experimental.contains("<string>Lumen Experimental</string>"));
-        assert!(
-            experimental.contains("<key>CFBundleExecutable</key><string>lumen-editor</string>")
-        );
-    }
-    #[test]
-    fn legacy_bundle_disables_default_features_and_has_separate_identity() {
-        assert!(editor_feature_args(BundleEditor::Standard).is_empty());
-        assert_eq!(
-            editor_feature_args(BundleEditor::Legacy),
-            &["--no-default-features"]
-        );
-        let original = include_str!("../../assets/macos/Info.plist");
-        let legacy = bundle_plist(original, BundleEditor::Legacy);
-        assert_eq!(bundle_name(BundleEditor::Legacy), "Lumen Legacy.app");
-        assert!(legacy.contains("<string>dev.lumen.editor.legacy</string>"));
-        assert!(legacy.contains("<key>CFBundleExecutable</key><string>lumen-editor</string>"));
-    }
     #[test]
     fn macos_icon_wraps_the_shared_png_as_an_icns_chunk() {
         let png = include_bytes!("../../assets/icons/lumen.png");
