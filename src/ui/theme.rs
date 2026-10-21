@@ -25,6 +25,11 @@ pub(crate) struct Palette {
     /// Text on a control filled with `accent` (white on blue, black on the
     /// high-contrast yellow); pair them, never reach for plain white.
     pub(crate) on_accent: Color32,
+    /// Fill for destructive confirmation buttons and the text drawn on it.
+    pub(crate) danger: Color32,
+    pub(crate) on_danger: Color32,
+    /// Dim layer drawn over the workbench behind a blocking dialog.
+    pub(crate) scrim: Color32,
     /// Secondary text on the title strip, lighter than `muted` where the strip
     /// is darker than an ordinary panel.
     pub(crate) title_muted: Color32,
@@ -77,6 +82,9 @@ impl Theme {
             float_border: Color32::from_rgb(69, 69, 69),
             accent: Color32::from_rgb(0, 122, 204),
             on_accent: Color32::WHITE,
+            danger: Color32::from_rgb(196, 43, 28),
+            on_danger: Color32::WHITE,
+            scrim: Color32::from_black_alpha(100),
             title_muted: Color32::from_gray(168),
             hover: Color32::from_rgb(43, 43, 43),
             input: Color32::from_rgb(49, 49, 49),
@@ -112,6 +120,8 @@ impl Theme {
                 active: Color32::from_rgb(190, 220, 245),
                 accent: Color32::from_rgb(0, 95, 160),
                 title_muted: Color32::from_gray(96),
+                danger: Color32::from_rgb(179, 38, 30),
+                scrim: Color32::from_black_alpha(56),
                 error: Color32::from_rgb(165, 25, 25),
                 warning: Color32::from_rgb(125, 88, 0),
                 success: Color32::from_rgb(0, 112, 64),
@@ -142,6 +152,9 @@ impl Theme {
                 active: Color32::from_rgb(0, 65, 100),
                 accent: Color32::YELLOW,
                 on_accent: Color32::BLACK,
+                danger: Color32::from_rgb(255, 120, 120),
+                on_danger: Color32::BLACK,
+                scrim: Color32::from_black_alpha(140),
                 title_muted: Color32::from_gray(220),
                 error: Color32::from_rgb(255, 120, 120),
                 warning: Color32::YELLOW,
@@ -281,6 +294,7 @@ mod tests {
             let colors = theme.palette();
             let pairs = [
                 ("action text on accent", colors.on_accent, colors.accent),
+                ("action text on danger", colors.on_danger, colors.danger),
                 ("muted on panel", colors.muted, colors.panel),
                 ("secondary on title strip", colors.title_muted, colors.title),
                 ("primary on title strip", colors.text, colors.title),
