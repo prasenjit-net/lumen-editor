@@ -241,6 +241,8 @@ The repository has no image capture today, and OS-level screen capture is not re
 - **Snapshot tests with `egui_kittest`** (version matched to `egui` 0.33): render `LumenApp` fixtures headlessly at fixed sizes and themes and compare against stored images. Best for regression coverage in CI; requires a wgpu-capable runner or a software renderer, and stored images per platform.
 - **A debug-only in-app capture**: behind an environment variable, load a fixture, request `egui::ViewportCommand::Screenshot` and write the returned image to disk. Exercises the real native window and fonts, so it suits macOS/Windows visual checks, but it needs a display and is not a CI gate.
 
+**Implemented:** the debug-only in-app capture. Run `LUMEN_CAPTURE=/tmp/shot.png [LUMEN_CAPTURE_FRAMES=40] HOME=/tmp/lumen-home lumen-editor /tmp/fixture /tmp/fixture/src/main.rs`; after the settle frames Lumen saves one PNG of its window and exits (`src/app/capture.rs`). Use a disposable folder and `HOME` so no real profile or workspace is shown. It captures one screen per run, so scripted multi-screen baselines still need a driver.
+
 Either way, keep fixture content in the repository (a small workspace with long names, Git changes, a Settings draft and a chat transcript) and never point capture at a user's real workspace or profile.
 
 ### Required acceptance checks when implementing
@@ -263,7 +265,7 @@ Either way, keep fixture content in the repository (a small workspace with long 
 
 ## Implementation status
 
-Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements` (#31) ← `f-ui-dialogs` (#32) ← `f-ui-narrow-layouts` (#33) ← `f-ui-settings` (#34) ← `f-ui-chat` (#35) ← `f-ui-editor` (#37) ← `f-ui-chrome`.
+Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements` (#31) ← `f-ui-dialogs` (#32) ← `f-ui-narrow-layouts` (#33) ← `f-ui-settings` (#34) ← `f-ui-chat` (#35) ← `f-ui-editor` (#37) ← `f-ui-chrome` (#38) ← `f-ui-finish`.
 
 | Item | Status |
 | --- | --- |
@@ -278,7 +280,11 @@ Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements
 | 6 Settings | Done: one label per setting, details behind a toggle, scope apart from filters (filters toggle), accent edge and Draft/Live for pending, filled Apply, language-server settings marked unavailable when the feature is off. Narrow category picker unchanged |
 | 8 Editor focus, tabs, search | Partly: unsaved tabs show a dot and turn it into the close glyph on hover (same hit target); Find tells an empty query from no results. The focused group already has an outline; an inactive-selection treatment inside the editor surface is not done. Workspace search already separates searching, cancelled and error states |
 | 10 Chrome and status | Done: macOS title fits between traffic lights and launcher (ellipsis, not hidden), task name measured in rendered width, status bar drops language/EOL then server state before position and problem counts. Activity-bar/toggle entry points kept |
-| 2, 11 and Phase 0 | Not started |
+| 2 Shared roles | Partly: `META_SIZE` and `SECTION_HEADING_SIZE` named (same values, no visual change); egui error/warn text follows the palette; destructive and scrim roles added. Other local sizes (10, 10.5, 11.5, 12) remain, since unifying them changes the look |
+| 9 Keyboard and names | Done for the audited controls: launcher, Settings gear, header tooltips, session rows (name, state, focus ring); disclosure-row actions already follow keyboard focus; dialogs keep the safe default focused |
+| 11 Git/diff consistency | Partly: language-edit review uses the shared removed color. Existing history, diff and blame layouts left as they were |
+| 12 rest | Done: Git history/tags/stash/branch/clone, rename and review use the shared dialog; empty-state gap scales with pane height. The resizable workspace-replace preview keeps its window |
+| Phase 0 | Done: in-app capture (below). `egui_kittest` snapshot tests are not added |
 
 ## Scope boundaries
 

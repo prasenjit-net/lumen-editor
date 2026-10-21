@@ -5,6 +5,7 @@ pub(crate) mod agent_context;
 pub(crate) mod agent_history;
 pub(crate) mod agent_hub;
 pub(crate) mod agent_permission;
+pub(crate) mod capture;
 pub(crate) mod chat_tabs;
 mod cli_open;
 mod clipboard;
@@ -109,6 +110,8 @@ pub(crate) struct LumenApp {
     /// Folder of cached conversations; `None` in tests.
     pub(crate) native_transcripts_dir: Option<std::path::PathBuf>,
     pub(crate) terminal_session: Option<crate::services::terminal::TerminalSession>,
+    /// Debug-only screenshot request (`LUMEN_CAPTURE`); `None` in normal use and tests.
+    pub(crate) capture: Option<capture::Capture>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) native_menu: Option<crate::platform::native_menu::NativeMenu>,
 }
@@ -156,6 +159,7 @@ impl Default for LumenApp {
             native_agents_store: None,
             native_transcripts_dir: None,
             terminal_session: None,
+            capture: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_menu: None,
         }
@@ -163,6 +167,9 @@ impl Default for LumenApp {
 }
 impl eframe::App for LumenApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(capture) = &mut self.capture {
+            capture.update(ctx);
+        }
         self.sync_project_settings();
         self.apply_workbench_settings(ctx);
         self.refresh_language_server_status(ctx);
