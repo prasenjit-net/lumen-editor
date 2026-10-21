@@ -263,7 +263,7 @@ Either way, keep fixture content in the repository (a small workspace with long 
 
 ## Implementation status
 
-Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements` (#31) ← `f-ui-dialogs`.
+Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements` (#31) ← `f-ui-dialogs` (#32) ← `f-ui-narrow-layouts`.
 
 | Item | Status |
 | --- | --- |
@@ -274,7 +274,8 @@ Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements
 | 9 Naming and focus | Partly: task launcher, Settings gear, disabled header tooltips. Keyboard-order audit pending |
 | 10/12 small fixes | Done: platform commit hint, "New Text File", log font cap removed |
 | 12 Shared dialogs | In progress: `ui/dialog.rs` (title strip, close, footer, scrim, danger button). Migrated: document, quit, task, conflict, language-server error, safety, Explorer delete, unapplied settings, workspace replace confirmation, Git abort and revert. Pending: Git branch/clone/tags/stash/history forms, rename and language-edit review, workspace replace preview (resizable review), empty-state pattern |
-| 2, 5, 6, 8, 11 and Phase 0 | Not started |
+| 5 Narrow layouts | Done for Find (second row below 460 px), task forms (stacked labels), chat (no width floor, hint truncates), task-output header (overflow menu below 520 px). Settings toolbar and status bar pending |
+| 2, 6, 8, 11 and Phase 0 | Not started |
 
 ## Scope boundaries
 

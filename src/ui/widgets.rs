@@ -64,8 +64,19 @@ pub(crate) fn tabbed_panel_header(
     tabs: &[PanelTab],
     actions: &[HeaderAction],
 ) -> Option<Command> {
+    tabbed_panel_header_with_menu(ui, tabs, actions, None)
+}
+
+/// `tabbed_panel_header` with a trailing `⋯` menu after the icon actions, for
+/// commands that move out of the header when it is too narrow to show them all.
+pub(crate) fn tabbed_panel_header_with_menu(
+    ui: &mut egui::Ui,
+    tabs: &[PanelTab],
+    actions: &[HeaderAction],
+    menu: Option<(&str, &[MenuEntry])>,
+) -> Option<Command> {
     let colors = crate::ui::theme::palette(ui.visuals());
-    header_row(ui, actions, None, |ui| {
+    header_row(ui, actions, menu, |ui| {
         ui.spacing_mut().item_spacing.x = 14.0;
         let mut clicked = None;
         // Many tabs (task runs) must stay reachable: the strip scrolls sideways
