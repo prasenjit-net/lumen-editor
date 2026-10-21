@@ -1,13 +1,9 @@
 //! Rename prompt and the review dialog for language-server edits.
 use super::Workbench;
 use crate::app::command::Command;
-use eframe::egui::{self, Frame, RichText, ScrollArea, TextEdit, Vec2};
+use eframe::egui::{self, RichText, ScrollArea, TextEdit};
 
 const MAX_PREVIEW_ROWS: usize = 400;
-
-fn window_frame(ctx: &egui::Context) -> Frame {
-    super::widgets::floating_frame(ctx)
-}
 
 impl Workbench<'_> {
     pub(crate) fn rename_prompt(&mut self, ctx: &egui::Context) {
@@ -19,23 +15,23 @@ impl Workbench<'_> {
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             command = Some(Command::CancelRename);
         }
-        egui::Window::new("Rename Symbol")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 96.0))
-            .frame(window_frame(ctx))
+        let dialog = super::dialog::Dialog::new("Rename Symbol")
+            .width(380.0)
             .show(ctx, |ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "Rename “{}” everywhere the server finds it",
-                        prompt.original
-                    ))
-                    .color(colors.muted),
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(format!(
+                            "Rename “{}” everywhere the server finds it",
+                            prompt.original
+                        ))
+                        .color(colors.muted),
+                    )
+                    .wrap(),
                 );
                 let input = ui.add(
                     TextEdit::singleline(&mut prompt.name)
                         .id(egui::Id::new("language_rename_input"))
-                        .desired_width(320.0),
+                        .desired_width(f32::INFINITY),
                 );
                 if prompt.focus {
                     input.request_focus();
@@ -44,8 +40,8 @@ impl Workbench<'_> {
                 if input.lost_focus() && ui.input(|state| state.key_pressed(egui::Key::Enter)) {
                     command = Some(Command::SubmitRename);
                 }
-                ui.horizontal(|ui| {
-                    if ui.button("Preview Rename").clicked() {
+                super::dialog::footer(ui, |ui| {
+                    if super::dialogs::primary_button(ui, "Preview Rename").clicked() {
                         command = Some(Command::SubmitRename);
                     }
                     if ui.button("Cancel").clicked() {
@@ -53,6 +49,9 @@ impl Workbench<'_> {
                     }
                 });
             });
+        if dialog.close_clicked {
+            command = Some(Command::CancelRename);
+        }
         if let Some(command) = command {
             self.command(command);
         }
@@ -70,24 +69,22 @@ impl Workbench<'_> {
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             command = Some(Command::CancelLanguageEdit);
         }
-        egui::Window::new(format!("Review: {title}"))
-            .collapsible(false)
-            .resizable(true)
-            .default_width(640.0)
-            .default_height(380.0)
-            .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 72.0))
-            .frame(window_frame(ctx))
+        let dialog = super::dialog::Dialog::new(format!("Review: {title}"))
+            .width(640.0)
             .show(ctx, |ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "{edits} edit(s) in {files} file(s). Open files change in their buffers and stay unsaved; other files are written when you apply."
-                    ))
-                    .color(colors.muted),
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(format!(
+                            "{edits} edit(s) in {files} file(s). Open files change in their buffers and stay unsaved; other files are written when you apply."
+                        ))
+                        .color(colors.muted),
+                    )
+                    .wrap(),
                 );
                 ui.separator();
                 ScrollArea::vertical()
-                    .max_height(ui.available_height() - 36.0)
-                    .auto_shrink([false, false])
+                    .max_height(300.0)
+                    .auto_shrink([false, true])
                     .show(ui, |ui| {
                         let mut current = None;
                         for row in rows.iter().take(MAX_PREVIEW_ROWS) {
@@ -124,8 +121,8 @@ impl Workbench<'_> {
                         }
                     });
                 ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button("Apply Changes").clicked() {
+                super::dialog::footer(ui, |ui| {
+                    if super::dialogs::primary_button(ui, "Apply Changes").clicked() {
                         command = Some(Command::ApplyLanguageEdit);
                     }
                     if ui.button("Cancel").clicked() {
@@ -133,6 +130,9 @@ impl Workbench<'_> {
                     }
                 });
             });
+        if dialog.close_clicked {
+            command = Some(Command::CancelLanguageEdit);
+        }
         if let Some(command) = command {
             self.command(command);
         }
