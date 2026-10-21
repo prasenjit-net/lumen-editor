@@ -119,7 +119,13 @@ impl Workbench<'_> {
                         });
                 }
                 egui::CentralPanel::default()
-                    .frame(egui::Frame::NONE)
+                    // Keep rows (and a pending draft's edge) off the category divider.
+                    .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                        left: 12,
+                        right: 0,
+                        top: 0,
+                        bottom: 0,
+                    }))
                     .show_inside(ui, |ui| {
                         results(
                             ui,

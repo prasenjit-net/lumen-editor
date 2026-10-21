@@ -241,7 +241,7 @@ The repository has no image capture today, and OS-level screen capture is not re
 - **Snapshot tests with `egui_kittest`** (version matched to `egui` 0.33): render `LumenApp` fixtures headlessly at fixed sizes and themes and compare against stored images. Best for regression coverage in CI; requires a wgpu-capable runner or a software renderer, and stored images per platform.
 - **A debug-only in-app capture**: behind an environment variable, load a fixture, request `egui::ViewportCommand::Screenshot` and write the returned image to disk. Exercises the real native window and fonts, so it suits macOS/Windows visual checks, but it needs a display and is not a CI gate.
 
-**Implemented:** the debug-only in-app capture. Run `LUMEN_CAPTURE=/tmp/shot.png [LUMEN_CAPTURE_FRAMES=40] HOME=/tmp/lumen-home lumen-editor /tmp/fixture /tmp/fixture/src/main.rs`; after the settle frames Lumen saves one PNG of its window and exits (`src/app/capture.rs`). Use a disposable folder and `HOME` so no real profile or workspace is shown. It captures one screen per run, so scripted multi-screen baselines still need a driver.
+**Implemented:** the debug-only in-app capture. Run `LUMEN_CAPTURE=/tmp/shot.png [LUMEN_CAPTURE_FRAMES=40] HOME=/tmp/lumen-home lumen-editor /tmp/fixture /tmp/fixture/src/main.rs`; after the settle frames Lumen saves one PNG of its window and exits (`src/app/capture.rs`). Use a disposable folder and `HOME` so no real profile or workspace is shown. `LUMEN_CAPTURE_COMMANDS=theme_light,settings,palette,text:sav` scripts menu-id commands (plus `problems`, `agents`, `bottom`) and typed text before the shot, one step per frame, so each screen/theme is one run. Real captures of Dark, Light and High Contrast (workbench, Settings, palette, Quick Open, Problems) found and fixed two defects: the palette and Go to File still showed a window title bar, and Settings rows touched the category divider.
 
 Either way, keep fixture content in the repository (a small workspace with long names, Git changes, a Settings draft and a chat transcript) and never point capture at a user's real workspace or profile.
 
@@ -265,7 +265,7 @@ Either way, keep fixture content in the repository (a small workspace with long 
 
 ## Implementation status
 
-Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements` (#31) ← `f-ui-dialogs` (#32) ← `f-ui-narrow-layouts` (#33) ← `f-ui-settings` (#34) ← `f-ui-chat` (#35) ← `f-ui-editor` (#37) ← `f-ui-chrome` (#38) ← `f-ui-finish`.
+Branches are stacked: `f-git-ui-redesign` (#29) ← `f-ui-ux-visual-improvements` (#31) ← `f-ui-dialogs` (#32) ← `f-ui-narrow-layouts` (#33) ← `f-ui-settings` (#34) ← `f-ui-chat` (#35) ← `f-ui-editor` (#37) ← `f-ui-chrome` (#38) ← `f-ui-finish` (#39) ← `f-ui-capture-scenes`.
 
 | Item | Status |
 | --- | --- |

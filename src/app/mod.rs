@@ -167,8 +167,17 @@ impl Default for LumenApp {
 }
 impl eframe::App for LumenApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if let Some(capture) = &mut self.capture {
-            capture.update(ctx);
+        match self
+            .capture
+            .as_mut()
+            .and_then(|capture| capture.update(ctx))
+        {
+            Some(capture::Step::Command(command)) => self.execute(command, ctx),
+            // Events pushed now reach the widgets drawn later in this same frame.
+            Some(capture::Step::Text(text)) => {
+                ctx.input_mut(|input| input.events.push(egui::Event::Text(text)))
+            }
+            None => {}
         }
         self.sync_project_settings();
         self.apply_workbench_settings(ctx);

@@ -385,6 +385,9 @@ impl Workbench<'_> {
 fn empty_message(status: Option<&crate::app::view_state::LanguageServerStatus>) -> &'static str {
     use crate::app::view_state::LanguageServerStatus::*;
     match status {
+        None if !cfg!(feature = "language-server") => {
+            "Language server support is not enabled in this build. Problems from tasks still appear here."
+        }
         None => {
             "No language server is running for the open files, so no diagnostics are available."
         }
@@ -404,6 +407,13 @@ fn empty_message(status: Option<&crate::app::view_state::LanguageServerStatus>) 
 #[cfg(test)]
 mod tests {
     use crate::app::{LumenApp, view_state::LanguageServerStatus};
+
+    #[cfg(not(feature = "language-server"))]
+    #[test]
+    fn without_the_feature_the_empty_list_says_the_build_has_no_language_server() {
+        assert!(super::empty_message(None).starts_with("Language server support is not enabled"));
+    }
+
     use eframe::egui;
     use lumen_language_services::diagnostics::{Diagnostic, DiagnosticSeverity};
 
@@ -483,7 +493,14 @@ mod tests {
         let mut quiet = LumenApp::default();
         quiet.view.problems.open = true;
         let cases = [
-            (None, "No language server is running"),
+            (
+                None,
+                if cfg!(feature = "language-server") {
+                    "No language server is running"
+                } else {
+                    "Language server support is not enabled"
+                },
+            ),
             (
                 Some(LanguageServerStatus::Starting("rust-analyzer".into())),
                 "starting",

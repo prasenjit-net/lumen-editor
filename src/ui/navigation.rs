@@ -29,6 +29,7 @@ impl Workbench<'_> {
             NavigationMode::RecentFolders => "Open Recent Folder",
         })
             .open(&mut open)
+            .title_bar(false)
             .collapsible(false)
             .resizable(false)
             .default_width(width)
