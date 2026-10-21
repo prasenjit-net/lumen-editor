@@ -6,8 +6,6 @@
 //! (the pipe backs up) instead of buffering without limit. The process tree is
 //! isolated so a stop reaches the agent's tool processes too (see
 //! `process_tree` for the platform boundaries).
-// Wired to the agent controller in a later step.
-#![allow(dead_code)]
 use super::process_tree::{
     force_kill_process_tree, isolate_process_tree, resolve_program, terminate_process_tree,
 };

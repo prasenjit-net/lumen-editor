@@ -2,8 +2,6 @@
 //! one or two streams; this turns them into display lines with defined behavior
 //! for split UTF-8, invalid bytes, `\r`, terminal escape sequences and very long
 //! lines, and never grows past its byte budget (old lines are dropped and counted).
-// Wired to the task runner in the next step.
-#![allow(dead_code)]
 use std::collections::VecDeque;
 
 /// Longest line kept whole; longer ones are split so one line cannot defeat the budget.
@@ -124,10 +122,12 @@ impl RunLog {
         self.retained_bytes
     }
 
+    #[cfg(test)]
     pub(crate) fn dropped_lines(&self) -> u64 {
         self.dropped_lines
     }
 
+    #[cfg(test)]
     pub(crate) fn dropped_bytes(&self) -> u64 {
         self.dropped_bytes
     }

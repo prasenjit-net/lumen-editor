@@ -1,8 +1,6 @@
 //! Saved form of a conversation, so a chat reopened after a restart shows what
 //! was said. This is Lumen's display cache, not the provider's history: it is
 //! bounded, tolerant of damage, and never claims a restored tool is still running.
-// Used by the native agent glue when native agents are enabled.
-#![allow(dead_code)]
 use lumen_agent_core::{
     ItemId, TurnId,
     model::{

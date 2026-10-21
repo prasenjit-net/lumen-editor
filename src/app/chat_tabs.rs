@@ -2,7 +2,6 @@
 //! session. Closing a tab only hides the view; the session and its history stay in
 //! the session list. Tabs are addressed by `SessionId`, never by strip position.
 // Hosted in the first editor group for now, like Settings and task editors.
-#![allow(dead_code)]
 use lumen_agent_core::SessionId;
 use std::collections::HashMap;
 
@@ -23,6 +22,7 @@ impl ChatTabs {
         self.active
     }
 
+    #[cfg(test)]
     pub(crate) fn is_open(&self, id: SessionId) -> bool {
         self.tabs.contains(&id)
     }
@@ -36,6 +36,7 @@ impl ChatTabs {
     }
 
     /// Show another open chat; false when it is not open.
+    #[cfg(test)]
     pub(crate) fn activate(&mut self, id: SessionId) -> bool {
         if self.tabs.contains(&id) {
             self.active = Some(id);
@@ -66,6 +67,7 @@ impl ChatTabs {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn draft(&self, id: SessionId) -> &str {
         self.drafts.get(&id).map_or("", String::as_str)
     }

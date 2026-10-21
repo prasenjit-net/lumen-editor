@@ -7,8 +7,6 @@
 //! started in a terminal appears without duplicating a session Lumen already has.
 //! Serialization is JSON with a schema version; unknown fields and unreadable
 //! rows are tolerated and counted, never fatal, and no secrets are stored.
-// Wired to the agent controller in a later step.
-#![allow(dead_code)]
 use lumen_agent_core::{NativeSessionRef, ProfileId, ProviderId, SessionId, api::SessionSummary};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -67,6 +65,7 @@ impl Registry {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn records(&self) -> &[SessionRecord] {
         &self.records
     }
@@ -151,6 +150,8 @@ impl Registry {
         }
     }
 
+    // Not reachable from the UI yet (session rename, remove and discovery).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn rename(&mut self, id: SessionId, title: &str) -> bool {
         let title = title.trim();
         match self.get_mut(id) {
@@ -192,6 +193,8 @@ impl Registry {
         }
     }
 
+    // Not reachable from the UI yet (session rename, remove and discovery).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn remove(&mut self, id: SessionId) -> bool {
         let before = self.records.len();
         self.records.retain(|r| r.id != id);
@@ -201,6 +204,8 @@ impl Registry {
     /// Fold a provider listing into the index. Known sessions only refresh their
     /// time and (non-custom) title; unknown ones are added. Returns how many were
     /// added. A listing says nothing about rows it does not contain.
+    // Not reachable from the UI yet (session rename, remove and discovery).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn merge_discovered(
         &mut self,
         summaries: &[SessionSummary],

@@ -8,7 +8,7 @@ from grep. Before acting on any item, remove it on a branch and run
 
 ## Status (2026-10-21, branch `c-remove-legacy-editor`, uncommitted)
 
-A, B, C and D are done except where noted under each heading. E and F are untouched.
+A, B, C, D and F are done except where noted under each heading. E is untouched.
 
 ## A. Legacy editor (TextEdit) vs the shared editor
 
@@ -140,6 +140,18 @@ Several carry stale comments such as "Wired to the task runner in the next step"
 Remove each allow and let the compiler list what is unused; those items are the
 provably safe deletions. Keep the 7 platform-conditional allows in
 `src/app/command.rs`.
+
+### F status
+
+Done (uncommitted): all 14 blanket `#![allow(dead_code)]` attributes and their stale
+"wired in the next step" comments are gone. Deleted as unused: `HeldReply::Question`
+and `reply_question`, `Phase::Finishing` and `Scheduler::finishing` (with its test),
+`Scheduler::session_tickets`, `kill_process_tree`. Made `#[cfg(test)]` because only
+tests call them: the `set_slots`, `shutdown_started`, `is_open`, `draft`, `activate`,
+`active_tab`, `records`, `holds_lease`, `holds_slot`, `dropped_lines` and
+`dropped_bytes` accessors. Kept with a targeted `cfg_attr(not(test), allow(dead_code))`
+and a reason: session `rename`, `remove` and `merge_discovered` in the agent
+registry, which are unbuilt UI features with tests. Windows was not rechecked.
 
 ## Suggested order
 

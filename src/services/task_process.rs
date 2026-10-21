@@ -6,8 +6,6 @@
 //! (the pipe backs up) instead of the app buffering without limit, and the UI
 //! drains every frame regardless of which tab is visible. Process exit and pipe
 //! closure are separate events so final output is not lost to an early exit report.
-// Wired to the task runner controller in the next step.
-#![allow(dead_code)]
 use super::{
     language_server::ServerWake,
     process_tree::{

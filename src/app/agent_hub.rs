@@ -5,7 +5,6 @@
 //! events into each session's reducer, settles operations and starts whatever the
 //! scheduler now allows. Backends never queue turns - the hub keeps each session's
 //! queue - and a backend only ever sees one active turn per session.
-#![allow(dead_code)]
 use crate::model::{
     agent_registry::Registry,
     agent_scheduler::{Dispatch, Phase, Scheduler, Ticket, WaitReason},
@@ -15,7 +14,7 @@ use lumen_agent_core::{
     SessionId, TurnId,
     api::{
         AgentBackend, AgentOperation, ApprovalDecisionId, ClientTurnId, ConfigPatch, InputBlock,
-        OperationOutcome, OperationOutput, QuestionAnswer, Request, SessionConfig,
+        OperationOutcome, OperationOutput, Request, SessionConfig,
     },
     event::{AgentEvent, EventEnvelope, TurnOutcome},
     model::{SessionModel, TurnState},
@@ -93,7 +92,6 @@ pub(crate) struct Live {
 
 enum HeldReply {
     Approval(RequestToken, ApprovalDecisionId),
-    Question(RequestToken, Vec<QuestionAnswer>),
 }
 
 impl Live {
@@ -175,6 +173,7 @@ impl AgentHub {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn set_slots(&mut self, slots: usize) {
         self.scheduler.set_slots(slots);
     }
@@ -332,15 +331,6 @@ impl AgentHub {
         self.hold_reply(session, HeldReply::Approval(token, decision));
     }
 
-    pub(crate) fn reply_question(
-        &mut self,
-        session: SessionId,
-        token: RequestToken,
-        answers: Vec<QuestionAnswer>,
-    ) {
-        self.hold_reply(session, HeldReply::Question(token, answers));
-    }
-
     fn hold_reply(&mut self, session: SessionId, reply: HeldReply) {
         let Some(live) = self.live.get_mut(&session) else {
             return;
@@ -466,7 +456,7 @@ impl AgentHub {
         }
         for prompt in &live.prompts {
             match self.scheduler.phase(prompt.ticket) {
-                Some(Phase::Executing | Phase::Finishing) => return SessionStatus::Working,
+                Some(Phase::Executing) => return SessionStatus::Working,
                 Some(Phase::WaitingForUser) => return SessionStatus::NeedsAttention,
                 Some(Phase::Resuming | Phase::Queued) => {
                     return match self.scheduler.wait_reason(prompt.ticket) {
@@ -543,9 +533,6 @@ impl AgentHub {
             let operation = match held {
                 Some(HeldReply::Approval(token, decision)) => {
                     AgentOperation::ReplyApproval { token, decision }
-                }
-                Some(HeldReply::Question(token, answers)) => {
-                    AgentOperation::ReplyQuestion { token, answers }
                 }
                 None => return,
             };
@@ -860,6 +847,7 @@ impl AgentHub {
         self.shutdown_ops = Some(open);
     }
 
+    #[cfg(test)]
     pub(crate) fn shutdown_started(&self) -> bool {
         self.shutdown_ops.is_some()
     }

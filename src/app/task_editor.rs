@@ -1,8 +1,6 @@
 //! Task editor tabs: virtual (non-document) tabs hosted beside the editor tabs,
 //! like Settings. They own no document history and never dirty an editor buffer.
 //! Tabs are addressed by `TaskEditorId`, never by strip position or label.
-// The sidebar and palette that open these tabs arrive with the editable form.
-#![allow(dead_code)]
 use lumen_task_core::{Issue, Scope, TaskDef, TaskKey, TaskKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -293,6 +291,7 @@ impl TaskEditorState {
         self.active
     }
 
+    #[cfg(test)]
     pub(crate) fn active_tab(&self) -> Option<&TaskEditorTab> {
         self.get(self.active?)
     }

@@ -6,16 +6,12 @@
 //! deliberately detached descendant (its own `setsid`) escapes; on Windows the tree
 //! is found by `taskkill /T`, not a Job Object, so descendants started after the
 //! call can escape. Neither is a sandbox.
-// Used by the agent and task runners; some entry points are only used by one.
-#![allow(dead_code)]
 #[cfg(windows)]
 use std::process::Stdio;
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
-    process::{Child, Command},
-    thread,
-    time::Duration,
+    process::Command,
 };
 
 /// Put the child in its own process group (Unix) so the whole tree can be killed.
@@ -70,24 +66,6 @@ pub(crate) fn force_kill_process_tree(pid: u32) -> bool {
             .stderr(Stdio::null())
             .spawn()
             .is_ok()
-    }
-}
-
-/// Kill the child and everything it started (npx -> node -> agent -> tools).
-pub(crate) fn kill_process_tree(child: &Child) {
-    #[cfg(unix)]
-    {
-        terminate_process_tree(child.id());
-        thread::sleep(Duration::from_millis(30));
-        force_kill_process_tree(child.id());
-    }
-    #[cfg(windows)]
-    {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
     }
 }
 

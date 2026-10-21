@@ -2,8 +2,6 @@
 //! `~/.lumen/agent-transcripts/`, named by the provider's own session id so a lost
 //! or recreated session index can never attach one conversation to another chat.
 //! Writes are atomic (temp file, then rename).
-// Used by the native agent glue when native agents are enabled.
-#![allow(dead_code)]
 use crate::model::agent_transcript;
 use lumen_agent_core::{ProviderId, model::TranscriptItem};
 use std::{

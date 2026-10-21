@@ -1,8 +1,6 @@
 //! Remembered "I reviewed this workspace task" decisions, keyed by workspace and
 //! the definition's execution digest. A changed command or dependency has a new
 //! digest and is reviewed again; this is a disclosure record, not a sandbox.
-// Used by the task runner controller.
-#![allow(dead_code)]
 use std::{
     fs,
     io::Write,

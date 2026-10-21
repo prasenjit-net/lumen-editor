@@ -1,8 +1,6 @@
 //! Where the native-agent session index lives on disk. Writes are atomic
 //! (temp file, then rename) so a crash never leaves a half-written index, and a
 //! damaged or newer-format file is reported instead of being overwritten silently.
-// Used by the native agent glue when native agents are enabled.
-#![allow(dead_code)]
 use crate::model::agent_registry::Registry;
 use std::{
     fs,
