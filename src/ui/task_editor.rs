@@ -13,6 +13,9 @@ use eframe::egui::{self, RichText, ScrollArea, TextEdit};
 use lumen_task_core::{Issue, SavePolicy, TaskKind, Transport};
 
 const LABEL_WIDTH: f32 = 130.0;
+/// Narrowest control column worth keeping beside the label; below this the
+/// label stacks above its control.
+const MIN_CONTROL_WIDTH: f32 = 220.0;
 
 impl Workbench<'_> {
     pub(super) fn task_editor_page(&mut self, ui: &mut egui::Ui) {
@@ -369,6 +372,11 @@ fn form(
 }
 
 /// One labelled form row with its problems underneath.
+/// Whether a form row is too narrow for a label column beside its control.
+fn stacked_labels(available_width: f32) -> bool {
+    available_width < LABEL_WIDTH + MIN_CONTROL_WIDTH
+}
+
 fn row(
     ui: &mut egui::Ui,
     label: &str,
@@ -377,20 +385,42 @@ fn row(
     colors: &super::theme::Palette,
     add: impl FnOnce(&mut egui::Ui),
 ) {
-    ui.horizontal_top(|ui| {
-        ui.add_sized(
-            [LABEL_WIDTH, 20.0],
-            egui::Label::new(RichText::new(label).color(colors.muted)).truncate(),
-        );
-        ui.vertical(|ui| {
-            add(ui);
-            for issue in issues
-                .iter()
-                .filter(|issue| fields.iter().any(|field| issue.field.starts_with(field)))
-            {
-                ui.label(RichText::new(&issue.message).size(11.0).color(colors.error));
-            }
+    let control = |ui: &mut egui::Ui| {
+        add(ui);
+        for issue in issues
+            .iter()
+            .filter(|issue| fields.iter().any(|field| issue.field.starts_with(field)))
+        {
+            ui.add(
+                egui::Label::new(RichText::new(&issue.message).size(11.0).color(colors.error))
+                    .wrap(),
+            );
+        }
+    };
+    if stacked_labels(ui.available_width()) {
+        ui.add(egui::Label::new(RichText::new(label).color(colors.muted)).truncate());
+        ui.vertical(control);
+    } else {
+        ui.horizontal_top(|ui| {
+            ui.add_sized(
+                [LABEL_WIDTH, 20.0],
+                egui::Label::new(RichText::new(label).color(colors.muted)).truncate(),
+            );
+            ui.vertical(control);
         });
-    });
+    }
     ui.add_space(2.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn form_labels_stack_when_the_control_column_would_be_too_narrow() {
+        assert!(stacked_labels(240.0));
+        assert!(stacked_labels(LABEL_WIDTH + MIN_CONTROL_WIDTH - 1.0));
+        assert!(!stacked_labels(LABEL_WIDTH + MIN_CONTROL_WIDTH));
+        assert!(!stacked_labels(900.0));
+    }
 }

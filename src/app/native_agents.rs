@@ -493,6 +493,31 @@ mod tests {
     }
 
     #[test]
+    fn chat_fits_an_editor_group_narrower_than_the_old_240_px_floor() {
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        app.view.agents.open = false;
+        for width in [200.0_f32, 260.0] {
+            frame(&mut app, &ctx, width);
+            let output = frame(&mut app, &ctx, width);
+            let mut found = false;
+            for clipped in &output.shapes {
+                if let egui::Shape::Text(text) = &clipped.shape
+                    && text.galley.job.text.contains("Send")
+                {
+                    found = true;
+                    let right = text.pos.x + text.galley.size().x;
+                    assert!(
+                        right <= width,
+                        "Send ends at {right}, past a {width}px window"
+                    );
+                }
+            }
+            assert!(found, "composer drawn at {width}");
+        }
+    }
+
+    #[test]
     fn messages_are_told_apart_and_permissions_and_working_state_are_clear() {
         let (mut app, ctx) = fixture();
         app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);

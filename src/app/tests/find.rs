@@ -191,6 +191,32 @@ fn find_controls_remain_visible_at_narrow_default_and_wide_widths() {
 }
 
 #[test]
+fn narrow_find_gives_options_and_navigation_a_second_row() {
+    for width in [240.0, 320.0] {
+        let (mut app, _) = test_app(TestDialogs::default());
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        app.new_file();
+        super::editor::editor_frame_at_width(&mut app, &ctx, vec![], width);
+        app.execute(Command::Find, &ctx);
+        super::editor::editor_frame_at_width(&mut app, &ctx, vec![], width);
+        let output = super::editor::editor_frame_at_width(&mut app, &ctx, vec![], width);
+        let query = text_position(&output, "Find");
+        for title in ["Aa", "ab", "Prev", "Next"] {
+            let position = text_position(&output, title);
+            assert!(
+                position.y > query.y,
+                "{title} is on a second row at width {width}"
+            );
+            assert!(
+                position.x > 0.0 && position.x < width,
+                "{title} stays inside width {width}"
+            );
+        }
+    }
+}
+
+#[test]
 fn opening_find_selects_seeded_query_and_typing_does_not_edit_document() {
     let (mut app, _) = test_app(TestDialogs::default());
     let ctx = egui::Context::default();

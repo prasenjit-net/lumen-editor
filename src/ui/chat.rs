@@ -104,7 +104,8 @@ impl Workbench<'_> {
 
         let width = ui.available_width().min(MAX_CONTENT_WIDTH);
         let side = ((ui.available_width() - width) / 2.0).max(0.0);
-        let column = (width - 2.0 * GUTTER).max(240.0);
+        // Never wider than the group: a floor larger than the pane pushed the composer off-screen.
+        let column = (width - 2.0 * GUTTER).max(80.0).min(width.max(0.0));
 
         // Bottom block first so the transcript takes whatever is left.
         egui::TopBottomPanel::bottom(egui::Id::new(("chat_composer", id.0)))
@@ -690,17 +691,10 @@ fn composer(
                     })
                     .lock_focus(true),
             );
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(if busy {
-                        "Enter to queue · sends after the current turn · Shift+Enter for a new line"
-                    } else {
-                        "Enter to send · Shift+Enter for a new line"
-                    })
-                    .size(10.0)
-                    .color(colors.muted),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), 24.0),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
                     let send = egui::Button::new(
                         RichText::new(format!(
                             "{}  {}",
@@ -746,8 +740,23 @@ fn composer(
                     {
                         commands.push(Command::ChatStop(id));
                     }
-                });
-            });
+                    // The hint takes whatever the buttons leave and gives way first.
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(if busy {
+                                    "Enter to queue · sends after the current turn · Shift+Enter for a new line"
+                                } else {
+                                    "Enter to send · Shift+Enter for a new line"
+                                })
+                                .size(10.0)
+                                .color(colors.muted),
+                            )
+                            .truncate(),
+                        );
+                    });
+                },
+            );
         });
     if send_now {
         commands.push(Command::ChatSend(id));
