@@ -1,6 +1,5 @@
 label=YAML
-filenames=.clang-format
+filenames=.clang-format .clang-tidy .yamllint
 extensions=yaml yml
-lexer=code
+lexer=yaml
 line_comment=#
-keywords=true false null

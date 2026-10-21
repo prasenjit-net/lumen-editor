@@ -6,8 +6,8 @@ these UTF-8 files in the binary; no syntax directory is needed at runtime.
 
 Fields are `key=value`, one per line. Lists use spaces as separators; filenames
 and extensions are case-sensitive. `label` and `lexer` are required. Supported
-lexer names: `code`, `markdown`, `html`, `makefile`, `dockerfile`, `ignore`, and
-`key_value`. Optional fields are `filenames`, `prefixes`, `extensions`,
+lexer names: `code`, `markdown`, `html`, `makefile`, `dockerfile`, `ignore`,
+`key_value`, and `yaml`. Optional fields are `filenames`, `prefixes`, `extensions`,
 `keywords`, `line_comment`, `block_comment=true`, and
 `case_insensitive_keywords=true`. Exact filenames win over prefixes, which win
 over extensions. A leading `#` line is a definition-file comment.

@@ -24,6 +24,9 @@ pub enum Language {
     Ini,
     Env,
     Sql,
+    Java,
+    Gradle,
+    Kotlin,
 }
 
 impl Language {
@@ -52,6 +55,7 @@ enum Lexer {
     Dockerfile,
     Ignore,
     KeyValue,
+    Yaml,
 }
 
 struct Definition {
@@ -102,6 +106,9 @@ const SOURCES: &[(Language, &str)] = &[
     (Language::Ini, include_str!("../syntaxes/ini.syntax")),
     (Language::Env, include_str!("../syntaxes/env.syntax")),
     (Language::Sql, include_str!("../syntaxes/sql.syntax")),
+    (Language::Java, include_str!("../syntaxes/java.syntax")),
+    (Language::Gradle, include_str!("../syntaxes/gradle.syntax")),
+    (Language::Kotlin, include_str!("../syntaxes/kotlin.syntax")),
 ];
 
 static DEFINITIONS: OnceLock<Vec<Definition>> = OnceLock::new();
@@ -154,6 +161,7 @@ fn parse(language: Language, source: &'static str) -> Definition {
                     "dockerfile" => Lexer::Dockerfile,
                     "ignore" => Lexer::Ignore,
                     "key_value" => Lexer::KeyValue,
+                    "yaml" => Lexer::Yaml,
                     _ => panic!("unknown syntax lexer {value}"),
                 }
             }
@@ -252,6 +260,7 @@ pub fn highlight(text: &str, language: Language) -> Vec<Span> {
         Lexer::Dockerfile => return dockerfile(text),
         Lexer::Ignore => return ignore_file(text),
         Lexer::KeyValue => return key_value_file(text, language),
+        Lexer::Yaml => return yaml(text),
         Lexer::Code => {}
     }
     let bytes = text.as_bytes();
@@ -296,9 +305,7 @@ pub fn highlight(text: &str, language: Language) -> Vec<Span> {
             out.push(span(start, i, Kind::Comment));
             continue;
         }
-        if language == Language::Python
-            && (bytes[i..].starts_with(b"\"\"\"") || bytes[i..].starts_with(b"'''"))
-        {
+        if triple_quotes(language, &bytes[i..]) {
             let quote = &bytes[i..i + 3];
             i = bytes[i + 3..]
                 .windows(3)
@@ -358,6 +365,21 @@ pub fn highlight(text: &str, language: Language) -> Vec<Span> {
                 Kind::String
             };
             out.push(span(start, i, kind));
+            at_line_start = false;
+            continue;
+        }
+        if c == b'@'
+            && matches!(
+                language,
+                Language::Java | Language::Gradle | Language::Kotlin
+            )
+            && bytes.get(i + 1).is_some_and(|b| b.is_ascii_alphabetic())
+        {
+            i += 1;
+            while i < bytes.len() && (word_byte(bytes[i]) || bytes[i] == b'.') {
+                i += 1;
+            }
+            out.push(span(start, i, Kind::Type));
             at_line_start = false;
             continue;
         }
@@ -429,6 +451,18 @@ pub fn highlight(text: &str, language: Language) -> Vec<Span> {
         at_line_start = false;
     }
     out
+}
+
+/// Whether a triple-quoted string (Python docstring, Java/Kotlin text block,
+/// Groovy multi-line string) opens at the start of `rest`.
+fn triple_quotes(language: Language, rest: &[u8]) -> bool {
+    let double = rest.starts_with(b"\"\"\"");
+    let single = rest.starts_with(b"'''");
+    match language {
+        Language::Python | Language::Gradle => double || single,
+        Language::Java | Language::Kotlin => double,
+        _ => false,
+    }
 }
 
 fn span(start: usize, end: usize, kind: Kind) -> Span {
@@ -633,6 +667,214 @@ fn ignore_file(text: &str) -> Vec<Span> {
     out
 }
 
+fn yaml_flow_byte(byte: u8) -> bool {
+    matches!(byte, b',' | b'[' | b']' | b'{' | b'}')
+}
+
+/// End of a quoted YAML scalar whose opening quote precedes `from`, or `None`
+/// when the scalar continues on the next line.
+fn yaml_quote_end(body: &[u8], from: usize, quote: u8) -> Option<usize> {
+    let mut i = from;
+    while i < body.len() {
+        if quote == b'"' && body[i] == b'\\' {
+            i += 2;
+        } else if body[i] == quote {
+            if quote == b'\'' && body.get(i + 1) == Some(&quote) {
+                i += 2;
+            } else {
+                return Some(i + 1);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+fn yaml_plain_kind(token: &str) -> Option<Kind> {
+    let lower = token.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "true" | "false" | "yes" | "no" | "on" | "off" | "null" | "~"
+    ) {
+        return Some(Kind::Keyword);
+    }
+    let unsigned = token.trim_start_matches(['+', '-']);
+    let starts_numeric = unsigned.starts_with(|c: char| c.is_ascii_digit())
+        || (unsigned.starts_with('.') && unsigned[1..].starts_with(|c: char| c.is_ascii_digit()));
+    let radix = unsigned.starts_with("0x") || unsigned.starts_with("0o");
+    if matches!(lower.trim_start_matches(['+', '-']), ".inf" | ".nan")
+        || (starts_numeric && unsigned.replace('_', "").parse::<f64>().is_ok())
+        || (radix && unsigned.len() > 2)
+    {
+        return Some(Kind::Number);
+    }
+    None
+}
+
+/// Line-oriented YAML scanner. It carries three pieces of state across lines:
+/// an open block scalar, an unterminated quoted scalar and flow nesting depth.
+fn yaml(text: &str) -> Vec<Span> {
+    let mut out = Vec::new();
+    let mut offset = 0;
+    let mut block_parent: Option<isize> = None;
+    let mut open_quote: Option<u8> = None;
+    let mut depth = 0usize;
+    for line in text.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\r', '\n']);
+        let bytes = body.as_bytes();
+        let indent = bytes.iter().take_while(|b| **b == b' ').count();
+        let mut pos = 0;
+        if let Some(quote) = open_quote {
+            let end = yaml_quote_end(bytes, 0, quote);
+            out.push(span(
+                offset,
+                offset + end.unwrap_or(bytes.len()),
+                Kind::String,
+            ));
+            match end {
+                Some(end) => {
+                    open_quote = None;
+                    pos = end;
+                }
+                None => {
+                    offset += line.len();
+                    continue;
+                }
+            }
+        } else if let Some(parent) = block_parent {
+            if body.trim().is_empty() {
+                offset += line.len();
+                continue;
+            }
+            if indent as isize > parent {
+                out.push(span(offset + indent, offset + bytes.len(), Kind::String));
+                offset += line.len();
+                continue;
+            }
+            block_parent = None;
+        }
+        if open_quote.is_none() && block_parent.is_none() && depth == 0 {
+            let marker = bytes.starts_with(b"---") || bytes.starts_with(b"...");
+            if marker && bytes.get(3).is_none_or(|b| matches!(b, b' ' | b'\t')) {
+                out.push(span(offset, offset + 3, Kind::Keyword));
+                pos = 3;
+            } else {
+                pos = indent;
+            }
+        }
+        let mut key_col: Option<usize> = None;
+        let mut marker_col: Option<usize> = None;
+        // Block sequence markers (`- `, possibly nested as `- - x`).
+        while depth == 0
+            && bytes.get(pos) == Some(&b'-')
+            && bytes.get(pos + 1).is_none_or(|b| matches!(b, b' ' | b'\t'))
+        {
+            out.push(span(offset + pos, offset + pos + 1, Kind::Keyword));
+            marker_col = Some(pos);
+            pos += 1;
+            while matches!(bytes.get(pos), Some(b' ' | b'\t')) {
+                pos += 1;
+            }
+        }
+        while pos < bytes.len() {
+            let c = bytes[pos];
+            let at = offset + pos;
+            if matches!(c, b' ' | b'\t') {
+                pos += 1;
+            } else if c == b'#' && (pos == 0 || matches!(bytes[pos - 1], b' ' | b'\t')) {
+                out.push(span(at, offset + bytes.len(), Kind::Comment));
+                break;
+            } else if c == b'"' || c == b'\'' {
+                let end = yaml_quote_end(bytes, pos + 1, c);
+                let stop = end.unwrap_or(bytes.len());
+                let after = body[stop..].trim_start_matches([' ', '\t']);
+                let is_key = end.is_some()
+                    && after.starts_with(':')
+                    && after[1..]
+                        .bytes()
+                        .next()
+                        .is_none_or(|b| matches!(b, b' ' | b'\t'));
+                if is_key && depth == 0 {
+                    key_col.get_or_insert(pos);
+                }
+                let kind = if is_key { Kind::Property } else { Kind::String };
+                out.push(span(at, offset + stop, kind));
+                if end.is_none() {
+                    open_quote = Some(c);
+                }
+                pos = stop;
+            } else if c == b'&' || c == b'*' || c == b'!' {
+                let end = bytes[pos..]
+                    .iter()
+                    .position(|b| matches!(b, b' ' | b'\t') || (depth > 0 && yaml_flow_byte(*b)))
+                    .map_or(bytes.len(), |p| pos + p);
+                let kind = if c == b'!' { Kind::Tag } else { Kind::Type };
+                out.push(span(at, offset + end, kind));
+                pos = end;
+            } else if c == b'[' || c == b'{' {
+                depth += 1;
+                pos += 1;
+            } else if c == b']' || c == b'}' {
+                depth = depth.saturating_sub(1);
+                pos += 1;
+            } else if c == b',' {
+                pos += 1;
+            } else if (c == b'|' || c == b'>') && depth == 0 {
+                let mut end = pos + 1;
+                while matches!(bytes.get(end), Some(b'+' | b'-' | b'0'..=b'9')) {
+                    end += 1;
+                }
+                if bytes.get(end).is_none_or(|b| matches!(b, b' ' | b'\t')) {
+                    out.push(span(at, offset + end, Kind::Keyword));
+                    let parent = key_col.or(marker_col).map_or(-1, |col| col as isize);
+                    block_parent = Some(parent);
+                    pos = end;
+                } else {
+                    pos = end;
+                }
+            } else {
+                let mut end = pos;
+                let mut is_key = false;
+                while end < bytes.len() {
+                    let b = bytes[end];
+                    if b == b':'
+                        && bytes.get(end + 1).is_none_or(|n| {
+                            matches!(n, b' ' | b'\t') || (depth > 0 && yaml_flow_byte(*n))
+                        })
+                    {
+                        is_key = true;
+                        break;
+                    }
+                    if (matches!(b, b' ' | b'\t') && bytes.get(end + 1) == Some(&b'#'))
+                        || (depth > 0 && matches!(b, b',' | b']' | b'}'))
+                    {
+                        break;
+                    }
+                    end += 1;
+                }
+                let token = body[pos..end].trim_end();
+                if is_key {
+                    if depth == 0 {
+                        key_col.get_or_insert(pos);
+                    }
+                    if !token.is_empty() {
+                        out.push(span(at, at + token.len(), Kind::Property));
+                    }
+                    pos = end + 1;
+                } else {
+                    if let Some(kind) = yaml_plain_kind(token) {
+                        out.push(span(at, at + token.len(), kind));
+                    }
+                    pos = end.max(pos + 1);
+                }
+            }
+        }
+        offset += line.len();
+    }
+    out
+}
+
 fn key_value_file(text: &str, language: Language) -> Vec<Span> {
     let mut out = Vec::new();
     let mut offset = 0;
@@ -676,7 +918,7 @@ mod tests {
     use super::*;
     #[test]
     fn embedded_definitions_are_complete_and_unambiguous() {
-        assert_eq!(definitions().len(), 19);
+        assert_eq!(definitions().len(), 22);
         let mut languages = HashSet::new();
         let mut filenames = HashSet::new();
         let mut extensions = HashSet::new();
@@ -739,6 +981,126 @@ mod tests {
             .is_err()
         );
     }
+    #[test]
+    fn java_gradle_and_kotlin_are_recognised_by_name_and_highlighted() {
+        for (path, language, label) in [
+            ("src/Main.java", Language::Java, "Java"),
+            ("build.gradle", Language::Gradle, "Gradle"),
+            ("app/settings.gradle", Language::Gradle, "Gradle"),
+            ("plugin.gradle", Language::Gradle, "Gradle"),
+            ("build.gradle.kts", Language::Kotlin, "Kotlin"),
+            ("settings.gradle.kts", Language::Kotlin, "Kotlin"),
+            ("Main.kt", Language::Kotlin, "Kotlin"),
+            ("gradle.properties", Language::Ini, "INI"),
+        ] {
+            assert_eq!(Language::from_path(Path::new(path)), language, "{path}");
+            assert_eq!(language.as_str(), label);
+        }
+        let java = "@Override\npublic sealed record P(int x) permits Q {\n  String t = \"\"\"\n  hi\n  \"\"\"; char c = 'a'; long n = 0xFF_L; // c\n}";
+        let gradle = "plugins { id 'java' }\ndependencies {\n  implementation \"a:b:${v}\" // x\n}\ndef s = '''m'''";
+        for (source, language, expected) in [
+            (
+                java,
+                Language::Java,
+                vec![
+                    ("@Override", Kind::Type),
+                    ("sealed", Kind::Keyword),
+                    ("record", Kind::Keyword),
+                    ("permits", Kind::Keyword),
+                    ("\"\"\"\n  hi\n  \"\"\"", Kind::String),
+                    ("'a'", Kind::String),
+                    ("0xFF_L", Kind::Number),
+                    ("// c", Kind::Comment),
+                ],
+            ),
+            (
+                gradle,
+                Language::Gradle,
+                vec![
+                    ("plugins", Kind::Keyword),
+                    ("dependencies", Kind::Keyword),
+                    ("implementation", Kind::Keyword),
+                    ("'java'", Kind::String),
+                    ("\"a:b:${v}\"", Kind::String),
+                    ("'''m'''", Kind::String),
+                    ("// x", Kind::Comment),
+                ],
+            ),
+        ] {
+            let spans = highlight(source, language);
+            for (token, kind) in expected {
+                assert!(
+                    spans
+                        .iter()
+                        .any(|s| &source[s.range.clone()] == token && s.kind == kind),
+                    "missing {token} in {language:?}"
+                );
+            }
+        }
+    }
+
+    fn yaml_tokens(source: &str) -> Vec<(&str, Kind)> {
+        highlight(source, Language::Yaml)
+            .into_iter()
+            .map(|s| (&source[s.range], s.kind))
+            .collect()
+    }
+
+    #[test]
+    fn yaml_highlights_structure_scalars_and_comments() {
+        let source = "---\nname: CI # trailing\non:\n  push: {branches: [main], n: 3}\nurl: http://x/#frag\nbase: &b\n  - a: yes\n  - *b\n  - !!str ~\n\"q k\": 'it''s'\n...\n";
+        let tokens = yaml_tokens(source);
+        for expected in [
+            ("---", Kind::Keyword),
+            ("name", Kind::Property),
+            ("# trailing", Kind::Comment),
+            ("on", Kind::Property),
+            ("branches", Kind::Property),
+            ("n", Kind::Property),
+            ("3", Kind::Number),
+            ("&b", Kind::Type),
+            ("*b", Kind::Type),
+            ("!!str", Kind::Tag),
+            ("-", Kind::Keyword),
+            ("yes", Kind::Keyword),
+            ("~", Kind::Keyword),
+            ("\"q k\"", Kind::Property),
+            ("'it''s'", Kind::String),
+            ("...", Kind::Keyword),
+        ] {
+            assert!(tokens.contains(&expected), "missing {expected:?}");
+        }
+        assert!(
+            !tokens
+                .iter()
+                .any(|(t, k)| *k == Kind::Comment && t.contains("frag"))
+        );
+    }
+
+    #[test]
+    fn yaml_block_scalars_multiline_quotes_and_crlf() {
+        let source = "run: |-\r\n  echo a: b\r\n  # not comment\r\n\r\nnext: \"a\r\n  b\"\r\nlast: >\r\n  folded\r\ndone: 1\r\n";
+        let tokens = yaml_tokens(source);
+        for expected in [
+            ("run", Kind::Property),
+            ("|-", Kind::Keyword),
+            ("echo a: b", Kind::String),
+            ("# not comment", Kind::String),
+            ("next", Kind::Property),
+            ("\"a", Kind::String),
+            ("  b\"", Kind::String),
+            ("folded", Kind::String),
+            ("done", Kind::Property),
+            ("1", Kind::Number),
+        ] {
+            assert!(
+                tokens.contains(&expected),
+                "missing {expected:?}: {tokens:?}"
+            );
+        }
+        assert!(!tokens.contains(&("a", Kind::Property)));
+    }
+
     #[test]
     fn javascript_and_typescript_extensions_resolve_to_javascript() {
         for ext in ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"] {

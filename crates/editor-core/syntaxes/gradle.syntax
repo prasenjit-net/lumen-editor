@@ -1,0 +1,7 @@
+label=Gradle
+filenames=build.gradle settings.gradle init.gradle
+extensions=gradle
+lexer=code
+line_comment=//
+block_comment=true
+keywords=def var class interface enum trait extends implements import package new return if else for while in switch case default break continue try catch finally throw this super static final true false null as instanceof plugins pluginManagement dependencyResolutionManagement buildscript allprojects subprojects dependencies repositories tasks task apply include rootProject implementation api compileOnly runtimeOnly testImplementation testRuntimeOnly annotationProcessor classpath id version
