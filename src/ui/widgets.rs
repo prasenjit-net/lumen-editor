@@ -190,8 +190,13 @@ fn header_row(
             .add_enabled_ui(action.enabled, |ui| {
                 ui.put(button_rect, egui::Button::new(action.glyph).frame(false))
             })
-            .inner
-            .on_hover_text(action.tooltip);
+            .inner;
+        // egui shows a disabled widget's tooltip only through the disabled variant.
+        let button = if action.enabled {
+            button.on_hover_text(action.tooltip)
+        } else {
+            button.on_disabled_hover_text(action.tooltip)
+        };
         if named(button, action.enabled, action.tooltip).clicked() {
             clicked = Some(action.command.clone());
         }

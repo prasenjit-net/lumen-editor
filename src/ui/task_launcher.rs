@@ -64,6 +64,7 @@ impl Workbench<'_> {
                         .min_size(egui::vec2(TOGGLE_SIZE.0, TOGGLE_SIZE.1)),
                     )
                     .on_hover_text(tooltip);
+                let response = super::widgets::named(response, true, tooltip);
                 if response.clicked() {
                     self.command(command);
                 }
@@ -119,6 +120,7 @@ impl Workbench<'_> {
                     )
                     .on_hover_text("Stop the selected task")
                     .on_disabled_hover_text("The selected task is not running");
+                let stop = super::widgets::named(stop, active.is_some(), "Stop selected task");
                 if let (true, Some(run_id)) = (stop.clicked(), active) {
                     commands.push(Command::StopTaskRun(run_id));
                 }
@@ -138,6 +140,7 @@ impl Workbench<'_> {
                         None => "Choose a task to run first".into(),
                     })
                     .on_disabled_hover_text("Choose a task to run first");
+                let run = super::widgets::named(run, selected_label.is_some(), "Run selected task");
                 if run.clicked() {
                     commands.push(Command::RunSelectedTask);
                 }
@@ -305,6 +308,53 @@ mod tests {
             },
         };
         app
+    }
+
+    #[test]
+    fn icon_only_launcher_controls_have_spoken_names() {
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        ctx.enable_accesskit();
+        let mut app = app_with_task();
+        app.view.tasks.selected = Some(TaskKey::new(Scope::Workspace, "build"));
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(600.0, 200.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                app.render_component(ctx, |workbench| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            workbench.panel_toggles(ui);
+                            workbench.task_launcher(ui);
+                        });
+                    });
+                })
+            },
+        );
+        let labels: Vec<String> = output
+            .platform_output
+            .accesskit_update
+            .iter()
+            .flat_map(|update| update.nodes.iter())
+            .filter_map(|(_, node)| node.label().map(str::to_owned))
+            .collect();
+        for name in [
+            "Run selected task",
+            "Stop selected task",
+            "Toggle Left Sidebar",
+            "Toggle Right Panel (Coding Agents)",
+            "Toggle Bottom Panel",
+        ] {
+            assert!(
+                labels.iter().any(|label| label == name),
+                "{name}: {labels:?}"
+            );
+        }
     }
 
     #[test]

@@ -313,7 +313,7 @@ fn setting_row(ui: &mut egui::Ui, state: &mut SettingsState, setting: &Setting) 
                 .small()
                 .color(colors.muted),
         );
-        ui.menu_button(icon::GEAR, |ui| {
+        let gear = ui.menu_button(icon::GEAR, |ui| {
             if ui.button("Remove Override (inherit)").clicked() {
                 state.selected_mut().draft.remove(setting.id);
                 ui.close();
@@ -329,9 +329,12 @@ fn setting_row(ui: &mut egui::Ui, state: &mut SettingsState, setting: &Setting) 
                 ui.ctx().copy_text(setting.id.into());
                 ui.close();
             }
-        })
-        .response
-        .on_hover_text("Setting actions");
+        });
+        super::widgets::named(
+            gear.response.on_hover_text("Setting actions"),
+            true,
+            "Setting actions",
+        );
     });
     ui.add_space(8.0);
     ui.separator();
