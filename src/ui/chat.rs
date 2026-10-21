@@ -284,7 +284,7 @@ fn empty_state(
 fn user_bubble(ui: &mut egui::Ui, text: &str, colors: &theme::Palette) {
     Frame::default()
         .fill(colors.input)
-        .corner_radius(6)
+        .corner_radius(3)
         .inner_margin(Margin::symmetric(12, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -361,7 +361,7 @@ fn tool_row(ui: &mut egui::Ui, item_id: &str, call: &ToolCall, colors: &theme::P
     let mut open = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
     let row = Frame::default()
         .fill(colors.panel)
-        .corner_radius(4)
+        .corner_radius(3)
         .inner_margin(Margin::symmetric(8, 4))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -432,7 +432,7 @@ fn plan_card(
     use lumen_agent_core::model::PlanStatus;
     Frame::default()
         .fill(colors.panel)
-        .corner_radius(4)
+        .corner_radius(3)
         .inner_margin(Margin::symmetric(10, 6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -464,7 +464,7 @@ fn notice_card(ui: &mut egui::Ui, text: &str, color: Color32) {
     Frame::default()
         .fill(color.gamma_multiply(0.12))
         .stroke(egui::Stroke::new(1.0_f32, color.gamma_multiply(0.6)))
-        .corner_radius(5)
+        .corner_radius(3)
         .inner_margin(Margin::symmetric(10, 6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -484,7 +484,7 @@ fn approval_card(
     Frame::default()
         .fill(colors.warning.gamma_multiply(0.10))
         .stroke(egui::Stroke::new(1.0_f32, colors.warning))
-        .corner_radius(6)
+        .corner_radius(3)
         .inner_margin(Margin::symmetric(12, 9))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -512,7 +512,7 @@ fn approval_card(
             if let Some(command) = &request.command {
                 Frame::default()
                     .fill(colors.bg)
-                    .corner_radius(4)
+                    .corner_radius(3)
                     .inner_margin(Margin::symmetric(8, 5))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -598,7 +598,7 @@ fn queue_list<'a>(
             .unwrap_or("(attachment)");
         Frame::default()
             .fill(colors.panel)
-            .corner_radius(4)
+            .corner_radius(3)
             .inner_margin(Margin::symmetric(8, 3))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -632,7 +632,7 @@ fn settings_strip(
     let colors = theme::palette(ui.visuals());
     Frame::default()
         .fill(colors.panel)
-        .corner_radius(6)
+        .corner_radius(3)
         .inner_margin(Margin::symmetric(8, 3))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -672,7 +672,7 @@ fn composer(
                 colors.border
             },
         ))
-        .corner_radius(8)
+        .corner_radius(3)
         .inner_margin(Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -692,26 +692,34 @@ fn composer(
             );
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("Enter to send · Shift+Enter for a new line")
-                        .size(10.0)
-                        .color(colors.muted),
+                    RichText::new(if busy {
+                        "Enter to queue · sends after the current turn · Shift+Enter for a new line"
+                    } else {
+                        "Enter to send · Shift+Enter for a new line"
+                    })
+                    .size(10.0)
+                    .color(colors.muted),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let send = egui::Button::new(
-                        RichText::new(format!("{}  Send", icon::SEND))
-                            .size(12.0)
-                            .color(if can_send {
-                                colors.on_accent
-                            } else {
-                                colors.muted
-                            }),
+                        RichText::new(format!(
+                            "{}  {}",
+                            icon::SEND,
+                            if busy { "Queue" } else { "Send" }
+                        ))
+                        .size(12.0)
+                        .color(if can_send {
+                            colors.on_accent
+                        } else {
+                            colors.muted
+                        }),
                     )
                     .fill(if can_send {
                         colors.accent
                     } else {
                         colors.panel
                     })
-                    .corner_radius(6);
+                    .corner_radius(3);
                     if ui
                         .add_enabled(can_send, send)
                         .on_hover_text(if busy {
@@ -731,7 +739,7 @@ fn composer(
                                         .size(12.0)
                                         .color(colors.error),
                                 )
-                                .corner_radius(6),
+                                .corner_radius(3),
                             )
                             .on_hover_text("Stop the current turn")
                             .clicked()

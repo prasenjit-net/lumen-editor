@@ -507,7 +507,8 @@ mod tests {
             assert!(has_text(&output, "Codex"), "agent label at {width}");
             assert!(has_text(&output, "Permission needed"), "{width}");
             assert!(has_text(&output, "Needs your answer"), "status at {width}");
-            assert!(has_text(&output, "Send"), "composer at {width}");
+            // The turn is waiting on a permission, so a new message queues.
+            assert!(has_text(&output, "Queue"), "composer at {width}");
             assert!(
                 has_text(&output, "Model"),
                 "settings above the composer at {width}"
