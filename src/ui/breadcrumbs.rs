@@ -5,6 +5,7 @@ use eframe::egui::{self, FontId, RichText};
 
 const FONT_SIZE: f32 = 11.0;
 const LEFT_INSET: f32 = 10.0;
+const PREVIEW_BUTTON: f32 = 20.0;
 
 impl Workbench<'_> {
     /// Directories reveal themselves in the Explorer; the file opens the symbol
@@ -13,6 +14,12 @@ impl Workbench<'_> {
     pub(super) fn breadcrumb_bar(&mut self, ui: &mut egui::Ui, index: usize) {
         let colors = crate::ui::theme::palette(ui.visuals());
         let file = &self.editor.files[index];
+        let preview = file.preview_kind().map(|_| file.id);
+        let reserved = if preview.is_some() {
+            PREVIEW_BUTTON + LEFT_INSET
+        } else {
+            0.0
+        };
         let crumbs = breadcrumbs::crumbs(
             self.editor.workspace.as_deref(),
             file.path.as_deref(),
@@ -38,7 +45,7 @@ impl Workbench<'_> {
             &widths,
             separator,
             ellipsis,
-            (ui.available_width() - 2.0 * LEFT_INSET).max(0.0),
+            (ui.available_width() - 2.0 * LEFT_INSET - reserved).max(0.0),
         );
         let symbols_reason = self.palette_disabled_reason(&Command::ShowDocumentSymbols);
         let mut command = None;
@@ -93,6 +100,26 @@ impl Workbench<'_> {
                         command = Some(Command::RevealInExplorer(path.clone()));
                     }
                 }
+            }
+            if let Some(document) = preview {
+                // Anchored to the right edge; the crumbs above were sized to leave room.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(LEFT_INSET - 4.0);
+                    let response = ui
+                        .add_sized(
+                            [PREVIEW_BUTTON, 18.0],
+                            egui::Button::new(
+                                RichText::new(icon::PREVIEW)
+                                    .size(FONT_SIZE + 1.0)
+                                    .color(colors.muted),
+                            )
+                            .frame(false),
+                        )
+                        .on_hover_text("Open Preview (Cmd/Ctrl+Shift+V)");
+                    if response.clicked() {
+                        command = Some(Command::OpenPreview(document));
+                    }
+                });
             }
         });
         if let Some(command) = command {

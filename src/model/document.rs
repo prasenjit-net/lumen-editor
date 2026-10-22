@@ -1,4 +1,4 @@
-use super::{DocumentId, image_asset::ImageLoad};
+use super::{DocumentId, image_asset::ImageLoad, previewable::PreviewKind};
 use lumen_editor_core::syntax::Language;
 use std::path::{Path, PathBuf};
 pub(crate) struct Document {
@@ -14,6 +14,9 @@ pub(crate) struct Document {
     pub(crate) editing: Option<lumen_editor_core::EditorBuffer>,
     /// Set for image tabs, which hold pixels instead of text and are never dirty.
     pub(crate) image: Option<ImageLoad>,
+    /// Set for preview tabs: the document whose rendered form this tab shows.
+    /// A preview owns no text, is never dirty and is never written to disk.
+    pub(crate) preview_of: Option<DocumentId>,
 }
 
 impl Document {
@@ -29,6 +32,31 @@ impl Document {
         self.image.is_some()
     }
 
+    /// A read-only preview tab for `source`.
+    pub(crate) fn preview_for(source: &Document) -> Self {
+        let mut document = Self::untitled(0);
+        document.language = Language::Plain;
+        document.preview_of = Some(source.id);
+        document.name = preview_title(&source.name);
+        document
+    }
+
+    pub(crate) fn is_preview(&self) -> bool {
+        self.preview_of.is_some()
+    }
+
+    /// How this document can be previewed, if at all. Preview tabs and images
+    /// are not themselves previewable.
+    pub(crate) fn preview_kind(&self) -> Option<PreviewKind> {
+        if self.is_preview() || self.is_image() {
+            return None;
+        }
+        match &self.path {
+            Some(path) => PreviewKind::of_path(path, self.language),
+            None => PreviewKind::of(self.language),
+        }
+    }
+
     pub(crate) fn from_path(path: PathBuf, text: String) -> Self {
         Self {
             id: DocumentId::allocate(),
@@ -42,6 +70,7 @@ impl Document {
             disk_changed: false,
             editing: None,
             image: None,
+            preview_of: None,
         }
     }
 
@@ -120,6 +149,7 @@ impl Document {
             saved_text: String::new(),
             editing: None,
             image: None,
+            preview_of: None,
         }
     }
 
@@ -143,6 +173,10 @@ impl Document {
             self.dirty = buffer.is_dirty();
         }
     }
+}
+
+pub(crate) fn preview_title(source_name: &str) -> String {
+    format!("Preview: {source_name}")
 }
 
 pub(crate) fn display_name(path: &Path) -> String {

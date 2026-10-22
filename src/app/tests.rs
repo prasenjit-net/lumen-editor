@@ -23,6 +23,7 @@ mod find;
 mod images;
 mod navigation;
 mod paste;
+mod preview;
 mod safety;
 mod shared;
 mod unpinned;

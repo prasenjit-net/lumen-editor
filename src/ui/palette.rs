@@ -227,6 +227,14 @@ impl Workbench<'_> {
         if matches!(command, CloseOtherTabs) && self.editor.files.len() < 2 {
             return Some("There are no other tabs");
         }
+        if matches!(command, OpenActivePreview)
+            && self
+                .editor
+                .active()
+                .is_none_or(|file| file.preview_kind().is_none())
+        {
+            return Some("The active file has no preview");
+        }
         if matches!(command, ReopenClosedTab) && self.view.closed_tabs.is_empty() {
             return Some("No recently closed tabs");
         }
@@ -421,6 +429,7 @@ fn command_shortcut(command: &Command) -> String {
         ShowWorkspaceSearch => "Shift+F",
         ShowDocumentSymbols => "Shift+O",
         ReopenClosedTab => "Shift+T",
+        OpenActivePreview => "Shift+V",
         SplitEditor => "\\",
         ToggleAgentPanel => "Shift+A",
         ToggleOutput => "Shift+U",
@@ -574,6 +583,10 @@ fn palette_commands() -> Vec<(String, Command)> {
         ("Tab: Next Tab".into(), Command::NextTab),
         ("Tab: Previous Tab".into(), Command::PreviousTab),
         ("Tab: Reopen Closed Tab".into(), Command::ReopenClosedTab),
+        (
+            format!("{}  Open Preview", icon::PREVIEW),
+            Command::OpenActivePreview,
+        ),
         (
             "View: Split Editor / Move Tab to Other Group".into(),
             Command::SplitEditor,
@@ -910,6 +923,27 @@ mod tests {
                 caret: 0,
             });
         assert_eq!(reason(&mut app, Command::ReopenClosedTab), None);
+    }
+
+    #[test]
+    fn open_preview_is_offered_only_for_previewable_active_files() {
+        let (mut app, ctx) = opened();
+        let reason = |app: &mut LumenApp| {
+            let mut found = None;
+            app.render_component(&ctx, |workbench| {
+                found = workbench.palette_disabled_reason(&Command::OpenActivePreview);
+            });
+            found
+        };
+        app.editor.new_file();
+        assert_eq!(reason(&mut app), Some("The active file has no preview"));
+        app.editor.files.push(crate::model::Document::from_path(
+            "/w/readme.md".into(),
+            "# Hi".into(),
+        ));
+        let last = app.editor.files.len() - 1;
+        app.editor.set_active_index(Some(last));
+        assert_eq!(reason(&mut app), None);
     }
 
     #[test]

@@ -25,6 +25,7 @@ mod language_services;
 pub(crate) mod native_agents;
 mod navigation;
 pub(crate) mod output;
+pub(crate) mod preview;
 pub(crate) mod repo_extras;
 mod safety;
 pub(crate) mod scroll_sync;
@@ -227,6 +228,7 @@ impl eframe::App for LumenApp {
         self.render_component(ctx, |workbench| workbench.safety_details_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.workspace_replace_preview(ctx));
         self.maintain_documents(ctx);
+        self.maintain_previews(ctx);
         self.poll_images(ctx);
         self.poll_workspace_search(ctx);
         self.poll_file_index(ctx);

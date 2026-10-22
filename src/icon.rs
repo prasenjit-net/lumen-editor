@@ -44,3 +44,4 @@ pub const DEBUG: &str = "\u{e026}";
 pub const BRACKETS_CURLY: &str = "\u{e027}";
 pub const MINUS: &str = "\u{e028}";
 pub const FIT_SCREEN: &str = "\u{e029}";
+pub const PREVIEW: &str = "\u{e02a}";

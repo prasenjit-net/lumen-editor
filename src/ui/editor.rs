@@ -157,6 +157,10 @@ impl Workbench<'_> {
             });
             return;
         };
+        if self.editor.files[index].is_preview() {
+            self.preview_page(ui, index);
+            return;
+        }
         self.breadcrumb_bar(ui, index);
         ui.add_space(2.0);
         if self.editor.files[index].is_image() {
