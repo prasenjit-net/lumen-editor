@@ -217,7 +217,7 @@ impl LumenApp {
             .editor
             .files
             .iter_mut()
-            .filter(|file| !file.is_image() && !file.is_preview())
+            .filter(|file| !file.is_image() && !file.is_view_tab())
         {
             let Some(path) = &file.path else {
                 continue;

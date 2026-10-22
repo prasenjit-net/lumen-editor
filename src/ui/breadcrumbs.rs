@@ -1,6 +1,10 @@
 //! Clickable path breadcrumbs above the editor text.
 use super::Workbench;
-use crate::{app::command::Command, icon, model::breadcrumbs};
+use crate::{
+    app::command::Command,
+    icon,
+    model::{breadcrumbs, previewable::AlternateView},
+};
 use eframe::egui::{self, FontId, RichText};
 
 const FONT_SIZE: f32 = 11.0;
@@ -19,7 +23,8 @@ impl Workbench<'_> {
         // Below the tab strip: where this pane's content begins.
         let content_top = ui.cursor().top();
         let file = &self.editor.files[index];
-        let preview = file.preview_kind().map(|_| file.id);
+        let views = file.alternate_views();
+        let document = file.id;
         let crumbs = breadcrumbs::crumbs(
             self.editor.workspace.as_deref(),
             file.path.as_deref(),
@@ -102,40 +107,50 @@ impl Workbench<'_> {
                 }
             }
         });
-        if let Some(document) = preview
-            && self.preview_button(ui, document, content_top)
-        {
-            command = Some(Command::OpenPreview(document));
+        for (slot, view) in views.into_iter().enumerate() {
+            if self.view_button(ui, document, view, slot, content_top) {
+                command = Some(match view {
+                    AlternateView::Preview(_) => Command::OpenPreview(document),
+                    AlternateView::Visual(_) => Command::OpenVisualEditor(document),
+                });
+            }
         }
         if let Some(command) = command {
             self.command(command);
         }
     }
 
-    /// Floating Preview button at the pane's top-right corner, sized like the
-    /// workbench panel toggles. Returns whether it was clicked.
-    fn preview_button(
+    /// Floating alternate-view button at the pane's top-right corner, sized like
+    /// the workbench panel toggles; further views stack to its left. Returns
+    /// whether it was clicked.
+    fn view_button(
         &self,
         ui: &egui::Ui,
         document: crate::model::DocumentId,
+        view: AlternateView,
+        slot: usize,
         content_top: f32,
     ) -> bool {
+        let (glyph, tooltip) = match view {
+            AlternateView::Preview(_) => (icon::PREVIEW, "Open Preview (Cmd/Ctrl+Shift+V)"),
+            AlternateView::Visual(_) => (icon::TABLE, "Open Visual Editor"),
+        };
         let colors = crate::ui::theme::palette(ui.visuals());
         let (toggle_width, toggle_height) = super::task_launcher::TOGGLE_SIZE;
         // Padding around the glyph so the bordered button reads as a control.
         let (width, height) = (toggle_width + 6.0, toggle_height + 4.0);
         let pane = ui.max_rect();
         let position = egui::pos2(
-            pane.right() - PREVIEW_MARGIN.x - width,
+            pane.right() - PREVIEW_MARGIN.x - width - slot as f32 * (width + 4.0),
             content_top + PREVIEW_MARGIN.y,
         );
-        egui::Area::new(egui::Id::new(("preview-button", document)))
+        egui::Area::new(egui::Id::new(("view-button", document, slot)))
             .order(egui::Order::Middle)
             .fixed_pos(position)
             .show(ui.ctx(), |ui| {
                 let response = ui.add(
                     egui::Button::new(
-                        RichText::new(icon::PREVIEW)
+                        RichText::new(glyph)
                             .size(PREVIEW_GLYPH_SIZE)
                             .color(colors.text),
                     )
@@ -144,9 +159,7 @@ impl Workbench<'_> {
                     .corner_radius(3)
                     .min_size(egui::vec2(width, height)),
                 );
-                response
-                    .on_hover_text("Open Preview (Cmd/Ctrl+Shift+V)")
-                    .clicked()
+                response.on_hover_text(tooltip).clicked()
             })
             .inner
     }
