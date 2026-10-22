@@ -8,7 +8,7 @@ const LEFT_INSET: f32 = 10.0;
 /// Gap between the floating Preview button and the pane edges; the right
 /// margin also clears the editor's vertical scrollbar.
 const PREVIEW_MARGIN: egui::Vec2 = egui::vec2(18.0, 8.0);
-const PREVIEW_GLYPH_SIZE: f32 = 14.0;
+const PREVIEW_GLYPH_SIZE: f32 = 15.0;
 
 impl Workbench<'_> {
     /// Directories reveal themselves in the Explorer; the file opens the symbol
@@ -121,7 +121,9 @@ impl Workbench<'_> {
         content_top: f32,
     ) -> bool {
         let colors = crate::ui::theme::palette(ui.visuals());
-        let (width, height) = super::task_launcher::TOGGLE_SIZE;
+        let (toggle_width, toggle_height) = super::task_launcher::TOGGLE_SIZE;
+        // Padding around the glyph so the bordered button reads as a control.
+        let (width, height) = (toggle_width + 6.0, toggle_height + 4.0);
         let pane = ui.max_rect();
         let position = egui::pos2(
             pane.right() - PREVIEW_MARGIN.x - width,
@@ -131,18 +133,20 @@ impl Workbench<'_> {
             .order(egui::Order::Middle)
             .fixed_pos(position)
             .show(ui.ctx(), |ui| {
-                ui.add(
+                let response = ui.add(
                     egui::Button::new(
                         RichText::new(icon::PREVIEW)
                             .size(PREVIEW_GLYPH_SIZE)
-                            .color(colors.muted),
+                            .color(colors.text),
                     )
-                    .fill(colors.panel)
+                    .fill(colors.input)
+                    .stroke(egui::Stroke::new(1.0_f32, colors.float_border))
                     .corner_radius(3)
                     .min_size(egui::vec2(width, height)),
-                )
-                .on_hover_text("Open Preview (Cmd/Ctrl+Shift+V)")
-                .clicked()
+                );
+                response
+                    .on_hover_text("Open Preview (Cmd/Ctrl+Shift+V)")
+                    .clicked()
             })
             .inner
     }
