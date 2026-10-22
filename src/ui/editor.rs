@@ -2,7 +2,7 @@ use super::Workbench;
 use super::widgets::{canvas, surface};
 use crate::app::command::Command;
 use crate::icon;
-use crate::model::display_name;
+use crate::model::{display_name, previewable::AlternateView};
 use eframe::egui::{self, RichText};
 impl Workbench<'_> {
     pub(crate) fn editor(&mut self, ctx: &egui::Context) {
@@ -157,8 +157,11 @@ impl Workbench<'_> {
             });
             return;
         };
-        if self.editor.files[index].is_preview() {
-            self.preview_page(ui, index);
+        if self.editor.files[index].is_view_tab() {
+            match self.editor.files[index].view_kind {
+                Some(AlternateView::Visual(_)) => self.csv_editor_page(ui, index),
+                _ => self.preview_page(ui, index),
+            }
             return;
         }
         self.breadcrumb_bar(ui, index);

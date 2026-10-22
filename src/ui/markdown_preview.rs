@@ -31,7 +31,7 @@ impl Workbench<'_> {
         let colors = theme::palette(ui.visuals());
         let preview = self.editor.files[index].id;
         let Some(source) = self.editor.files[index]
-            .preview_of
+            .view_of
             .and_then(|id| self.editor.index_of(id))
         else {
             ui.label(RichText::new("The previewed file was closed").color(colors.muted));

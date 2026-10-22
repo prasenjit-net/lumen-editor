@@ -6,6 +6,7 @@ use crate::{
         Document, DocumentId, EditorState,
         image_asset::DecodedImage,
         markdown::{self, Block, LinkTarget},
+        previewable::AlternateView,
         svg::SvgImage,
     },
     services::image_files,
@@ -128,31 +129,32 @@ impl SvgPreview {
     }
 }
 
-/// Open the preview of `source`, or focus the one that is already open.
-/// Returns whether `source` can be previewed at all.
-pub(crate) fn open_preview(
+/// Open the tab showing `source` as `kind`, or focus the one that is already
+/// open. Returns whether `source` offers that view at all.
+pub(crate) fn open_alternate_view(
     editor: &mut EditorState,
     view: &mut ViewState,
     source: DocumentId,
+    kind: AlternateView,
 ) -> bool {
     let Some(index) = editor.index_of(source) else {
         return false;
     };
-    if editor.files[index].preview_kind().is_none() {
-        view.status = "This file type has no preview".into();
+    if !editor.files[index].alternate_views().contains(&kind) {
+        view.status = AlternateView::unsupported_message().into();
         return false;
     }
     let existing = editor
         .files
         .iter()
-        .find(|file| file.preview_of == Some(source))
+        .find(|file| file.view_of == Some(source) && file.view_kind == Some(kind))
         .map(|file| file.id);
     let id = match existing {
         Some(id) => id,
         None => {
-            let preview = Document::preview_for(&editor.files[index]);
-            let id = preview.id;
-            editor.files.insert(index + 1, preview);
+            let tab = Document::view_for(&editor.files[index], kind);
+            let id = tab.id;
+            editor.files.insert(index + 1, tab);
             id
         }
     };
@@ -162,8 +164,30 @@ pub(crate) fn open_preview(
     }
     editor.activate(id);
     view.focus_editor = true;
-    view.status = "Opened preview".into();
+    view.status = kind.opened_message().into();
     true
+}
+
+/// Open the first alternate view of `source` that `wants` accepts.
+pub(crate) fn open_first_view(
+    editor: &mut EditorState,
+    view: &mut ViewState,
+    source: DocumentId,
+    wants: impl Fn(&AlternateView) -> bool,
+    missing: &str,
+) {
+    let kind = editor.index_of(source).and_then(|index| {
+        editor.files[index]
+            .alternate_views()
+            .into_iter()
+            .find(wants)
+    });
+    match kind {
+        Some(kind) => {
+            open_alternate_view(editor, view, source, kind);
+        }
+        None => view.status = missing.into(),
+    }
 }
 
 /// Where a relative link or image of the document at `source` points.
@@ -202,14 +226,16 @@ impl LumenApp {
             .files
             .iter()
             .filter(|file| {
-                file.preview_of
+                file.view_of
                     .is_some_and(|source| !titles.contains_key(&source))
             })
             .map(|file| file.id)
             .collect();
         for file in &mut self.editor.files {
-            if let Some(name) = file.preview_of.and_then(|source| titles.get(&source)) {
-                let title = crate::model::preview_title(name);
+            if let Some(name) = file.view_of.and_then(|source| titles.get(&source)) {
+                let title = file
+                    .view_kind
+                    .map_or_else(|| name.clone(), |kind| kind.tab_title(name));
                 if file.name != title {
                     file.name = title;
                 }
@@ -226,6 +252,9 @@ impl LumenApp {
             .preview
             .svg
             .retain(|id, _| titles.contains_key(id));
+        self.view
+            .visual
+            .retain_sources(|id| titles.contains_key(id));
         self.poll_preview_images(ctx);
     }
 
@@ -277,7 +306,7 @@ impl LumenApp {
             .files
             .iter()
             .find(|file| file.id == preview)
-            .and_then(|file| file.preview_of)
+            .and_then(|file| file.view_of)
             .and_then(|id| self.editor.index_of(id));
         match LinkTarget::classify(destination) {
             LinkTarget::Anchor(anchor) => {

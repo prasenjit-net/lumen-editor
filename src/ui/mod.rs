@@ -6,6 +6,7 @@ mod breadcrumbs;
 mod chat;
 mod chrome;
 mod completion;
+mod csv_editor;
 mod dialog;
 mod dialogs;
 mod editor;

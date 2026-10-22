@@ -29,6 +29,7 @@ mod shared;
 mod svg_preview;
 mod unpinned;
 mod viewport;
+mod visual_editor;
 mod workspace_search;
 
 #[derive(Default)]

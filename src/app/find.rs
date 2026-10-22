@@ -156,7 +156,7 @@ impl LumenApp {
             || self
                 .editor
                 .active()
-                .is_some_and(|file| file.is_image() || file.is_preview())
+                .is_some_and(|file| file.is_image() || file.is_view_tab())
         {
             return;
         }

@@ -39,7 +39,7 @@ fn svg_offers_a_preview_and_stays_a_text_document() {
     assert!(app.editor.files[0].preview_kind().is_some());
     app.execute(Command::OpenPreview(source), &ctx);
     assert_eq!(app.editor.files.len(), 2);
-    assert_eq!(app.editor.files[1].preview_of, Some(source));
+    assert_eq!(app.editor.files[1].view_of, Some(source));
     assert_eq!(app.editor.files[1].name, "Preview: logo.svg");
 
     app.editor.activate(source);
