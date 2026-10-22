@@ -5,7 +5,10 @@ use eframe::egui::{self, FontId, RichText};
 
 const FONT_SIZE: f32 = 11.0;
 const LEFT_INSET: f32 = 10.0;
-const PREVIEW_BUTTON: f32 = 20.0;
+/// Gap between the floating Preview button and the pane edges; the right
+/// margin also clears the editor's vertical scrollbar.
+const PREVIEW_MARGIN: egui::Vec2 = egui::vec2(18.0, 8.0);
+const PREVIEW_GLYPH_SIZE: f32 = 14.0;
 
 impl Workbench<'_> {
     /// Directories reveal themselves in the Explorer; the file opens the symbol
@@ -13,13 +16,10 @@ impl Workbench<'_> {
     /// into an ellipsis before the file name ever truncates.
     pub(super) fn breadcrumb_bar(&mut self, ui: &mut egui::Ui, index: usize) {
         let colors = crate::ui::theme::palette(ui.visuals());
+        // Below the tab strip: where this pane's content begins.
+        let content_top = ui.cursor().top();
         let file = &self.editor.files[index];
         let preview = file.preview_kind().map(|_| file.id);
-        let reserved = if preview.is_some() {
-            PREVIEW_BUTTON + LEFT_INSET
-        } else {
-            0.0
-        };
         let crumbs = breadcrumbs::crumbs(
             self.editor.workspace.as_deref(),
             file.path.as_deref(),
@@ -45,7 +45,7 @@ impl Workbench<'_> {
             &widths,
             separator,
             ellipsis,
-            (ui.available_width() - 2.0 * LEFT_INSET - reserved).max(0.0),
+            (ui.available_width() - 2.0 * LEFT_INSET).max(0.0),
         );
         let symbols_reason = self.palette_disabled_reason(&Command::ShowDocumentSymbols);
         let mut command = None;
@@ -101,30 +101,50 @@ impl Workbench<'_> {
                     }
                 }
             }
-            if let Some(document) = preview {
-                // Anchored to the right edge; the crumbs above were sized to leave room.
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_space(LEFT_INSET - 4.0);
-                    let response = ui
-                        .add_sized(
-                            [PREVIEW_BUTTON, 18.0],
-                            egui::Button::new(
-                                RichText::new(icon::PREVIEW)
-                                    .size(FONT_SIZE + 1.0)
-                                    .color(colors.muted),
-                            )
-                            .frame(false),
-                        )
-                        .on_hover_text("Open Preview (Cmd/Ctrl+Shift+V)");
-                    if response.clicked() {
-                        command = Some(Command::OpenPreview(document));
-                    }
-                });
-            }
         });
+        if let Some(document) = preview
+            && self.preview_button(ui, document, content_top)
+        {
+            command = Some(Command::OpenPreview(document));
+        }
         if let Some(command) = command {
             self.command(command);
         }
+    }
+
+    /// Floating Preview button at the pane's top-right corner, sized like the
+    /// workbench panel toggles. Returns whether it was clicked.
+    fn preview_button(
+        &self,
+        ui: &egui::Ui,
+        document: crate::model::DocumentId,
+        content_top: f32,
+    ) -> bool {
+        let colors = crate::ui::theme::palette(ui.visuals());
+        let (width, height) = super::task_launcher::TOGGLE_SIZE;
+        let pane = ui.max_rect();
+        let position = egui::pos2(
+            pane.right() - PREVIEW_MARGIN.x - width,
+            content_top + PREVIEW_MARGIN.y,
+        );
+        egui::Area::new(egui::Id::new(("preview-button", document)))
+            .order(egui::Order::Middle)
+            .fixed_pos(position)
+            .show(ui.ctx(), |ui| {
+                ui.add(
+                    egui::Button::new(
+                        RichText::new(icon::PREVIEW)
+                            .size(PREVIEW_GLYPH_SIZE)
+                            .color(colors.muted),
+                    )
+                    .fill(colors.panel)
+                    .corner_radius(3)
+                    .min_size(egui::vec2(width, height)),
+                )
+                .on_hover_text("Open Preview (Cmd/Ctrl+Shift+V)")
+                .clicked()
+            })
+            .inner
     }
 }
 
