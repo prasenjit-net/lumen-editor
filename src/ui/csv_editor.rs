@@ -19,6 +19,13 @@ const MIN_COLUMN_WIDTH: f32 = 36.0;
 const RESIZE_GRAB: f32 = 5.0;
 const CELL_PADDING: f32 = 6.0;
 const FONT_SIZE: f32 = 12.5;
+/// The grid and its cell editor keep Tab and the arrows instead of moving focus.
+const GRID_FOCUS_FILTER: egui::EventFilter = egui::EventFilter {
+    tab: true,
+    horizontal_arrows: true,
+    vertical_arrows: true,
+    escape: false,
+};
 
 /// Column left edges (relative to the content origin) for one frame.
 struct Layout {
@@ -440,6 +447,17 @@ impl Workbench<'_> {
                 if let Some(mut edit) = view.editing.take() {
                     let rect = cell_rect(edit.row, edit.column);
                     let editor_id = grid_id.with(("edit", edit.row, edit.column));
+                    // Like Excel: Tab commits and moves right, Shift+Tab left. Take
+                    // the key before the text widget can treat it as focus movement.
+                    let tab_step = ui.input_mut(|input| {
+                        if input.consume_key(Modifiers::SHIFT, Key::Tab) {
+                            Some(true)
+                        } else {
+                            input
+                                .consume_key(Modifiers::NONE, Key::Tab)
+                                .then_some(false)
+                        }
+                    });
                     let output = ui.put(
                         rect,
                         egui::TextEdit::singleline(&mut edit.text)
@@ -449,14 +467,16 @@ impl Workbench<'_> {
                             .margin(Vec2::new(CELL_PADDING, 3.0))
                             .desired_width(rect.width()),
                     );
+                    ui.memory_mut(|memory| {
+                        memory.set_focus_lock_filter(editor_id, GRID_FOCUS_FILTER)
+                    });
                     if edit.needs_focus {
                         output.request_focus();
                         edit.needs_focus = false;
                     }
-                    let (enter, tab, escape) = ui.input(|input| {
+                    let (enter, escape) = ui.input(|input| {
                         (
                             input.key_pressed(Key::Enter),
-                            input.key_pressed(Key::Tab),
                             input.key_pressed(Key::Escape),
                         )
                     });
@@ -469,13 +489,10 @@ impl Workbench<'_> {
                     );
                     if escape {
                         finished = Some((edit, Finish::Cancel));
-                    } else if output.lost_focus() && (enter || tab) {
-                        let step = if tab {
-                            Finish::Right(back)
-                        } else {
-                            Finish::Down(back)
-                        };
-                        finished = Some((edit, step));
+                    } else if let Some(back) = tab_step {
+                        finished = Some((edit, Finish::Right(back)));
+                    } else if output.lost_focus() && enter {
+                        finished = Some((edit, Finish::Down(back)));
                     } else if output.lost_focus() {
                         finished = Some((edit, Finish::Stay));
                     } else {
@@ -615,19 +632,7 @@ impl Workbench<'_> {
             });
         let response = output.inner;
         let focused = ui.memory(|memory| memory.has_focus(id));
-        if focused {
-            ui.memory_mut(|memory| {
-                memory.set_focus_lock_filter(
-                    id,
-                    egui::EventFilter {
-                        tab: true,
-                        horizontal_arrows: true,
-                        vertical_arrows: true,
-                        escape: false,
-                    },
-                );
-            });
-        }
+        ui.memory_mut(|memory| memory.set_focus_lock_filter(id, GRID_FOCUS_FILTER));
         let view = self.view.visual.table_mut(source);
         if focused && view.editing.is_none() {
             handle_keys(ui, source, view, table, text, malformed, commands);
@@ -743,11 +748,11 @@ fn handle_keys(
             step(view, row, column, false);
         }
     }
-    if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Tab)) {
-        step(view, 0, 1, false);
-    }
+    // Shift variants first: a shortcut without Shift also matches a Shift press.
     if ui.input_mut(|input| input.consume_key(Modifiers::SHIFT, Key::Tab)) {
         step(view, 0, -1, false);
+    } else if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Tab)) {
+        step(view, 0, 1, false);
     }
     if moved {
         view.reveal = true;
@@ -782,14 +787,13 @@ fn handle_keys(
         view.anchor = (first, 0);
         view.head = (last_row, last_column);
     }
-    if !malformed && ui.input_mut(|input| input.consume_key(command, Key::Z)) {
-        commands.push(Command::EditTable(source, TableEdit::Undo));
-    }
     if !malformed
         && (ui.input_mut(|input| input.consume_key(command | Modifiers::SHIFT, Key::Z))
             || ui.input_mut(|input| input.consume_key(command, Key::Y)))
     {
         commands.push(Command::EditTable(source, TableEdit::Redo));
+    } else if !malformed && ui.input_mut(|input| input.consume_key(command, Key::Z)) {
+        commands.push(Command::EditTable(source, TableEdit::Undo));
     }
     let events = ui.input(|input| input.events.clone());
     for event in events {

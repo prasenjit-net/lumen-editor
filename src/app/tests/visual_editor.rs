@@ -212,3 +212,37 @@ fn the_table_renders_at_narrow_default_and_wide_widths() {
     }
     assert_eq!(visual_tabs(&app), 1);
 }
+
+fn key(key: egui::Key, shift: bool) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers {
+            shift,
+            ..Default::default()
+        },
+    }
+}
+
+#[test]
+fn tab_and_shift_tab_move_one_cell_right_and_left_like_a_spreadsheet() {
+    let (mut app, ctx) = fixture();
+    let source = open_document(&mut app, "/w/data.csv", "a,b,c\n1,2,3\n4,5,6\n");
+    app.execute(Command::OpenVisualEditor(source), &ctx);
+    editor_frame_at_width(&mut app, &ctx, vec![], 900.0);
+    let grid = egui::Id::new(("csv-grid", source)).with("focus");
+    ctx.memory_mut(|memory| memory.request_focus(grid));
+    editor_frame_at_width(&mut app, &ctx, vec![], 900.0);
+    app.view.visual.table_mut(source).anchor = (1, 0);
+    app.view.visual.table_mut(source).head = (1, 0);
+    let head = |app: &mut LumenApp| app.view.visual.table_mut(source).head;
+    editor_frame_at_width(&mut app, &ctx, vec![key(egui::Key::Tab, false)], 900.0);
+    assert_eq!(head(&mut app), (1, 1));
+    editor_frame_at_width(&mut app, &ctx, vec![key(egui::Key::Tab, false)], 900.0);
+    editor_frame_at_width(&mut app, &ctx, vec![key(egui::Key::Tab, false)], 900.0);
+    assert_eq!(head(&mut app), (1, 2), "no wrap past the last column");
+    editor_frame_at_width(&mut app, &ctx, vec![key(egui::Key::Tab, true)], 900.0);
+    assert_eq!(head(&mut app), (1, 1));
+}
