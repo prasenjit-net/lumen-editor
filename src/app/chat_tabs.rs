@@ -2,6 +2,7 @@
 //! session. Closing a tab only hides the view; the session and its history stay in
 //! the session list. Tabs are addressed by `SessionId`, never by strip position.
 // Hosted in the first editor group for now, like Settings and task editors.
+use super::chat_attachments::{Attachment, AttachmentError, MAX_ATTACHMENTS};
 use lumen_agent_core::SessionId;
 use std::collections::HashMap;
 
@@ -11,6 +12,9 @@ pub(crate) struct ChatTabs {
     active: Option<SessionId>,
     /// Unsent composer text per session, kept while the tab is open or hidden.
     drafts: HashMap<SessionId, String>,
+    /// Files attached to the unsent message, per session. Paths and metadata
+    /// only: the bytes are read when the message is sent.
+    attachments: HashMap<SessionId, Vec<Attachment>>,
 }
 
 impl ChatTabs {
@@ -80,6 +84,43 @@ impl ChatTabs {
         self.drafts.remove(&id).unwrap_or_default()
     }
 
+    pub(crate) fn attachments(&self, id: SessionId) -> &[Attachment] {
+        self.attachments.get(&id).map_or(&[], Vec::as_slice)
+    }
+
+    /// Add an attachment; a file already attached is refused rather than doubled.
+    pub(crate) fn attach(
+        &mut self,
+        id: SessionId,
+        attachment: Attachment,
+    ) -> Result<(), AttachmentError> {
+        let list = self.attachments.entry(id).or_default();
+        if list.iter().any(|a| a.path == attachment.path) {
+            return Err(AttachmentError::Duplicate(attachment.name()));
+        }
+        if list.len() >= MAX_ATTACHMENTS {
+            return Err(AttachmentError::TooMany);
+        }
+        list.push(attachment);
+        Ok(())
+    }
+
+    pub(crate) fn detach(&mut self, id: SessionId, path: &std::path::Path) {
+        if let Some(list) = self.attachments.get_mut(&id) {
+            list.retain(|a| a.path != path);
+        }
+    }
+
+    pub(crate) fn take_attachments(&mut self, id: SessionId) -> Vec<Attachment> {
+        self.attachments.remove(&id).unwrap_or_default()
+    }
+
+    pub(crate) fn restore_attachments(&mut self, id: SessionId, list: Vec<Attachment>) {
+        if !list.is_empty() {
+            self.attachments.insert(id, list);
+        }
+    }
+
     pub(crate) fn restore_draft(&mut self, id: SessionId, text: String) {
         if !text.is_empty() {
             self.drafts.insert(id, text);
@@ -90,6 +131,35 @@ impl ChatTabs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn file(name: &str) -> Attachment {
+        Attachment::new(name.into(), None, 10)
+    }
+
+    #[test]
+    fn attachments_are_per_session_unique_and_bounded() {
+        let mut tabs = ChatTabs::default();
+        let id = SessionId(1);
+        assert!(tabs.attach(id, file("/w/a.rs")).is_ok());
+        assert_eq!(
+            tabs.attach(id, file("/w/a.rs")),
+            Err(AttachmentError::Duplicate("a.rs".into()))
+        );
+        assert!(tabs.attachments(SessionId(2)).is_empty());
+        for n in 1..MAX_ATTACHMENTS {
+            tabs.attach(id, file(&format!("/w/{n}.rs"))).unwrap();
+        }
+        assert_eq!(
+            tabs.attach(id, file("/w/extra.rs")),
+            Err(AttachmentError::TooMany)
+        );
+        tabs.detach(id, std::path::Path::new("/w/a.rs"));
+        assert_eq!(tabs.attachments(id).len(), MAX_ATTACHMENTS - 1);
+        let taken = tabs.take_attachments(id);
+        assert!(tabs.attachments(id).is_empty());
+        tabs.restore_attachments(id, taken);
+        assert_eq!(tabs.attachments(id).len(), MAX_ATTACHMENTS - 1);
+    }
 
     #[test]
     fn opening_twice_focuses_instead_of_duplicating() {

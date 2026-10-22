@@ -364,6 +364,12 @@ def _(g):
     g.seg((6.2, 3), (6.2, 13)); g.seg((9.8, 6.3), (9.8, 13))
 
 
+@icon("PAPERCLIP")
+def _(g):
+    pts = [(11, 5.5)] + g.arc((8, 10.5), 3, 0, 180) + g.arc((7, 4.5), 2, 180, 360) + [(9, 10)]
+    g.line(pts, 1.3)
+
+
 def build():
     names = list(icons)
     codes = {n: 0xE000 + i for i, n in enumerate(names)}

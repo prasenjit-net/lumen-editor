@@ -69,6 +69,8 @@ pub(crate) struct Live {
     /// An answer waiting for a slot before it is sent to the provider.
     held_reply: Option<HeldReply>,
     pub(crate) error: Option<String>,
+    /// What the provider reported when the session became ready.
+    pub(crate) capabilities: Option<Box<lumen_agent_core::Capabilities>>,
     /// Settings changes sent to the provider and not yet answered. A turn waits
     /// for them so it starts with the revision the user last saw.
     config_in_flight: usize,
@@ -105,6 +107,7 @@ impl Live {
             turn: None,
             held_reply: None,
             error: None,
+            capabilities: None,
             config_in_flight: 0,
             config_queue: VecDeque::new(),
             starting: false,
@@ -763,7 +766,9 @@ impl AgentHub {
             (
                 Pending::Prepare(session),
                 OperationOutcome::Succeeded(OperationOutput::SessionReady {
-                    native, config, ..
+                    native,
+                    config,
+                    capabilities,
                 }),
             ) => {
                 self.registry.set_native(session, native);
@@ -772,6 +777,7 @@ impl AgentHub {
                 if let Some(live) = self.live.get_mut(&session) {
                     live.ready = true;
                     live.preparing = false;
+                    live.capabilities = Some(capabilities.clone());
                     if live.model.config.is_none() {
                         live.model.config = Some(config.clone());
                     }

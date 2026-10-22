@@ -55,6 +55,19 @@ impl FileSystem for MemoryFileSystem {
             .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
     }
 
+    fn file_len(&self, path: &Path) -> io::Result<u64> {
+        self.read_bytes(path).map(|bytes| bytes.len() as u64)
+    }
+
+    fn read_bytes(&self, path: &Path) -> io::Result<Vec<u8>> {
+        let storage = self.0.borrow();
+        storage
+            .files
+            .get(path)
+            .map(|text| text.as_bytes().to_vec())
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
+    }
+
     fn write_text(&self, path: &Path, text: &str) -> io::Result<()> {
         let mut storage = self.0.borrow_mut();
         if storage.fail_writes {
@@ -179,6 +192,9 @@ impl FileDialogs for TestDialogs {
     }
     fn save_as(&self, _: &str) -> Option<PathBuf> {
         self.save_path.clone()
+    }
+    fn pick_attachments(&self) -> Vec<PathBuf> {
+        self.file.clone().into_iter().collect()
     }
 }
 

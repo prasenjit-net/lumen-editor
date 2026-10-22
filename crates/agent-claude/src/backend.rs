@@ -212,7 +212,7 @@ fn capabilities() -> Capabilities {
     caps.archive =
         Support::unsupported("Claude Code has no archive call; Lumen hides the session locally");
     caps.attachments_text = Support::Supported;
-    caps.attachments_image = Support::unsupported("not implemented for Claude Code yet");
+    caps.attachments_image = Support::Supported;
     caps.approvals = Support::Supported;
     caps.questions = Support::unsupported("questions from Claude Code are declined for now");
     caps.config_mutation = Support::Supported;

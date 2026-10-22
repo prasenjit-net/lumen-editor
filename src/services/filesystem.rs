@@ -5,6 +5,10 @@ use std::{
 };
 pub(crate) trait FileSystem {
     fn read_text(&self, path: &Path) -> io::Result<String>;
+    /// Size in bytes of a regular file.
+    fn file_len(&self, path: &Path) -> io::Result<u64>;
+    /// The whole file as bytes; callers check `file_len` first when it may be large.
+    fn read_bytes(&self, path: &Path) -> io::Result<Vec<u8>>;
     fn write_text(&self, path: &Path, text: &str) -> io::Result<()>;
     /// Refuse to replace a file whose contents changed since it was opened/saved.
     fn write_text_if_unchanged(&self, path: &Path, expected: &str, text: &str) -> io::Result<()> {
@@ -55,6 +59,17 @@ pub(crate) struct LocalFileSystem;
 impl FileSystem for LocalFileSystem {
     fn read_text(&self, path: &Path) -> io::Result<String> {
         fs::read_to_string(path)
+    }
+    fn file_len(&self, path: &Path) -> io::Result<u64> {
+        let meta = fs::metadata(path)?;
+        if meta.is_file() {
+            Ok(meta.len())
+        } else {
+            Err(io::Error::new(io::ErrorKind::InvalidInput, "not a file"))
+        }
+    }
+    fn read_bytes(&self, path: &Path) -> io::Result<Vec<u8>> {
+        fs::read(path)
     }
     fn write_text(&self, path: &Path, text: &str) -> io::Result<()> {
         atomic_replace(path, text, None)

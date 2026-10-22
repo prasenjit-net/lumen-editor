@@ -596,7 +596,7 @@ fn unsupported_input_fails_before_anything_is_launched() {
         client_turn: ClientTurnId("c".into()),
         input: vec![InputBlock::Image {
             media_type: "image/png".into(),
-            bytes: vec![1],
+            bytes: vec![],
         }],
         expected_revision: None,
     });
