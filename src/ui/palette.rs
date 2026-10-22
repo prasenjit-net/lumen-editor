@@ -235,6 +235,14 @@ impl Workbench<'_> {
         {
             return Some("The active file has no preview");
         }
+        if matches!(command, OpenActiveVisualEditor)
+            && self
+                .editor
+                .active()
+                .is_none_or(|file| file.visual_kind().is_none())
+        {
+            return Some("The active file has no visual editor");
+        }
         if matches!(command, ReopenClosedTab) && self.view.closed_tabs.is_empty() {
             return Some("No recently closed tabs");
         }
@@ -586,6 +594,10 @@ fn palette_commands() -> Vec<(String, Command)> {
         (
             format!("{}  Open Preview", icon::PREVIEW),
             Command::OpenActivePreview,
+        ),
+        (
+            format!("{}  Open Visual Editor", icon::TABLE),
+            Command::OpenActiveVisualEditor,
         ),
         (
             "View: Split Editor / Move Tab to Other Group".into(),

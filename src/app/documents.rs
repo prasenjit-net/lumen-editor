@@ -220,7 +220,7 @@ impl LumenApp {
         let Some(file) = self.editor.files.get_mut(index) else {
             return;
         };
-        if file.is_image() || file.is_preview() {
+        if file.is_image() || file.is_view_tab() {
             self.view.status = "Images and previews are read-only and cannot be saved".into();
             return;
         }
@@ -437,7 +437,7 @@ impl LumenApp {
         let Some(index) = self.editor.active_index() else {
             return;
         };
-        if self.editor.files[index].is_image() || self.editor.files[index].is_preview() {
+        if self.editor.files[index].is_image() || self.editor.files[index].is_view_tab() {
             self.view.status = "Images and previews are read-only and cannot be saved".into();
             return;
         }

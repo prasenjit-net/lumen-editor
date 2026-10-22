@@ -313,6 +313,10 @@ impl LumenApp {
             | Command::PinActiveTab
             | Command::OpenPreview(_)
             | Command::OpenActivePreview
+            | Command::OpenVisualEditor(_)
+            | Command::OpenActiveVisualEditor
+            | Command::EditTable(..)
+            | Command::ActivateDocument(_)
             | Command::ShowWorkspaceSearch => {
                 command.apply_local(&mut self.editor, &mut self.view);
             }

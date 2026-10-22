@@ -357,6 +357,13 @@ def _(g):
     g.circ((8, 8), 2.2)
 
 
+@icon("TABLE")
+def _(g):
+    g.line([(2.5, 3), (13.5, 3), (13.5, 13), (2.5, 13)], closed=True)
+    g.seg((2.5, 6.3), (13.5, 6.3)); g.seg((2.5, 9.7), (13.5, 9.7))
+    g.seg((6.2, 3), (6.2, 13)); g.seg((9.8, 6.3), (9.8, 13))
+
+
 def build():
     names = list(icons)
     codes = {n: 0xE000 + i for i, n in enumerate(names)}

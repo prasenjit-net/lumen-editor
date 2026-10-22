@@ -150,7 +150,7 @@ impl LumenApp {
         if self
             .editor
             .active()
-            .is_none_or(|file| file.is_image() || file.is_preview())
+            .is_none_or(|file| file.is_image() || file.is_view_tab())
             || self.view.settings.open
         {
             self.view.status = "Open an editor to go to a line".into();

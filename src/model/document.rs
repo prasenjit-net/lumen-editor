@@ -1,4 +1,8 @@
-use super::{DocumentId, image_asset::ImageLoad, previewable::PreviewKind};
+use super::{
+    DocumentId,
+    image_asset::ImageLoad,
+    previewable::{AlternateView, PreviewKind, VisualKind},
+};
 use lumen_editor_core::syntax::Language;
 use std::path::{Path, PathBuf};
 pub(crate) struct Document {
@@ -14,9 +18,11 @@ pub(crate) struct Document {
     pub(crate) editing: Option<lumen_editor_core::EditorBuffer>,
     /// Set for image tabs, which hold pixels instead of text and are never dirty.
     pub(crate) image: Option<ImageLoad>,
-    /// Set for preview tabs: the document whose rendered form this tab shows.
-    /// A preview owns no text, is never dirty and is never written to disk.
-    pub(crate) preview_of: Option<DocumentId>,
+    /// Set for alternate-view tabs (preview, visual editor): the document this
+    /// tab shows. Such a tab owns no text, is never dirty and is never written
+    /// to disk; edits made in it go to the source document's buffer.
+    pub(crate) view_of: Option<DocumentId>,
+    pub(crate) view_kind: Option<AlternateView>,
 }
 
 impl Document {
@@ -32,29 +38,47 @@ impl Document {
         self.image.is_some()
     }
 
-    /// A read-only preview tab for `source`.
-    pub(crate) fn preview_for(source: &Document) -> Self {
+    /// A tab showing `source` as `view`.
+    pub(crate) fn view_for(source: &Document, view: AlternateView) -> Self {
         let mut document = Self::untitled(0);
         document.language = Language::Plain;
-        document.preview_of = Some(source.id);
-        document.name = preview_title(&source.name);
+        document.view_of = Some(source.id);
+        document.view_kind = Some(view);
+        document.name = view.tab_title(&source.name);
         document
     }
 
-    pub(crate) fn is_preview(&self) -> bool {
-        self.preview_of.is_some()
+    pub(crate) fn is_view_tab(&self) -> bool {
+        self.view_of.is_some()
     }
 
     /// How this document can be previewed, if at all. Preview tabs and images
     /// are not themselves previewable.
     pub(crate) fn preview_kind(&self) -> Option<PreviewKind> {
-        if self.is_preview() || self.is_image() {
+        if self.is_view_tab() || self.is_image() {
             return None;
         }
         match &self.path {
             Some(path) => PreviewKind::of_path(path, self.language),
             None => PreviewKind::of(self.language),
         }
+    }
+
+    /// Table editor available for this document, if any.
+    pub(crate) fn visual_kind(&self) -> Option<VisualKind> {
+        if self.is_view_tab() || self.is_image() {
+            return None;
+        }
+        self.path.as_deref().and_then(VisualKind::of_path)
+    }
+
+    /// Alternate views to offer for this document, in button order.
+    pub(crate) fn alternate_views(&self) -> Vec<AlternateView> {
+        self.preview_kind()
+            .map(AlternateView::Preview)
+            .into_iter()
+            .chain(self.visual_kind().map(AlternateView::Visual))
+            .collect()
     }
 
     pub(crate) fn from_path(path: PathBuf, text: String) -> Self {
@@ -70,7 +94,8 @@ impl Document {
             disk_changed: false,
             editing: None,
             image: None,
-            preview_of: None,
+            view_of: None,
+            view_kind: None,
         }
     }
 
@@ -149,7 +174,8 @@ impl Document {
             saved_text: String::new(),
             editing: None,
             image: None,
-            preview_of: None,
+            view_of: None,
+            view_kind: None,
         }
     }
 
@@ -163,6 +189,41 @@ impl Document {
         }
     }
 
+    /// Apply sorted, non-overlapping `changes` to the shared buffer as one undo
+    /// step. This is the only way alternate views mutate their source.
+    pub(crate) fn apply_changes(
+        &mut self,
+        changes: &[(std::ops::Range<usize>, String)],
+    ) -> Result<bool, &'static str> {
+        use lumen_editor_core::Selection;
+        self.enable_shared_editing();
+        self.sync_shared_editing();
+        let buffer = self.editing.as_mut().expect("shared editing enabled");
+        let ranges = changes
+            .iter()
+            .map(|(range, _)| Selection {
+                anchor: range.start,
+                head: range.end,
+            })
+            .collect();
+        let fragments: Vec<&str> = changes.iter().map(|(_, text)| text.as_str()).collect();
+        let caret = buffer.selections().selections()[buffer.selections().primary_index()].head;
+        let changed = buffer
+            .replace_ranges(ranges, 0, &fragments)
+            .map_err(|_| "The table no longer matches the text; reopen the visual editor")?;
+        let caret = caret.min(buffer.text().len());
+        if buffer
+            .set_selections(vec![Selection::caret(caret)], 0)
+            .is_err()
+        {
+            buffer
+                .set_selections(vec![Selection::caret(0)], 0)
+                .map_err(|_| "Could not keep the text caret after the table edit")?;
+        }
+        self.sync_shared_editing();
+        Ok(changed)
+    }
+
     pub(crate) fn sync_shared_editing(&mut self) {
         if let Some(buffer) = &self.editing {
             if self.revision != buffer.revision() {
@@ -173,10 +234,6 @@ impl Document {
             self.dirty = buffer.is_dirty();
         }
     }
-}
-
-pub(crate) fn preview_title(source_name: &str) -> String {
-    format!("Preview: {source_name}")
 }
 
 pub(crate) fn display_name(path: &Path) -> String {

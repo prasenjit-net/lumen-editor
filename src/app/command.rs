@@ -2,7 +2,7 @@ use super::editor_action::EditorAction;
 use super::tab_commands::TabMove;
 use super::view_state::{Activity, ClosedTab, ExplorerEdit, MAX_CLOSED_TABS, ViewState};
 use super::workspace_search::ReplaceScope;
-use crate::model::{Document, DocumentId, EditorState};
+use crate::model::{Document, DocumentId, EditorState, previewable::AlternateView};
 use crate::services::source_control::DiffSide;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -287,6 +287,14 @@ pub(crate) enum Command {
     OpenPreview(DocumentId),
     /// `OpenPreview` for the active document.
     OpenActivePreview,
+    /// Open (or focus) the table editor of a CSV/TSV document.
+    OpenVisualEditor(DocumentId),
+    /// `OpenVisualEditor` for the active document.
+    OpenActiveVisualEditor,
+    /// Show a document's own tab (for example a table's text view).
+    ActivateDocument(DocumentId),
+    /// A table edit made in a visual editor, applied to its source document.
+    EditTable(DocumentId, super::visual_editor::TableEdit),
     /// A link clicked in the given preview tab.
     OpenPreviewLink(DocumentId, String),
     /// Reorder a document tab, by stable ID.
@@ -307,6 +315,26 @@ pub(crate) enum Command {
     SaveAndClose(DocumentId),
     SaveAllAndQuit,
     DiscardAndQuit,
+}
+
+fn open_preview_of(editor: &mut EditorState, view: &mut ViewState, source: DocumentId) {
+    super::preview::open_first_view(
+        editor,
+        view,
+        source,
+        |kind| matches!(kind, AlternateView::Preview(_)),
+        "This file type has no preview",
+    );
+}
+
+fn open_visual_editor_of(editor: &mut EditorState, view: &mut ViewState, source: DocumentId) {
+    super::preview::open_first_view(
+        editor,
+        view,
+        source,
+        |kind| matches!(kind, AlternateView::Visual(_)),
+        "This file type has no visual editor",
+    );
 }
 
 impl Command {
@@ -336,15 +364,24 @@ impl Command {
                 view.focus_editor = true;
                 view.status = "New untitled file".into();
             }
-            Self::OpenPreview(id) => {
-                super::preview::open_preview(editor, view, id);
-            }
+            Self::OpenPreview(id) => open_preview_of(editor, view, id),
             Self::OpenActivePreview => match editor.active_id() {
-                Some(id) => {
-                    super::preview::open_preview(editor, view, id);
-                }
+                Some(id) => open_preview_of(editor, view, id),
                 None => view.status = "Open a file to preview".into(),
             },
+            Self::OpenVisualEditor(id) => open_visual_editor_of(editor, view, id),
+            Self::OpenActiveVisualEditor => match editor.active_id() {
+                Some(id) => open_visual_editor_of(editor, view, id),
+                None => view.status = "Open a file to edit visually".into(),
+            },
+            Self::ActivateDocument(id) => {
+                view.leave_page_tabs();
+                editor.activate(id);
+                view.focus_editor = true;
+            }
+            Self::EditTable(id, ref edit) => {
+                super::visual_editor::apply_table_edit(editor, view, id, edit);
+            }
             Self::CollapseFolders => view.expanded_dirs.clear(),
             Self::RefreshExplorer => view.status = "Explorer refreshed".into(),
             Self::NewFile => {
@@ -438,6 +475,7 @@ impl Command {
             Self::PreviousTab => Some("previous_tab"),
             Self::ReopenClosedTab => Some("reopen_tab"),
             Self::OpenActivePreview => Some("preview"),
+            Self::OpenActiveVisualEditor => Some("visual_editor"),
             Self::Save => Some("save"),
             Self::SaveAs => Some("save_as"),
             Self::CloseEditor => Some("close"),
@@ -480,6 +518,7 @@ impl Command {
             "previous_tab" => Self::PreviousTab,
             "reopen_tab" => Self::ReopenClosedTab,
             "preview" => Self::OpenActivePreview,
+            "visual_editor" => Self::OpenActiveVisualEditor,
             "save" => Self::Save,
             "save_as" => Self::SaveAs,
             "close" => Self::CloseEditor,

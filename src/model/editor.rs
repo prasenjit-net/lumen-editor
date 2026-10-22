@@ -108,7 +108,7 @@ impl EditorState {
         let previews: Vec<DocumentId> = self
             .files
             .iter()
-            .filter(|file| file.preview_of == Some(id))
+            .filter(|file| file.view_of == Some(id))
             .map(|file| file.id)
             .collect();
         for preview in previews {

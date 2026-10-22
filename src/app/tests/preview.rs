@@ -26,7 +26,7 @@ fn previews(app: &LumenApp) -> Vec<&Document> {
     app.editor
         .files
         .iter()
-        .filter(|file| file.is_preview())
+        .filter(|file| file.is_view_tab())
         .collect()
 }
 
@@ -50,7 +50,7 @@ fn opening_a_preview_adds_one_clean_tab_after_the_source_and_refocuses_it() {
     open_document(&mut app, "/w/other.txt", "x");
     app.execute(Command::OpenPreview(source), &ctx);
     let preview = &app.editor.files[1];
-    assert_eq!(preview.preview_of, Some(source));
+    assert_eq!(preview.view_of, Some(source));
     assert_eq!(preview.name, "Preview: readme.md");
     assert!(!preview.dirty && preview.path.is_none());
     assert_eq!(app.editor.active_id(), Some(preview.id));

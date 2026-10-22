@@ -28,6 +28,7 @@ mod safety;
 mod shared;
 mod unpinned;
 mod viewport;
+mod visual_editor;
 mod workspace_search;
 
 #[derive(Default)]
