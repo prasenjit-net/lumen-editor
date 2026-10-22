@@ -127,6 +127,8 @@ impl NativeMenu {
             &plain_item(Command::NextTab, "Next Tab"),
             &plain_item(Command::PreviousTab, "Previous Tab"),
             &plain_item(Command::ReopenClosedTab, "Reopen Closed Tab"),
+            // Cmd/Ctrl+Shift+V is handled in the event loop, like the tab shortcuts.
+            &plain_item(Command::OpenActivePreview, "Open Preview"),
         ])?;
         let theme = Submenu::new("Color Theme", true);
         for choice in ThemeChoice::ALL {

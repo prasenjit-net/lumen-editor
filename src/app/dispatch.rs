@@ -311,6 +311,8 @@ impl LumenApp {
             | Command::ActivateActivity(_)
             | Command::PinTab(_)
             | Command::PinActiveTab
+            | Command::OpenPreview(_)
+            | Command::OpenActivePreview
             | Command::ShowWorkspaceSearch => {
                 command.apply_local(&mut self.editor, &mut self.view);
             }
@@ -387,6 +389,9 @@ impl LumenApp {
             Command::NextTab => self.cycle_tab(1),
             Command::PreviousTab => self.cycle_tab(-1),
             Command::ReopenClosedTab => self.reopen_closed_tab(),
+            Command::OpenPreviewLink(preview, destination) => {
+                self.open_preview_link(preview, &destination);
+            }
             Command::MoveTab(id, movement) => self.move_tab(id, movement),
             Command::MoveActiveTabLeft => self.move_active_tab(TabMove::Left),
             Command::MoveActiveTabRight => self.move_active_tab(TabMove::Right),

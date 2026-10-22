@@ -220,8 +220,8 @@ impl LumenApp {
         let Some(file) = self.editor.files.get_mut(index) else {
             return;
         };
-        if file.is_image() {
-            self.view.status = "Images are read-only and cannot be saved".into();
+        if file.is_image() || file.is_preview() {
+            self.view.status = "Images and previews are read-only and cannot be saved".into();
             return;
         }
         let same_path = file.path.as_deref() == Some(path.as_path());
@@ -428,6 +428,7 @@ impl LumenApp {
         if let Some(path) = self.editor.files[index].path.clone() {
             self.save_file_at(index, path);
         } else {
+            // Untitled buffers and previews: Save As refuses previews itself.
             self.save_as_active();
         }
     }
@@ -436,8 +437,8 @@ impl LumenApp {
         let Some(index) = self.editor.active_index() else {
             return;
         };
-        if self.editor.files[index].is_image() {
-            self.view.status = "Images are read-only and cannot be saved".into();
+        if self.editor.files[index].is_image() || self.editor.files[index].is_preview() {
+            self.view.status = "Images and previews are read-only and cannot be saved".into();
             return;
         }
         if let Some(path) = self.dialogs.save_as(&self.editor.files[index].name) {

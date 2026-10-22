@@ -349,6 +349,14 @@ def _(g):
         g.line([(sx, sy + 3.5 * ey), (sx, sy), (sx + 3.5 * ex, sy)], 1.4)
 
 
+@icon("PREVIEW")
+def _(g):
+    top = g.arc((8, 14.5), 11, 237, 303, 12)
+    bottom = [(x, 16 - y) for x, y in top]
+    g.line(top + bottom[::-1], 1.2, closed=True)
+    g.circ((8, 8), 2.2)
+
+
 def build():
     names = list(icons)
     codes = {n: 0xE000 + i for i, n in enumerate(names)}

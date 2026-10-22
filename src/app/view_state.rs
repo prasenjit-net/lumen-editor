@@ -453,6 +453,7 @@ pub(crate) struct ViewState {
     pub(crate) pending_goto: Option<(crate::model::DocumentId, usize)>,
     pub(crate) pending_problem_selection:
         Option<(crate::model::DocumentId, std::ops::Range<usize>)>,
+    pub(crate) preview: super::preview::PreviewState,
     pub(crate) image_views:
         std::collections::HashMap<crate::model::DocumentId, super::images::ImageViewState>,
     pub(crate) fold_tabs:
@@ -625,6 +626,7 @@ impl Default for ViewState {
             navigation: NavigationView::default(),
             pending_goto: None,
             pending_problem_selection: None,
+            preview: Default::default(),
             image_views: Default::default(),
             fold_tabs: Default::default(),
             workspace_search: WorkspaceSearchView::default(),

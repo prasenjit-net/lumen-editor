@@ -254,6 +254,11 @@ impl LumenApp {
                 egui::Key::T,
             )) {
                 Some(Command::ReopenClosedTab)
+            } else if input.consume_shortcut(&shortcut(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::V,
+            )) {
+                Some(Command::OpenActivePreview)
             } else if cfg!(target_os = "macos")
                 && input.consume_shortcut(&shortcut(
                     egui::Modifiers::COMMAND | egui::Modifiers::ALT,

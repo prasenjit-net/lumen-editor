@@ -5,6 +5,10 @@ use eframe::egui::{self, FontId, RichText};
 
 const FONT_SIZE: f32 = 11.0;
 const LEFT_INSET: f32 = 10.0;
+/// Gap between the floating Preview button and the pane edges; the right
+/// margin also clears the editor's vertical scrollbar.
+const PREVIEW_MARGIN: egui::Vec2 = egui::vec2(18.0, 8.0);
+const PREVIEW_GLYPH_SIZE: f32 = 15.0;
 
 impl Workbench<'_> {
     /// Directories reveal themselves in the Explorer; the file opens the symbol
@@ -12,7 +16,10 @@ impl Workbench<'_> {
     /// into an ellipsis before the file name ever truncates.
     pub(super) fn breadcrumb_bar(&mut self, ui: &mut egui::Ui, index: usize) {
         let colors = crate::ui::theme::palette(ui.visuals());
+        // Below the tab strip: where this pane's content begins.
+        let content_top = ui.cursor().top();
         let file = &self.editor.files[index];
+        let preview = file.preview_kind().map(|_| file.id);
         let crumbs = breadcrumbs::crumbs(
             self.editor.workspace.as_deref(),
             file.path.as_deref(),
@@ -95,9 +102,53 @@ impl Workbench<'_> {
                 }
             }
         });
+        if let Some(document) = preview
+            && self.preview_button(ui, document, content_top)
+        {
+            command = Some(Command::OpenPreview(document));
+        }
         if let Some(command) = command {
             self.command(command);
         }
+    }
+
+    /// Floating Preview button at the pane's top-right corner, sized like the
+    /// workbench panel toggles. Returns whether it was clicked.
+    fn preview_button(
+        &self,
+        ui: &egui::Ui,
+        document: crate::model::DocumentId,
+        content_top: f32,
+    ) -> bool {
+        let colors = crate::ui::theme::palette(ui.visuals());
+        let (toggle_width, toggle_height) = super::task_launcher::TOGGLE_SIZE;
+        // Padding around the glyph so the bordered button reads as a control.
+        let (width, height) = (toggle_width + 6.0, toggle_height + 4.0);
+        let pane = ui.max_rect();
+        let position = egui::pos2(
+            pane.right() - PREVIEW_MARGIN.x - width,
+            content_top + PREVIEW_MARGIN.y,
+        );
+        egui::Area::new(egui::Id::new(("preview-button", document)))
+            .order(egui::Order::Middle)
+            .fixed_pos(position)
+            .show(ui.ctx(), |ui| {
+                let response = ui.add(
+                    egui::Button::new(
+                        RichText::new(icon::PREVIEW)
+                            .size(PREVIEW_GLYPH_SIZE)
+                            .color(colors.text),
+                    )
+                    .fill(colors.input)
+                    .stroke(egui::Stroke::new(1.0_f32, colors.float_border))
+                    .corner_radius(3)
+                    .min_size(egui::vec2(width, height)),
+                );
+                response
+                    .on_hover_text("Open Preview (Cmd/Ctrl+Shift+V)")
+                    .clicked()
+            })
+            .inner
     }
 }
 

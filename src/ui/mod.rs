@@ -23,6 +23,7 @@ mod git_history_tab;
 mod image_viewer;
 mod language_edit;
 mod language_navigation;
+mod markdown_preview;
 mod match_highlight;
 mod navigation;
 mod output;

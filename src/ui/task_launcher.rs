@@ -12,7 +12,7 @@ const EDGE_MARGIN: f32 = 6.0;
 /// provide the visual gap, so adding more would double it.
 const TOGGLE_SPACING: f32 = 0.0;
 /// Width and height of a toggle's hit and hover area.
-const TOGGLE_SIZE: (f32, f32) = (26.0, 22.0);
+pub(super) const TOGGLE_SIZE: (f32, f32) = (26.0, 22.0);
 
 /// Gap between the launcher and the panel toggles.
 const TOGGLE_GAP: f32 = 16.0;

@@ -283,6 +283,12 @@ pub(crate) enum Command {
     NextTab,
     PreviousTab,
     ReopenClosedTab,
+    /// Open (or focus) the preview tab of a previewable document.
+    OpenPreview(DocumentId),
+    /// `OpenPreview` for the active document.
+    OpenActivePreview,
+    /// A link clicked in the given preview tab.
+    OpenPreviewLink(DocumentId, String),
     /// Reorder a document tab, by stable ID.
     MoveTab(DocumentId, TabMove),
     MoveActiveTabLeft,
@@ -330,6 +336,15 @@ impl Command {
                 view.focus_editor = true;
                 view.status = "New untitled file".into();
             }
+            Self::OpenPreview(id) => {
+                super::preview::open_preview(editor, view, id);
+            }
+            Self::OpenActivePreview => match editor.active_id() {
+                Some(id) => {
+                    super::preview::open_preview(editor, view, id);
+                }
+                None => view.status = "Open a file to preview".into(),
+            },
             Self::CollapseFolders => view.expanded_dirs.clear(),
             Self::RefreshExplorer => view.status = "Explorer refreshed".into(),
             Self::NewFile => {
@@ -422,6 +437,7 @@ impl Command {
             Self::NextTab => Some("next_tab"),
             Self::PreviousTab => Some("previous_tab"),
             Self::ReopenClosedTab => Some("reopen_tab"),
+            Self::OpenActivePreview => Some("preview"),
             Self::Save => Some("save"),
             Self::SaveAs => Some("save_as"),
             Self::CloseEditor => Some("close"),
@@ -463,6 +479,7 @@ impl Command {
             "next_tab" => Self::NextTab,
             "previous_tab" => Self::PreviousTab,
             "reopen_tab" => Self::ReopenClosedTab,
+            "preview" => Self::OpenActivePreview,
             "save" => Self::Save,
             "save_as" => Self::SaveAs,
             "close" => Self::CloseEditor,

@@ -104,6 +104,16 @@ impl EditorState {
             .filter(|chosen| self.index_of(*chosen).is_some())
             .or_else(|| self.fallback_active(focused))
             .and_then(|chosen| self.index_of(chosen));
+        // A preview cannot outlive the document it shows.
+        let previews: Vec<DocumentId> = self
+            .files
+            .iter()
+            .filter(|file| file.preview_of == Some(id))
+            .map(|file| file.id)
+            .collect();
+        for preview in previews {
+            self.close_document(preview);
+        }
     }
     /// Move a document so it lands at `to`, an index into `files` as it is
     /// *before* the move. Content, dirty flags and the active document are
