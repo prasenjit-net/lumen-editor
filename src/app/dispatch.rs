@@ -31,6 +31,8 @@ impl LumenApp {
             Command::CloseChat(id) => self.view.chats.close(id),
             Command::ChatSend(id) => self.chat_send(id),
             Command::ChatStop(id) => self.chat_stop(id),
+            Command::ChatAttach(id) => self.chat_attach(id),
+            Command::ChatDetach(id, path) => self.chat_detach(id, &path),
             Command::ChatCancelQueued(id, ticket) => self.chat_cancel_queued(id, ticket),
             Command::ChatApproval(id, token, decision) => self.chat_approval(id, token, decision),
             Command::ChatSetConfig(id, option, value) => self.chat_set_config(id, option, value),

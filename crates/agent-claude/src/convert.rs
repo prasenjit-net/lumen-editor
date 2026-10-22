@@ -335,14 +335,38 @@ pub fn input_blocks(blocks: &[InputBlock]) -> Result<Vec<Value>, AgentError> {
                 out.push(json!({"type": "text", "text": format!(
                     "{kind} from the editor: {origin}{rev}. This is context only and may be unsaved.\n```\n{text}\n```")}));
             }
-            InputBlock::Image { .. } => {
-                return Err(AgentError::Unsupported {
-                    reason: "image attachments are not supported for Claude Code yet".into(),
-                });
+            InputBlock::Image { media_type, bytes } => {
+                if bytes.is_empty() {
+                    return Err(AgentError::Unsupported {
+                        reason: "an image attachment is empty".into(),
+                    });
+                }
+                out.push(json!({"type": "image", "source": {
+                    "type": "base64", "media_type": media_type, "data": base64(bytes)}}));
             }
         }
     }
     Ok(out)
+}
+
+/// Standard padded base64 (the only encoding the image source accepts).
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |acc, (i, b)| acc | (u32::from(*b) << (16 - 8 * i)));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 /// `claude auth status` JSON, reduced to a label that is safe to show (no e-mail).
@@ -507,7 +531,16 @@ mod tests {
     }
 
     #[test]
-    fn input_blocks_become_content_and_images_fail_before_sending() {
+    fn base64_matches_the_standard_vectors() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foob"), "Zm9vYg==");
+    }
+
+    #[test]
+    fn input_blocks_become_content_and_empty_images_fail_before_sending() {
         let blocks = input_blocks(&[
             InputBlock::Text("hi".into()),
             InputBlock::FileReference {
@@ -527,6 +560,16 @@ mod tests {
             snap.contains("File from the editor: a.rs.")
                 && snap.contains("may be unsaved")
                 && snap.contains("fn x() {}")
+        );
+        let image = input_blocks(&[InputBlock::Image {
+            media_type: "image/png".into(),
+            bytes: b"foo".to_vec(),
+        }])
+        .unwrap();
+        assert_eq!(
+            image[0],
+            json!({"type": "image", "source": {
+                "type": "base64", "media_type": "image/png", "data": "Zm9v"}})
         );
         assert!(matches!(
             input_blocks(&[InputBlock::Image {

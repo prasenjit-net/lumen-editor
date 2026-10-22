@@ -4,6 +4,7 @@ use super::{Workbench, agent_message, theme};
 use crate::{
     app::{
         agent_hub::{QueuedPrompt, SessionStatus},
+        chat_attachments::Attachment,
         command::Command,
     },
     icon,
@@ -130,8 +131,9 @@ impl Workbench<'_> {
                             status,
                             SessionStatus::Working | SessionStatus::NeedsAttention
                         );
+                        let attachments = self.view.chats.attachments(id).to_vec();
                         let draft = self.view.chats.draft_mut(id);
-                        composer(ui, id, draft, busy, &mut commands);
+                        composer(ui, id, draft, &attachments, busy, &mut commands);
                     });
                 });
             });
@@ -697,6 +699,7 @@ fn composer(
     ui: &mut egui::Ui,
     id: SessionId,
     draft: &mut String,
+    attachments: &[Attachment],
     busy: bool,
     commands: &mut Vec<Command>,
 ) {
@@ -710,7 +713,7 @@ fn composer(
     });
     let send_now =
         focused && !composing && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
-    let can_send = !draft.trim().is_empty();
+    let can_send = !draft.trim().is_empty() || !attachments.is_empty();
     Frame::default()
         .fill(colors.input)
         .stroke(egui::Stroke::new(
@@ -725,6 +728,7 @@ fn composer(
         .inner_margin(Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            attachment_chips(ui, id, attachments, &colors, commands);
             ui.add(
                 egui::TextEdit::multiline(draft)
                     .id(editor_id)
@@ -790,6 +794,15 @@ fn composer(
                     }
                     // The hint takes whatever the buttons leave and gives way first.
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let attach = egui::Button::new(
+                            RichText::new(icon::PAPERCLIP)
+                                .size(13.0)
+                                .color(colors.muted),
+                        )
+                        .frame(false);
+                        if ui.add(attach).on_hover_text("Attach files").clicked() {
+                            commands.push(Command::ChatAttach(id));
+                        }
                         ui.add(
                             egui::Label::new(
                                 RichText::new(if busy {
@@ -808,6 +821,78 @@ fn composer(
         });
     if send_now {
         commands.push(Command::ChatSend(id));
+    }
+}
+
+/// One removable chip per attached file, above the message box.
+fn attachment_chips(
+    ui: &mut egui::Ui,
+    id: SessionId,
+    attachments: &[Attachment],
+    colors: &theme::Palette,
+    commands: &mut Vec<Command>,
+) {
+    if attachments.is_empty() {
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        for attachment in attachments {
+            Frame::default()
+                .fill(colors.panel)
+                .corner_radius(3)
+                .inner_margin(Margin::symmetric(6, 2))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let name = attachment.name();
+                        let kind = if attachment.image_type.is_some() {
+                            "image"
+                        } else {
+                            "file"
+                        };
+                        ui.label(RichText::new(icon::FILE).size(12.0).color(colors.muted));
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&name)
+                                    .size(theme::META_SIZE)
+                                    .color(colors.text),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(format!(
+                            "{} ({kind}, {})",
+                            attachment.path.display(),
+                            human_size(attachment.size)
+                        ));
+                        ui.label(
+                            RichText::new(human_size(attachment.size))
+                                .size(10.0)
+                                .color(colors.muted),
+                        );
+                        let remove = ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new(icon::X).size(10.0).color(colors.muted),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text(format!("Remove {name}"));
+                        if remove.clicked() {
+                            commands.push(Command::ChatDetach(id, attachment.path.clone()));
+                        }
+                    });
+                });
+        }
+    });
+    ui.add_space(4.0);
+}
+
+fn human_size(bytes: u64) -> String {
+    match bytes {
+        0..1024 => format!("{bytes} B"),
+        1024..1_048_576 => format!("{:.0} KB", bytes as f64 / 1024.0),
+        _ => format!("{:.1} MB", bytes as f64 / 1_048_576.0),
     }
 }
 

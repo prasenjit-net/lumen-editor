@@ -1,7 +1,7 @@
 //! Workbench glue for the native agents: commands from the session list and chat
 //! tabs become hub calls, and the hub is polled once per frame. File access, process
 //! launching and persistence stay behind the hub and services.
-use super::LumenApp;
+use super::{LumenApp, chat_attachments};
 use crate::model::agent_scheduler::Ticket;
 use eframe::egui;
 use lumen_agent_core::{
@@ -235,17 +235,34 @@ impl LumenApp {
 
     pub(super) fn chat_send(&mut self, id: SessionId) {
         let text = self.view.chats.take_draft(id);
-        if text.trim().is_empty() {
+        let attachments = self.view.chats.take_attachments(id);
+        if text.trim().is_empty() && attachments.is_empty() {
             self.view.chats.restore_draft(id, text);
             return;
         }
         let Some(hub) = self.view.native_agents.as_mut() else {
             self.view.chats.restore_draft(id, text);
+            self.view.chats.restore_attachments(id, attachments);
             return;
         };
-        if let Err(error) = hub.send(id, vec![InputBlock::Text(text.clone())]) {
-            // Nothing was sent: keep what the user typed.
+        let mut input = Vec::new();
+        if !text.trim().is_empty() {
+            input.push(InputBlock::Text(text.clone()));
+        }
+        match chat_attachments::blocks(&*self.file_system, &attachments) {
+            Ok(blocks) => input.extend(blocks),
+            Err(error) => {
+                // A moved or oversized file stops the send; the draft and chips stay.
+                self.view.chats.restore_draft(id, text);
+                self.view.chats.restore_attachments(id, attachments);
+                self.view.status = error.to_string();
+                return;
+            }
+        }
+        if let Err(error) = hub.send(id, input) {
+            // Nothing was sent: keep what the user typed and attached.
             self.view.chats.restore_draft(id, text);
+            self.view.chats.restore_attachments(id, attachments);
             self.view.status = format!("Could not send the message: {error:?}");
         }
     }
@@ -436,6 +453,130 @@ mod tests {
         let hub = app.view.native_agents.as_ref().unwrap();
         assert_eq!(hub.status(id), crate::app::agent_hub::SessionStatus::Idle);
         assert!(hub.registry_dirty);
+    }
+
+    struct Picks(Vec<std::path::PathBuf>);
+    impl crate::services::FileDialogs for Picks {
+        fn open_file(&self) -> Option<std::path::PathBuf> {
+            None
+        }
+        fn open_folder(&self) -> Option<std::path::PathBuf> {
+            None
+        }
+        fn save_as(&self, _: &str) -> Option<std::path::PathBuf> {
+            None
+        }
+        fn pick_attachments(&self) -> Vec<std::path::PathBuf> {
+            self.0.clone()
+        }
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("lumen-attach-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn user_messages(app: &LumenApp, id: SessionId) -> Vec<String> {
+        app.view
+            .native_agents
+            .as_ref()
+            .unwrap()
+            .live(id)
+            .unwrap()
+            .model
+            .items
+            .iter()
+            .filter_map(|i| match &i.kind {
+                lumen_agent_core::model::ItemKind::User(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn attached_files_and_images_are_sent_with_the_message_and_clear_afterwards() {
+        let dir = scratch("send");
+        let note = dir.join("note.rs");
+        let shot = dir.join("shot.dat");
+        std::fs::write(&note, "fn n() {}").unwrap();
+        std::fs::write(&shot, b"\x89PNG\r\n\x1a\nrest").unwrap();
+        let (mut app, ctx) = fixture();
+        app.dialogs = Box::new(Picks(vec![note.clone(), shot.clone()]));
+        app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
+        let id = app.view.chats.active().unwrap();
+        settle(&mut app, &ctx);
+        app.execute(Command::ChatAttach(id), &ctx);
+        let kinds: Vec<_> = app
+            .view
+            .chats
+            .attachments(id)
+            .iter()
+            .map(|a| a.image_type)
+            .collect();
+        assert_eq!(
+            kinds,
+            [None, Some("image/png")],
+            "type comes from the bytes"
+        );
+        frame(&mut app, &ctx, 1000.0);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "note.rs"), "chips show the file name");
+        assert!(has_text(&output, "shot.dat"));
+
+        // Attachments alone are enough to send.
+        app.execute(Command::ChatSend(id), &ctx);
+        assert!(
+            app.view.chats.attachments(id).is_empty(),
+            "chips clear on send"
+        );
+        settle(&mut app, &ctx);
+        let shown = user_messages(&app, id).join("\n");
+        assert!(shown.contains(&format!("@{}", note.display())) && shown.contains("image/png"));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_cancelled_picker_and_refused_files_attach_nothing() {
+        let dir = scratch("refuse");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
+        let id = app.view.chats.active().unwrap();
+        app.dialogs = Box::new(Picks(Vec::new()));
+        app.execute(Command::ChatAttach(id), &ctx);
+        assert!(app.view.chats.attachments(id).is_empty());
+
+        app.attach_paths(id, vec![dir.clone(), dir.join("missing.txt")]);
+        assert!(app.view.chats.attachments(id).is_empty());
+        assert!(app.view.status.contains("Could not read") || app.view.status.contains("folder"));
+
+        app.attach_paths(id, vec![file.clone(), file.clone()]);
+        assert_eq!(app.view.chats.attachments(id).len(), 1, "no duplicates");
+        assert!(app.view.status.contains("already attached"));
+        app.execute(Command::ChatDetach(id, file), &ctx);
+        assert!(app.view.chats.attachments(id).is_empty());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_file_gone_before_sending_keeps_the_draft_and_chips() {
+        let dir = scratch("gone");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
+        let id = app.view.chats.active().unwrap();
+        app.attach_paths(id, vec![file.clone()]);
+        app.view.chats.draft_mut(id).push_str("look at this");
+        std::fs::remove_file(&file).unwrap();
+        app.execute(Command::ChatSend(id), &ctx);
+        assert_eq!(app.view.chats.draft(id), "look at this");
+        assert_eq!(app.view.chats.attachments(id).len(), 1);
+        assert!(app.view.status.contains("gone"));
+        assert!(user_messages(&app, id).is_empty(), "nothing was sent");
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

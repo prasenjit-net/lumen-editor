@@ -20,6 +20,9 @@ pub(crate) enum Command {
     /// Send the session's composer text.
     ChatSend(lumen_agent_core::SessionId),
     ChatStop(lumen_agent_core::SessionId),
+    /// Pick files to attach to the session's unsent message.
+    ChatAttach(lumen_agent_core::SessionId),
+    ChatDetach(lumen_agent_core::SessionId, std::path::PathBuf),
     ChatCancelQueued(
         lumen_agent_core::SessionId,
         crate::model::agent_scheduler::Ticket,

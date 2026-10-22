@@ -1,6 +1,7 @@
 //! Application orchestration: shared commands, workflows and frame ordering.
 pub(crate) mod agent_hub;
 pub(crate) mod capture;
+pub(crate) mod chat_attachments;
 pub(crate) mod chat_tabs;
 mod cli_open;
 mod clipboard;
