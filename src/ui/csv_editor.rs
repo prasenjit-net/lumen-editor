@@ -266,7 +266,7 @@ impl Workbench<'_> {
         }
         let layout = Layout::new(view, columns, rows, digit_width);
         let grid_id = egui::Id::new(("csv-grid", source));
-        let mut reveal = false;
+        let mut reveal = std::mem::take(&mut view.reveal);
         let id = grid_id.with("focus");
 
         let output = egui::ScrollArea::both()
@@ -744,31 +744,13 @@ fn handle_keys(
         }
     }
     if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Tab)) {
-        let next = if view.head.1 < last_column {
-            (view.head.0, view.head.1 + 1)
-        } else if view.head.0 < last_row {
-            (view.head.0 + 1, 0)
-        } else {
-            view.head
-        };
-        view.head = next;
-        view.anchor = next;
-        moved = true;
+        step(view, 0, 1, false);
     }
     if ui.input_mut(|input| input.consume_key(Modifiers::SHIFT, Key::Tab)) {
-        let previous = if view.head.1 > 0 {
-            (view.head.0, view.head.1 - 1)
-        } else if view.head.0 > first {
-            (view.head.0 - 1, last_column)
-        } else {
-            view.head
-        };
-        view.head = previous;
-        view.anchor = previous;
-        moved = true;
+        step(view, 0, -1, false);
     }
     if moved {
-        // Scrolling to the new cell happens on the next paint.
+        view.reveal = true;
         ui.ctx().request_repaint();
         view.head = (view.head.0.max(first), view.head.1);
     }

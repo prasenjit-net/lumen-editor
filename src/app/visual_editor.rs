@@ -85,6 +85,8 @@ pub(crate) struct TableView {
     pub(crate) anchor: (usize, usize),
     pub(crate) head: (usize, usize),
     pub(crate) editing: Option<CellEdit>,
+    /// Scroll the active cell into view on the next paint.
+    pub(crate) reveal: bool,
     pub(crate) widths: Vec<f32>,
     parsed: Option<Parsed>,
 }
@@ -98,6 +100,7 @@ impl Default for TableView {
             anchor: (0, 0),
             head: (0, 0),
             editing: None,
+            reveal: false,
             widths: Vec::new(),
             parsed: None,
         }
