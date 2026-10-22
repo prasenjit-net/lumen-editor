@@ -8,7 +8,10 @@ use crate::{
         preview::{PreviewImage, PreviewState, resolve_relative},
     },
     icon,
-    model::markdown::{Block, ColumnAlign, Inline, LinkTarget, ListItem},
+    model::{
+        markdown::{Block, ColumnAlign, Inline, LinkTarget, ListItem},
+        previewable::PreviewKind,
+    },
 };
 use eframe::egui::{
     self, Align, Color32, FontId, Frame, Layout, Margin, RichText, ScrollArea, Sense, Stroke,
@@ -36,6 +39,10 @@ impl Workbench<'_> {
         };
         // The source may not have rendered this frame; bring its text up to date.
         self.editor.files[source].sync_shared_editing();
+        if self.editor.files[source].preview_kind() == Some(PreviewKind::Svg) {
+            self.svg_preview_page(ui, preview, source);
+            return;
+        }
         let blocks = self.view.preview.blocks(&self.editor.files[source]);
         let source_path = self.editor.files[source].path.clone();
         let mut anchor = match self.view.preview.anchor_request.take() {

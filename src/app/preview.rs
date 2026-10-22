@@ -1,12 +1,13 @@
 //! Preview tabs: a read-only rendered view of another document, kept live from
 //! the source buffer and tracked by the source's stable document ID.
-use super::{LumenApp, view_state::ViewState};
+use super::{LumenApp, images::ImageViewState, view_state::ViewState};
 use crate::{
     model::{
         Document, DocumentId, EditorState,
         image_asset::DecodedImage,
         markdown::{self, Block, LinkTarget},
         previewable::AlternateView,
+        svg::SvgImage,
     },
     services::image_files,
 };
@@ -31,11 +32,31 @@ pub(crate) enum PreviewImage {
     Failed,
 }
 
+/// One SVG preview tab: the source parsed for a revision, the latest raster of
+/// it, and the viewer's zoom and pan.
+pub(crate) struct SvgPreview {
+    revision: u64,
+    parsed: Result<SvgImage, String>,
+    /// Raster scale and pixels; redone when the zoom needs a sharper bitmap.
+    raster: Option<(f32, Arc<DecodedImage>)>,
+    pub(crate) view: ImageViewState,
+}
+
+/// Scale to rasterize an SVG at for `wanted` device pixels per SVG pixel:
+/// rounded up to half-octave steps so smooth zooming does not re-render on
+/// every frame, while the bitmap is never coarser than the display needs.
+pub(crate) fn raster_scale(wanted: f32) -> f32 {
+    let wanted = if wanted.is_finite() { wanted } else { 1.0 };
+    2f32.powf((wanted.clamp(0.01, 1.0e4).log2() * 2.0).ceil() / 2.0)
+}
+
 /// Preview state that is not part of any document.
 #[derive(Default)]
 pub(crate) struct PreviewState {
     /// Parsed Markdown per source document, valid for the recorded revision.
     parsed: HashMap<DocumentId, (u64, Arc<Vec<Block>>)>,
+    /// SVG previews by preview-tab ID.
+    svg: HashMap<DocumentId, SvgPreview>,
     pub(crate) images: HashMap<PathBuf, PreviewImage>,
     /// Image paths the last frame asked for, so loading starts on demand.
     wanted: Vec<PathBuf>,
@@ -58,12 +79,53 @@ impl PreviewState {
         blocks
     }
 
+    /// The SVG preview of `source` shown in tab `preview`, reparsed only when
+    /// the source revision changed.
+    pub(crate) fn svg(&mut self, preview: DocumentId, source: &Document) -> &mut SvgPreview {
+        let entry = self.svg.entry(preview).or_insert_with(|| SvgPreview {
+            revision: source.revision,
+            parsed: SvgImage::parse(&source.text),
+            raster: None,
+            view: ImageViewState::default(),
+        });
+        if entry.revision != source.revision {
+            entry.revision = source.revision;
+            entry.parsed = SvgImage::parse(&source.text);
+            entry.raster = None;
+        }
+        entry
+    }
+
     /// Ask for a local image; returns its current state.
     pub(crate) fn image(&mut self, path: &Path) -> Option<&mut PreviewImage> {
         if !self.images.contains_key(path) && !self.wanted.iter().any(|wanted| wanted == path) {
             self.wanted.push(path.to_path_buf());
         }
         self.images.get_mut(path)
+    }
+}
+
+impl SvgPreview {
+    /// Intrinsic size when the SVG parsed, or why it did not.
+    pub(crate) fn size(&self) -> Result<(u32, u32), &str> {
+        self.parsed
+            .as_ref()
+            .map(SvgImage::size)
+            .map_err(String::as_str)
+    }
+
+    /// The SVG rasterized sharply enough for `wanted` device pixels per SVG
+    /// pixel, reusing the previous bitmap while it is still adequate.
+    pub(crate) fn raster(&mut self, wanted: f32) -> Result<Arc<DecodedImage>, String> {
+        let scale = raster_scale(wanted);
+        if let Some((held, image)) = &self.raster
+            && *held == scale
+        {
+            return Ok(Arc::clone(image));
+        }
+        let image = Arc::new(self.parsed.as_ref().map_err(Clone::clone)?.render(scale)?);
+        self.raster = Some((scale, Arc::clone(&image)));
+        Ok(image)
     }
 }
 
@@ -185,6 +247,10 @@ impl LumenApp {
         self.view
             .preview
             .parsed
+            .retain(|id, _| titles.contains_key(id));
+        self.view
+            .preview
+            .svg
             .retain(|id, _| titles.contains_key(id));
         self.view
             .visual

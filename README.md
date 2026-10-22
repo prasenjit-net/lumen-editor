@@ -197,6 +197,8 @@ Scans skip symlinks, `.git`, `target`, binary/non-UTF-8 files, and files larger 
 
 Syntax highlighting works independently of language servers. Recognized languages include Rust, Go, C/C++, Python, JavaScript/TypeScript, shell, JSON, TOML, YAML, Markdown, HTML, CSS, CMake, SQL, and INI. Special filenames include `CMakeLists.txt`, Makefiles, `Dockerfile`/`Containerfile`, ignore files, `.editorconfig`, `.env` variants, `Cargo.lock`, and extensionless `README`/`CHANGELOG`.
 
+`.svg` files open in the text editor and offer the **Preview** button (or **Open Preview**, Shift+V in the palette). The read-only preview re-renders from the buffer, including unsaved edits, shows an inline error while the markup is invalid, and reuses the image viewer's zoom, fit and pan, re-rasterizing at the current zoom so it stays sharp. Text is not rendered (no fonts are loaded), and scripts, embedded raster images and external file or remote references are ignored. AVIF is not yet supported in image tabs.
+
 Optional language-server support currently targets **Rust (`rust-analyzer`)** and **Go (`gopls`)**. Install the appropriate server separately and make it discoverable on `PATH`, or set its absolute executable path in User Settings. Project configuration cannot choose language-server executables.
 
 Depending on server capabilities, Lumen exposes diagnostics and Problems, hover, Go to Definition, references, completion, signature help, document symbols, semantic highlighting, formatting, and symbol rename. Language edits have review/application workflows; availability depends on the active language and server response. Check the status bar and Output when startup or requests fail.

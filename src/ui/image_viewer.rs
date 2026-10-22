@@ -12,7 +12,7 @@ use crate::{
 use eframe::egui::{self, Color32, RichText};
 use std::sync::Arc;
 
-const TOOLBAR_HEIGHT: f32 = 26.0;
+pub(super) const TOOLBAR_HEIGHT: f32 = 26.0;
 const BUTTON_SIZE: f32 = 22.0;
 const CHECKER_TILE: f32 = 8.0;
 /// Part of the image that must stay inside the viewport while panning.

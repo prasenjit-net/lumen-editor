@@ -37,6 +37,7 @@ pub(crate) mod shortcut;
 mod source_control;
 mod source_control_menu;
 mod source_control_rows;
+mod svg_preview;
 mod tab_drag;
 mod task_dialogs;
 mod task_editor;
