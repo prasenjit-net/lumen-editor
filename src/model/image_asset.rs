@@ -15,6 +15,8 @@ pub(crate) enum ImageKind {
     Bmp,
     Ico,
     Tiff,
+    /// Rasterized from SVG text; never opened from a file as an image tab.
+    Svg,
 }
 
 impl ImageKind {
@@ -27,6 +29,7 @@ impl ImageKind {
             Self::Bmp => "BMP",
             Self::Ico => "ICO",
             Self::Tiff => "TIFF",
+            Self::Svg => "SVG",
         }
     }
 
@@ -63,8 +66,8 @@ impl ImageKind {
         })
     }
 
-    fn format(self) -> image::ImageFormat {
-        match self {
+    fn format(self) -> Option<image::ImageFormat> {
+        Some(match self {
             Self::Png => image::ImageFormat::Png,
             Self::Jpeg => image::ImageFormat::Jpeg,
             Self::Gif => image::ImageFormat::Gif,
@@ -72,7 +75,8 @@ impl ImageKind {
             Self::Bmp => image::ImageFormat::Bmp,
             Self::Ico => image::ImageFormat::Ico,
             Self::Tiff => image::ImageFormat::Tiff,
-        }
+            Self::Svg => return None,
+        })
     }
 }
 
@@ -101,7 +105,8 @@ pub(crate) struct DecodedImage {
 /// extension. Never panics on corrupt data.
 pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedImage, String> {
     let kind = ImageKind::from_magic(bytes).ok_or("Not a recognised image file")?;
-    let mut decoder = ImageReader::with_format(Cursor::new(bytes), kind.format())
+    let format = kind.format().ok_or("Not a recognised image file")?;
+    let mut decoder = ImageReader::with_format(Cursor::new(bytes), format)
         .into_decoder()
         .map_err(|error| error.to_string())?;
     let orientation = decoder.orientation().ok();

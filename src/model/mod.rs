@@ -14,6 +14,7 @@ pub(crate) mod output_log;
 pub(crate) mod previewable;
 pub(crate) mod search;
 pub(crate) mod status_info;
+pub(crate) mod svg;
 pub(crate) mod task_output;
 pub(crate) use document::{Document, display_name, preview_title};
 pub(crate) use document_id::DocumentId;

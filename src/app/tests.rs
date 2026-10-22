@@ -26,6 +26,7 @@ mod paste;
 mod preview;
 mod safety;
 mod shared;
+mod svg_preview;
 mod unpinned;
 mod viewport;
 mod workspace_search;
