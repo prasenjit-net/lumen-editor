@@ -1,4 +1,4 @@
-//! Markdown-lite rendering of agent replies in chat tabs.
+//! Markdown-lite rendering of agent replies in the agent panel's chats.
 use super::theme;
 use crate::{
     icon,

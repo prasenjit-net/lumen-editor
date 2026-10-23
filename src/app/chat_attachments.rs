@@ -202,7 +202,7 @@ impl LumenApp {
         for path in paths {
             let result = classify(&*self.file_system, &path)
                 .and_then(|a| check_support(&a, &files, &images).map(|()| a))
-                .and_then(|a| self.view.chats.attach(id, a));
+                .and_then(|a| self.view.agent_panel.attach(id, a));
             if let Err(error) = result {
                 refusal.get_or_insert(error.to_string());
             }
@@ -213,7 +213,7 @@ impl LumenApp {
     }
 
     pub(super) fn chat_detach(&mut self, id: SessionId, path: &Path) {
-        self.view.chats.detach(id, path);
+        self.view.agent_panel.detach(id, path);
     }
 }
 

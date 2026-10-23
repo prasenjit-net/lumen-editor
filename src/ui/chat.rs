@@ -1,5 +1,6 @@
-//! Agent chat tab: header, transcript, approvals, queue and composer for one
-//! session. Reads the hub through `ViewState` and only issues typed commands.
+//! Agent chat: transcript, approvals, queue and composer for one session,
+//! hosted in the agent panel. Reads the hub through `ViewState` and only
+//! issues typed commands.
 use super::{Workbench, agent_message, theme};
 use crate::{
     app::{
@@ -17,8 +18,6 @@ use lumen_agent_core::{
 };
 
 const TEXT_SIZE: f32 = 12.5;
-/// Widest the conversation grows; wider windows centre it for readable lines.
-const MAX_CONTENT_WIDTH: f32 = 860.0;
 
 /// The subtle identity colour of a provider's sessions.
 pub(super) fn provider_color(
@@ -50,39 +49,9 @@ pub(super) fn status_text(status: &SessionStatus) -> String {
 }
 
 impl Workbench<'_> {
-    pub(super) fn chat_title(&self, id: SessionId) -> String {
-        self.view
-            .native_agents
-            .as_ref()
-            .and_then(|hub| hub.registry.get(id))
-            .map_or_else(|| "Chat".into(), |record| record.title.clone())
-    }
-
-    pub(super) fn chat_needs_attention(&self, id: SessionId) -> bool {
-        self.view
-            .native_agents
-            .as_ref()
-            .is_some_and(|hub| hub.status(id) == SessionStatus::NeedsAttention)
-    }
-
-    pub(super) fn chat_tooltip(&self, id: SessionId) -> String {
-        let Some(hub) = self.view.native_agents.as_ref() else {
-            return String::new();
-        };
-        hub.registry.get(id).map_or_else(String::new, |record| {
-            format!(
-                "{} · {}\n{}",
-                record.provider.label(),
-                status_text(&hub.status(id)),
-                record.workspace.display()
-            )
-        })
-    }
-
-    /// The editor area's content while a chat tab is the visible page: a slim
-    /// header, the conversation, then (pinned to the bottom) the settings strip,
-    /// any queued messages and the composer.
-    pub(super) fn chat_page(&mut self, ui: &mut egui::Ui, id: SessionId) {
+    /// The agent panel's chat: the conversation, then (pinned to the bottom) any
+    /// queued messages and the composer. Model and effort live in the controls row.
+    pub(super) fn chat_body(&mut self, ui: &mut egui::Ui, id: SessionId) {
         let colors = theme::palette(ui.visuals());
         let Some(hub) = self.view.native_agents.as_ref() else {
             ui.label("Native agents are not enabled.");
@@ -92,21 +61,15 @@ impl Workbench<'_> {
             ui.label("This session no longer exists.");
             return;
         };
-        let (provider, title, folder) = (
-            record.provider,
-            record.title.clone(),
-            record.workspace.clone(),
-        );
+        let provider = record.provider;
         let status = hub.status(id);
         let mut commands: Vec<Command> = Vec::new();
         let accent = provider_color(&colors, provider);
 
-        chat_header(ui, provider, &title, &folder, &status, &colors, accent);
-
-        let width = ui.available_width().min(MAX_CONTENT_WIDTH);
-        let side = ((ui.available_width() - width) / 2.0).max(0.0);
-        // Never wider than the group: a floor larger than the pane pushed the composer off-screen.
+        let width = ui.available_width();
+        // Never wider than the panel: a floor larger than the pane pushed the composer off-screen.
         let column = (width - 2.0 * GUTTER).max(80.0).min(width.max(0.0));
+        let focus_composer = self.view.agent_panel.take_composer_focus();
 
         // Bottom block first so the transcript takes whatever is left.
         egui::TopBottomPanel::bottom(egui::Id::new(("chat_composer", id.0)))
@@ -114,7 +77,6 @@ impl Workbench<'_> {
             .show_separator_line(false)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.add_space(side);
                     ui.vertical(|ui| {
                         ui.set_width(column);
                         let hub = self.view.native_agents.as_ref().expect("checked above");
@@ -123,17 +85,22 @@ impl Workbench<'_> {
                                 notice_card(ui, error, colors.error);
                             }
                             queue_list(ui, id, live.prompts.iter().skip(1), &mut commands);
-                            if let Some(config) = live.model.config.as_ref() {
-                                settings_strip(ui, id, config, &mut commands);
-                            }
                         }
                         let busy = matches!(
                             status,
                             SessionStatus::Working | SessionStatus::NeedsAttention
                         );
-                        let attachments = self.view.chats.attachments(id).to_vec();
-                        let draft = self.view.chats.draft_mut(id);
-                        composer(ui, id, draft, &attachments, busy, &mut commands);
+                        let attachments = self.view.agent_panel.attachments(id).to_vec();
+                        let draft = self.view.agent_panel.draft_mut(id);
+                        composer(
+                            ui,
+                            id,
+                            draft,
+                            &attachments,
+                            busy,
+                            focus_composer,
+                            &mut commands,
+                        );
                     });
                 });
             });
@@ -146,7 +113,7 @@ impl Workbench<'_> {
             .show(ui, |ui| {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    ui.add_space(side + GUTTER);
+                    ui.add_space(GUTTER);
                     ui.vertical(|ui| {
                         ui.set_width(column);
                         ui.spacing_mut().item_spacing.y = 10.0;
@@ -196,87 +163,8 @@ impl Workbench<'_> {
     }
 }
 
-/// Space between the window edge and the conversation column.
-const GUTTER: f32 = 16.0;
-
-fn chat_header(
-    ui: &mut egui::Ui,
-    provider: lumen_agent_core::ProviderId,
-    title: &str,
-    folder: &std::path::Path,
-    status: &SessionStatus,
-    colors: &theme::Palette,
-    accent: Color32,
-) {
-    Frame::default()
-        .fill(colors.panel)
-        .inner_margin(Margin::symmetric(GUTTER as i8, 7))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            // Status is placed first at the right edge; the provider and title share
-            // what is left and the title is the part that gives way.
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), 20.0),
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    status_chip(ui, status, colors);
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        provider_pill(ui, provider.label(), accent);
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(title).size(13.0).strong().color(colors.text),
-                            )
-                            .truncate(),
-                        );
-                    });
-                },
-            );
-            ui.add(
-                egui::Label::new(
-                    RichText::new(folder.display().to_string())
-                        .size(10.5)
-                        .color(colors.muted),
-                )
-                .truncate(),
-            );
-        });
-}
-
-/// Small rounded label tinted with the provider colour.
-fn provider_pill(ui: &mut egui::Ui, label: &str, accent: Color32) {
-    ui.label(
-        RichText::new(label.to_uppercase())
-            .size(10.5)
-            .strong()
-            .color(accent),
-    );
-}
-
-fn status_chip(ui: &mut egui::Ui, status: &SessionStatus, colors: &theme::Palette) {
-    let color = match status {
-        SessionStatus::Failed(_) => colors.error,
-        SessionStatus::NeedsAttention => colors.warning,
-        SessionStatus::Working => colors.accent,
-        SessionStatus::Waiting(_) => colors.warning,
-        SessionStatus::Idle => colors.muted,
-    };
-    let text = match status {
-        SessionStatus::Failed(_) => "Failed".to_string(),
-        other => status_text(other),
-    };
-    let response = ui.add(
-        egui::Label::new(
-            RichText::new(text)
-                .size(crate::ui::theme::META_SIZE)
-                .color(color),
-        )
-        .truncate(),
-    );
-    if let SessionStatus::Failed(message) = status {
-        response.on_hover_text(message);
-    }
-    ui.label(RichText::new("●").size(9.0).color(color));
-}
+/// Space between the panel edge and the conversation column.
+const GUTTER: f32 = 8.0;
 
 fn empty_state(
     ui: &mut egui::Ui,
@@ -673,24 +561,6 @@ fn queue_list<'a>(
     }
 }
 
-/// Settings above the chat box, as one quiet rounded strip.
-fn settings_strip(
-    ui: &mut egui::Ui,
-    id: SessionId,
-    config: &lumen_agent_core::api::SessionConfig,
-    commands: &mut Vec<Command>,
-) {
-    let colors = theme::palette(ui.visuals());
-    Frame::default()
-        .fill(colors.panel)
-        .corner_radius(3)
-        .inner_margin(Margin::symmetric(8, 3))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            config_row(ui, id, config, commands);
-        });
-}
-
 /// The message box: the biggest control on the page. Enter sends and Shift+Enter
 /// adds a line (consumed before the text box sees it, only while it has focus
 /// and no IME composition is in progress). Send turns into Stop while the agent
@@ -701,10 +571,14 @@ fn composer(
     draft: &mut String,
     attachments: &[Attachment],
     busy: bool,
+    focus: bool,
     commands: &mut Vec<Command>,
 ) {
     let colors = theme::palette(ui.visuals());
     let editor_id = egui::Id::new(("chat_draft", id.0));
+    if focus {
+        ui.memory_mut(|m| m.request_focus(editor_id));
+    }
     let focused = ui.ctx().memory(|m| m.has_focus(editor_id));
     let composing = ui.ctx().input(|i| {
         i.events
@@ -894,103 +768,4 @@ fn human_size(bytes: u64) -> String {
         1024..1_048_576 => format!("{:.0} KB", bytes as f64 / 1024.0),
         _ => format!("{:.1} MB", bytes as f64 / 1_048_576.0),
     }
-}
-
-/// The session's settings as compact controls: selects as drop-downs, toggles as
-/// checkboxes. Generic over the option schema, so nothing here knows a provider.
-/// A setting that cannot change says why; a staged value that differs from what
-/// the provider reported shows both.
-fn config_row(
-    ui: &mut egui::Ui,
-    id: SessionId,
-    config: &lumen_agent_core::api::SessionConfig,
-    commands: &mut Vec<Command>,
-) {
-    use lumen_agent_core::api::ConfigKind;
-    let colors = theme::palette(ui.visuals());
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        for option in &config.options {
-            let enabled = option.disabled.is_none();
-            let hover = match &option.disabled {
-                Some(reason) => format!("{}\nUnavailable: {reason}", option.description),
-                None => option.description.clone(),
-            };
-            match option.kind {
-                ConfigKind::Toggle => {
-                    let mut on = option.is_on();
-                    let response = ui
-                        .add_enabled(enabled, egui::Checkbox::new(&mut on, &option.label))
-                        .on_hover_text(hover)
-                        .on_disabled_hover_text(format!(
-                            "{}\nUnavailable: {}",
-                            option.description,
-                            option.disabled.as_deref().unwrap_or_default()
-                        ));
-                    if response.changed() {
-                        commands.push(Command::ChatSetConfig(
-                            id,
-                            option.id.clone(),
-                            on.to_string(),
-                        ));
-                    }
-                }
-                ConfigKind::Select => {
-                    ui.label(RichText::new(&option.label).size(10.5).color(colors.muted));
-                    let current = option
-                        .choices
-                        .iter()
-                        .find(|c| c.value == option.current)
-                        .map_or(option.current.as_str(), |c| c.label.as_str());
-                    ui.add_enabled_ui(enabled, |ui| {
-                        egui::ComboBox::from_id_salt(("chat_option", id.0, &option.id))
-                            .selected_text(RichText::new(current).size(crate::ui::theme::META_SIZE))
-                            .show_ui(ui, |ui| {
-                                for choice in &option.choices {
-                                    let selected = choice.value == option.current;
-                                    let response = ui.selectable_label(selected, &choice.label);
-                                    let response = if choice.description.is_empty() {
-                                        response
-                                    } else {
-                                        response.on_hover_text(&choice.description)
-                                    };
-                                    if response.clicked() && !selected {
-                                        commands.push(Command::ChatSetConfig(
-                                            id,
-                                            option.id.clone(),
-                                            choice.value.clone(),
-                                        ));
-                                    }
-                                }
-                            })
-                            .response
-                            .on_hover_text(hover)
-                    });
-                }
-            }
-            // What the provider says it is actually using, when that differs.
-            if let Some(effective) = &option.effective
-                && *effective != option.current
-                && option.kind == ConfigKind::Select
-            {
-                ui.label(
-                    RichText::new(format!("using {effective}"))
-                        .size(10.0)
-                        .color(colors.muted),
-                );
-            }
-            let at_default = option.default.as_ref() == Some(&option.current);
-            if enabled
-                && option.default.is_some()
-                && !at_default
-                && ui
-                    .small_button(icon::DISCARD)
-                    .on_hover_text(format!("Reset {} to its default", option.label))
-                    .clicked()
-            {
-                commands.push(Command::ChatResetConfig(id, option.id.clone()));
-            }
-            ui.add_space(6.0);
-        }
-    });
 }

@@ -162,7 +162,6 @@ impl LumenApp {
         }
         self.view.leave_page_tabs();
         self.view.task_editors.deactivate();
-        self.view.chats.deactivate();
         self.view.history_active = true;
         if let Some(diff) = &mut self.view.source_control.diff {
             diff.active = false;

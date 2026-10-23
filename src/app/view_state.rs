@@ -381,7 +381,7 @@ impl Activity {
     }
 }
 
-/// Whether the right-hand agent session list is showing.
+/// Whether the right-hand agent panel is showing.
 #[derive(Default)]
 pub(crate) struct AgentsView {
     pub(crate) open: bool,
@@ -399,7 +399,7 @@ pub(crate) struct ViewState {
     pub(crate) tags_dialog: Option<super::git_tags::TagsDialog>,
     pub(crate) settings: super::settings::SettingsState,
     pub(crate) task_editors: super::task_editor::TaskEditorState,
-    pub(crate) chats: super::chat_tabs::ChatTabs,
+    pub(crate) agent_panel: super::agent_panel::AgentPanel,
     /// The native agent controller; `None` until native agents are enabled.
     pub(crate) native_agents: Option<super::agent_hub::AgentHub>,
     pub(crate) tasks: super::task_catalog::TaskCatalog,
@@ -541,23 +541,18 @@ impl ViewState {
         self.settings.open = false;
         self.history_active = false;
         self.task_editors.deactivate();
-        self.chats.deactivate();
     }
 
     /// Make a task editor the visible page (used when it must be answered).
     pub(crate) fn leave_page_tabs_for_task(&mut self, id: super::task_editor::TaskEditorId) {
         self.settings.open = false;
         self.history_active = false;
-        self.chats.deactivate();
         self.task_editors.activate(id);
     }
 
     /// A non-document page (Settings or a task editor) is what the editor area shows.
     pub(crate) fn page_tab_active(&self) -> bool {
-        self.settings.open
-            || self.history_active
-            || self.task_editors.active().is_some()
-            || self.chats.active().is_some()
+        self.settings.open || self.history_active || self.task_editors.active().is_some()
     }
 
     pub(crate) fn reveal_edit_directory(&mut self, editor: &crate::model::EditorState) {
@@ -590,7 +585,7 @@ impl Default for ViewState {
             group_surfaces: Vec::new(),
             hide_virtual_tabs: false,
             task_editors: Default::default(),
-            chats: Default::default(),
+            agent_panel: Default::default(),
             native_agents: None,
             tasks: Default::default(),
             task_runs: Default::default(),
