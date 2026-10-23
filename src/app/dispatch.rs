@@ -23,12 +23,13 @@ impl LumenApp {
                 self.view.history_active = false;
                 self.view.settings.focus_search = true;
                 self.view.task_editors.deactivate();
-                self.view.chats.deactivate();
                 self.enter_page_tab(ctx);
             }
             Command::NativeNewSession(provider) => self.native_new_session(provider, ctx),
             Command::OpenChat(id) => self.open_chat(id, ctx),
-            Command::CloseChat(id) => self.view.chats.close(id),
+            Command::AgentSelectProvider(provider) => self.agent_select_provider(provider, ctx),
+            Command::AgentToggleHistory(provider) => self.view.agent_panel.toggle_history(provider),
+            Command::AgentBackToChat(provider) => self.view.agent_panel.back_to_chat(provider),
             Command::ChatSend(id) => self.chat_send(id),
             Command::ChatStop(id) => self.chat_stop(id),
             Command::ChatAttach(id) => self.chat_attach(id),
@@ -38,6 +39,7 @@ impl LumenApp {
             Command::ChatSetConfig(id, option, value) => self.chat_set_config(id, option, value),
             Command::ChatResetConfig(id, option) => self.chat_reset_config(id, option),
             Command::ArchiveChat(id) => self.archive_chat(id),
+            Command::RenameChat(id, title) => self.rename_chat(id, &title),
             Command::PinChat(id, pinned) => self.pin_chat(id, pinned),
             Command::NewTaskEditor(scope) => {
                 self.new_task_editor(scope);
@@ -421,10 +423,6 @@ impl LumenApp {
             }
             Command::FocusGroup(group) => self.focus_group_command(group),
             Command::CloseEditor => {
-                if let Some(id) = self.view.chats.active() {
-                    self.view.chats.close(id);
-                    return;
-                }
                 if let Some(id) = self.view.task_editors.active() {
                     self.request_close_task_editor(id);
                     return;
@@ -548,7 +546,6 @@ impl LumenApp {
     pub(super) fn show_task_editor_page(&mut self, ctx: &egui::Context) {
         self.view.settings.open = false;
         self.view.history_active = false;
-        self.view.chats.deactivate();
         if let Some(diff) = &mut self.view.source_control.diff {
             diff.active = false;
         }

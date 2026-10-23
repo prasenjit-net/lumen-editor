@@ -1,9 +1,11 @@
 //! Workbench components and shared drawing primitives.
 mod activity_bar;
 mod agent_message;
+mod agent_panel;
 mod bottom_tabs;
 mod breadcrumbs;
 mod chat;
+mod chat_controls;
 mod chrome;
 mod completion;
 mod csv_editor;
@@ -31,7 +33,6 @@ mod output;
 mod palette;
 mod popup_place;
 mod problems;
-mod session_list;
 mod settings;
 pub(crate) mod shortcut;
 mod source_control;

@@ -27,7 +27,6 @@ enum TabTarget {
     Settings,
     History,
     TaskEditor(TaskEditorId),
-    Chat(lumen_agent_core::SessionId),
 }
 
 #[derive(Clone, PartialEq)]
@@ -126,17 +125,6 @@ impl Workbench<'_> {
         let task_active = (!hide_virtual)
             .then(|| self.view.task_editors.active())
             .flatten();
-        let chat_tabs: Vec<(lumen_agent_core::SessionId, String)> = if hide_virtual {
-            Vec::new()
-        } else {
-            self.view
-                .chats
-                .tabs()
-                .iter()
-                .map(|id| (*id, format!("{} {}", icon::AGENT, self.chat_title(*id))))
-                .collect()
-        };
-        let chat_active = (!hide_virtual).then(|| self.view.chats.active()).flatten();
         let hidden_document = self
             .view
             .source_control
@@ -185,7 +173,6 @@ impl Workbench<'_> {
             .chain(settings_tab.then(|| format!("{} Settings", icon::GEAR)))
             .chain(history_title.clone().filter(|_| history_tab))
             .chain(task_tabs.iter().map(|(_, title)| title.clone()))
-            .chain(chat_tabs.iter().map(|(_, title)| title.clone()))
             .collect();
         let font = egui::TextStyle::Button.resolve(ui.style());
         let natural: Vec<_> = titles
@@ -210,13 +197,7 @@ impl Workbench<'_> {
                 .is_some_and(|diff| diff.active);
         let history_index = visible_files.len() + usize::from(diff_tab) + usize::from(settings_tab);
         let task_base = history_index + usize::from(history_tab);
-        let chat_base = task_base + task_tabs.len();
-        let active_index = if let Some(id) = chat_active {
-            chat_tabs
-                .iter()
-                .position(|(tab, _)| *tab == id)
-                .map(|position| chat_base + position)
-        } else if let Some(id) = task_active {
+        let active_index = if let Some(id) = task_active {
             task_tabs
                 .iter()
                 .position(|(tab, _)| *tab == id)
@@ -233,9 +214,7 @@ impl Workbench<'_> {
                 .and_then(|index| visible_files.iter().position(|visible| *visible == index))
         };
         let sizing = TabSizing::new(ui.available_width(), &natural, active_index);
-        let active = if let Some(id) = chat_active {
-            Some(TabTarget::Chat(id))
-        } else if let Some(id) = task_active {
+        let active = if let Some(id) = task_active {
             Some(TabTarget::TaskEditor(id))
         } else if history_open {
             Some(TabTarget::History)
@@ -279,8 +258,6 @@ impl Workbench<'_> {
         let mut close_settings = false;
         let mut open_history = false;
         let mut close_history = false;
-        let mut open_chat: Option<lumen_agent_core::SessionId> = None;
-        let mut close_chat: Option<lumen_agent_core::SessionId> = None;
         let mut open_diff = false;
         let mut close_diff = false;
         let strip =
@@ -507,29 +484,6 @@ impl Workbench<'_> {
                                         ui.scroll_to_rect(response.rect, None);
                                     }
                                 }
-                                for (position, (id, _)) in chat_tabs.iter().enumerate() {
-                                    let index = chat_base + position;
-                                    let selected = active == Some(TabTarget::Chat(*id));
-                                    let attention = self.chat_needs_attention(*id);
-                                    let response = tab(
-                                        ui,
-                                        &titles[index],
-                                        sizing.widths[index],
-                                        selected,
-                                        &self.chat_tooltip(*id),
-                                        "Close chat (the session stays in the list)",
-                                        TabMarks { dirty: attention, unpinned: false },
-                                    );
-                                    if response.select {
-                                        open_chat = Some(*id);
-                                    }
-                                    if response.close {
-                                        close_chat = Some(*id);
-                                    }
-                                    if selected && reveal {
-                                        ui.scroll_to_rect(response.rect, None);
-                                    }
-                                }
                             });
                             });
                     },
@@ -604,15 +558,6 @@ impl Workbench<'_> {
                                     ui.close();
                                 }
                             }
-                            for (id, title) in &chat_tabs {
-                                if ui
-                                    .selectable_label(active == Some(TabTarget::Chat(*id)), title)
-                                    .clicked()
-                                {
-                                    open_chat = Some(*id);
-                                    ui.close();
-                                }
-                            }
                         });
                     })
                     .response
@@ -682,11 +627,6 @@ impl Workbench<'_> {
             self.command(Command::CloseTaskEditor(id));
         } else if let Some(id) = open_task {
             self.command(Command::ActivateTaskEditor(id));
-        }
-        if let Some(id) = close_chat {
-            self.command(Command::CloseChat(id));
-        } else if let Some(id) = open_chat {
-            self.command(Command::OpenChat(id));
         }
         if close_history {
             self.command(Command::CloseHistoryDialog);

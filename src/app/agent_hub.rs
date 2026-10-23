@@ -25,7 +25,7 @@ use std::{
     time::Duration,
 };
 
-/// What a session list row says about a session.
+/// What a History row says about a session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SessionStatus {
     Idle,
@@ -480,6 +480,23 @@ impl AgentHub {
             return SessionStatus::Failed("The agent stopped unexpectedly".into());
         }
         SessionStatus::Idle
+    }
+
+    /// Some unarchived chat of this provider is waiting for the user's answer.
+    pub(crate) fn provider_needs_attention(&self, provider: ProviderId) -> bool {
+        self.registry
+            .listing(None, false)
+            .into_iter()
+            .any(|record| {
+                record.provider == provider
+                    && self.status(record.id) == SessionStatus::NeedsAttention
+            })
+    }
+
+    pub(crate) fn any_needs_attention(&self) -> bool {
+        ProviderId::ALL
+            .into_iter()
+            .any(|provider| self.provider_needs_attention(provider))
     }
 
     pub(crate) fn wants_repaint(&self) -> bool {

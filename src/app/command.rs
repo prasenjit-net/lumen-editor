@@ -16,7 +16,9 @@ pub(crate) enum Command {
     /// Start a new native agent chat in the current workspace.
     NativeNewSession(lumen_agent_core::ProviderId),
     OpenChat(lumen_agent_core::SessionId),
-    CloseChat(lumen_agent_core::SessionId),
+    AgentSelectProvider(lumen_agent_core::ProviderId),
+    AgentToggleHistory(lumen_agent_core::ProviderId),
+    AgentBackToChat(lumen_agent_core::ProviderId),
     /// Send the session's composer text.
     ChatSend(lumen_agent_core::SessionId),
     ChatStop(lumen_agent_core::SessionId),
@@ -37,6 +39,7 @@ pub(crate) enum Command {
     /// Return a setting to its default (not the same as picking a value).
     ChatResetConfig(lumen_agent_core::SessionId, String),
     ArchiveChat(lumen_agent_core::SessionId),
+    RenameChat(lumen_agent_core::SessionId, String),
     PinChat(lumen_agent_core::SessionId, bool),
     /// Open a blank task editor tab in the given scope.
     NewTaskEditor(lumen_task_core::Scope),

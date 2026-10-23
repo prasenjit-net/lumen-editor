@@ -1,5 +1,5 @@
-//! Workbench glue for the native agents: commands from the session list and chat
-//! tabs become hub calls, and the hub is polled once per frame. File access, process
+//! Workbench glue for the native agents: commands from the agent panel become
+//! hub calls, and the hub is polled once per frame. File access, process
 //! launching and persistence stay behind the hub and services.
 use super::{LumenApp, chat_attachments};
 use crate::model::agent_scheduler::Ticket;
@@ -15,6 +15,47 @@ use std::time::Duration;
 const QUIT_GRACE: Duration = Duration::from_secs(4);
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// A provider's unarchived sessions in a folder, most recently active first
+/// (pins do not matter: this is the "latest" fallback, not the History order).
+pub(crate) fn provider_sessions(
+    hub: &super::agent_hub::AgentHub,
+    provider: ProviderId,
+    workspace: Option<&std::path::Path>,
+) -> Vec<SessionId> {
+    let mut rows: Vec<_> = hub
+        .registry
+        .listing(workspace, false)
+        .into_iter()
+        .filter(|record| record.provider == provider)
+        .collect();
+    rows.sort_by(|a, b| b.updated.cmp(&a.updated).then(b.id.cmp(&a.id)));
+    rows.into_iter().map(|record| record.id).collect()
+}
+
+/// The folder chats work in: the open workspace, else the current directory,
+/// with aliases and symlinks resolved to one workspace context.
+pub(crate) fn chat_workspace_for(workspace: Option<&std::path::Path>) -> std::path::PathBuf {
+    let folder = workspace
+        .map(std::path::Path::to_path_buf)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| ".".into());
+    std::fs::canonicalize(&folder).unwrap_or(folder)
+}
+
+impl super::view_state::ViewState {
+    /// Keep a provider tab's current session valid for this folder (see
+    /// `AgentPanel::resolve_current`).
+    pub(crate) fn resolve_agent_session(
+        &mut self,
+        provider: ProviderId,
+        workspace: &std::path::Path,
+    ) -> Option<SessionId> {
+        let hub = self.native_agents.as_ref()?;
+        let sessions = provider_sessions(hub, provider, Some(workspace));
+        self.agent_panel.resolve_current(provider, &sessions)
+    }
+}
 
 /// The configured program, or the bare name to search PATH for.
 fn program(configured: &str, default: &str) -> String {
@@ -34,6 +75,26 @@ impl LumenApp {
             return;
         }
         self.view.agents.open = !self.view.agents.open;
+        if self.view.agents.open {
+            let provider = self.view.agent_panel.active_provider();
+            self.view.agent_panel.select_provider(provider);
+        }
+    }
+
+    /// Tab click: show that provider's chat (or History, as it was left).
+    pub(super) fn agent_select_provider(&mut self, provider: ProviderId, ctx: &egui::Context) {
+        self.view.agent_panel.select_provider(provider);
+        if let Some(id) = self.resolve_provider_session(provider) {
+            self.prepare_chat(id);
+        }
+        ctx.request_repaint();
+    }
+
+    /// The provider's current session for this folder, falling back to its most
+    /// recent one when the remembered session was archived or is gone.
+    pub(crate) fn resolve_provider_session(&mut self, provider: ProviderId) -> Option<SessionId> {
+        let workspace = chat_workspace_for(self.editor.workspace.as_deref());
+        self.view.resolve_agent_session(provider, &workspace)
     }
 
     /// Turn on the native Codex / Claude Code integration. Providers are launched
@@ -67,6 +128,13 @@ impl LumenApp {
             },
             None => (crate::model::agent_registry::Registry::new(), None),
         };
+        if let Some(provider) = store.as_deref().and_then(|path| {
+            crate::services::agent_panel_store::load(
+                &crate::services::agent_panel_store::path_beside(path),
+            )
+        }) {
+            self.view.agent_panel.restore_provider(provider);
+        }
         self.native_agents_store = store;
         self.native_transcripts_dir = crate::services::agent_transcripts_store::user_dir();
         let backends: Vec<(ProviderId, Box<dyn AgentBackend>)> = vec![
@@ -133,6 +201,15 @@ impl LumenApp {
                 }
             }
         }
+        if let Some(provider) = self.view.agent_panel.take_provider_change()
+            && let Some(index) = &self.native_agents_store
+        {
+            // Forgetting the tab is harmless, so a failed write is not reported.
+            let _ = crate::services::agent_panel_store::save(
+                &crate::services::agent_panel_store::path_beside(index),
+                provider,
+            );
+        }
         if self.view.native_quit_deadline.is_some() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
@@ -163,14 +240,7 @@ impl LumenApp {
 
     /// The folder a new chat works in: the open workspace, else the current directory.
     fn chat_workspace(&self) -> std::path::PathBuf {
-        let folder = self
-            .editor
-            .workspace
-            .clone()
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| ".".into());
-        // Path aliases and symlinks must resolve to one workspace context.
-        std::fs::canonicalize(&folder).unwrap_or(folder)
+        chat_workspace_for(self.editor.workspace.as_deref())
     }
 
     pub(super) fn native_new_session(&mut self, provider: ProviderId, ctx: &egui::Context) {
@@ -192,18 +262,27 @@ impl LumenApp {
         if !known {
             return;
         }
+        let provider = self
+            .view
+            .native_agents
+            .as_ref()
+            .and_then(|hub| hub.registry.get(id))
+            .map(|record| record.provider);
+        let Some(provider) = provider else {
+            return;
+        };
+        self.prepare_chat(id);
+        self.view.agents.open = true;
+        self.view.agent_panel.show_session(provider, id);
+        ctx.request_repaint();
+    }
+
+    /// Load the cached transcript and start the session's backend if it is not ready.
+    fn prepare_chat(&mut self, id: SessionId) {
         self.load_cached_transcript(id);
         if let Some(hub) = self.view.native_agents.as_mut() {
             hub.ensure_ready(id);
         }
-        self.view.chats.open(id);
-        self.view.settings.open = false;
-        self.view.history_active = false;
-        self.view.task_editors.deactivate();
-        if let Some(diff) = &mut self.view.source_control.diff {
-            diff.active = false;
-        }
-        self.enter_page_tab(ctx);
     }
 
     /// Show what was said in this chat the last time, read from the cache. Done
@@ -234,15 +313,15 @@ impl LumenApp {
     }
 
     pub(super) fn chat_send(&mut self, id: SessionId) {
-        let text = self.view.chats.take_draft(id);
-        let attachments = self.view.chats.take_attachments(id);
+        let text = self.view.agent_panel.take_draft(id);
+        let attachments = self.view.agent_panel.take_attachments(id);
         if text.trim().is_empty() && attachments.is_empty() {
-            self.view.chats.restore_draft(id, text);
+            self.view.agent_panel.restore_draft(id, text);
             return;
         }
         let Some(hub) = self.view.native_agents.as_mut() else {
-            self.view.chats.restore_draft(id, text);
-            self.view.chats.restore_attachments(id, attachments);
+            self.view.agent_panel.restore_draft(id, text);
+            self.view.agent_panel.restore_attachments(id, attachments);
             return;
         };
         let mut input = Vec::new();
@@ -253,16 +332,16 @@ impl LumenApp {
             Ok(blocks) => input.extend(blocks),
             Err(error) => {
                 // A moved or oversized file stops the send; the draft and chips stay.
-                self.view.chats.restore_draft(id, text);
-                self.view.chats.restore_attachments(id, attachments);
+                self.view.agent_panel.restore_draft(id, text);
+                self.view.agent_panel.restore_attachments(id, attachments);
                 self.view.status = error.to_string();
                 return;
             }
         }
         if let Err(error) = hub.send(id, input) {
             // Nothing was sent: keep what the user typed and attached.
-            self.view.chats.restore_draft(id, text);
-            self.view.chats.restore_attachments(id, attachments);
+            self.view.agent_panel.restore_draft(id, text);
+            self.view.agent_panel.restore_attachments(id, attachments);
             self.view.status = format!("Could not send the message: {error:?}");
         }
     }
@@ -315,7 +394,21 @@ impl LumenApp {
     pub(super) fn archive_chat(&mut self, id: SessionId) {
         if let Some(hub) = self.view.native_agents.as_mut() {
             hub.archive(id);
-            self.view.chats.close(id);
+        }
+        // The tab that was showing it falls back to the provider's latest chat.
+        for provider in ProviderId::ALL {
+            self.resolve_provider_session(provider);
+        }
+    }
+
+    pub(super) fn rename_chat(&mut self, id: SessionId, title: &str) {
+        let Some(hub) = self.view.native_agents.as_mut() else {
+            return;
+        };
+        if hub.registry.rename(id, title) {
+            hub.registry_dirty = true;
+        } else {
+            self.view.status = "A chat title cannot be empty".into();
         }
     }
 
@@ -392,30 +485,23 @@ mod tests {
     }
 
     #[test]
-    fn a_new_chat_opens_as_a_tab_and_documents_take_the_page_back() {
+    fn a_new_chat_opens_in_the_panel_and_never_in_the_editor_strip() {
         let (mut app, ctx) = fixture();
+        app.view.agents.open = false;
         app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
-        let id = app.view.chats.active().expect("chat tab is visible");
-        assert!(app.view.page_tab_active());
+        let id = app
+            .view
+            .agent_panel
+            .visible_chat()
+            .expect("the chat is shown in the panel");
+        assert!(app.view.agents.open, "creating a chat reveals the panel");
+        assert_eq!(app.view.agent_panel.active_provider(), ProviderId::Claude);
+        assert!(!app.view.page_tab_active(), "the editor area is untouched");
         let output = frame(&mut app, &ctx, 1000.0);
-        assert!(
-            has_text(&output, "New chat"),
-            "tab and header show the title"
-        );
-        assert!(has_text(&output, "Claude Code"));
-        let doc = app.editor.files[0].id;
-        app.show_document_tab(doc);
-        assert!(!app.view.page_tab_active());
-        assert!(app.view.chats.is_open(id), "the tab stays open");
-        app.execute(Command::OpenChat(id), &ctx);
-        assert_eq!(app.view.chats.active(), Some(id));
-        app.execute(Command::CloseEditor, &ctx);
-        assert!(!app.view.chats.is_open(id));
-        assert_eq!(
-            app.editor.files.len(),
-            1,
-            "Close Editor did not close a document"
-        );
+        assert!(has_text(&output, "Claude Code"), "provider tab");
+        assert!(has_text(&output, "Codex"), "every provider has a tab");
+        assert!(has_text(&output, "Ask Claude Code anything"));
+        assert!(!has_text(&output, "New chat"), "no chat tab in the strip");
         assert!(
             app.view
                 .native_agents
@@ -425,13 +511,14 @@ mod tests {
                 .get(id)
                 .is_some()
         );
+        assert_eq!(app.view.agent_panel.visible_chat(), Some(id));
     }
 
     #[test]
     fn sending_a_draft_runs_a_turn_and_shows_the_conversation() {
         let (mut app, ctx) = fixture();
         app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
-        let id = app.view.chats.active().unwrap();
+        let id = app.view.agent_panel.visible_chat().unwrap();
         app.execute(Command::ChatSend(id), &ctx);
         assert!(
             app.view
@@ -444,9 +531,12 @@ mod tests {
                 .is_empty(),
             "blank drafts are not sent"
         );
-        app.view.chats.draft_mut(id).push_str("hello fake agent");
+        app.view
+            .agent_panel
+            .draft_mut(id)
+            .push_str("hello fake agent");
         app.execute(Command::ChatSend(id), &ctx);
-        assert_eq!(app.view.chats.draft(id), "", "the draft is consumed");
+        assert_eq!(app.view.agent_panel.draft(id), "", "the draft is consumed");
         settle(&mut app, &ctx);
         let output = frame(&mut app, &ctx, 1000.0);
         assert!(has_text(&output, "hello fake agent"));
@@ -504,12 +594,12 @@ mod tests {
         let (mut app, ctx) = fixture();
         app.dialogs = Box::new(Picks(vec![note.clone(), shot.clone()]));
         app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
-        let id = app.view.chats.active().unwrap();
+        let id = app.view.agent_panel.visible_chat().unwrap();
         settle(&mut app, &ctx);
         app.execute(Command::ChatAttach(id), &ctx);
         let kinds: Vec<_> = app
             .view
-            .chats
+            .agent_panel
             .attachments(id)
             .iter()
             .map(|a| a.image_type)
@@ -527,7 +617,7 @@ mod tests {
         // Attachments alone are enough to send.
         app.execute(Command::ChatSend(id), &ctx);
         assert!(
-            app.view.chats.attachments(id).is_empty(),
+            app.view.agent_panel.attachments(id).is_empty(),
             "chips clear on send"
         );
         settle(&mut app, &ctx);
@@ -543,20 +633,24 @@ mod tests {
         std::fs::write(&file, "x").unwrap();
         let (mut app, ctx) = fixture();
         app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
-        let id = app.view.chats.active().unwrap();
+        let id = app.view.agent_panel.visible_chat().unwrap();
         app.dialogs = Box::new(Picks(Vec::new()));
         app.execute(Command::ChatAttach(id), &ctx);
-        assert!(app.view.chats.attachments(id).is_empty());
+        assert!(app.view.agent_panel.attachments(id).is_empty());
 
         app.attach_paths(id, vec![dir.clone(), dir.join("missing.txt")]);
-        assert!(app.view.chats.attachments(id).is_empty());
+        assert!(app.view.agent_panel.attachments(id).is_empty());
         assert!(app.view.status.contains("Could not read") || app.view.status.contains("folder"));
 
         app.attach_paths(id, vec![file.clone(), file.clone()]);
-        assert_eq!(app.view.chats.attachments(id).len(), 1, "no duplicates");
+        assert_eq!(
+            app.view.agent_panel.attachments(id).len(),
+            1,
+            "no duplicates"
+        );
         assert!(app.view.status.contains("already attached"));
         app.execute(Command::ChatDetach(id, file), &ctx);
-        assert!(app.view.chats.attachments(id).is_empty());
+        assert!(app.view.agent_panel.attachments(id).is_empty());
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -567,36 +661,39 @@ mod tests {
         std::fs::write(&file, "x").unwrap();
         let (mut app, ctx) = fixture();
         app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
-        let id = app.view.chats.active().unwrap();
+        let id = app.view.agent_panel.visible_chat().unwrap();
         app.attach_paths(id, vec![file.clone()]);
-        app.view.chats.draft_mut(id).push_str("look at this");
+        app.view.agent_panel.draft_mut(id).push_str("look at this");
         std::fs::remove_file(&file).unwrap();
         app.execute(Command::ChatSend(id), &ctx);
-        assert_eq!(app.view.chats.draft(id), "look at this");
-        assert_eq!(app.view.chats.attachments(id).len(), 1);
+        assert_eq!(app.view.agent_panel.draft(id), "look at this");
+        assert_eq!(app.view.agent_panel.attachments(id).len(), 1);
         assert!(app.view.status.contains("gone"));
         assert!(user_messages(&app, id).is_empty(), "nothing was sent");
         std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]
-    fn the_session_list_shows_both_providers_and_archiving_closes_the_tab() {
+    fn history_lists_one_providers_sessions_and_archiving_falls_back() {
         let (mut app, ctx) = fixture();
         app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
-        let codex = app.view.chats.active().unwrap();
+        let codex = app.view.agent_panel.visible_chat().unwrap();
         app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
-        let claude = app.view.chats.active().unwrap();
-        let workspace = std::fs::canonicalize(std::env::temp_dir()).unwrap();
-        let hub = app.view.native_agents.as_ref().unwrap();
-        assert_eq!(
-            hub.registry.listing(Some(workspace.as_path()), false).len(),
-            2
-        );
+        let claude = app.view.agent_panel.visible_chat().unwrap();
+        app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
+        let newest_claude = app.view.agent_panel.visible_chat().unwrap();
+        assert_ne!(claude, newest_claude);
+        app.execute(Command::AgentSelectProvider(ProviderId::Codex), &ctx);
+        assert_eq!(app.view.agent_panel.visible_chat(), Some(codex));
+        app.execute(Command::AgentToggleHistory(ProviderId::Codex), &ctx);
         for width in [700.0, 1000.0, 1600.0] {
             let output = frame(&mut app, &ctx, width);
-            assert!(has_text(&output, "AGENT SESSIONS"), "width {width}");
-            assert!(has_text(&output, "Codex"));
+            assert!(has_text(&output, "Back to chat"), "width {width}");
+            assert!(has_text(&output, "Previous chats"));
         }
+        // Claude's tab still shows its own current chat, in chat mode.
+        app.execute(Command::AgentSelectProvider(ProviderId::Claude), &ctx);
+        assert_eq!(app.view.agent_panel.visible_chat(), Some(newest_claude));
         app.execute(Command::PinChat(codex, true), &ctx);
         assert!(
             app.view
@@ -608,10 +705,41 @@ mod tests {
                 .unwrap()
                 .pinned
         );
+        app.execute(Command::ArchiveChat(newest_claude), &ctx);
+        assert_eq!(
+            app.view.agent_panel.current(ProviderId::Claude),
+            Some(claude),
+            "falls back to the provider's other session"
+        );
         app.execute(Command::ArchiveChat(claude), &ctx);
-        assert!(!app.view.chats.is_open(claude));
+        assert_eq!(app.view.agent_panel.current(ProviderId::Claude), None);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "Start chat"), "empty state is offered");
         let hub = app.view.native_agents.as_ref().unwrap();
         assert_eq!(hub.registry.listing(None, false).len(), 1);
+    }
+
+    #[test]
+    fn renaming_a_session_keeps_the_title_and_refuses_empty_ones() {
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        let id = app.view.agent_panel.visible_chat().unwrap();
+        app.execute(Command::RenameChat(id, "  Release notes ".into()), &ctx);
+        let title = |app: &LumenApp| {
+            app.view
+                .native_agents
+                .as_ref()
+                .unwrap()
+                .registry
+                .get(id)
+                .unwrap()
+                .title
+                .clone()
+        };
+        assert_eq!(title(&app), "Release notes");
+        app.execute(Command::RenameChat(id, "   ".into()), &ctx);
+        assert_eq!(title(&app), "Release notes");
+        assert!(app.view.status.contains("cannot be empty"));
     }
 
     #[test]
@@ -620,7 +748,7 @@ mod tests {
         let ctx = egui::Context::default();
         app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
         app.execute(Command::OpenChat(SessionId(1)), &ctx);
-        assert!(app.view.chats.tabs().is_empty());
+        assert_eq!(app.view.agent_panel.current(ProviderId::Codex), None);
         assert!(app.view.status.contains("not enabled"));
     }
 
@@ -628,26 +756,31 @@ mod tests {
     fn the_chat_header_offers_the_session_settings_and_changing_one_applies_it() {
         let (mut app, ctx) = fixture();
         app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
-        let id = app.view.chats.active().unwrap();
+        let id = app.view.agent_panel.visible_chat().unwrap();
         settle(&mut app, &ctx);
         let output = frame(&mut app, &ctx, 1000.0);
-        assert!(has_text(&output, "Model"), "the model selector is shown");
+        assert!(has_text(&output, "Fast"), "the model selector is shown");
+        assert!(
+            !has_text(&output, "Verbose"),
+            "other options are behind the configuration menu"
+        );
         app.execute(
             Command::ChatSetConfig(id, "model".into(), "smart".into()),
             &ctx,
         );
         settle(&mut app, &ctx);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "Smart"), "the selector shows the change");
         let hub = app.view.native_agents.as_ref().unwrap();
         let config = hub.live(id).unwrap().model.config.as_ref().unwrap();
         assert_eq!(config.get("model").unwrap().current, "smart");
     }
 
     #[test]
-    fn chat_fits_an_editor_group_narrower_than_the_old_240_px_floor() {
+    fn the_composer_fits_a_narrow_agent_panel() {
         let (mut app, ctx) = fixture();
         app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
-        app.view.agents.open = false;
-        for width in [200.0_f32, 260.0] {
+        for width in [260.0_f32, 340.0, 700.0] {
             frame(&mut app, &ctx, width);
             let output = frame(&mut app, &ctx, width);
             let mut found = false;
@@ -668,44 +801,74 @@ mod tests {
     }
 
     #[test]
-    fn a_long_chat_title_gives_way_to_the_status_in_a_narrow_group() {
+    fn panel_header_and_controls_keep_their_edges_at_every_window_width() {
         let (mut app, ctx) = fixture();
         app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
-        let id = app.view.chats.active().unwrap();
-        app.view.chats.draft_mut(id).push_str(
-            "approve: please review every file in the workspace and explain the layout in detail",
-        );
-        app.execute(Command::ChatSend(id), &ctx);
         settle(&mut app, &ctx);
-        app.view.agents.open = false;
-        let width = 340.0_f32;
-        frame(&mut app, &ctx, width);
-        let output = frame(&mut app, &ctx, width);
-        let rects_of = |needle: &str| {
+        let mut right_gaps = Vec::new();
+        for width in [700.0_f32, 1000.0, 1600.0] {
+            frame(&mut app, &ctx, width);
+            let output = frame(&mut app, &ctx, width);
+            let rect_of = |needle: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|clipped| match &clipped.shape {
+                        egui::Shape::Text(text) if text.galley.job.text.contains(needle) => {
+                            Some(text.galley.rect.translate(text.pos.to_vec2()))
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("{needle:?} not drawn at width {width}"))
+            };
+            let tab = rect_of("Codex");
+            let close = rect_of(crate::icon::X);
+            let history = rect_of(crate::icon::HISTORY);
+            let new_chat = rect_of(crate::icon::PLUS);
+            assert!(tab.left() > width - 340.0, "tabs stay in the panel");
+            assert!(tab.right() < close.left(), "tabs left of the close action");
+            assert!(history.right() < new_chat.left(), "stable button order");
+            assert!(new_chat.right() <= width && close.right() <= width);
+            right_gaps.push(width - new_chat.right());
+        }
+        assert!(
+            right_gaps
+                .windows(2)
+                .all(|pair| (pair[0] - pair[1]).abs() < 1.0),
+            "the buttons stay anchored to the right edge: {right_gaps:?}"
+        );
+    }
+
+    #[test]
+    fn wide_content_never_widens_the_panel() {
+        let (mut app, ctx) = fixture();
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        let id = app.view.agent_panel.visible_chat().unwrap();
+        let tab_left = |output: &egui::FullOutput| {
             output
                 .shapes
                 .iter()
-                .filter_map(|clipped| match &clipped.shape {
-                    // Right-aligned galleys extend left of their anchor.
-                    egui::Shape::Text(text) if text.galley.job.text.contains(needle) => {
-                        Some(text.galley.rect.translate(text.pos.to_vec2()))
-                    }
+                .find_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == "Codex" => Some(text.pos.x),
                     _ => None,
                 })
-                .collect::<Vec<_>>()
         };
-        let status = rects_of("Needs your answer")[0];
-        // The tab strip repeats the title; the header's copy shares the status row.
-        let title = rects_of("approve: please")
-            .into_iter()
-            .find(|rect| (rect.center().y - status.center().y).abs() < 6.0)
-            .expect("chat title in the header row");
-        assert!(status.right() <= width, "status stays inside the window");
+        frame(&mut app, &ctx, 1000.0);
+        let before = tab_left(&frame(&mut app, &ctx, 1000.0)).expect("tab drawn");
+        let long = "x".repeat(600);
+        app.view
+            .agent_panel
+            .draft_mut(id)
+            .push_str(&format!("{long} {long}"));
+        app.execute(Command::ChatSend(id), &ctx);
+        settle(&mut app, &ctx);
+        for _ in 0..3 {
+            frame(&mut app, &ctx, 1000.0);
+        }
+        let after = tab_left(&frame(&mut app, &ctx, 1000.0)).expect("tab drawn");
         assert!(
-            title.right() <= status.left() + 1.0,
-            "title ends at {} but status starts at {}",
-            title.right(),
-            status.left()
+            (before - after).abs() < 1.0,
+            "panel edge moved from {before} to {after}"
         );
     }
 
@@ -714,6 +877,7 @@ mod tests {
         let (mut app, ctx) = fixture();
         ctx.enable_accesskit();
         app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        app.execute(Command::AgentToggleHistory(ProviderId::Codex), &ctx);
         settle(&mut app, &ctx);
         let mut labels = Vec::new();
         for _ in 0..3 {
@@ -737,8 +901,11 @@ mod tests {
     fn messages_are_told_apart_and_permissions_and_working_state_are_clear() {
         let (mut app, ctx) = fixture();
         app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
-        let id = app.view.chats.active().unwrap();
-        app.view.chats.draft_mut(id).push_str("approve: touch file");
+        let id = app.view.agent_panel.visible_chat().unwrap();
+        app.view
+            .agent_panel
+            .draft_mut(id)
+            .push_str("approve: touch file");
         app.execute(Command::ChatSend(id), &ctx);
         settle(&mut app, &ctx);
         for width in [620.0, 1000.0, 1800.0] {
@@ -747,13 +914,13 @@ mod tests {
             assert!(has_text(&output, "You"), "user label at {width}");
             assert!(has_text(&output, "Codex"), "agent label at {width}");
             assert!(has_text(&output, "Permission needed"), "{width}");
-            assert!(has_text(&output, "Needs your answer"), "status at {width}");
+            assert!(
+                has_text(&output, "Codex ●"),
+                "the provider tab flags the pending approval at {width}"
+            );
             // The turn is waiting on a permission, so a new message queues.
             assert!(has_text(&output, "Queue"), "composer at {width}");
-            assert!(
-                has_text(&output, "Model"),
-                "settings above the composer at {width}"
-            );
+            assert!(has_text(&output, "Fast"), "model selector at {width}");
         }
         let request = app
             .view
@@ -773,7 +940,10 @@ mod tests {
             .id
             .clone();
         app.execute(Command::ChatApproval(id, request.token, allow), &ctx);
-        app.view.chats.draft_mut(id).push_str("slow: keep going");
+        app.view
+            .agent_panel
+            .draft_mut(id)
+            .push_str("slow: keep going");
         app.execute(Command::ChatSend(id), &ctx);
         settle(&mut app, &ctx);
         let output = frame(&mut app, &ctx, 1000.0);
@@ -793,8 +963,11 @@ mod tests {
     fn quitting_stops_the_agents_first_and_closes_when_they_are_done() {
         let (mut app, ctx) = fixture();
         app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
-        let id = app.view.chats.active().unwrap();
-        app.view.chats.draft_mut(id).push_str("slow: long running");
+        let id = app.view.agent_panel.visible_chat().unwrap();
+        app.view
+            .agent_panel
+            .draft_mut(id)
+            .push_str("slow: long running");
         app.execute(Command::ChatSend(id), &ctx);
         settle(&mut app, &ctx);
         assert!(app.native_agents_need_shutdown());
@@ -826,9 +999,9 @@ mod tests {
         let (mut app, ctx) = fixture();
         app.native_transcripts_dir = Some(dir.clone());
         app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
-        let id = app.view.chats.active().unwrap();
+        let id = app.view.agent_panel.visible_chat().unwrap();
         app.view
-            .chats
+            .agent_panel
             .draft_mut(id)
             .push_str("remember the tangerine");
         app.execute(Command::ChatSend(id), &ctx);

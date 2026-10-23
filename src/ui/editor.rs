@@ -96,10 +96,6 @@ impl Workbench<'_> {
             self.history_page(ui);
             return;
         }
-        if !hide_virtual && let Some(chat) = self.view.chats.active() {
-            self.chat_page(ui, chat);
-            return;
-        }
         if !hide_virtual && self.view.task_editors.active().is_some() {
             self.task_editor_page(ui);
             return;

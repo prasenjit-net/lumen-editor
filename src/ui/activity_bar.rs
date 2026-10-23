@@ -43,6 +43,11 @@ impl Workbench<'_> {
                         }
                         // Bottom-aligned group: Agent, Terminal, Output, Problems, Settings.
                         let agents_enabled = self.view.settings.boolean("agent.enabled");
+                        let agent_attention = self
+                            .view
+                            .native_agents
+                            .as_ref()
+                            .is_some_and(|hub| hub.any_needs_attention());
                         let buttons = if agents_enabled { 5.0 } else { 4.0 };
                         ui.add_space((ui.available_height() - 50.0 * buttons).max(0.0));
                         for (glyph, selected, tooltip, command) in [
@@ -84,6 +89,14 @@ impl Workbench<'_> {
                                     response.rect.left(),
                                     response.rect.y_range(),
                                     Stroke::new(2.0_f32, colors.accent),
+                                );
+                            }
+                            if glyph == icon::AGENT && agent_attention {
+                                // A chat is waiting for an answer, even with the panel closed.
+                                ui.painter().circle_filled(
+                                    response.rect.right_top() + egui::vec2(-10.0, 10.0),
+                                    4.0,
+                                    colors.warning,
                                 );
                             }
                             if response.clicked() {

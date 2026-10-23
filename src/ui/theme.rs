@@ -52,7 +52,7 @@ pub(crate) struct Palette {
     pub(crate) warning: Color32,
     pub(crate) success: Color32,
     pub(crate) info: Color32,
-    /// Subtle per-provider identity colours for session rows and chat tabs.
+    /// Subtle per-provider identity colours for History rows and provider tabs.
     pub(crate) codex: Color32,
     pub(crate) claude: Color32,
 }

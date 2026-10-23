@@ -18,7 +18,7 @@ pub(crate) const DEFAULT_SLOTS: usize = 2;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Ticket(pub(crate) u64);
 
-/// Why a turn is not running yet, in the words the session list shows.
+/// Why a turn is not running yet, in the words the History list shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum WaitReason {
     /// An earlier message of the same session is still being handled.
