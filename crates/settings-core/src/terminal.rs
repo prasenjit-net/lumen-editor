@@ -5,6 +5,16 @@ pub(crate) const SCHEMA: SectionSchema = SectionSchema {
     validate: Some(validate),
     settings: &[
         Setting {
+            id: "terminal.windows_shell",
+            default: DefaultValue::Choice("powershell"),
+            name: "Windows Shell",
+            category: "Terminal",
+            help: "Shell started by the integrated terminal on Windows. Choose cmd if PowerShell does not work; applies to terminals opened afterwards.",
+            aliases: "powershell pwsh cmd command prompt comspec console",
+            control: Control::Choice(&["powershell", "cmd"]),
+            document: false,
+        },
+        Setting {
             id: "terminal.font_family",
             default: DefaultValue::Choice("platform"),
             name: "Font Family",

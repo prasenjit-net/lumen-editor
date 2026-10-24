@@ -85,6 +85,40 @@ pub(crate) fn windows_shell(
     }
 }
 
+/// The shell for the integrated terminal. On Windows `windows_preference`
+/// (`"powershell"` or `"cmd"`, from the `terminal.windows_shell` setting)
+/// chooses between PowerShell and the command prompt; elsewhere it is ignored.
+pub(crate) fn terminal_shell(windows_preference: &str) -> ResolvedShell {
+    if cfg!(windows) {
+        let path = std::env::var_os("PATH");
+        windows_terminal_shell(std::env::var_os("COMSPEC"), windows_preference, |name| {
+            find_on_path(name, path.as_deref())
+        })
+    } else {
+        platform_shell()
+    }
+}
+
+/// PowerShell unless the command prompt is requested. A missing PowerShell
+/// falls back to the same lookup tasks use, so a terminal still opens.
+pub(crate) fn windows_terminal_shell(
+    comspec: Option<OsString>,
+    preference: &str,
+    locate: impl Fn(&str) -> Option<PathBuf>,
+) -> ResolvedShell {
+    if preference != "cmd" {
+        for name in POWERSHELL_PROGRAMS {
+            if let Some(found) = locate(name) {
+                return ResolvedShell {
+                    program: found.into_os_string(),
+                    flavor: ShellFlavor::PowerShell,
+                };
+            }
+        }
+    }
+    windows_shell(comspec, locate)
+}
+
 fn find_on_path(name: &str, path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
     std::env::split_paths(path?)
         .map(|directory| directory.join(name))
@@ -135,6 +169,25 @@ mod tests {
         assert_eq!(shell.flavor, ShellFlavor::Cmd);
         let shell = windows_shell(None, only(&[]));
         assert_eq!(shell.program, OsString::from("cmd.exe"));
+    }
+
+    #[test]
+    fn terminal_defaults_to_powershell_and_cmd_is_a_choice() {
+        let available = &["cmd.exe", "pwsh.exe", "powershell.exe"];
+        let shell = windows_terminal_shell(None, "powershell", only(available));
+        assert_eq!(shell.flavor, ShellFlavor::PowerShell);
+        assert!(shell.program.to_string_lossy().ends_with("pwsh.exe"));
+        let shell =
+            windows_terminal_shell(None, "powershell", only(&["cmd.exe", "powershell.exe"]));
+        assert!(shell.program.to_string_lossy().ends_with("powershell.exe"));
+        let shell = windows_terminal_shell(None, "cmd", only(available));
+        assert_eq!(shell.flavor, ShellFlavor::Cmd);
+    }
+
+    #[test]
+    fn terminal_falls_back_to_cmd_when_powershell_is_missing() {
+        let shell = windows_terminal_shell(None, "powershell", only(&["cmd.exe"]));
+        assert_eq!(shell.flavor, ShellFlavor::Cmd);
     }
 
     #[test]

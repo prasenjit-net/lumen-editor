@@ -230,7 +230,7 @@ The visible panel refreshes to detect external Git changes. Reopen a comparison 
 
 ![Lumen’s integrated terminal running Cargo and Rust version commands below the Rust editor](assets/screenshots/terminal.jpg)
 
-Toggle the terminal with **Ctrl+`** on every platform or use the Terminal menu/activity button. It starts in the workspace directory, or the home directory when no folder is open. The native PTY uses `SHELL` on Unix (falling back to `/bin/sh`) and `COMSPEC` on Windows (falling back to `cmd.exe`).
+Toggle the terminal with **Ctrl+`** on every platform or use the Terminal menu/activity button. It starts in the workspace directory, or the home directory when no folder is open. The native PTY uses `SHELL` on Unix (falling back to `/bin/sh`) and PowerShell on Windows (`pwsh.exe`, then `powershell.exe`). If PowerShell does not work, set **Terminal → Windows Shell** to `cmd` to use `COMSPEC`/`cmd.exe` instead; the choice applies to terminals opened afterwards. Tasks keep their own shell lookup.
 
 The terminal uses an Alacritty-based emulation core. Settings control its font family, font size, line height, cursor style/blink, ANSI palette, auto-scroll, and panel divider. Input while the terminal owns focus goes to the shell rather than document editing.
 
