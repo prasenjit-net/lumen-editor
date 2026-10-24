@@ -1,5 +1,9 @@
 use crate::{app::LumenApp, platform, ui::theme::configure_ui};
 use eframe::egui;
+
+/// Client size of a new window, in logical pixels.
+const INNER_SIZE: [f32; 2] = [1280.0, 760.0];
+
 pub(crate) fn run() -> eframe::Result<()> {
     use crate::cli::{Invocation, USAGE, parse};
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -24,7 +28,7 @@ pub(crate) fn run() -> eframe::Result<()> {
         &format!("Lumen {} started", env!("CARGO_PKG_VERSION")),
     );
     let viewport = egui::ViewportBuilder::default()
-        .with_inner_size([1280.0, 760.0])
+        .with_inner_size(INNER_SIZE)
         .with_min_inner_size([900.0, 560.0])
         .with_icon(
             eframe::icon_data::from_png_bytes(include_bytes!("../assets/icons/lumen.png"))
@@ -78,7 +82,18 @@ pub(crate) fn run() -> eframe::Result<()> {
             {
                 let menu = platform::native_menu::NativeMenu::new(&cc.egui_ctx)?;
                 #[cfg(target_os = "windows")]
-                menu.attach(cc)?;
+                {
+                    // `attach` gives the menu bar's height back to the window
+                    // before the first frame. If the surface still reports the
+                    // shrunken size, re-applying the intended client size
+                    // reconfigures it; otherwise this is a no-op.
+                    menu.attach(cc)?;
+                    cc.egui_ctx
+                        .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                            INNER_SIZE[0],
+                            INNER_SIZE[1],
+                        )));
+                }
                 menu.set_context(
                     app.editor.active_index().is_some(),
                     app.editor.active_index().is_some(),
