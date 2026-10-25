@@ -1,5 +1,6 @@
 //! Controller for the workspace-rooted integrated terminal.
 use super::LumenApp;
+use crate::services::shell::terminal_shell;
 use crate::services::terminal::{
     DEFAULT_COLUMNS, DEFAULT_ROWS, TerminalSession, default_working_directory,
 };
@@ -72,6 +73,14 @@ impl LumenApp {
                 for chunk in chunks {
                     emulator.feed(&chunk);
                 }
+                // Answer terminal queries (e.g. ConPTY's cursor-position
+                // request) or the shell never starts drawing.
+                let replies = emulator.take_replies();
+                if !replies.is_empty()
+                    && let Err(error) = session.write(&replies)
+                {
+                    self.view.terminal.error = Some(error);
+                }
             }
             self.view.terminal.scroll_to_bottom =
                 self.view.settings.boolean("terminal.auto_scroll");
@@ -98,7 +107,8 @@ impl LumenApp {
         let measured = |value: u16, default: u16| if value == 0 { default } else { value };
         let rows = measured(self.view.terminal.rows, DEFAULT_ROWS);
         let columns = measured(self.view.terminal.columns, DEFAULT_COLUMNS);
-        match TerminalSession::start(&root, rows, columns) {
+        let shell = terminal_shell(&self.view.settings.choice("terminal.windows_shell"));
+        match TerminalSession::start(&root, rows, columns, &shell) {
             Ok(session) => {
                 self.terminal_session = Some(session);
                 self.view.terminal.error = None;

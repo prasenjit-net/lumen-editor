@@ -225,9 +225,12 @@ impl NativeMenu {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
         if let RawWindowHandle::Win32(handle) = cc.window_handle()?.as_raw() {
             // The handle is provided by the live eframe window on its UI thread.
+            let hwnd = handle.hwnd.get();
             unsafe {
+                let before = client_height(hwnd);
                 self._menu
-                    .init_for_hwnd_with_theme(handle.hwnd.get(), muda::MenuTheme::Dark)?;
+                    .init_for_hwnd_with_theme(hwnd, muda::MenuTheme::Dark)?;
+                grow_by(hwnd, before - client_height(hwnd));
             }
         }
         Ok(())
@@ -263,6 +266,63 @@ impl NativeMenu {
             );
             item.set_enabled(text_input || (clipboard && explorer));
         }
+    }
+}
+
+/// Height of the window's client area in physical pixels.
+///
+/// # Safety
+/// `hwnd` must be a live window handle owned by the calling thread.
+#[cfg(target_os = "windows")]
+unsafe fn client_height(hwnd: isize) -> i32 {
+    use windows_sys::Win32::{Foundation::RECT, UI::WindowsAndMessaging::GetClientRect};
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    unsafe { GetClientRect(hwnd as _, &mut rect) };
+    rect.bottom - rect.top
+}
+
+/// Make the window `extra` physical pixels taller, keeping its position.
+///
+/// Attaching the menu bar takes its height out of the client area. Giving it
+/// back before the first frame keeps the requested client size, so the first
+/// frame is laid out and presented at the right size instead of showing a dead
+/// strip until a later resize reconfigures the surface.
+///
+/// # Safety
+/// `hwnd` must be a live window handle owned by the calling thread.
+#[cfg(target_os = "windows")]
+unsafe fn grow_by(hwnd: isize, extra: i32) {
+    use windows_sys::Win32::{
+        Foundation::RECT,
+        UI::WindowsAndMessaging::{
+            GetWindowRect, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetWindowPos,
+        },
+    };
+    if extra <= 0 {
+        return;
+    }
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    unsafe {
+        GetWindowRect(hwnd as _, &mut rect);
+        SetWindowPos(
+            hwnd as _,
+            std::ptr::null_mut(),
+            0,
+            0,
+            rect.right - rect.left,
+            rect.bottom - rect.top + extra,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
     }
 }
 

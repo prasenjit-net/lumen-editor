@@ -86,6 +86,11 @@ pub(crate) struct Live {
     had_turn: bool,
     /// When the session last became idle (seconds); drives releasing idle sessions.
     idle_since: u64,
+    /// The chat was archived or left behind by a folder change: its process goes
+    /// as soon as the turn is over, without waiting for the idle timeout.
+    release_now: bool,
+    /// A detach is on its way to the provider.
+    detaching: bool,
     /// The saved conversation was looked up (whether or not one existed).
     transcript_loaded: bool,
     /// The conversation changed since it was last saved.
@@ -114,6 +119,8 @@ impl Live {
             reattached: false,
             had_turn: false,
             idle_since: 0,
+            release_now: false,
+            detaching: false,
             transcript_loaded: false,
             transcript_dirty: false,
         }
@@ -128,7 +135,8 @@ enum Pending {
     Reply,
     /// A settings change; a refusal is shown on the session.
     Config(SessionId),
-    Other,
+    /// Giving up the provider session; a refusal leaves it to be released later.
+    Detach(SessionId),
 }
 
 pub(crate) struct AgentHub {
@@ -284,6 +292,7 @@ impl AgentHub {
         let ticket = self.scheduler.submit(session, workspace, true);
         let live = self.live_mut(session);
         live.error = None;
+        live.release_now = false;
         live.prompts.push_back(QueuedPrompt { ticket, input });
         if let Some(text) = title_hint {
             self.registry.suggest_title(session, &text);
@@ -437,15 +446,46 @@ impl AgentHub {
         if self.status(session) == SessionStatus::Working {
             return;
         }
+        self.release_session(session);
+        self.registry.set_archived(session, true);
+        self.registry_dirty = true;
+    }
+
+    /// Stop everything a chat has going and give up its process once it is
+    /// quiet: queued messages are dropped, a running turn (including one waiting
+    /// for an answer) is interrupted, and the provider session is detached.
+    fn release_session(&mut self, session: SessionId) {
         for ticket in self.scheduler.drop_session(session) {
             let _ = ticket;
         }
-        if let Some(live) = self.live.get_mut(&session) {
-            live.prompts.clear();
-            live.current = None;
+        let Some(live) = self.live.get_mut(&session) else {
+            return;
+        };
+        live.prompts.clear();
+        live.current = None;
+        live.held_reply = None;
+        live.release_now = true;
+        if live.turn.is_some() {
+            self.interrupt(session);
         }
-        self.registry.set_archived(session, true);
-        self.registry_dirty = true;
+    }
+
+    /// The open folder changed: chats of any other folder stop and let go of
+    /// their processes, so nothing keeps working in a folder that is no longer open.
+    pub(crate) fn release_outside(&mut self, workspace: &std::path::Path) {
+        let leaving: Vec<SessionId> = self
+            .live
+            .keys()
+            .copied()
+            .filter(|id| {
+                self.registry
+                    .get(*id)
+                    .is_some_and(|record| record.workspace != workspace)
+            })
+            .collect();
+        for session in leaving {
+            self.release_session(session);
+        }
     }
 
     // ---------------------------------------------------------------- status
@@ -821,8 +861,27 @@ impl AgentHub {
                 Pending::Start(session),
                 OperationOutcome::Succeeded(OperationOutput::TurnStarted(turn)),
             ) => {
-                if let Some(live) = self.live.get_mut(&session) {
+                let release = self.live.get_mut(&session).is_some_and(|live| {
                     live.turn = Some(turn.clone());
+                    live.release_now
+                });
+                // Released while the turn was still starting.
+                if release {
+                    self.interrupt(session);
+                }
+            }
+            (Pending::Detach(session), outcome) => {
+                let succeeded = matches!(outcome, OperationOutcome::Succeeded(_));
+                if let Some(live) = self.live.get_mut(&session) {
+                    live.detaching = false;
+                    // Only forget the provider session when nothing started in
+                    // the meantime; a refusal keeps it so a later pass retries.
+                    if succeeded && live.current.is_none() && live.turn.is_none() && !live.starting
+                    {
+                        live.ready = false;
+                        live.had_turn = false;
+                        live.release_now = false;
+                    }
                 }
             }
             (
@@ -894,12 +953,13 @@ impl AgentHub {
             return;
         }
         let now = (self.now)();
-        let mut idle: Vec<(u64, SessionId)> = self
+        let mut idle: Vec<(u64, SessionId, bool)> = self
             .live
             .iter()
             .filter(|(id, live)| {
                 live.ready
                     && live.had_turn
+                    && !live.detaching
                     && live.current.is_none()
                     && live.prompts.is_empty()
                     && live.config_in_flight == 0
@@ -908,17 +968,19 @@ impl AgentHub {
                     && live.model.state == TurnState::Idle
                     && self.status(**id) != SessionStatus::Working
             })
-            .map(|(id, live)| (live.idle_since, *id))
+            .map(|(id, live)| (live.idle_since, *id, live.release_now))
             .collect();
         idle.sort();
         let excess = idle.len().saturating_sub(Self::WARM_IDLE_SESSIONS);
         let release: Vec<SessionId> = idle
             .iter()
             .enumerate()
-            .filter(|(index, (since, _))| {
-                *index < excess || now.saturating_sub(*since) >= Self::IDLE_RELEASE_SECONDS
+            .filter(|(index, (since, _, now_release))| {
+                *now_release
+                    || *index < excess
+                    || now.saturating_sub(*since) >= Self::IDLE_RELEASE_SECONDS
             })
-            .map(|(_, (_, id))| *id)
+            .map(|(_, (_, id, _))| *id)
             .collect();
         for session in release {
             let Some(provider) = self.registry.get(session).map(|r| r.provider) else {
@@ -927,11 +989,10 @@ impl AgentHub {
             if self.submit(
                 provider,
                 AgentOperation::DetachSession { session },
-                Pending::Other,
+                Pending::Detach(session),
             ) && let Some(live) = self.live.get_mut(&session)
             {
-                live.ready = false;
-                live.had_turn = false;
+                live.detaching = true;
             }
         }
     }
@@ -1387,11 +1448,13 @@ mod tests {
             settle(&mut hub, |h| idle(h, *id));
         }
         // Four idle sessions: only the two most recent stay warm.
-        let ready: Vec<bool> = ids.iter().map(|id| hub.live(*id).unwrap().ready).collect();
-        assert_eq!(ready, [false, false, true, true]);
+        let ready = |hub: &AgentHub| -> Vec<bool> {
+            ids.iter().map(|id| hub.live(*id).unwrap().ready).collect()
+        };
+        settle(&mut hub, |h| ready(h) == [false, false, true, true]);
         // Past the timeout the rest are released too.
         clock.store(1000 + 400, std::sync::atomic::Ordering::SeqCst);
-        hub.tick();
+        settle(&mut hub, |h| ready(h) == [false; 4]);
         assert!(ids.iter().all(|id| !hub.live(*id).unwrap().ready));
         // A message to a released session attaches it again with its history intact.
         hub.send(ids[0], text("back again")).unwrap();
@@ -1399,6 +1462,63 @@ mod tests {
         let live = hub.live(ids[0]).unwrap();
         assert_eq!(live.model.last_outcome, Some(TurnOutcome::Completed));
         assert!(live.error.is_none(), "{:?}", live.error);
+    }
+
+    #[test]
+    fn archiving_a_chat_stops_its_turn_and_releases_its_process_at_once() {
+        let mut hub = hub();
+        let session = hub.create_session(ProviderId::Claude, "/w".into());
+        hub.send(session, text("slow: working")).unwrap();
+        settle(&mut hub, |h| {
+            h.live(session).is_some_and(|l| l.turn.is_some())
+        });
+        // A running turn is not archived out from under the user.
+        hub.archive(session);
+        assert!(!hub.registry.get(session).unwrap().archived);
+        assert!(hub.interrupt(session));
+        settle(&mut hub, |h| idle(h, session));
+        hub.archive(session);
+        settle(&mut hub, |h| !h.live(session).unwrap().ready);
+        assert!(hub.registry.get(session).unwrap().archived);
+    }
+
+    #[test]
+    fn changing_folders_stops_chats_of_the_old_folder_and_keeps_the_new_ones() {
+        let mut hub = hub();
+        let old = hub.create_session(ProviderId::Claude, "/old".into());
+        let kept = hub.create_session(ProviderId::Claude, "/new".into());
+        hub.set_slots(2);
+        hub.send(old, text("slow: working")).unwrap();
+        hub.send(kept, text("hi")).unwrap();
+        settle(&mut hub, |h| h.live(old).is_some_and(|l| l.turn.is_some()));
+        hub.release_outside(std::path::Path::new("/new"));
+        settle(&mut hub, |h| {
+            idle(h, old) && !h.live(old).unwrap().ready && idle(h, kept)
+        });
+        assert_eq!(
+            hub.live(old).unwrap().model.last_outcome,
+            Some(TurnOutcome::Interrupted)
+        );
+        assert!(
+            hub.live(kept).unwrap().ready,
+            "the open folder's chat stays warm"
+        );
+    }
+
+    #[test]
+    fn a_refused_detach_keeps_the_session_for_a_later_release() {
+        let mut hub = hub();
+        let session = hub.create_session(ProviderId::Claude, "/w".into());
+        hub.send(session, text("hi")).unwrap();
+        settle(&mut hub, |h| idle(h, session));
+        let ready_before = hub.live(session).unwrap().ready;
+        hub.settle(
+            Pending::Detach(session),
+            &OperationOutcome::Failed(AgentError::Busy),
+        );
+        let live = hub.live(session).unwrap();
+        assert_eq!(live.ready, ready_before);
+        assert!(!live.detaching);
     }
 
     #[test]

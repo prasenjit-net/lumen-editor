@@ -2,6 +2,7 @@
 //!
 //! The service owns process and PTY handles. UI code only submits complete
 //! input lines and drains output through the app controller.
+use super::shell::{ResolvedShell, ShellFlavor};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::{
     io::{Read, Write},
@@ -41,7 +42,12 @@ pub(crate) struct TerminalSession {
 }
 
 impl TerminalSession {
-    pub(crate) fn start(root: &Path, rows: u16, columns: u16) -> Result<Self, String> {
+    pub(crate) fn start(
+        root: &Path,
+        rows: u16,
+        columns: u16,
+        shell: &ResolvedShell,
+    ) -> Result<Self, String> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -51,7 +57,10 @@ impl TerminalSession {
                 pixel_height: 0,
             })
             .map_err(|error| format!("Could not create terminal: {error}"))?;
-        let mut command = CommandBuilder::new(default_shell());
+        let mut command = CommandBuilder::new(&shell.program);
+        if shell.flavor == ShellFlavor::PowerShell {
+            command.arg("-NoLogo");
+        }
         command.cwd(root);
         configure_environment(&mut command);
         let child = pair
@@ -123,17 +132,6 @@ fn configure_environment(command: &mut CommandBuilder) {
     command.env("COLORTERM", "truecolor");
 }
 
-fn default_shell() -> std::ffi::OsString {
-    #[cfg(windows)]
-    {
-        super::shell::platform_shell().program
-    }
-    #[cfg(not(windows))]
-    {
-        std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())
-    }
-}
-
 fn read_terminal_output(mut reader: Box<dyn Read + Send>, sender: mpsc::Sender<Vec<u8>>) {
     let mut buffer = [0; 4096];
     loop {
@@ -150,6 +148,8 @@ fn read_terminal_output(mut reader: Box<dyn Read + Send>, sender: mpsc::Sender<V
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(windows))]
+    use super::super::shell::platform_shell;
     use super::*;
 
     // Windows ConPTY may emit its device-status query without delivering an
@@ -159,7 +159,8 @@ mod tests {
     #[test]
     fn shell_runs_in_the_requested_directory_and_streams_output() {
         let directory = tempfile::tempdir().unwrap();
-        let mut terminal = TerminalSession::start(directory.path(), 12, 80).unwrap();
+        let mut terminal =
+            TerminalSession::start(directory.path(), 12, 80, &platform_shell()).unwrap();
         terminal.write(b"printf lumen-terminal-ok\r").unwrap();
         let mut output = Vec::new();
         for _ in 0..50 {
@@ -178,7 +179,8 @@ mod tests {
     #[test]
     fn shell_sees_a_colour_terminal_and_colours_reach_the_emulator() {
         let directory = tempfile::tempdir().unwrap();
-        let mut session = TerminalSession::start(directory.path(), 10, 60).unwrap();
+        let mut session =
+            TerminalSession::start(directory.path(), 10, 60, &platform_shell()).unwrap();
         session
             .write(
                 b"printf '%s|%s\\n' \"$TERM\" \"$COLORTERM\"; printf '\\033[31mRED\\033[0m\\n'\r",
@@ -214,6 +216,42 @@ mod tests {
             lumen_terminal_core::TerminalColor::Named(256),
             "red text kept the default foreground"
         );
+    }
+
+    /// Regression: ConPTY holds back all shell output until its startup
+    /// cursor-position query is answered, so an emulator that drops replies
+    /// shows a blank terminal on Windows.
+    #[cfg(windows)]
+    #[test]
+    fn windows_powershell_draws_a_prompt_once_queries_are_answered() {
+        let directory = tempfile::tempdir().unwrap();
+        let shell = super::super::shell::windows_terminal_shell(
+            std::env::var_os("COMSPEC"),
+            "powershell",
+            |name| {
+                std::env::split_paths(&std::env::var_os("PATH")?)
+                    .map(|dir| dir.join(name))
+                    .find(|candidate| candidate.is_file())
+            },
+        );
+        let mut session = TerminalSession::start(directory.path(), 10, 80, &shell).unwrap();
+        let mut emulator = lumen_terminal_core::Terminal::new(10, 80);
+        let mut seen = String::new();
+        for _ in 0..500 {
+            for chunk in session.drain_output() {
+                emulator.feed(&chunk);
+            }
+            let replies = emulator.take_replies();
+            if !replies.is_empty() {
+                session.write(&replies).unwrap();
+            }
+            seen = emulator.text();
+            if seen.contains("PS ") {
+                return;
+            }
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("no prompt was drawn: {seen:?}");
     }
 
     #[test]

@@ -453,6 +453,8 @@ impl ClaudeBackend {
         config: SessionConfig,
         history: bool,
     ) {
+        // Registering again must not orphan a running process.
+        self.retire(session);
         self.sessions.insert(
             session,
             Session {

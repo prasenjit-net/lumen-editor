@@ -5,12 +5,30 @@
 //! native shell, while the workbench renders the snapshots exposed here.
 
 use alacritty_terminal::{
-    event::VoidListener,
+    event::{Event, EventListener},
     grid::Dimensions,
     index::{Column, Line},
     term::{self, Term},
 };
+use std::sync::{Arc, Mutex};
 use vte::ansi::Color;
+
+/// Collects what the emulator wants written back to the shell, such as the
+/// answer to a cursor-position query. Windows ConPTY sends that query first and
+/// withholds all output until it is answered, so dropping replies leaves the
+/// terminal blank.
+#[derive(Clone, Default)]
+struct ReplyQueue(Arc<Mutex<Vec<String>>>);
+
+impl EventListener for ReplyQueue {
+    fn send_event(&self, event: Event) {
+        if let Event::PtyWrite(reply) = event
+            && let Ok(mut queue) = self.0.lock()
+        {
+            queue.push(reply);
+        }
+    }
+}
 
 /// A terminal screen cell ready for a GUI renderer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,9 +83,10 @@ impl Screen {
 
 /// ANSI/VT parser and screen grid.
 pub struct Terminal {
-    term: Term<VoidListener>,
+    term: Term<ReplyQueue>,
     parser: vte::ansi::Processor,
     size: Size,
+    replies: ReplyQueue,
 }
 
 impl Terminal {
@@ -90,15 +109,27 @@ impl Terminal {
 
     fn with_config(rows: usize, columns: usize, config: term::Config) -> Self {
         let size = Size::new(rows, columns);
+        let replies = ReplyQueue::default();
         Self {
-            term: Term::new(config, &size, VoidListener),
+            term: Term::new(config, &size, replies.clone()),
             parser: vte::ansi::Processor::new(),
             size,
+            replies,
         }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.term, bytes);
+    }
+
+    /// Bytes the emulator answered with since the last call; write them to the
+    /// shell's input.
+    pub fn take_replies(&mut self) -> Vec<u8> {
+        self.replies
+            .0
+            .lock()
+            .map(|mut queue| queue.drain(..).collect::<String>().into_bytes())
+            .unwrap_or_default()
     }
 
     pub fn resize(&mut self, rows: usize, columns: usize) {
@@ -232,6 +263,15 @@ mod tests {
         let screen = terminal.screen();
         assert_eq!(screen.line(0), "one");
         assert_eq!(screen.line(1), "two");
+    }
+
+    #[test]
+    fn cursor_position_queries_are_answered_once() {
+        let mut terminal = Terminal::new(4, 20);
+        terminal.feed(b"ab\x1b[6n");
+        assert_eq!(terminal.take_replies(), b"\x1b[1;3R");
+        assert!(terminal.take_replies().is_empty());
+        assert_eq!(terminal.screen().line(0), "ab");
     }
 
     #[test]

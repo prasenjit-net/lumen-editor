@@ -1,5 +1,6 @@
 //! Workbench components and shared drawing primitives.
 mod activity_bar;
+pub(crate) mod agent_install;
 mod agent_message;
 mod agent_panel;
 mod bottom_tabs;

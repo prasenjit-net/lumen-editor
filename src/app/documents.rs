@@ -78,6 +78,7 @@ impl LumenApp {
         self.view.workspace_search.results = None;
         self.view.workspace_search.completed_request = None;
         self.editor.workspace = Some(folder.clone());
+        self.release_agents_outside_workspace();
         // A comparison belongs to the repository it was opened from.
         self.source_control_job = None;
         self.view.source_control = Default::default();
@@ -133,6 +134,7 @@ impl LumenApp {
         self.view.explorer_focused = false;
         self.close_terminal();
         self.close_workspace_language_server();
+        self.release_agents_outside_workspace();
         self.view.status = format!("Closed folder {}", display_name(&folder));
     }
 
