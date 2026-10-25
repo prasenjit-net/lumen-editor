@@ -6,7 +6,7 @@
 //! scheduler now allows. Backends never queue turns - the hub keeps each session's
 //! queue - and a backend only ever sees one active turn per session.
 use crate::model::{
-    agent_registry::Registry,
+    agent_registry::{Registry, SessionRecord},
     agent_scheduler::{Dispatch, Phase, Scheduler, Ticket, WaitReason},
 };
 use lumen_agent_core::{
@@ -42,6 +42,13 @@ pub(crate) enum SessionStatus {
 pub(crate) struct QueuedPrompt {
     pub(crate) ticket: Ticket,
     pub(crate) input: Vec<InputBlock>,
+}
+
+/// Which way a pending message moves in the queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum QueueMove {
+    Up,
+    Down,
 }
 
 /// Why `send` refused a message.
@@ -315,6 +322,77 @@ impl AgentHub {
         true
     }
 
+    /// Position of a message that can still be changed: waiting behind the head
+    /// of the session's list, not dispatched, and still queued in the scheduler.
+    /// The head is the active prompt and is never editable or movable.
+    fn editable_position(&self, session: SessionId, ticket: Ticket) -> Option<usize> {
+        let live = self.live.get(&session)?;
+        if live.current == Some(ticket) || self.scheduler.phase(ticket) != Some(Phase::Queued) {
+            return None;
+        }
+        live.prompts
+            .iter()
+            .position(|p| p.ticket == ticket)
+            .filter(|&index| index > 0)
+    }
+
+    /// Replace the text of a pending message, keeping its attachments and place.
+    /// Refused once the message started, and for an empty result.
+    pub(crate) fn edit_queued(&mut self, session: SessionId, ticket: Ticket, text: &str) -> bool {
+        let Some(index) = self.editable_position(session, ticket) else {
+            return false;
+        };
+        let Some(live) = self.live.get_mut(&session) else {
+            return false;
+        };
+        let input = &mut live.prompts[index].input;
+        let has_other = input.iter().any(|b| !matches!(b, InputBlock::Text(_)));
+        let text = text.trim();
+        if text.is_empty() && !has_other {
+            return false;
+        }
+        input.retain(|b| !matches!(b, InputBlock::Text(_)));
+        if !text.is_empty() {
+            input.insert(0, InputBlock::Text(text.to_string()));
+        }
+        true
+    }
+
+    /// Swap a pending message with its neighbour. Tickets keep their scheduler
+    /// order, so the contents move and the identities stay put.
+    pub(crate) fn move_queued(
+        &mut self,
+        session: SessionId,
+        ticket: Ticket,
+        direction: QueueMove,
+    ) -> bool {
+        let Some(index) = self.editable_position(session, ticket) else {
+            return false;
+        };
+        let other = match direction {
+            QueueMove::Up => index - 1,
+            QueueMove::Down => index + 1,
+        };
+        let Some(neighbour) = self
+            .live
+            .get(&session)
+            .and_then(|live| live.prompts.get(other))
+            .map(|p| p.ticket)
+        else {
+            return false;
+        };
+        if self.editable_position(session, neighbour).is_none() {
+            return false;
+        }
+        let Some(live) = self.live.get_mut(&session) else {
+            return false;
+        };
+        let (a, b) = (index.min(other), index.max(other));
+        let (left, right) = live.prompts.make_contiguous().split_at_mut(b);
+        std::mem::swap(&mut left[a].input, &mut right[0].input);
+        true
+    }
+
     pub(crate) fn interrupt(&mut self, session: SessionId) -> bool {
         let Some(live) = self.live.get(&session) else {
             return false;
@@ -489,6 +567,31 @@ impl AgentHub {
     }
 
     // ---------------------------------------------------------------- status
+
+    /// The most actionable unarchived session, across folders. Approval requests
+    /// take precedence over failures, running turns, then scheduler waits. Ties
+    /// use recency and identity, independent of pins or HashMap iteration order.
+    pub(crate) fn provider_activity(
+        &self,
+        provider: ProviderId,
+    ) -> Option<(&SessionRecord, SessionStatus)> {
+        self.registry
+            .listing(None, false)
+            .into_iter()
+            .filter(|record| record.provider == provider)
+            .map(|record| (record, self.status(record.id)))
+            .filter(|(_, status)| *status != SessionStatus::Idle)
+            .max_by_key(|(record, status)| {
+                let priority = match status {
+                    SessionStatus::NeedsAttention => 4,
+                    SessionStatus::Failed(_) => 3,
+                    SessionStatus::Working => 2,
+                    SessionStatus::Waiting(_) => 1,
+                    SessionStatus::Idle => 0,
+                };
+                (priority, record.updated, std::cmp::Reverse(record.id.0))
+            })
+    }
 
     pub(crate) fn status(&self, session: SessionId) -> SessionStatus {
         let Some(live) = self.live.get(&session) else {
@@ -1053,6 +1156,73 @@ mod tests {
     }
 
     #[test]
+    fn provider_activity_prioritizes_attention_failure_work_and_waiting_across_folders() {
+        let mut hub = hub();
+        hub.set_slots(1);
+        let working = hub.create_session(ProviderId::Codex, "/working".into());
+        let waiting = hub.create_session(ProviderId::Codex, "/waiting".into());
+        let failed = hub.create_session(ProviderId::Codex, "/failed".into());
+        let approval = hub.create_session(ProviderId::Codex, "/approval".into());
+        let other = hub.create_session(ProviderId::Claude, "/other".into());
+        assert!(hub.provider_activity(ProviderId::Codex).is_none());
+        hub.live_mut(other).error = Some("other provider".into());
+        hub.send(approval, text("approve: touch file")).unwrap();
+        settle(&mut hub, |hub| {
+            hub.status(approval) == SessionStatus::NeedsAttention
+        });
+        hub.live_mut(failed).error = Some("connection lost".into());
+        hub.send(working, text("slow: running")).unwrap();
+        hub.send(waiting, text("waiting for a slot")).unwrap();
+        let activity = |hub: &AgentHub| {
+            hub.provider_activity(ProviderId::Codex)
+                .map(|(r, s)| (r.id, s))
+        };
+        assert_eq!(
+            activity(&hub),
+            Some((approval, SessionStatus::NeedsAttention))
+        );
+        hub.registry.set_archived(approval, true);
+        assert_eq!(
+            activity(&hub),
+            Some((failed, SessionStatus::Failed("connection lost".into())))
+        );
+        hub.registry.set_archived(failed, true);
+        assert_eq!(activity(&hub), Some((working, SessionStatus::Working)));
+        hub.registry.set_archived(working, true);
+        assert!(matches!(activity(&hub), Some((id, SessionStatus::Waiting(_))) if id == waiting));
+        hub.registry.set_archived(waiting, true);
+        assert_eq!(activity(&hub), None);
+        assert_eq!(
+            hub.provider_activity(ProviderId::Claude).unwrap().0.id,
+            other
+        );
+    }
+
+    #[test]
+    fn provider_activity_ties_use_recency_then_identity_and_ignore_pins() {
+        let mut hub = hub();
+        let first = hub.create_session(ProviderId::Codex, "/a".into());
+        let second = hub.create_session(ProviderId::Codex, "/b".into());
+        hub.live_mut(first).error = Some("failed".into());
+        hub.live_mut(second).error = Some("failed".into());
+        hub.registry.set_pinned(second, true);
+        assert_eq!(
+            hub.provider_activity(ProviderId::Codex).unwrap().0.id,
+            first
+        );
+        hub.registry.touch(second, 1001, None);
+        assert_eq!(
+            hub.provider_activity(ProviderId::Codex).unwrap().0.id,
+            second
+        );
+        hub.live_mut(second).error = None;
+        assert_eq!(
+            hub.provider_activity(ProviderId::Codex).unwrap().0.id,
+            first
+        );
+    }
+
+    #[test]
     fn a_message_creates_the_native_session_runs_the_turn_and_titles_the_chat() {
         let mut hub = hub();
         let session = hub.create_session(ProviderId::Codex, "/w".into());
@@ -1097,6 +1267,84 @@ mod tests {
             .collect();
         assert_eq!(users, ["one", "three"]);
         let _ = third;
+    }
+
+    fn user_texts(hub: &AgentHub, session: SessionId) -> Vec<String> {
+        hub.live(session)
+            .unwrap()
+            .model
+            .items
+            .iter()
+            .filter_map(|i| match &i.kind {
+                lumen_agent_core::model::ItemKind::User(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pending_messages_can_be_edited_and_reordered_but_not_the_active_one() {
+        let mut hub = hub();
+        let session = hub.create_session(ProviderId::Claude, "/w".into());
+        let head = hub.send(session, text("one")).unwrap();
+        let second = hub.send(session, text("two")).unwrap();
+        let third = hub.send(session, text("three")).unwrap();
+        let fourth = hub.send(session, text("four")).unwrap();
+        assert!(!hub.edit_queued(session, head, "changed"), "active prompt");
+        assert!(!hub.move_queued(session, head, QueueMove::Down));
+        assert!(
+            !hub.move_queued(session, second, QueueMove::Up),
+            "head stays first"
+        );
+        assert!(
+            !hub.move_queued(session, fourth, QueueMove::Down),
+            "last stays last"
+        );
+        assert!(
+            !hub.edit_queued(session, second, "  "),
+            "empty edit is refused"
+        );
+        assert!(hub.edit_queued(session, second, " two edited "));
+        assert!(hub.move_queued(session, third, QueueMove::Up));
+        let order: Vec<_> = hub
+            .live(session)
+            .unwrap()
+            .prompts
+            .iter()
+            .map(|p| (p.ticket, p.input.clone()))
+            .collect();
+        assert_eq!(order[1], (second, text("three")));
+        assert_eq!(order[2], (third, text("two edited")));
+        settle(&mut hub, |h| idle(h, session));
+        assert_eq!(
+            user_texts(&hub, session),
+            ["one", "three", "two edited", "four"]
+        );
+        assert!(
+            !hub.edit_queued(session, second, "late"),
+            "finished message"
+        );
+    }
+
+    #[test]
+    fn editing_replaces_the_text_and_stale_tickets_change_nothing() {
+        let mut hub = hub();
+        let session = hub.create_session(ProviderId::Claude, "/w".into());
+        hub.send(session, text("head")).unwrap();
+        let mut blocks = text("see file");
+        blocks.push(InputBlock::Text("second block".into()));
+        let ticket = hub.send(session, blocks).unwrap();
+        assert!(hub.edit_queued(session, ticket, "revised"));
+        assert_eq!(
+            hub.live(session).unwrap().prompts[1].input,
+            text("revised"),
+            "text blocks are replaced by the edited text"
+        );
+        assert!(hub.cancel_queued(session, ticket));
+        assert!(!hub.edit_queued(session, ticket, "gone"));
+        assert!(!hub.move_queued(session, ticket, QueueMove::Up));
+        let other = hub.create_session(ProviderId::Codex, "/x".into());
+        assert!(!hub.edit_queued(other, ticket, "wrong session"));
     }
 
     #[test]

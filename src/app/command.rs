@@ -33,6 +33,22 @@ pub(crate) enum Command {
         lumen_agent_core::SessionId,
         crate::model::agent_scheduler::Ticket,
     ),
+    /// Replace the text of a pending (not yet started) queued message.
+    ChatEditQueued(
+        lumen_agent_core::SessionId,
+        crate::model::agent_scheduler::Ticket,
+        String,
+    ),
+    ChatMoveQueued(
+        lumen_agent_core::SessionId,
+        crate::model::agent_scheduler::Ticket,
+        super::agent_hub::QueueMove,
+    ),
+    /// Put a starting prompt in an empty draft without sending it.
+    ChatSuggest(
+        lumen_agent_core::SessionId,
+        super::agent_panel::ChatSuggestion,
+    ),
     ChatApproval(
         lumen_agent_core::SessionId,
         lumen_agent_core::RequestToken,

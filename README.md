@@ -40,7 +40,7 @@ Lumen is under active development. The default editor uses a shared Rust editing
 | Git | Status badges, staged/working diffs, staging, hunk staging, commits, amend, confirmed discard, push and fast-forward pull |
 | Terminal | Integrated PTY shell with terminal emulation and configurable typography/colors |
 | Tasks | Project and personal tasks in `tasks.toml`: guided editor, dependency groups, terminal or captured output tabs, background services, inputs |
-| Coding agents | Native Claude Code and Codex sessions in one list, with chats in editor tabs, permission cards, per-session model/effort/permission settings and cached transcripts |
+| Coding agents | Codex and Claude Code provider tabs with searchable grouped history, activity indicators, permission navigation, queue editing, diff previews, grouped tool activity, conversation navigation, per-session settings and cached transcripts |
 | Settings | Searchable User/Project configuration, sparse TOML overrides, themes and editor/terminal preferences |
 | File safety | Dirty-buffer prompts, optional Auto Save, recovery snapshots, external-change detection, staged file writes |
 
@@ -296,11 +296,11 @@ Open **Agent Sessions** with `Cmd/Ctrl+Shift+A`. Lumen talks directly to your in
 
 ### Sessions and chats
 
-- The side panel lists Codex and Claude Code sessions for the open folder in one list, colored by provider, with a compact age on each row. **+ Claude** / **+ Codex** start a new chat in the folder.
-- Each chat opens in an editor tab, so several can run side by side with your documents. Lumen queues turns and serializes workspace writes so two agents do not edit at the same time.
-- Messages are labelled by speaker. Tool calls appear as compact rows, and permission requests appear as cards you approve or reject inline. A working indicator shows while a turn runs, and you can cancel it.
+- The right-hand panel has **Codex** and **Claude Code** tabs. Each shows its current chat; **History** lists that provider’s previous chats in the open folder, and **+** starts a new chat.
+- Tabs show background activity across folders: approval needed, failed, working, or waiting, in that priority order. Hover for the session title, folder, and status. Lumen queues turns and serializes workspace writes so two agents do not edit at the same time.
+- Messages are labelled by speaker. Tool calls appear as compact rows, and permission requests appear as cards you approve or reject inline. A pinned approval count and **Review** action let you find requests while reading older messages; Review only navigates, leaving decisions with the full request details. A working indicator shows while a turn runs, and you can cancel it.
 - Conversations are cached on disk, so a reopened chat keeps its transcript. If a provider forgets a session (for example after its agent restarts), Lumen re-attaches it. Idle sessions release their process, and quitting stops agents gracefully, waiting a few seconds before closing.
-- The settings above the composer choose the model, reasoning effort, fast mode, and permission mode per session. They are typed, can be reset to defaults, and persist. A staged choice is not proof that the provider applied it.
+- The controls below the provider tabs show model and reasoning effort when offered. At narrow widths, effort moves into the configuration menu; its current value is also in the gear tooltip. Other provider settings live in that menu. Choices can be reset to defaults and persist per session. A staged choice is not proof that the provider applied it.
 
 Sending a prompt shares that context with the selected provider; authentication, usage limits and costs remain with the provider.
 

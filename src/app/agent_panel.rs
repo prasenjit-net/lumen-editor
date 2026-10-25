@@ -3,8 +3,127 @@
 //! only: sessions live in the hub, so nothing here owns or ends one. Drafts and
 //! attachments are kept per session so they outlive tab, history and panel switches.
 use super::chat_attachments::{Attachment, AttachmentError, MAX_ATTACHMENTS};
+use crate::model::agent_scheduler::Ticket;
 use lumen_agent_core::{ProviderId, SessionId};
 use std::collections::HashMap;
+
+/// A starting prompt offered in an empty chat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChatSuggestion {
+    ExplainFolder,
+    ReviewChanges,
+}
+
+impl ChatSuggestion {
+    pub(crate) const ALL: [Self; 2] = [Self::ExplainFolder, Self::ReviewChanges];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::ExplainFolder => "Explain this folder",
+            Self::ReviewChanges => "Review my changes",
+        }
+    }
+
+    pub(crate) fn prompt(self) -> &'static str {
+        match self {
+            Self::ExplainFolder => {
+                "Explain what this folder contains: its purpose, structure and how to build and run it."
+            }
+            Self::ReviewChanges => {
+                "Review my uncommitted changes and point out bugs, risks and anything missing."
+            }
+        }
+    }
+
+    /// Reviewing changes needs a Git repository to have any.
+    pub(crate) fn needs_repository(self) -> bool {
+        self == Self::ReviewChanges
+    }
+}
+
+/// The Git comparison that shows an agent-edited file, when one exists: the
+/// working tree first, then untracked, then staged. `None` when the file has no
+/// uncommitted change in the repository (or lies outside it).
+pub(crate) fn changed_file_diff(
+    snapshot: &crate::services::source_control::GitSnapshot,
+    path: &std::path::Path,
+) -> Option<(
+    std::path::PathBuf,
+    crate::services::source_control::DiffSide,
+)> {
+    use crate::services::source_control::DiffSide;
+    let relative = path.strip_prefix(&snapshot.root).ok()?;
+    let change = snapshot.changes.iter().find(|c| c.path == relative)?;
+    let side = if change.index == '?' && change.worktree == '?' {
+        DiffSide::Untracked
+    } else if change.worktree != ' ' && change.worktree != '?' {
+        DiffSide::Working
+    } else if change.index != ' ' && change.index != '?' {
+        DiffSide::Staged
+    } else {
+        return None;
+    };
+    Some((relative.to_path_buf(), side))
+}
+
+/// Where a chat's transcript should scroll to on the next frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScrollRequest {
+    Latest,
+    /// The transcript item at this index (a message the user sent).
+    Item(usize),
+}
+
+/// A queued message being edited in place; saved or cancelled explicitly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct QueueEdit {
+    pub(crate) session: SessionId,
+    pub(crate) ticket: Ticket,
+    pub(crate) text: String,
+    pub(crate) focus: bool,
+    /// The field had keyboard focus last frame. egui drops focus on Escape before
+    /// the widget runs, so this is what tells Escape it was meant for the field.
+    pub(crate) had_focus: bool,
+}
+
+/// Recency groups of the History list, newest first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum HistoryGroup {
+    Pinned,
+    Recent,
+    Week,
+    Earlier,
+}
+
+impl HistoryGroup {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Pinned => "Pinned",
+            Self::Recent => "Last 24 hours",
+            Self::Week => "Last 7 days",
+            Self::Earlier => "Earlier",
+        }
+    }
+}
+
+/// Rolling windows rather than calendar days: no time-zone guess is needed and a
+/// chat from just before midnight is still "recent".
+pub(crate) fn history_group(pinned: bool, now: u64, updated: u64) -> HistoryGroup {
+    if pinned {
+        return HistoryGroup::Pinned;
+    }
+    match now.saturating_sub(updated) {
+        0..86_400 => HistoryGroup::Recent,
+        86_400..604_800 => HistoryGroup::Week,
+        _ => HistoryGroup::Earlier,
+    }
+}
+
+/// Whether a title matches the search text (case-insensitive; blank matches all).
+pub(crate) fn title_matches(title: &str, query: &str) -> bool {
+    let query = query.trim();
+    query.is_empty() || title.to_lowercase().contains(&query.to_lowercase())
+}
 
 /// What a provider tab shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -57,6 +176,14 @@ pub(crate) struct AgentPanel {
     attachments: HashMap<SessionId, Vec<Attachment>>,
     /// Providers whose program was not found, with the name that was looked for.
     missing: HashMap<ProviderId, String>,
+    /// Pending transcript scroll per session, applied on the next frame.
+    scroll_requests: HashMap<SessionId, ScrollRequest>,
+    /// Transcript items the user has seen at the end of each session, so content
+    /// that arrives while reading older messages can be flagged.
+    seen_items: HashMap<SessionId, usize>,
+    /// Title filter of the History list, shared by the provider tabs.
+    history_query: String,
+    queue_edit: Option<QueueEdit>,
 }
 
 impl Default for AgentPanel {
@@ -71,6 +198,10 @@ impl Default for AgentPanel {
             drafts: HashMap::new(),
             attachments: HashMap::new(),
             missing: HashMap::new(),
+            scroll_requests: HashMap::new(),
+            seen_items: HashMap::new(),
+            history_query: String::new(),
+            queue_edit: None,
         }
     }
 }
@@ -155,6 +286,44 @@ impl AgentPanel {
         self.tabs.entry(provider).or_default().mode = TabMode::Chat;
         self.focus_composer = true;
         self.rename = None;
+        self.history_query.clear();
+    }
+
+    pub(crate) fn request_composer_focus(&mut self) {
+        self.focus_composer = true;
+    }
+
+    pub(crate) fn history_query_mut(&mut self) -> &mut String {
+        &mut self.history_query
+    }
+
+    pub(crate) fn request_scroll(&mut self, id: SessionId, request: ScrollRequest) {
+        self.scroll_requests.insert(id, request);
+    }
+
+    pub(crate) fn take_scroll_request(&mut self, id: SessionId) -> Option<ScrollRequest> {
+        self.scroll_requests.remove(&id)
+    }
+
+    /// Record how many transcript items the user has caught up with.
+    pub(crate) fn mark_seen(&mut self, id: SessionId, items: usize) {
+        self.seen_items.insert(id, items);
+    }
+
+    /// Items that arrived since the user last saw the end of the transcript. A
+    /// session never viewed has nothing "new": its whole history is not news.
+    pub(crate) fn unseen_items(&self, id: SessionId, items: usize) -> usize {
+        self.seen_items
+            .get(&id)
+            .map_or(0, |seen| items.saturating_sub(*seen))
+    }
+
+    pub(crate) fn queue_edit(&self) -> Option<&QueueEdit> {
+        self.queue_edit.as_ref()
+    }
+
+    pub(crate) fn set_queue_edit(&mut self, edit: Option<QueueEdit>) {
+        self.queue_edit = edit;
     }
 
     pub(crate) fn take_history_focus(&mut self) -> bool {
@@ -362,6 +531,93 @@ mod tests {
         assert_eq!(panel.take_provider_change(), None);
         panel.select_provider(CODEX);
         assert_eq!(panel.take_provider_change(), None);
+    }
+
+    #[test]
+    fn agent_edits_open_the_matching_git_comparison_or_nothing() {
+        use crate::services::source_control::{DiffSide, GitChange, GitSnapshot};
+        let snapshot = GitSnapshot {
+            root: "/repo".into(),
+            changes: vec![
+                GitChange::new("a.rs", ' ', 'M'),
+                GitChange::new("new.rs", '?', '?'),
+                GitChange::new("staged.rs", 'M', ' '),
+            ],
+            ..Default::default()
+        };
+        let find = |p: &str| changed_file_diff(&snapshot, std::path::Path::new(p));
+        assert_eq!(find("/repo/a.rs"), Some(("a.rs".into(), DiffSide::Working)));
+        assert_eq!(
+            find("/repo/new.rs"),
+            Some(("new.rs".into(), DiffSide::Untracked))
+        );
+        assert_eq!(
+            find("/repo/staged.rs"),
+            Some(("staged.rs".into(), DiffSide::Staged))
+        );
+        assert_eq!(find("/repo/clean.rs"), None);
+        assert_eq!(find("/elsewhere/a.rs"), None);
+    }
+
+    #[test]
+    fn history_groups_are_rolling_windows_with_pinned_first() {
+        let now = 1_000_000;
+        assert_eq!(history_group(true, now, 0), HistoryGroup::Pinned);
+        assert_eq!(
+            history_group(false, now, now - 86_399),
+            HistoryGroup::Recent
+        );
+        assert_eq!(history_group(false, now, now - 86_400), HistoryGroup::Week);
+        assert_eq!(
+            history_group(false, now, now - 604_800),
+            HistoryGroup::Earlier
+        );
+        assert_eq!(history_group(false, now, now + 5), HistoryGroup::Recent);
+        assert!(HistoryGroup::Pinned < HistoryGroup::Recent);
+    }
+
+    #[test]
+    fn title_search_ignores_case_and_surrounding_space() {
+        assert!(title_matches("Fix Login Bug", "  login "));
+        assert!(title_matches("anything", ""));
+        assert!(!title_matches("Fix Login Bug", "logout"));
+    }
+
+    #[test]
+    fn unseen_items_count_only_what_arrived_after_the_last_look() {
+        let mut panel = AgentPanel::default();
+        let id = SessionId(1);
+        assert_eq!(panel.unseen_items(id, 40), 0, "never viewed is not news");
+        panel.mark_seen(id, 10);
+        assert_eq!(panel.unseen_items(id, 14), 4);
+        assert_eq!(
+            panel.unseen_items(id, 8),
+            0,
+            "a shorter transcript is not new"
+        );
+        assert_eq!(panel.unseen_items(SessionId(2), 14), 0);
+    }
+
+    #[test]
+    fn scroll_requests_are_per_session_and_taken_once() {
+        let mut panel = AgentPanel::default();
+        panel.request_scroll(SessionId(1), ScrollRequest::Item(3));
+        assert_eq!(panel.take_scroll_request(SessionId(2)), None);
+        assert_eq!(
+            panel.take_scroll_request(SessionId(1)),
+            Some(ScrollRequest::Item(3))
+        );
+        assert_eq!(panel.take_scroll_request(SessionId(1)), None);
+    }
+
+    #[test]
+    fn going_back_to_the_chat_clears_the_history_search() {
+        let mut panel = AgentPanel::default();
+        panel.history_query_mut().push_str("bug");
+        panel.toggle_history(CODEX);
+        assert_eq!(panel.history_query_mut(), "bug", "kept while in History");
+        panel.back_to_chat(CODEX);
+        assert!(panel.history_query_mut().is_empty());
     }
 
     #[test]

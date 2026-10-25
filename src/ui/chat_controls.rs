@@ -18,8 +18,10 @@ const ROW_HEIGHT: f32 = 24.0;
 const BUTTON_SIZE: f32 = 22.0;
 const MODEL_OPTION: &str = "model";
 const EFFORT_OPTION: &str = "effort";
-/// Narrowest a selector may get before it stops shrinking.
-const MIN_SELECT_WIDTH: f32 = 48.0;
+/// Model space to reserve before offering effort alongside it.
+const MIN_MODEL_WIDTH: f32 = 128.0;
+const SELECTOR_GAP: f32 = 6.0;
+const ACTION_GAP: f32 = 2.0;
 const MENU_WIDTH: f32 = 200.0;
 
 /// What the row acts on: the active provider and, when one exists, its session.
@@ -30,8 +32,46 @@ pub(super) struct ChatControls<'a> {
 }
 
 /// Options shown in the row itself; all others go to the menu.
-fn is_primary(option: &ConfigOption) -> bool {
-    option.id == MODEL_OPTION || option.id == EFFORT_OPTION
+fn is_primary(option: &ConfigOption, inline_effort: bool) -> bool {
+    option.kind == ConfigKind::Select
+        && (option.id == MODEL_OPTION || (inline_effort && option.id == EFFORT_OPTION))
+}
+
+fn current_label(option: &ConfigOption) -> &str {
+    option
+        .choices
+        .iter()
+        .find(|choice| choice.value == option.current)
+        .map_or(option.current.as_str(), |choice| choice.label.as_str())
+}
+
+/// Keep enough room for the longest effort choice and a useful model label.
+/// Choice measurement makes the threshold stable as the selected effort changes.
+fn effort_width(ui: &egui::Ui, config: &SessionConfig) -> Option<f32> {
+    let effort = config
+        .get(EFFORT_OPTION)
+        .filter(|o| o.kind == ConfigKind::Select)?;
+    let font = egui::FontId::proportional(theme::META_SIZE);
+    let text_width = ui.fonts_mut(|fonts| {
+        effort
+            .choices
+            .iter()
+            .map(|choice| choice.label.as_str())
+            .chain(std::iter::once(current_label(effort)))
+            .map(|label| {
+                fonts
+                    .layout_no_wrap(label.into(), font.clone(), egui::Color32::PLACEHOLDER)
+                    .size()
+                    .x
+            })
+            .fold(0.0_f32, f32::max)
+    });
+    Some(
+        text_width
+            + 2.0 * ui.spacing().button_padding.x
+            + ui.spacing().icon_width
+            + ui.spacing().icon_spacing,
+    )
 }
 
 fn at_default(option: &ConfigOption) -> bool {
@@ -98,11 +138,33 @@ impl ChatControls<'_> {
             .inner_margin(Margin::symmetric(8, 3))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                // Reserve the gear even when effort is inline, so resizing never
+                // moves History or New chat, or leaves a hidden effort unreachable.
+                let has_menu = self.session.is_some_and(|(_, config)| {
+                    config
+                        .options
+                        .iter()
+                        .any(|option| !is_primary(option, false))
+                });
+                let action_count = if has_menu { 3.0 } else { 2.0 };
+                let selector_room =
+                    ui.available_width() - action_count * (BUTTON_SIZE + ACTION_GAP);
+                let effort_width = self
+                    .session
+                    .and_then(|(_, config)| effort_width(ui, config));
+                let inline_effort = self.session.is_none_or(|(_, config)| {
+                    config
+                        .get(MODEL_OPTION)
+                        .is_none_or(|o| o.kind != ConfigKind::Select)
+                        || effort_width.is_none_or(|width| {
+                            selector_room >= MIN_MODEL_WIDTH + SELECTOR_GAP + width
+                        })
+                });
                 ui.allocate_ui_with_layout(
                     egui::vec2(ui.available_width(), ROW_HEIGHT),
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.spacing_mut().item_spacing.x = ACTION_GAP;
                         // Buttons first, so the selectors only get what is left.
                         let new_chat = icon_button(
                             ui,
@@ -129,24 +191,38 @@ impl ChatControls<'_> {
                             commands.push(Command::AgentToggleHistory(self.provider));
                         }
                         if let Some((id, config)) = self.session
-                            && config.options.iter().any(|o| !is_primary(o))
+                            && has_menu
                         {
+                            let tooltip = if !inline_effort {
+                                config
+                                    .get(EFFORT_OPTION)
+                                    .map(|effort| {
+                                        format!(
+                                            "Chat configuration\n{}: {}",
+                                            effort.label,
+                                            current_label(effort)
+                                        )
+                                    })
+                                    .unwrap_or_else(|| "Chat configuration".into())
+                            } else {
+                                "Chat configuration".into()
+                            };
                             let button = icon_button(
                                 ui,
                                 icon::GEAR,
-                                "Chat configuration",
+                                &tooltip,
                                 false,
                                 self.mode == TabMode::Chat,
                             );
                             if self.mode == TabMode::Chat {
-                                config_menu(&button, id, config, commands);
+                                config_menu(&button, id, config, inline_effort, commands);
                             }
                         }
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
+                            ui.spacing_mut().item_spacing.x = SELECTOR_GAP;
                             match (self.mode, self.session) {
                                 (TabMode::Chat, Some((id, config))) => {
-                                    selectors(ui, id, config, commands);
+                                    selectors(ui, id, config, inline_effort, commands);
                                 }
                                 (TabMode::History, _) => {
                                     ui.add(
@@ -173,30 +249,25 @@ fn selectors(
     ui: &mut egui::Ui,
     id: SessionId,
     config: &SessionConfig,
+    inline_effort: bool,
     commands: &mut Vec<Command>,
 ) {
     let options: Vec<&ConfigOption> = [MODEL_OPTION, EFFORT_OPTION]
         .into_iter()
-        .filter_map(|wanted| {
-            config
-                .options
-                .iter()
-                .find(|o| o.id == wanted && o.kind == ConfigKind::Select)
-        })
+        .filter_map(|wanted| config.get(wanted).filter(|o| is_primary(o, inline_effort)))
         .collect();
-    if options.is_empty() {
-        return;
-    }
-    let spacing = ui.spacing().item_spacing.x;
-    let room = (ui.available_width() - spacing * (options.len() as f32 - 1.0)).max(0.0);
-    // The model name is the long one; effort values are short words.
-    let shares: &[f32] = if options.len() == 2 {
-        &[0.62, 0.38]
-    } else {
-        &[1.0]
-    };
-    for (option, share) in options.into_iter().zip(shares) {
-        let width = (room * share).max(MIN_SELECT_WIDTH.min(room));
+    let room =
+        (ui.available_width() - SELECTOR_GAP * options.len().saturating_sub(1) as f32).max(0.0);
+    let effort = effort_width(ui, config).unwrap_or(0.0).min(room);
+    let both = options.len() == 2;
+    for option in options {
+        let width = if !both {
+            room
+        } else if option.id == EFFORT_OPTION {
+            effort
+        } else {
+            room - effort
+        };
         select_option(ui, id, option, width, commands);
     }
 }
@@ -209,15 +280,11 @@ fn select_option(
     commands: &mut Vec<Command>,
 ) {
     let enabled = option.disabled.is_none();
-    let current = option
-        .choices
-        .iter()
-        .find(|c| c.value == option.current)
-        .map_or(option.current.as_str(), |c| c.label.as_str());
-    let hover = match &option.disabled {
-        Some(reason) => format!("{}\nUnavailable: {reason}", option.description),
-        None => option.description.clone(),
-    };
+    let current = current_label(option);
+    let mut hover = format!("{}: {}\n{}", option.label, current, option.description);
+    if let Some(reason) = &option.disabled {
+        hover.push_str(&format!("\nUnavailable: {reason}"));
+    }
     ui.add_enabled_ui(enabled, |ui| {
         egui::ComboBox::from_id_salt(("chat_option", id.0, &option.id))
             .width(width)
@@ -254,6 +321,7 @@ fn config_menu(
     button: &egui::Response,
     id: SessionId,
     config: &SessionConfig,
+    inline_effort: bool,
     commands: &mut Vec<Command>,
 ) {
     let colors = theme::palette(&button.ctx.style().visuals);
@@ -262,7 +330,11 @@ fn config_menu(
         .show(|ui| {
             ui.set_min_width(MENU_WIDTH);
             ui.set_max_width(MENU_WIDTH.max(ui.available_width().min(320.0)));
-            for option in config.options.iter().filter(|o| !is_primary(o)) {
+            for option in config
+                .options
+                .iter()
+                .filter(|o| !is_primary(o, inline_effort))
+            {
                 let enabled = option.disabled.is_none();
                 let hover = match &option.disabled {
                     Some(reason) => format!("{}\nUnavailable: {reason}", option.description),
@@ -367,4 +439,186 @@ fn marked_label(text: &str, changed: bool, accent: egui::Color32) -> egui::text:
         );
     }
     job
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lumen_agent_core::{ConfigRevision, api::ConfigChoice};
+
+    fn config() -> SessionConfig {
+        SessionConfig {
+            revision: ConfigRevision(1),
+            options: vec![
+                ConfigOption::select(
+                    "model",
+                    "Model",
+                    "Choose the model",
+                    vec![ConfigChoice::new("model", "A long model name for coding")],
+                    "model",
+                ),
+                ConfigOption::select(
+                    "effort",
+                    "Effort",
+                    "Reasoning effort",
+                    vec![
+                        ConfigChoice::new("high", "High"),
+                        ConfigChoice::new("extra", "Extra high"),
+                    ],
+                    "high",
+                ),
+            ],
+        }
+    }
+
+    fn frame(
+        ctx: &egui::Context,
+        config: &SessionConfig,
+        width: f32,
+        events: Vec<egui::Event>,
+    ) -> (egui::FullOutput, Vec<Command>) {
+        let mut commands = Vec::new();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 400.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE)
+                    .show(ctx, |ui| {
+                        ChatControls {
+                            provider: ProviderId::Codex,
+                            mode: TabMode::Chat,
+                            session: Some((SessionId(7), config)),
+                        }
+                        .show(ui, &mut commands);
+                    });
+            },
+        );
+        (output, commands)
+    }
+
+    fn text_rect(output: &egui::FullOutput, needle: &str) -> Option<egui::Rect> {
+        output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.job.text == needle => {
+                Some(text.galley.rect.translate(text.pos.to_vec2()))
+            }
+            _ => None,
+        })
+    }
+
+    fn click(
+        ctx: &egui::Context,
+        config: &SessionConfig,
+        width: f32,
+        pos: egui::Pos2,
+    ) -> (egui::FullOutput, Vec<Command>) {
+        frame(ctx, config, width, vec![egui::Event::PointerMoved(pos)]);
+        frame(
+            ctx,
+            config,
+            width,
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        frame(
+            ctx,
+            config,
+            width,
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        )
+    }
+
+    #[test]
+    fn resizing_preserves_values_and_right_anchored_actions_and_relocates_effort() {
+        let ctx = egui::Context::default();
+        theme::configure_ui(&ctx);
+        let config = config();
+        let original = config.clone();
+        let mut gaps = Vec::new();
+        for width in [240.0, 300.0, 600.0, 240.0] {
+            frame(&ctx, &config, width, vec![]);
+            let (output, commands) = frame(&ctx, &config, width, vec![]);
+            assert!(commands.is_empty());
+            assert_eq!(config, original);
+            let model = text_rect(&output, "A long model name for coding").unwrap();
+            let gear = text_rect(&output, icon::GEAR).unwrap();
+            let history = text_rect(&output, icon::HISTORY).unwrap();
+            let new = text_rect(&output, icon::PLUS).unwrap();
+            assert!(
+                model.right() < gear.left(),
+                "model overlaps actions at {width}"
+            );
+            assert!(gear.right() < history.left() && history.right() < new.left());
+            assert!(new.right() <= width);
+            gaps.push(width - new.right());
+            assert_eq!(
+                text_rect(&output, "High").is_some(),
+                width == 600.0,
+                "effort at {width}"
+            );
+        }
+        assert!(gaps.windows(2).all(|pair| (pair[0] - pair[1]).abs() < 0.5));
+    }
+
+    #[test]
+    fn compact_configuration_exposes_effort_and_dispatches_its_session_and_value() {
+        let ctx = egui::Context::default();
+        theme::configure_ui(&ctx);
+        let config = config();
+        frame(&ctx, &config, 240.0, vec![]);
+        let (output, _) = frame(&ctx, &config, 240.0, vec![]);
+        click(
+            &ctx,
+            &config,
+            240.0,
+            text_rect(&output, icon::GEAR).unwrap().center(),
+        );
+        let (output, _) = frame(&ctx, &config, 240.0, vec![]);
+        let effort = text_rect(&output, "Effort: High").expect("effort moved into menu");
+        click(&ctx, &config, 240.0, effort.center());
+        let (output, _) = frame(&ctx, &config, 240.0, vec![]);
+        let choice = text_rect(&output, "     Extra high").expect("effort choices reachable");
+        let (_, commands) = click(&ctx, &config, 240.0, choice.center());
+        assert!(
+            matches!(commands.as_slice(), [Command::ChatSetConfig(SessionId(7), name, value)] if name == "effort" && value == "extra")
+        );
+    }
+
+    #[test]
+    fn disabled_effort_stays_disabled_in_the_compact_menu() {
+        let ctx = egui::Context::default();
+        theme::configure_ui(&ctx);
+        let mut config = config();
+        config.options[1].disabled = Some("The provider is reconnecting".into());
+        frame(&ctx, &config, 240.0, vec![]);
+        let (output, _) = frame(&ctx, &config, 240.0, vec![]);
+        click(
+            &ctx,
+            &config,
+            240.0,
+            text_rect(&output, icon::GEAR).unwrap().center(),
+        );
+        let (output, _) = frame(&ctx, &config, 240.0, vec![]);
+        let effort = text_rect(&output, "Effort: High").unwrap();
+        let (_, commands) = click(&ctx, &config, 240.0, effort.center());
+        assert!(commands.is_empty());
+        let (output, _) = frame(&ctx, &config, 240.0, vec![]);
+        assert!(text_rect(&output, "     Extra high").is_none());
+        assert_eq!(config.get("effort").unwrap().current, "high");
+    }
 }

@@ -37,6 +37,11 @@ impl LumenApp {
             Command::ChatAttach(id) => self.chat_attach(id),
             Command::ChatDetach(id, path) => self.chat_detach(id, &path),
             Command::ChatCancelQueued(id, ticket) => self.chat_cancel_queued(id, ticket),
+            Command::ChatEditQueued(id, ticket, text) => self.chat_edit_queued(id, ticket, &text),
+            Command::ChatMoveQueued(id, ticket, direction) => {
+                self.chat_move_queued(id, ticket, direction)
+            }
+            Command::ChatSuggest(id, suggestion) => self.chat_suggest(id, suggestion),
             Command::ChatApproval(id, token, decision) => self.chat_approval(id, token, decision),
             Command::ChatSetConfig(id, option, value) => self.chat_set_config(id, option, value),
             Command::ChatResetConfig(id, option) => self.chat_reset_config(id, option),

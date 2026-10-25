@@ -34,6 +34,7 @@ pub(super) fn as_panel_tabs(entries: &[BottomTabEntry]) -> Vec<PanelTab<'_>> {
             active: entry.active,
             command: entry.command.clone(),
             tooltip: &entry.tooltip,
+            indicator: None,
         })
         .collect()
 }
