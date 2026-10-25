@@ -125,7 +125,15 @@ impl Workbench<'_> {
                         session: config,
                     }
                     .show(ui_body, &mut commands);
+                    let missing = self.view.agent_panel.missing(provider).map(str::to_owned);
                     match mode {
+                        TabMode::Chat if missing.is_some() => super::agent_install::not_installed(
+                            ui_body,
+                            provider,
+                            missing.as_deref().unwrap_or_default(),
+                            &colors,
+                            &mut commands,
+                        ),
                         TabMode::Chat => match current {
                             Some(id) => self.chat_body(ui_body, id),
                             None => start_chat(ui_body, provider, &colors, &mut commands),

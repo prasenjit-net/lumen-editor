@@ -55,6 +55,8 @@ pub(crate) struct AgentPanel {
     /// Files attached to the unsent message, per session. Paths and metadata
     /// only: the bytes are read when the message is sent.
     attachments: HashMap<SessionId, Vec<Attachment>>,
+    /// Providers whose program was not found, with the name that was looked for.
+    missing: HashMap<ProviderId, String>,
 }
 
 impl Default for AgentPanel {
@@ -68,11 +70,25 @@ impl Default for AgentPanel {
             rename: None,
             drafts: HashMap::new(),
             attachments: HashMap::new(),
+            missing: HashMap::new(),
         }
     }
 }
 
 impl AgentPanel {
+    /// Record whether the provider's program was found (`None`) or not (`Some(name)`).
+    pub(crate) fn set_missing(&mut self, provider: ProviderId, program: Option<String>) {
+        match program {
+            Some(name) => self.missing.insert(provider, name),
+            None => self.missing.remove(&provider),
+        };
+    }
+
+    /// The program that was looked for and not found, when it is not installed.
+    pub(crate) fn missing(&self, provider: ProviderId) -> Option<&str> {
+        self.missing.get(&provider).map(String::as_str)
+    }
+
     pub(crate) fn active_provider(&self) -> ProviderId {
         self.active
     }

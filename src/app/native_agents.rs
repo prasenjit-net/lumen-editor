@@ -156,6 +156,45 @@ impl LumenApp {
             ),
         ];
         self.view.native_agents = Some(super::agent_hub::AgentHub::new(backends, registry));
+        for provider in ProviderId::ALL {
+            self.check_agent_installed(provider);
+        }
+    }
+
+    /// Look for the provider's program (as a chat would launch it) and remember
+    /// whether it is there, so the panel can explain instead of failing at send.
+    pub(crate) fn check_agent_installed(&mut self, provider: ProviderId) {
+        let (setting, default) = match provider {
+            ProviderId::Codex => ("agent.native.codex_command", "codex"),
+            ProviderId::Claude => ("agent.native.claude_command", "claude"),
+        };
+        let name = program(&self.view.settings.user_text(setting), default);
+        let path = crate::services::login_path::merge_path(
+            crate::services::login_path::cached_login_path().map(|p| p.as_os_str()),
+            std::env::var_os("PATH").as_deref(),
+        );
+        let found =
+            crate::services::process_tree::resolve_program(&name, Some(path.as_os_str())).is_some();
+        self.view
+            .agent_panel
+            .set_missing(provider, (!found).then_some(name));
+    }
+
+    pub(super) fn agent_recheck_install(&mut self, provider: ProviderId) {
+        self.check_agent_installed(provider);
+        self.view.status = if self.view.agent_panel.missing(provider).is_some() {
+            format!("{} is still not installed", provider.label())
+        } else {
+            format!("Found {}", provider.label())
+        };
+    }
+
+    pub(super) fn agent_open_install_page(&mut self, provider: ProviderId) {
+        let url = crate::ui::agent_install::install_url(provider);
+        self.view.status = match crate::services::open_external(url) {
+            Ok(()) => format!("Opened {url}"),
+            Err(error) => format!("Could not open {url}: {error}"),
+        };
     }
 
     /// The window is closing for good. Agents are asked to stop first (turns
@@ -188,6 +227,7 @@ impl LumenApp {
     }
 
     pub(crate) fn poll_native_agents(&mut self, ctx: &egui::Context) {
+        self.prepare_visible_chat();
         let Some(hub) = self.view.native_agents.as_mut() else {
             return;
         };
@@ -238,12 +278,38 @@ impl LumenApp {
         }
     }
 
+    /// The chat the panel shows must have its saved conversation loaded, however
+    /// it came to be shown: a tab click does this itself, but at startup the
+    /// remembered tab is simply there.
+    fn prepare_visible_chat(&mut self) {
+        if !self.view.agents.open || self.view.native_agents.is_none() {
+            return;
+        }
+        let provider = self.view.agent_panel.active_provider();
+        if self.view.agent_panel.mode(provider) != super::agent_panel::TabMode::Chat {
+            return;
+        }
+        if let Some(id) = self.resolve_provider_session(provider)
+            && self
+                .view
+                .native_agents
+                .as_ref()
+                .is_some_and(|hub| !hub.transcript_loaded(id))
+        {
+            self.prepare_chat(id);
+        }
+    }
+
     /// The folder a new chat works in: the open workspace, else the current directory.
     fn chat_workspace(&self) -> std::path::PathBuf {
         chat_workspace_for(self.editor.workspace.as_deref())
     }
 
     pub(super) fn native_new_session(&mut self, provider: ProviderId, ctx: &egui::Context) {
+        if let Some(name) = self.view.agent_panel.missing(provider) {
+            self.view.status = format!("{name} is not installed; see the {} tab", provider.label());
+            return;
+        }
         let workspace = self.chat_workspace();
         let Some(hub) = self.view.native_agents.as_mut() else {
             self.view.status = "Native agents are not enabled".into();
@@ -388,6 +454,15 @@ impl LumenApp {
         };
         if !hub.set_config(id, lumen_agent_core::api::ConfigPatch::reset(option)) {
             self.view.status = "The session is not ready yet; try again in a moment".into();
+        }
+    }
+
+    /// After the open folder changed: chats of other folders are stopped and
+    /// their processes released.
+    pub(super) fn release_agents_outside_workspace(&mut self) {
+        let workspace = self.chat_workspace();
+        if let Some(hub) = self.view.native_agents.as_mut() {
+            hub.release_outside(&workspace);
         }
     }
 
@@ -1044,5 +1119,68 @@ mod tests {
         let live = app.view.native_agents.as_ref().unwrap().live(id).unwrap();
         assert_eq!(live.model.items.len(), count);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_remembered_tab_shows_its_conversation_at_startup_without_a_click() {
+        let dir = std::env::temp_dir().join(format!("lumen-startup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (mut app, ctx) = fixture();
+        app.native_transcripts_dir = Some(dir.clone());
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        let id = app.view.agent_panel.visible_chat().unwrap();
+        app.view
+            .agent_panel
+            .draft_mut(id)
+            .push_str("remember the kumquat");
+        app.execute(Command::ChatSend(id), &ctx);
+        for _ in 0..1000 {
+            app.poll_native_agents(&ctx);
+            if app.view.native_agents.as_ref().unwrap().status(id)
+                == crate::app::agent_hub::SessionStatus::Idle
+                && std::fs::read_dir(&dir).is_ok_and(|d| {
+                    d.flatten().any(|f| {
+                        std::fs::read_to_string(f.path()).is_ok_and(|t| t.contains("echo:"))
+                    })
+                })
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let registry = app.view.native_agents.as_ref().unwrap().registry.to_json();
+
+        let (mut app, ctx) = fixture();
+        app.native_transcripts_dir = Some(dir.clone());
+        app.view.native_agents.as_mut().unwrap().registry =
+            crate::model::agent_registry::Registry::from_json(&registry).unwrap();
+        app.view.agent_panel.restore_provider(ProviderId::Codex);
+        app.view.agents.open = true;
+        app.poll_native_agents(&ctx);
+        frame(&mut app, &ctx, 1000.0);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "remember the kumquat"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_program_is_explained_with_an_install_link_and_starts_no_chat() {
+        let (mut app, ctx) = fixture();
+        app.view.agents.open = true;
+        app.view.agent_panel.restore_provider(ProviderId::Claude);
+        app.view
+            .agent_panel
+            .set_missing(ProviderId::Claude, Some("claude".into()));
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "is not installed"));
+        assert!(has_text(&output, "Open install instructions"));
+        app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
+        assert!(
+            app.view.agent_panel.visible_chat().is_none(),
+            "no chat was started"
+        );
+        assert!(app.view.status.contains("not installed"));
+        // Another provider is unaffected.
+        assert!(app.view.agent_panel.missing(ProviderId::Codex).is_none());
     }
 }

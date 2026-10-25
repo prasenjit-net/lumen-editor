@@ -29,6 +29,8 @@ impl LumenApp {
             Command::OpenChat(id) => self.open_chat(id, ctx),
             Command::AgentSelectProvider(provider) => self.agent_select_provider(provider, ctx),
             Command::AgentToggleHistory(provider) => self.view.agent_panel.toggle_history(provider),
+            Command::AgentOpenInstallPage(provider) => self.agent_open_install_page(provider),
+            Command::AgentRecheckInstall(provider) => self.agent_recheck_install(provider),
             Command::AgentBackToChat(provider) => self.view.agent_panel.back_to_chat(provider),
             Command::ChatSend(id) => self.chat_send(id),
             Command::ChatStop(id) => self.chat_stop(id),

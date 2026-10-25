@@ -19,6 +19,10 @@ pub(crate) enum Command {
     AgentSelectProvider(lumen_agent_core::ProviderId),
     AgentToggleHistory(lumen_agent_core::ProviderId),
     AgentBackToChat(lumen_agent_core::ProviderId),
+    /// Open the provider's install instructions in the browser.
+    AgentOpenInstallPage(lumen_agent_core::ProviderId),
+    /// Look for the provider's program again, after the user installed it.
+    AgentRecheckInstall(lumen_agent_core::ProviderId),
     /// Send the session's composer text.
     ChatSend(lumen_agent_core::SessionId),
     ChatStop(lumen_agent_core::SessionId),
