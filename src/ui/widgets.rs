@@ -56,6 +56,8 @@ pub(crate) struct PanelTab<'a> {
     pub(crate) command: Command,
     /// Hover text; empty for none.
     pub(crate) tooltip: &'a str,
+    /// A fixed-width status slot. An empty glyph reserves room while idle.
+    pub(crate) indicator: Option<(&'static str, Color32)>,
 }
 
 /// Longest a tab label may be before it is truncated with an ellipsis.
@@ -102,6 +104,9 @@ pub(crate) fn tabbed_panel_header_with_menu(
                     let response = ui
                         .scope(|ui| {
                             ui.set_max_width(MAX_TAB_WIDTH);
+                            if let Some((glyph, color)) = tab.indicator {
+                                return indicated_tab(ui, tab, glyph, color);
+                            }
                             ui.add(
                                 egui::Label::new(
                                     RichText::new(tab.label)
@@ -147,6 +152,62 @@ pub(crate) fn tabbed_panel_header_with_menu(
             });
         clicked
     })
+}
+
+/// Agent status changes must not resize tabs or change their widget identity.
+fn indicated_tab(
+    ui: &mut egui::Ui,
+    tab: &PanelTab<'_>,
+    glyph: &str,
+    color: Color32,
+) -> egui::Response {
+    const STATUS_WIDTH: f32 = 16.0;
+    let colors = crate::ui::theme::palette(ui.visuals());
+    let font = FontId::proportional(crate::ui::theme::META_SIZE);
+    let foreground = if tab.active {
+        colors.text
+    } else {
+        colors.muted
+    };
+    let mut job =
+        egui::text::LayoutJob::simple_singleline(tab.label.into(), font.clone(), foreground);
+    job.wrap.max_width = MAX_TAB_WIDTH - STATUS_WIDTH;
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x + STATUS_WIDTH, galley.size().y.max(16.0)),
+        egui::Sense::click(),
+    );
+    ui.painter().galley(
+        egui::pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
+        galley,
+        foreground,
+    );
+    ui.painter().text(
+        egui::pos2(rect.right() - STATUS_WIDTH / 2.0, rect.center().y),
+        egui::Align2::CENTER_CENTER,
+        glyph,
+        font,
+        color,
+    );
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.expand(2.0),
+            3.0,
+            Stroke::new(1.0_f32, colors.accent),
+            egui::StrokeKind::Inside,
+        );
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            tab.active,
+            format!("{}: {}", tab.label, tab.tooltip),
+        )
+    });
+    response
 }
 
 fn header_row(
@@ -678,6 +739,59 @@ pub(crate) fn file_icon(path: &Path) -> &'static str {
 mod tests {
     use super::*;
     use crate::{app::view_state::Activity, ui::theme::configure_ui};
+
+    #[test]
+    fn changing_a_tab_indicator_preserves_its_identity_and_keyboard_activation() {
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        let mut previous = None;
+        for glyph in ["", icon::REFRESH, icon::WARNING, icon::ERROR] {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let tab = PanelTab {
+                        label: "Codex",
+                        active: false,
+                        command: Command::AgentSelectProvider(lumen_agent_core::ProviderId::Codex),
+                        tooltip: "Status of background chat",
+                        indicator: Some((glyph, Color32::WHITE)),
+                    };
+                    let response = indicated_tab(ui, &tab, glyph, Color32::WHITE);
+                    if let Some((id, rect)) = previous {
+                        assert_eq!(response.id, id);
+                        assert_eq!(response.rect, rect);
+                    }
+                    previous = Some((response.id, response.rect));
+                    response.request_focus();
+                });
+            });
+        }
+        let mut activated = false;
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let tab = PanelTab {
+                        label: "Codex",
+                        active: false,
+                        command: Command::AgentSelectProvider(lumen_agent_core::ProviderId::Codex),
+                        tooltip: "Status of background chat",
+                        indicator: Some((icon::ERROR, Color32::WHITE)),
+                    };
+                    activated = indicated_tab(ui, &tab, icon::ERROR, Color32::WHITE).clicked();
+                });
+            },
+        );
+        assert!(activated);
+    }
 
     #[test]
     fn explorer_rows_expose_name_selection_and_a_keyboard_focus_ring() {

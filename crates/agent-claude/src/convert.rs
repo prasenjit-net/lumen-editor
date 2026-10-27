@@ -116,7 +116,15 @@ pub fn turn_outcome(result: &Value, interrupt_requested: bool) -> TurnOutcome {
         .get("is_error")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let message = text(result, "result").map(str::to_string);
+    // A failed run may carry its reasons in `errors` instead of `result`.
+    let errors: Vec<&str> = result
+        .get("errors")
+        .and_then(Value::as_array)
+        .map(|list| list.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let message = text(result, "result")
+        .map(str::to_string)
+        .or_else(|| (!errors.is_empty()).then(|| errors.join("; ")));
     let status = result.get("api_error_status").and_then(Value::as_u64);
     match subtype {
         "success" if !is_error => TurnOutcome::Completed,
@@ -133,7 +141,16 @@ pub fn turn_outcome(result: &Value, interrupt_requested: bool) -> TurnOutcome {
                 TurnOutcome::Failed(AgentError::AuthenticationRequired)
             } else {
                 TurnOutcome::Failed(AgentError::Provider {
-                    message: message.unwrap_or_else(|| format!("the turn ended with {subtype}")),
+                    message: message.map_or_else(
+                        || format!("the turn ended with {subtype}"),
+                        |m| {
+                            if subtype.is_empty() || subtype == "success" {
+                                m
+                            } else {
+                                format!("{m} ({subtype})")
+                            }
+                        },
+                    ),
                 })
             }
         }

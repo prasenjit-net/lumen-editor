@@ -11,11 +11,12 @@ use super::{
 use crate::{
     app::{
         agent_hub::SessionStatus,
-        agent_panel::{RenameDraft, TabMode},
+        agent_panel::{HistoryGroup, RenameDraft, TabMode, history_group, title_matches},
         command::Command,
         native_agents::chat_workspace_for,
     },
     icon,
+    model::agent_registry::SessionRecord,
 };
 use eframe::egui::{self, Key, RichText, ScrollArea, Sense, SidePanel, Stroke};
 use lumen_agent_core::{ProviderId, SessionId};
@@ -58,14 +59,30 @@ impl Workbench<'_> {
             self.view.resolve_agent_session(known, &workspace);
         }
         let mode = self.view.agent_panel.mode(provider);
-        let labels: Vec<String> = ProviderId::ALL
+        let activity: Vec<_> = ProviderId::ALL
             .iter()
             .map(|known| {
-                if self.provider_needs_attention(*known) {
-                    format!("{} ●", known.label())
-                } else {
-                    known.label().to_string()
-                }
+                self.view
+                    .native_agents
+                    .as_ref()
+                    .and_then(|hub| hub.provider_activity(*known))
+                    .map(|(record, status)| {
+                        let tooltip = format!(
+                            "{} — {}\n{}",
+                            status_text(&status),
+                            record.title,
+                            record.workspace.display()
+                        );
+                        let indicator = match status {
+                            SessionStatus::NeedsAttention => (icon::WARNING, colors.warning),
+                            SessionStatus::Failed(_) => (icon::ERROR, colors.error),
+                            SessionStatus::Working => (icon::REFRESH, colors.accent),
+                            SessionStatus::Waiting(_) => (icon::HISTORY, colors.muted),
+                            SessionStatus::Idle => ("", colors.muted),
+                        };
+                        (indicator, tooltip)
+                    })
+                    .unwrap_or_else(|| (("", colors.muted), "No active chats".into()))
             })
             .collect();
         SidePanel::right("agent_panel")
@@ -78,16 +95,13 @@ impl Workbench<'_> {
                     ui.set_min_size(ui.available_size());
                     let tabs: Vec<PanelTab> = ProviderId::ALL
                         .iter()
-                        .zip(&labels)
-                        .map(|(known, label)| PanelTab {
-                            label,
+                        .zip(&activity)
+                        .map(|(known, (indicator, tooltip))| PanelTab {
+                            label: known.label(),
+                            indicator: Some(*indicator),
                             active: *known == provider,
                             command: Command::AgentSelectProvider(*known),
-                            tooltip: if self.provider_needs_attention(*known) {
-                                "A chat is waiting for your answer"
-                            } else {
-                                ""
-                            },
+                            tooltip,
                         })
                         .collect();
                     let actions = [HeaderAction {
@@ -150,14 +164,6 @@ impl Workbench<'_> {
         }
     }
 
-    /// A chat of this provider is waiting for the user's answer (any folder).
-    pub(super) fn provider_needs_attention(&self, provider: ProviderId) -> bool {
-        self.view
-            .native_agents
-            .as_ref()
-            .is_some_and(|hub| hub.provider_needs_attention(provider))
-    }
-
     fn history_list(
         &mut self,
         ui: &mut egui::Ui,
@@ -167,10 +173,15 @@ impl Workbench<'_> {
     ) {
         let colors = theme::palette(ui.visuals());
         // Escape returns to the chat unless a rename is capturing it.
+        let searching = !self.view.agent_panel.history_query_mut().is_empty();
         if self.view.agent_panel.renaming().is_none()
             && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape))
         {
-            commands.push(Command::AgentBackToChat(provider));
+            if searching {
+                self.view.agent_panel.history_query_mut().clear();
+            } else {
+                commands.push(Command::AgentBackToChat(provider));
+            }
         }
         if ui
             .add(
@@ -192,6 +203,7 @@ impl Workbench<'_> {
             .filter(|record| record.provider == provider)
             .collect();
         if rows.is_empty() {
+            self.view.agent_panel.history_query_mut().clear();
             ui.add_space(12.0);
             ui.vertical_centered(|ui| {
                 ui.label(
@@ -206,6 +218,32 @@ impl Workbench<'_> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
+        history_search(ui, self.view.agent_panel.history_query_mut(), &colors);
+        let query = self.view.agent_panel.history_query_mut().clone();
+        let total = rows.len();
+        let entries = history_entries(rows, &query, now);
+        if entries.is_empty() {
+            ui.add_space(12.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "No {} chats match “{}”.",
+                        provider.label(),
+                        query.trim()
+                    ))
+                    .size(11.5)
+                    .color(colors.muted),
+                );
+                if ui
+                    .button("Clear search")
+                    .on_hover_text(format!("Show all {total} chats"))
+                    .clicked()
+                {
+                    self.view.agent_panel.history_query_mut().clear();
+                }
+            });
+            return;
+        }
         let current = self.view.agent_panel.current(provider);
         let mut focus_first = self.view.agent_panel.take_history_focus();
         let mut renaming = self.view.agent_panel.take_rename();
@@ -214,9 +252,22 @@ impl Workbench<'_> {
         ScrollArea::vertical()
             .id_salt("session_rows")
             .auto_shrink([false, false])
-            .show_rows(ui, ROW_HEIGHT, rows.len(), |ui, range| {
+            .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                for record in &rows[range] {
+                for entry in &entries {
+                    let record = match entry {
+                        HistoryEntry::Heading(group) => {
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(group.label())
+                                    .size(10.0)
+                                    .strong()
+                                    .color(colors.muted),
+                            );
+                            continue;
+                        }
+                        HistoryEntry::Session(record) => *record,
+                    };
                     let status = hub.status(record.id);
                     let accent = provider_color(&colors, record.provider);
                     let selected = current == Some(record.id);
@@ -376,6 +427,64 @@ impl Workbench<'_> {
         }
         self.view.agent_panel.set_rename(renaming);
     }
+}
+
+enum HistoryEntry<'a> {
+    Heading(HistoryGroup),
+    Session(&'a SessionRecord),
+}
+
+/// Filter by title, then lay the sessions out under recency headings. Sessions
+/// keep the registry's order (pinned, then newest), so identity and order are
+/// the same with or without a query.
+fn history_entries<'a>(
+    rows: Vec<&'a SessionRecord>,
+    query: &str,
+    now: u64,
+) -> Vec<HistoryEntry<'a>> {
+    let mut entries = Vec::new();
+    let mut last = None;
+    for record in rows
+        .into_iter()
+        .filter(|record| title_matches(&record.title, query))
+    {
+        let group = history_group(record.pinned, now, record.updated);
+        if last != Some(group) {
+            entries.push(HistoryEntry::Heading(group));
+            last = Some(group);
+        }
+        entries.push(HistoryEntry::Session(record));
+    }
+    entries
+}
+
+/// The title filter. Escape clears it first; with nothing typed it leaves the
+/// History to the caller's own Escape handling.
+fn history_search(ui: &mut egui::Ui, query: &mut String, colors: &theme::Palette) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let clear_width = if query.is_empty() { 0.0 } else { 20.0 };
+        ui.add(
+            egui::TextEdit::singleline(query)
+                .id(egui::Id::new("history_search"))
+                .hint_text(format!("{} Search chats", icon::MAGNIFYING_GLASS))
+                .font(egui::FontId::proportional(theme::META_SIZE))
+                .text_color(colors.text)
+                .desired_width((ui.available_width() - clear_width - 4.0).max(40.0)),
+        );
+        if !query.is_empty()
+            && ui
+                .add(
+                    egui::Button::new(RichText::new(icon::X).size(10.0).color(colors.muted))
+                        .frame(false),
+                )
+                .on_hover_text("Clear search")
+                .clicked()
+        {
+            query.clear();
+        }
+    });
+    ui.add_space(4.0);
 }
 
 /// No chat yet for this provider: say what it can do and offer to start one.

@@ -2,6 +2,7 @@
 //! hub calls, and the hub is polled once per frame. File access, process
 //! launching and persistence stay behind the hub and services.
 use super::{LumenApp, chat_attachments};
+use super::{agent_hub::QueueMove, agent_panel::ChatSuggestion};
 use crate::model::agent_scheduler::Ticket;
 use eframe::egui;
 use lumen_agent_core::{
@@ -424,6 +425,44 @@ impl LumenApp {
         }
     }
 
+    pub(super) fn chat_edit_queued(&mut self, id: SessionId, ticket: Ticket, text: &str) {
+        let saved = self
+            .view
+            .native_agents
+            .as_mut()
+            .is_some_and(|hub| hub.edit_queued(id, ticket, text));
+        if !saved {
+            self.view.status =
+                "That message already started or is empty; it was not changed".into();
+        }
+    }
+
+    pub(super) fn chat_move_queued(&mut self, id: SessionId, ticket: Ticket, direction: QueueMove) {
+        let moved = self
+            .view
+            .native_agents
+            .as_mut()
+            .is_some_and(|hub| hub.move_queued(id, ticket, direction));
+        if !moved {
+            self.view.status = "That message cannot move any further".into();
+        }
+    }
+
+    /// Fill an empty composer with a starting prompt. An existing draft is never
+    /// replaced, and nothing is sent: the user reviews the text first.
+    pub(super) fn chat_suggest(&mut self, id: SessionId, suggestion: ChatSuggestion) {
+        if !self.view.agent_panel.draft_mut(id).trim().is_empty() {
+            self.view.status = "Clear the message box first; your draft was kept".into();
+            return;
+        }
+        if suggestion.needs_repository() && self.view.source_control.snapshot.is_none() {
+            self.view.status = "Open a folder with a Git repository to review changes".into();
+            return;
+        }
+        *self.view.agent_panel.draft_mut(id) = suggestion.prompt().to_string();
+        self.view.agent_panel.request_composer_focus();
+    }
+
     pub(super) fn chat_approval(
         &mut self,
         id: SessionId,
@@ -530,12 +569,22 @@ mod tests {
     }
 
     fn frame(app: &mut LumenApp, ctx: &egui::Context, width: f32) -> egui::FullOutput {
+        frame_with_events(app, ctx, width, vec![])
+    }
+
+    fn frame_with_events(
+        app: &mut LumenApp,
+        ctx: &egui::Context,
+        width: f32,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
         ctx.run(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(width, 700.0),
                 )),
+                events,
                 ..Default::default()
             },
             |ctx| {
@@ -576,7 +625,10 @@ mod tests {
         assert!(has_text(&output, "Claude Code"), "provider tab");
         assert!(has_text(&output, "Codex"), "every provider has a tab");
         assert!(has_text(&output, "Ask Claude Code anything"));
-        assert!(!has_text(&output, "New chat"), "no chat tab in the strip");
+        assert!(
+            has_text(&output, "New chat"),
+            "the session title heads the chat"
+        );
         assert!(
             app.view
                 .native_agents
@@ -990,8 +1042,8 @@ mod tests {
             assert!(has_text(&output, "Codex"), "agent label at {width}");
             assert!(has_text(&output, "Permission needed"), "{width}");
             assert!(
-                has_text(&output, "Codex ●"),
-                "the provider tab flags the pending approval at {width}"
+                has_text(&output, "1 approval needed"),
+                "the pinned strip flags the pending approval at {width}"
             );
             // The turn is waiting on a permission, so a new message queues.
             assert!(has_text(&output, "Queue"), "composer at {width}");
@@ -1032,6 +1084,173 @@ mod tests {
         let output = frame(&mut app, &ctx, 1000.0);
         assert!(!has_text(&output, "Working"));
         assert!(!has_text(&output, "Stop"));
+    }
+
+    fn visible_text_rect(output: &egui::FullOutput, needle: &str) -> Option<egui::Rect> {
+        output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.job.text.contains(needle) => {
+                let rect = text.galley.rect.translate(text.pos.to_vec2());
+                shape.clip_rect.contains_rect(rect).then_some(rect)
+            }
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn provider_status_keeps_tab_geometry_and_announces_the_background_session() {
+        let (mut app, ctx) = fixture();
+        ctx.enable_accesskit();
+        app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+        let codex = app.view.agent_panel.visible_chat().unwrap();
+        app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
+        frame(&mut app, &ctx, 1000.0);
+        let output = frame(&mut app, &ctx, 1000.0);
+        let before = visible_text_rect(&output, "Claude Code").unwrap();
+        app.view
+            .agent_panel
+            .draft_mut(codex)
+            .push_str("approve: inspect background request");
+        app.execute(Command::ChatSend(codex), &ctx);
+        settle(&mut app, &ctx);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert_eq!(visible_text_rect(&output, "Claude Code").unwrap(), before);
+        let warning = visible_text_rect(&output, crate::icon::WARNING).unwrap();
+        assert!(warning.top() < 35.0, "status belongs to the tab");
+        let names: Vec<_> = output
+            .platform_output
+            .accesskit_update
+            .iter()
+            .flat_map(|update| &update.nodes)
+            .filter_map(|(_, node)| node.label())
+            .collect();
+        assert!(
+            names
+                .iter()
+                .any(|name| name.contains("Codex: Needs your answer")
+                    && name.contains("inspect background request")),
+            "{names:?}"
+        );
+        assert_eq!(app.view.agent_panel.active_provider(), ProviderId::Claude);
+    }
+
+    #[test]
+    fn approval_navigation_is_pinned_reveals_the_request_and_disappears_after_stop() {
+        for width in [240.0, 300.0, 600.0] {
+            let (mut app, ctx) = fixture();
+            ctx.style_mut(|style| style.scroll_animation = egui::style::ScrollAnimation::none());
+            ctx.data_mut(|data| {
+                data.insert_persisted(
+                    egui::Id::new("agent_panel"),
+                    egui::containers::panel::PanelState {
+                        rect: egui::Rect::from_min_size(
+                            egui::pos2(1000.0 - width, 0.0),
+                            egui::vec2(width, 700.0),
+                        ),
+                    },
+                )
+            });
+            app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+            let id = app.view.agent_panel.visible_chat().unwrap();
+            app.view
+                .agent_panel
+                .draft_mut(id)
+                .push_str(&format!("approve: {}", "Review this change.\n".repeat(80)));
+            app.execute(Command::ChatSend(id), &ctx);
+            settle(&mut app, &ctx);
+            for _ in 0..4 {
+                frame(&mut app, &ctx, 1000.0);
+            }
+            // Read old content. The pinned entry point remains visible while the
+            // permission card is below the viewport.
+            let pointer = egui::pos2(1000.0 - width / 2.0, 150.0);
+            frame_with_events(
+                &mut app,
+                &ctx,
+                1000.0,
+                vec![
+                    egui::Event::PointerMoved(pointer),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, 20000.0),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            for _ in 0..30 {
+                frame(&mut app, &ctx, 1000.0);
+            }
+            let output = frame(&mut app, &ctx, 1000.0);
+            assert!(
+                visible_text_rect(&output, "Permission needed").is_none(),
+                "scrolled away at {width}"
+            );
+            assert!(
+                visible_text_rect(&output, "1 approval needed").is_some(),
+                "pinned count at {width}"
+            );
+            // The chat title also contains "Review", so match the button's text exactly.
+            let review = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == "Review" => {
+                        Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            frame_with_events(
+                &mut app,
+                &ctx,
+                1000.0,
+                vec![egui::Event::PointerMoved(review)],
+            );
+            for pressed in [true, false] {
+                frame_with_events(
+                    &mut app,
+                    &ctx,
+                    1000.0,
+                    vec![egui::Event::PointerButton {
+                        pos: review,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+            }
+            frame(&mut app, &ctx, 1000.0);
+            let output = frame(&mut app, &ctx, 1000.0);
+            assert!(
+                visible_text_rect(&output, "Permission needed").is_some(),
+                "request revealed at {width}"
+            );
+            assert_eq!(
+                app.view
+                    .native_agents
+                    .as_ref()
+                    .unwrap()
+                    .live(id)
+                    .unwrap()
+                    .model
+                    .pending_approvals
+                    .len(),
+                1,
+                "review never approves"
+            );
+            app.execute(Command::ChatStop(id), &ctx);
+            settle(&mut app, &ctx);
+            let output = frame(&mut app, &ctx, 1000.0);
+            assert!(
+                !has_text(&output, "1 approval needed"),
+                "cancelled request removed"
+            );
+            app.execute(Command::NativeNewSession(ProviderId::Claude), &ctx);
+            let output = frame(&mut app, &ctx, 1000.0);
+            assert!(
+                !has_text(&output, "1 approval needed"),
+                "navigation does not leak to another session"
+            );
+        }
     }
 
     #[test]
@@ -1182,5 +1401,436 @@ mod tests {
         assert!(app.view.status.contains("not installed"));
         // Another provider is unaffected.
         assert!(app.view.agent_panel.missing(ProviderId::Codex).is_none());
+    }
+
+    fn seeded_chat(app: &mut LumenApp, ctx: &egui::Context, provider: ProviderId) -> SessionId {
+        app.execute(Command::NativeNewSession(provider), ctx);
+        app.view.agent_panel.visible_chat().expect("chat shown")
+    }
+
+    fn tool_item(
+        id: &str,
+        kind: lumen_agent_core::model::ToolKind,
+        status: lumen_agent_core::model::ToolStatus,
+        title: &str,
+    ) -> lumen_agent_core::model::TranscriptItem {
+        let mut call = lumen_agent_core::model::ToolCall::new(kind, title);
+        call.status = status;
+        lumen_agent_core::model::TranscriptItem {
+            id: lumen_agent_core::ItemId(id.into()),
+            turn: None,
+            kind: lumen_agent_core::model::ItemKind::Tool(call),
+        }
+    }
+
+    #[test]
+    fn the_chat_names_its_session_and_folder_and_follows_provider_switches() {
+        let (mut app, ctx) = fixture();
+        let claude = seeded_chat(&mut app, &ctx, ProviderId::Claude);
+        let codex = seeded_chat(&mut app, &ctx, ProviderId::Codex);
+        let hub = app.view.native_agents.as_mut().unwrap();
+        hub.registry.rename(claude, "Fix the login redirect");
+        hub.registry.rename(codex, "Profile the indexer");
+        for (provider, title) in [
+            (ProviderId::Claude, "Fix the login redirect"),
+            (ProviderId::Codex, "Profile the indexer"),
+        ] {
+            app.execute(Command::AgentSelectProvider(provider), &ctx);
+            frame(&mut app, &ctx, 1000.0);
+            let output = frame(&mut app, &ctx, 1000.0);
+            assert!(has_text(&output, title), "{title}");
+        }
+        let output = frame(&mut app, &ctx, 240.0);
+        assert!(
+            has_text(&output, "Profile the indexer"),
+            "narrow width keeps the row"
+        );
+    }
+
+    #[test]
+    fn suggestions_fill_an_empty_draft_without_sending_and_never_replace_a_draft() {
+        let (mut app, ctx) = fixture();
+        let id = seeded_chat(&mut app, &ctx, ProviderId::Claude);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "Explain this folder"));
+        assert!(has_text(&output, "Review my changes"));
+        app.execute(
+            Command::ChatSuggest(id, ChatSuggestion::ExplainFolder),
+            &ctx,
+        );
+        assert_eq!(
+            app.view.agent_panel.draft_mut(id).as_str(),
+            ChatSuggestion::ExplainFolder.prompt()
+        );
+        let hub = app.view.native_agents.as_ref().unwrap();
+        assert!(
+            hub.live(id).is_none_or(|l| l.prompts.is_empty()),
+            "nothing is sent"
+        );
+        // A second suggestion cannot overwrite what is now in the box.
+        app.execute(
+            Command::ChatSuggest(id, ChatSuggestion::ReviewChanges),
+            &ctx,
+        );
+        assert_eq!(
+            app.view.agent_panel.draft_mut(id).as_str(),
+            ChatSuggestion::ExplainFolder.prompt()
+        );
+        assert!(app.view.status.contains("draft was kept"));
+    }
+
+    #[test]
+    fn reviewing_changes_needs_a_repository_and_leaves_the_draft_empty_without_one() {
+        let (mut app, ctx) = fixture();
+        let id = seeded_chat(&mut app, &ctx, ProviderId::Codex);
+        app.view.source_control.snapshot = None;
+        app.execute(
+            Command::ChatSuggest(id, ChatSuggestion::ReviewChanges),
+            &ctx,
+        );
+        assert!(app.view.agent_panel.draft_mut(id).is_empty());
+        assert!(app.view.status.contains("Git repository"));
+    }
+
+    #[test]
+    fn queue_commands_change_only_pending_messages_and_report_stale_ones() {
+        let (mut app, ctx) = fixture();
+        let id = seeded_chat(&mut app, &ctx, ProviderId::Claude);
+        let send = |app: &mut LumenApp, text: &str| {
+            *app.view.agent_panel.draft_mut(id) = text.into();
+            app.execute(Command::ChatSend(id), &ctx);
+        };
+        send(&mut app, "first");
+        send(&mut app, "second");
+        send(&mut app, "third");
+        let tickets: Vec<_> = app
+            .view
+            .native_agents
+            .as_ref()
+            .unwrap()
+            .live(id)
+            .unwrap()
+            .prompts
+            .iter()
+            .map(|p| p.ticket)
+            .collect();
+        let queued_text = |app: &LumenApp| -> Vec<String> {
+            app.view
+                .native_agents
+                .as_ref()
+                .unwrap()
+                .live(id)
+                .unwrap()
+                .prompts
+                .iter()
+                .map(|p| match &p.input[0] {
+                    InputBlock::Text(t) => t.clone(),
+                    _ => String::new(),
+                })
+                .collect()
+        };
+        app.execute(Command::ChatMoveQueued(id, tickets[2], QueueMove::Up), &ctx);
+        assert_eq!(queued_text(&app), ["first", "third", "second"]);
+        app.execute(
+            Command::ChatEditQueued(id, tickets[1], "third edited".into()),
+            &ctx,
+        );
+        assert_eq!(queued_text(&app), ["first", "third edited", "second"]);
+        // The active message cannot be edited or moved; the user is told.
+        app.view.status.clear();
+        app.execute(
+            Command::ChatEditQueued(id, tickets[0], "hijack".into()),
+            &ctx,
+        );
+        assert_eq!(queued_text(&app)[0], "first");
+        assert!(app.view.status.contains("already started"));
+        app.view.status.clear();
+        app.execute(Command::ChatMoveQueued(id, tickets[1], QueueMove::Up), &ctx);
+        assert_eq!(queued_text(&app)[0], "first");
+        assert!(app.view.status.contains("cannot move"));
+    }
+
+    #[test]
+    fn the_queue_shows_its_count_and_an_edit_can_be_cancelled_without_changes() {
+        let (mut app, ctx) = fixture();
+        let id = seeded_chat(&mut app, &ctx, ProviderId::Claude);
+        for text in ["first", "second", "third"] {
+            *app.view.agent_panel.draft_mut(id) = text.into();
+            app.execute(Command::ChatSend(id), &ctx);
+        }
+        frame(&mut app, &ctx, 1000.0);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "Queue · 2 pending"));
+        let ticket = app
+            .view
+            .native_agents
+            .as_ref()
+            .unwrap()
+            .live(id)
+            .unwrap()
+            .prompts[1]
+            .ticket;
+        app.view
+            .agent_panel
+            .set_queue_edit(Some(crate::app::agent_panel::QueueEdit {
+                session: id,
+                ticket,
+                text: "second".into(),
+                focus: true,
+                had_focus: false,
+            }));
+        frame(&mut app, &ctx, 1000.0);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "Save") && has_text(&output, "Cancel"));
+        let key = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with_events(&mut app, &ctx, 1000.0, vec![key]);
+        assert!(
+            app.view.agent_panel.queue_edit().is_none(),
+            "Escape ends the edit"
+        );
+        let live = app.view.native_agents.as_ref().unwrap().live(id).unwrap();
+        assert_eq!(
+            live.prompts[1].input,
+            vec![InputBlock::Text("second".into())]
+        );
+        // A message that left the queue makes an open edit harmless.
+        app.view
+            .agent_panel
+            .set_queue_edit(Some(crate::app::agent_panel::QueueEdit {
+                session: id,
+                ticket,
+                text: "late".into(),
+                focus: false,
+                had_focus: false,
+            }));
+        app.execute(Command::ChatCancelQueued(id, ticket), &ctx);
+        frame(&mut app, &ctx, 1000.0);
+        assert!(app.view.agent_panel.queue_edit().is_none());
+    }
+
+    #[test]
+    fn finished_reads_collapse_into_one_summary_and_expand_in_order() {
+        use lumen_agent_core::model::{ToolKind, ToolStatus};
+        let (mut app, ctx) = fixture();
+        let id = seeded_chat(&mut app, &ctx, ProviderId::Claude);
+        let items = vec![
+            tool_item("a", ToolKind::Read, ToolStatus::Completed, "Read alpha.rs"),
+            tool_item("b", ToolKind::Read, ToolStatus::Completed, "Read beta.rs"),
+            tool_item("c", ToolKind::Search, ToolStatus::Completed, "Grep gamma"),
+            tool_item("d", ToolKind::Read, ToolStatus::Failed, "Read delta.rs"),
+        ];
+        app.view
+            .native_agents
+            .as_mut()
+            .unwrap()
+            .restore_transcript(id, items);
+        frame(&mut app, &ctx, 1000.0);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "Read 2 files · 1 search"));
+        assert!(!has_text(&output, "Read alpha.rs"), "collapsed");
+        assert!(has_text(&output, "Read delta.rs"), "failures stay visible");
+        let group = egui::Id::new(("chat_explored", id.0, "a"));
+        ctx.data_mut(|d| d.insert_temp(group, true));
+        let output = frame(&mut app, &ctx, 1000.0);
+        for title in ["Read alpha.rs", "Read beta.rs", "Grep gamma"] {
+            assert!(has_text(&output, title), "{title} reachable when expanded");
+        }
+    }
+
+    #[test]
+    fn edits_show_file_names_counts_and_actions_and_bad_patches_fall_back_to_text() {
+        use lumen_agent_core::model::{ItemKind, ToolKind, ToolStatus};
+        let (mut app, ctx) = fixture();
+        let id = seeded_chat(&mut app, &ctx, ProviderId::Codex);
+        let mut good = tool_item(
+            "good",
+            ToolKind::FileEdit,
+            ToolStatus::Completed,
+            "Edit files",
+        );
+        let mut bad = tool_item(
+            "bad",
+            ToolKind::FileEdit,
+            ToolStatus::Completed,
+            "Edit other",
+        );
+        if let ItemKind::Tool(call) = &mut good.kind {
+            call.patch = Some("@@ -1 +1 @@\n-old line\n+new line".into());
+            call.locations = vec!["/w/src/main.rs".into()];
+        }
+        if let ItemKind::Tool(call) = &mut bad.kind {
+            call.patch = Some("Begin Patch: not a unified diff".into());
+        }
+        app.view
+            .native_agents
+            .as_mut()
+            .unwrap()
+            .restore_transcript(id, vec![good, bad]);
+        for key in ["good", "bad"] {
+            let tool = egui::Id::new(("chat_tool", id.0, key));
+            ctx.data_mut(|d| d.insert_temp(tool, true));
+        }
+        frame(&mut app, &ctx, 1000.0);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "main.rs"));
+        assert!(has_text(&output, "new line") && has_text(&output, "old line"));
+        assert!(has_text(&output, "Open") && has_text(&output, "Diff"));
+        assert!(has_text(&output, "could not be read as a diff"));
+        assert!(has_text(&output, "Begin Patch: not a unified diff"));
+    }
+
+    #[test]
+    fn history_search_filters_by_title_groups_by_recency_and_offers_a_way_out() {
+        let (mut app, ctx) = fixture();
+        let a = seeded_chat(&mut app, &ctx, ProviderId::Claude);
+        let b = seeded_chat(&mut app, &ctx, ProviderId::Claude);
+        let hub = app.view.native_agents.as_mut().unwrap();
+        hub.registry.rename(a, "Database migration");
+        hub.registry.rename(b, "Login redirect");
+        hub.registry.set_pinned(b, true);
+        app.execute(Command::AgentToggleHistory(ProviderId::Claude), &ctx);
+        frame(&mut app, &ctx, 1000.0);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "Pinned"));
+        assert!(has_text(&output, "Database migration") && has_text(&output, "Login redirect"));
+        app.view.agent_panel.history_query_mut().push_str("MIGRA");
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "Database migration"));
+        assert!(!has_text(&output, "Login redirect"));
+        assert_eq!(
+            app.view.agent_panel.current(ProviderId::Claude),
+            Some(b),
+            "selection keeps its identity"
+        );
+        app.view.agent_panel.history_query_mut().push_str("zzz");
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(has_text(&output, "No Claude Code chats match"));
+        assert!(has_text(&output, "Clear search"));
+        app.execute(Command::AgentBackToChat(ProviderId::Claude), &ctx);
+        assert!(app.view.agent_panel.history_query_mut().is_empty());
+    }
+
+    #[test]
+    fn reading_old_messages_is_not_interrupted_and_navigation_reaches_the_latest() {
+        use lumen_agent_core::model::{ItemKind, TranscriptItem};
+        let (mut app, ctx) = fixture();
+        ctx.style_mut(|style| style.scroll_animation = egui::style::ScrollAnimation::none());
+        let id = seeded_chat(&mut app, &ctx, ProviderId::Claude);
+        let items = (0..40)
+            .map(|n| TranscriptItem {
+                id: lumen_agent_core::ItemId(format!("u{n}")),
+                turn: None,
+                kind: ItemKind::User(format!("message {n}")),
+            })
+            .collect();
+        app.view
+            .native_agents
+            .as_mut()
+            .unwrap()
+            .restore_transcript(id, items);
+        for _ in 0..4 {
+            frame(&mut app, &ctx, 1000.0);
+        }
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(
+            visible_text_rect(&output, "message 39").is_some(),
+            "starts at the end"
+        );
+        assert!(
+            !has_text(&output, "Latest"),
+            "nothing to jump to at the end"
+        );
+        let pointer = egui::pos2(850.0, 300.0);
+        frame_with_events(
+            &mut app,
+            &ctx,
+            1000.0,
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, 30000.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        for _ in 0..4 {
+            frame(&mut app, &ctx, 1000.0);
+        }
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(
+            visible_text_rect(&output, "message 0").is_some(),
+            "scrolled to the top"
+        );
+        assert!(has_text(&output, "Latest"));
+        assert!(has_text(&output, "Prev") && has_text(&output, "Next"));
+        // A reply arrives while the user is reading the start: it is announced,
+        // and the viewport stays where it was.
+        *app.view.agent_panel.draft_mut(id) = "hello".into();
+        app.execute(Command::ChatSend(id), &ctx);
+        settle(&mut app, &ctx);
+        for _ in 0..4 {
+            frame(&mut app, &ctx, 1000.0);
+        }
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(
+            visible_text_rect(&output, "message 0").is_some(),
+            "reading position kept"
+        );
+        assert!(has_text(&output, "2 new"), "new content is flagged");
+        // Next moves to a later message of the user, never past the end.
+        let button = |output: &egui::FullOutput, label: &str| {
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(t) if t.galley.job.text.contains(label) => {
+                    Some(t.galley.rect.translate(t.pos.to_vec2()).center())
+                }
+                _ => None,
+            })
+        };
+        let click = |app: &mut LumenApp, at: egui::Pos2| {
+            frame_with_events(app, &ctx, 1000.0, vec![egui::Event::PointerMoved(at)]);
+            for pressed in [true, false] {
+                frame_with_events(
+                    app,
+                    &ctx,
+                    1000.0,
+                    vec![egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+            }
+            for _ in 0..3 {
+                frame(app, &ctx, 1000.0);
+            }
+        };
+        let mut output = output;
+        for _ in 0..5 {
+            click(&mut app, button(&output, "Next").unwrap());
+            output = frame(&mut app, &ctx, 1000.0);
+        }
+        assert!(
+            visible_text_rect(&output, "message 0").is_none(),
+            "Next moved the reading position forward"
+        );
+        assert!(
+            visible_text_rect(&output, "message 9").is_some(),
+            "and by whole messages, not past the end"
+        );
+        click(&mut app, button(&output, "2 new").unwrap());
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(
+            visible_text_rect(&output, "hello").is_some(),
+            "jumped to the latest"
+        );
+        assert!(!has_text(&output, "Latest") && !has_text(&output, "2 new"));
     }
 }
