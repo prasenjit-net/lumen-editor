@@ -248,3 +248,71 @@ jobs:
             exit 1
           fi
           gh release create "$RELEASE_TAG" dist/* --repo "$GH_REPO" --verify-tag --title "Lumen $RELEASE_TAG" --generate-notes
+
+  homebrew:
+    name: Update Homebrew cask
+    needs: [prepare, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Generate and push the cask
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          TAP_REPO: ${{ github.repository_owner }}/homebrew-tap
+        run: |
+          if [[ -z "$TAP_TOKEN" ]]; then
+            echo "::error::Secret HOMEBREW_TAP_TOKEN is not set; the GitHub release is published but the Homebrew cask was not updated"
+            exit 1
+          fi
+          dmg="Lumen-v${RELEASE_VERSION}-macos-ARM64.dmg"
+          mkdir -p dl
+          gh release download "v${RELEASE_VERSION}" --repo "$GH_REPO" --pattern "$dmg" --dir dl
+          sha="$(sha256sum "dl/$dmg" | cut -d' ' -f1)"
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
+          mkdir -p tap/Casks
+          cat > tap/Casks/lumen.rb <<CASK
+          cask "lumen" do
+            version "${RELEASE_VERSION}"
+            sha256 "${sha}"
+
+            url "https://github.com/${GH_REPO}/releases/download/v#{version}/Lumen-v#{version}-macos-ARM64.dmg"
+            name "Lumen"
+            desc "Focused native file editor"
+            homepage "https://github.com/${GH_REPO}"
+
+            depends_on arch: :arm64
+
+            app "Lumen.app"
+
+            # Published builds are not signed or notarized.
+            postflight do
+              system_command "/usr/bin/xattr",
+                             args: ["-dr", "com.apple.quarantine", "#{appdir}/Lumen.app"],
+                             must_succeed: false
+            end
+
+            zap trash: [
+              "~/Library/Application Support/Lumen",
+              "~/Library/Caches/Lumen",
+            ]
+          end
+          CASK
+          # Strip the heredoc indentation required by YAML.
+          sed -i 's/^          //' tap/Casks/lumen.rb
+
+          cd tap
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add Casks/lumen.rb
+          if git diff --cached --quiet; then
+            echo "Cask already up to date"
+            exit 0
+          fi
+          git commit -m "lumen ${RELEASE_VERSION}"
+          git push origin HEAD
