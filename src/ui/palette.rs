@@ -246,6 +246,11 @@ impl Workbench<'_> {
         if matches!(command, ReopenClosedTab) && self.view.closed_tabs.is_empty() {
             return Some("No recently closed tabs");
         }
+        if matches!(command, InstallShellLauncher | UninstallShellLauncher)
+            && self.view.launcher_job.is_some()
+        {
+            return Some("The 'lumen' shell command is already being changed");
+        }
         if matches!(command, ClearRecentHistory)
             && self.view.navigation.recent.is_empty()
             && self.view.navigation.recent_folders.is_empty()
@@ -582,6 +587,14 @@ fn palette_commands() -> Vec<(String, Command)> {
         (
             format!("{}  File: Clear Recently Opened", icon::X),
             Command::ClearRecentHistory,
+        ),
+        (
+            "Shell Command: Install 'lumen' command in PATH".into(),
+            Command::InstallShellLauncher,
+        ),
+        (
+            "Shell Command: Uninstall 'lumen' command from PATH".into(),
+            Command::UninstallShellLauncher,
         ),
         (format!("{}  File: Save", icon::FLOPPY_DISK), Command::Save),
         (

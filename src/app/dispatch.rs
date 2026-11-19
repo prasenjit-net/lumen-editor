@@ -369,6 +369,12 @@ impl LumenApp {
             }
             Command::ShowRecentFolders => self.open_recent_folder_picker(),
             Command::ClearRecentHistory => self.clear_recent_history(),
+            Command::InstallShellLauncher => self
+                .change_shell_command(crate::services::cli_launcher::LauncherAction::Install, ctx),
+            Command::UninstallShellLauncher => self.change_shell_command(
+                crate::services::cli_launcher::LauncherAction::Uninstall,
+                ctx,
+            ),
             Command::Save if self.view.settings.open => {
                 if self.view.settings.selected().pending() > 0 {
                     self.apply_settings();

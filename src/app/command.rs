@@ -296,6 +296,9 @@ pub(crate) enum Command {
     OpenRecentFolder(PathBuf),
     ShowRecentFolders,
     ClearRecentHistory,
+    /// Put a `lumen` launcher on the PATH (or take it off again).
+    InstallShellLauncher,
+    UninstallShellLauncher,
     /// Show a workspace file or folder in the Explorer sidebar.
     RevealInExplorer(PathBuf),
     RequestClose(DocumentId),
