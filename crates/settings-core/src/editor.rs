@@ -1,4 +1,24 @@
 use super::{Control, DefaultValue, SectionSchema, Setting};
+/// An editor boolean that only changes how text is drawn, on by default and
+/// resolvable per document.
+const fn display_toggle(
+    id: &'static str,
+    name: &'static str,
+    help: &'static str,
+    aliases: &'static str,
+) -> Setting {
+    Setting {
+        id,
+        default: DefaultValue::Bool(true),
+        name,
+        category: "Editor",
+        help,
+        aliases,
+        control: Control::Bool,
+        document: true,
+    }
+}
+
 pub(crate) const SCHEMA: SectionSchema = SectionSchema {
     title: "Editor",
     validate: Some(validate),
@@ -33,26 +53,18 @@ pub(crate) const SCHEMA: SectionSchema = SectionSchema {
             control: Control::Bool,
             document: true,
         },
-        Setting {
-            id: "editor.highlight_current_line",
-            default: DefaultValue::Bool(true),
-            name: "Highlight Current Line",
-            category: "Editor",
-            help: "Tint the line with the caret and brighten its line number.",
-            aliases: "active line caret cursor row",
-            control: Control::Bool,
-            document: true,
-        },
-        Setting {
-            id: "editor.indent_guides",
-            default: DefaultValue::Bool(true),
-            name: "Indent Guides",
-            category: "Editor",
-            help: "Draw vertical guides at each indentation step, emphasising the caret's block.",
-            aliases: "indentation lines vertical rulers",
-            control: Control::Bool,
-            document: true,
-        },
+        display_toggle(
+            "editor.highlight_current_line",
+            "Highlight Current Line",
+            "Tint the line with the caret and brighten its line number.",
+            "active line caret cursor row",
+        ),
+        display_toggle(
+            "editor.indent_guides",
+            "Indent Guides",
+            "Draw vertical guides at each indentation step, emphasising the caret's block.",
+            "indentation lines vertical rulers",
+        ),
         Setting {
             id: "editor.auto_indent",
             default: DefaultValue::Bool(true),
