@@ -298,7 +298,9 @@ fn install(exe: &Path, target: &LauncherTarget) -> Result<LauncherOutcome, Strin
     })
 }
 
-/// Atomically replace `file` with `script` (mode 755 on Unix).
+/// Atomically replace `file` with `script`. It lands in a folder the user can
+/// write (their own bin folder), so it is executable by its owner only; the
+/// administrator install into the shared `/usr/local/bin` uses 755 instead.
 fn write_directly(folder: &Path, file: &Path, script: &str) -> io::Result<()> {
     use std::io::Write;
     fs::create_dir_all(folder)?;
@@ -311,7 +313,7 @@ fn write_directly(folder: &Path, file: &Path, script: &str) -> io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         staged
             .as_file()
-            .set_permissions(fs::Permissions::from_mode(0o755))?;
+            .set_permissions(fs::Permissions::from_mode(0o700))?;
     }
     staged.persist(file).map_err(|error| error.error)?;
     Ok(())
@@ -519,7 +521,7 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             let mode = fs::metadata(&target.file).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o755);
+            assert_eq!(mode & 0o777, 0o700);
         }
         let outcome = run(LauncherAction::Install, Path::new("/new/lumen"), &target);
         assert!(
@@ -647,7 +649,7 @@ mod tests {
         .unwrap();
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).unwrap();
         }
         let target = target_in(dir.path());
         run(LauncherAction::Install, &fake, &target);
