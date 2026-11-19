@@ -3,6 +3,7 @@ pub(crate) mod agent_hub;
 pub(crate) mod agent_panel;
 pub(crate) mod capture;
 pub(crate) mod chat_attachments;
+mod chat_links;
 
 pub(crate) mod cli_install;
 mod cli_open;

@@ -1,7 +1,11 @@
 //! Agent chat: transcript, approvals, queue and composer for one session,
 //! hosted in the agent panel. Reads the hub through `ViewState` and only
 //! issues typed commands.
-use super::{Workbench, agent_message, theme};
+use super::{
+    Workbench,
+    markdown_render::{self, Host, Metrics},
+    theme,
+};
 use crate::{
     app::{
         agent_hub::{QueueMove, QueuedPrompt, SessionStatus},
@@ -76,8 +80,7 @@ impl Workbench<'_> {
         let accent = provider_color(&colors, provider);
 
         let width = ui.available_width();
-        // Never wider than the panel: a floor larger than the pane pushed the composer off-screen.
-        let column = (width - 2.0 * GUTTER).max(80.0).min(width.max(0.0));
+        let (column, inset) = column_layout(width);
         let focus_composer = self.view.agent_panel.take_composer_focus();
         let scroll_request = self.view.agent_panel.take_scroll_request(id);
         let draft_empty = self.view.agent_panel.draft_mut(id).trim().is_empty();
@@ -85,7 +88,7 @@ impl Workbench<'_> {
         let mut queue_edit = self.view.agent_panel.queue_edit().cloned();
         let mut review_approval = None;
 
-        identity_row(ui, &title, &workspace, column, &colors);
+        identity_row(ui, &title, &workspace, column, inset, &colors);
 
         // Bottom block first so the transcript takes whatever is left.
         egui::TopBottomPanel::bottom(egui::Id::new(("chat_composer", id.0)))
@@ -93,6 +96,8 @@ impl Workbench<'_> {
             .show_separator_line(false)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
+                    // The frame already supplies one gutter.
+                    ui.add_space(inset - GUTTER);
                     ui.vertical(|ui| {
                         ui.set_width(column);
                         let hub = self.view.native_agents.as_ref().expect("checked above");
@@ -140,10 +145,11 @@ impl Workbench<'_> {
             .show(ui, |ui| {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    ui.add_space(GUTTER);
+                    ui.add_space(inset);
                     ui.vertical(|ui| {
                         ui.set_width(column);
-                        ui.spacing_mut().item_spacing.y = 10.0;
+                        // Items are spaced explicitly below; this is the spacing inside them.
+                        ui.spacing_mut().item_spacing.y = INNER_GAP;
                         let Some(live) = hub.live(id) else {
                             return;
                         };
@@ -175,18 +181,22 @@ impl Workbench<'_> {
                             user_tops: &mut user_tops,
                         };
                         let items = &live.model.items;
-                        let mut previous_tool = false;
+                        // Whether the previous item was a tool call; `None` before the first.
+                        let mut previous: Option<bool> = None;
                         for block in tool_groups::blocks(items) {
                             let is_tool = match &block {
-                                Block::Item(index) => {
-                                    matches!(items[*index].kind, ItemKind::Tool(_))
-                                }
+                                Block::Item(index) => match &items[*index].kind {
+                                    ItemKind::Tool(_) => true,
+                                    // An empty reply draws nothing, so it takes no space.
+                                    ItemKind::Agent { text, .. } if text.trim().is_empty() => {
+                                        continue;
+                                    }
+                                    _ => false,
+                                },
                                 Block::Explored(_) => true,
                             };
-                            if !is_tool && previous_tool {
-                                ui.add_space(2.0);
-                            }
-                            previous_tool = is_tool;
+                            ui.add_space(item_gap(previous, is_tool));
+                            previous = Some(is_tool);
                             match block {
                                 Block::Item(index) => {
                                     transcript_item(ui, index, &items[index], &mut pass)
@@ -197,6 +207,8 @@ impl Workbench<'_> {
                             }
                         }
                         for request in &live.model.pending_approvals {
+                            ui.add_space(item_gap(previous, false));
+                            previous = Some(false);
                             let response = approval_card(ui, id, request, &colors, pass.commands);
                             // Navigation is scoped to this frame and exact request token.
                             // A resolved request or another session cannot inherit it.
@@ -205,6 +217,7 @@ impl Workbench<'_> {
                             }
                         }
                         if let SessionStatus::Working | SessionStatus::Waiting(_) = &status {
+                            ui.add_space(item_gap(previous, false));
                             working_indicator(ui, &status, accent, &colors);
                         }
                         let end = ui.allocate_response(egui::vec2(1.0, 12.0), egui::Sense::hover());
@@ -256,6 +269,35 @@ impl Workbench<'_> {
 
 /// Space between the panel edge and the conversation column.
 const GUTTER: f32 = 8.0;
+/// The conversation column stops widening here and is centred in wider panels,
+/// keeping lines readable.
+const MAX_COLUMN: f32 = 760.0;
+/// Space inside an item (name to body, card rows) and between consecutive tool calls.
+const INNER_GAP: f32 = 4.0;
+/// Extra space between conversation items, on top of `INNER_GAP`.
+const ITEM_GAP: f32 = 10.0;
+
+/// The conversation column's width and its left inset for a panel `width`
+/// wide. Never wider than the panel: a floor larger than the pane pushed the
+/// composer off-screen.
+fn column_layout(width: f32) -> (f32, f32) {
+    let column = (width - 2.0 * GUTTER)
+        .max(80.0)
+        .min(width.max(0.0))
+        .min(MAX_COLUMN);
+    let inset = GUTTER.max((width - column) / 2.0);
+    (column, inset)
+}
+
+/// Space before an item: none for the first, tight between tool calls (they
+/// read as one run of work), wider between everything else.
+fn item_gap(previous: Option<bool>, is_tool: bool) -> f32 {
+    match previous {
+        None => 0.0,
+        Some(true) if is_tool => 0.0,
+        Some(_) => ITEM_GAP,
+    }
+}
 
 /// What the empty chat's starting actions may do right now.
 struct Suggestions {
@@ -269,6 +311,7 @@ fn identity_row(
     title: &str,
     workspace: &std::path::Path,
     column: f32,
+    inset: f32,
     colors: &theme::Palette,
 ) {
     let folder = workspace.file_name().map_or_else(
@@ -287,7 +330,7 @@ fn identity_row(
     let gap = 6.0;
     let title_width = (column - folder_width - gap).max(0.0);
     ui.horizontal(|ui| {
-        ui.add_space(GUTTER);
+        ui.add_space(inset);
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.allocate_ui_with_layout(
             egui::vec2(title_width, 18.0),
@@ -451,9 +494,7 @@ fn transcript_item(
                 response.scroll_to_me(Some(egui::Align::Min));
             }
         }
-        ItemKind::Agent { text, phase, .. } => {
-            agent_block(ui, pass.provider, pass.accent, text, *phase, colors)
-        }
+        ItemKind::Agent { text, phase, .. } => agent_block(ui, &item.id.0, text, *phase, pass),
         ItemKind::Tool(call) => tool_row(ui, &item.id.0, call, pass),
         ItemKind::Plan(entries) => plan_card(ui, entries, colors),
         ItemKind::Error(text) => notice_card(ui, text, colors.error),
@@ -616,24 +657,21 @@ fn user_bubble(ui: &mut egui::Ui, text: &str, colors: &theme::Palette) -> egui::
         .response
 }
 
-/// What the agent said: no card, a coloured name, then the markdown body.
+/// What the agent said: no card, a coloured name, then the Markdown body.
 /// Working notes between steps are smaller and muted so the answer stands out.
 fn agent_block(
     ui: &mut egui::Ui,
-    provider: lumen_agent_core::ProviderId,
-    accent: Color32,
+    item_id: &str,
     text: &str,
     phase: lumen_agent_core::model::MessagePhase,
-    colors: &theme::Palette,
+    pass: &mut TranscriptPass,
 ) {
-    if text.trim().is_empty() {
-        return;
-    }
+    let (colors, accent) = (pass.colors, pass.accent);
     let note = phase == lumen_agent_core::model::MessagePhase::Commentary;
     ui.horizontal(|ui| {
         ui.label(RichText::new("●").size(9.0).color(accent));
         ui.label(
-            RichText::new(provider.label())
+            RichText::new(pass.provider.label())
                 .size(10.5)
                 .strong()
                 .color(accent),
@@ -646,13 +684,21 @@ fn agent_block(
             );
         }
     });
-    if note {
-        ui.add(
-            egui::Label::new(RichText::new(text).size(11.5).color(colors.muted)).selectable(true),
-        );
-    } else {
-        agent_message::agent_message(ui, text);
-    }
+    markdown_render::show(
+        ui,
+        text,
+        if note {
+            Metrics::CHAT_NOTES
+        } else {
+            Metrics::CHAT
+        },
+        Host::Chat {
+            session: pass.session,
+            item: item_id,
+        },
+        note,
+        pass.commands,
+    );
 }
 
 fn tool_glyph(kind: ToolKind) -> &'static str {
@@ -917,15 +963,28 @@ fn plan_card(
                     PlanStatus::Pending => ("○", colors.muted),
                 };
                 ui.horizontal_top(|ui| {
-                    ui.label(
-                        RichText::new(mark)
-                            .size(crate::ui::theme::META_SIZE)
-                            .color(color),
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(14.0, 0.0),
+                        egui::Layout::top_down(egui::Align::Center),
+                        |ui| {
+                            ui.label(
+                                RichText::new(mark)
+                                    .size(crate::ui::theme::META_SIZE)
+                                    .color(color),
+                            );
+                        },
                     );
-                    ui.add(
-                        egui::Label::new(RichText::new(&entry.text).size(11.5).color(colors.text))
+                    // A vertical layout wraps the text; a horizontal one would not.
+                    ui.vertical(|ui| {
+                        ui.set_width(ui.available_width());
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&entry.text).size(11.5).color(colors.text),
+                            )
                             .selectable(true),
-                    );
+                        );
+                    });
                 });
             }
         });
@@ -1734,5 +1793,68 @@ mod tests {
             }],
         );
         assert_eq!(target, None);
+    }
+
+    #[test]
+    fn the_column_fills_narrow_panels_and_is_centred_in_wide_ones() {
+        assert_eq!(column_layout(240.0), (224.0, GUTTER));
+        assert_eq!(column_layout(600.0), (584.0, GUTTER));
+        let (column, inset) = column_layout(1000.0);
+        assert_eq!(column, MAX_COLUMN);
+        assert_eq!(inset, 120.0);
+        // Never wider than the panel itself.
+        assert!(column_layout(50.0).0 <= 50.0);
+    }
+
+    #[test]
+    fn tool_calls_run_together_and_other_items_get_room() {
+        assert_eq!(item_gap(None, false), 0.0);
+        assert_eq!(item_gap(Some(true), true), 0.0);
+        assert_eq!(item_gap(Some(true), false), ITEM_GAP);
+        assert_eq!(item_gap(Some(false), true), ITEM_GAP);
+    }
+
+    #[test]
+    fn long_plan_entries_wrap_inside_the_card() {
+        use lumen_agent_core::model::{PlanEntry, PlanStatus};
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let entry = "Refactor the renderer so that long plan entries wrap inside narrow panels";
+        let entries = [PlanEntry {
+            text: entry.into(),
+            status: PlanStatus::InProgress,
+        }];
+        let mut output = None;
+        for _ in 0..2 {
+            output = Some(ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(240.0, 400.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let colors = theme::palette(ui.visuals());
+                        plan_card(ui, &entries, &colors);
+                    });
+                },
+            ));
+        }
+        let output = output.unwrap();
+        let (rows, right) = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == entry => Some((
+                    text.galley.rows.len(),
+                    text.galley.rect.translate(text.pos.to_vec2()).right(),
+                )),
+                _ => None,
+            })
+            .expect("plan entry drawn");
+        assert!(rows > 1, "wraps");
+        assert!(right <= 240.0, "ends at {right}");
     }
 }

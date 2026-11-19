@@ -413,6 +413,9 @@ impl LumenApp {
             Command::OpenPreviewLink(preview, destination) => {
                 self.open_preview_link(preview, &destination);
             }
+            Command::OpenChatLink(session, destination) => {
+                self.open_chat_link(session, &destination);
+            }
             Command::MoveTab(id, movement) => self.move_tab(id, movement),
             Command::MoveActiveTabLeft => self.move_active_tab(TabMove::Left),
             Command::MoveActiveTabRight => self.move_active_tab(TabMove::Right),

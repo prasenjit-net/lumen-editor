@@ -181,6 +181,19 @@ impl Builder<'_> {
             match event {
                 Event::End(tag) if Some(tag) == end => break,
                 Event::End(_) => {}
+                // Tight list items also carry emphasis and links without a
+                // paragraph; they continue the text instead of starting a block.
+                Event::Start(
+                    tag @ (Tag::Emphasis
+                    | Tag::Strong
+                    | Tag::Strikethrough
+                    | Tag::Link { .. }
+                    | Tag::Image { .. }),
+                ) => {
+                    if let Some(inline) = self.inline_span(tag) {
+                        loose.push(inline);
+                    }
+                }
                 Event::Start(tag) => {
                     flush_paragraph(&mut loose, &mut blocks);
                     if let Some(block) = self.block(tag) {
@@ -191,7 +204,8 @@ impl Builder<'_> {
                     flush_paragraph(&mut loose, &mut blocks);
                     blocks.push(Block::Rule);
                 }
-                Event::Html(html) | Event::InlineHtml(html) => {
+                Event::InlineHtml(html) => loose.push(Inline::Text(html.into_string())),
+                Event::Html(html) => {
                     flush_paragraph(&mut loose, &mut blocks);
                     blocks.push(Block::Html(html.trim_end().to_owned()));
                 }
@@ -569,6 +583,35 @@ mod tests {
         assert_eq!(
             LinkTarget::classify("C:\\notes.md"),
             LinkTarget::File("C:\\notes.md".into())
+        );
+    }
+
+    #[test]
+    fn emphasis_and_links_stay_inline_in_tight_list_items() {
+        let blocks =
+            parse("- **Term:** its meaning, see [docs](a.md) and _this_ <kbd>K</kbd>\n- next");
+        let Block::List { items, .. } = &blocks[0] else {
+            panic!("{blocks:?}");
+        };
+        assert_eq!(
+            items[0].blocks.len(),
+            1,
+            "one paragraph: {:?}",
+            items[0].blocks
+        );
+        let Block::Paragraph(inlines) = &items[0].blocks[0] else {
+            panic!("{:?}", items[0].blocks);
+        };
+        assert_eq!(
+            inlines[0],
+            Inline::Strong(vec![Inline::Text("Term:".into())])
+        );
+        assert_eq!(inlines[1], Inline::Text(" its meaning, see ".into()));
+        assert!(matches!(&inlines[2], Inline::Link { destination, .. } if destination == "a.md"));
+        assert!(inlines.contains(&Inline::Emphasis(vec![Inline::Text("this".into())])));
+        assert_eq!(
+            plain_text(inlines),
+            "Term: its meaning, see docs and this <kbd>K</kbd>"
         );
     }
 }

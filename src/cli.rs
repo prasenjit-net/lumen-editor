@@ -106,7 +106,7 @@ fn target(argument: &OsString, cwd: &Path, exists: &impl Fn(&Path) -> bool) -> T
 
 /// Split a trailing `:line` or `:line:column` off `text`. The remaining path
 /// must not be empty, so `:5` stays a (strange) file name.
-fn split_position(text: &str) -> (&str, Option<usize>, Option<usize>) {
+pub(crate) fn split_position(text: &str) -> (&str, Option<usize>, Option<usize>) {
     let number = |part: &str| {
         (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
             .then(|| part.parse::<usize>().ok())
