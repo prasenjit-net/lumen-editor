@@ -75,8 +75,8 @@ section{display:flex;flex-direction:column;gap:20px}
   --code:Menlo,"SF Mono",Consolas,"JetBrains Mono",monospace;
   font-family:var(--ui);color:var(--l-text);
 }
-.ic{font-family:"LumenIcons";font-style:normal;line-height:1;display:inline-block}
-.fi{font-family:"LumenFileIcons";font-style:normal;line-height:1;display:inline-block;width:20px;font-size:15px}
+.ic{font-family:"LumenIcons",sans-serif;font-style:normal;line-height:1;display:inline-block}
+.fi{font-family:"LumenFileIcons",sans-serif;font-style:normal;line-height:1;display:inline-block;width:20px;font-size:15px}
 .lumen{width:1120px;height:640px;position:relative;background:var(--l-canvas);display:flex;flex-direction:column;overflow:hidden;font-size:13px;user-select:none;border-radius:8px}
 .lumen button{font-family:inherit}
 .lumen *:focus{outline:none}
@@ -483,7 +483,7 @@ footer.meth{border-top:1px solid var(--line);padding-top:20px;font-size:13px;col
                 </div>
               </div>
               <div class="scm">
-                <textarea id="msg" placeholder="Message (⌘↵ to commit on 'main')">Note the RK4 integrator TODO</textarea>
+                <textarea id="msg" aria-label="Commit message" placeholder="Message (⌘↵ to commit on 'main')">Note the RK4 integrator TODO</textarea>
                 <div class="split">
                   <button class="btn primary commit" id="commitBtn"><span class="spin"></span><span class="ic">&#xe00d;</span><span class="lb">Commit</span></button>
                   <button class="btn primary drop" title="Commit options" aria-label="Commit options"><span class="ic">&#xe00b;</span></button>
@@ -494,7 +494,7 @@ footer.meth{border-top:1px solid var(--line);padding-top:20px;font-size:13px;col
             </div>
             <div id="v-search" hidden>
               <div class="ph"><span class="t">SEARCH</span></div>
-              <div class="scm"><textarea style="height:24px" placeholder="Search"></textarea></div>
+              <div class="scm"><textarea id="scmSearch" aria-label="Search" style="height:24px" placeholder="Search"></textarea></div>
             </div>
             <div id="v-debug" hidden>
               <div class="ph"><span class="t">RUN AND DEBUG</span></div>
