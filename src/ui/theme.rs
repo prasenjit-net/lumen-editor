@@ -284,6 +284,19 @@ pub(crate) fn syntax_palette(scheme: &str) -> lumen_editor_surface::SyntaxPalett
     }
 }
 
+/// Tell every animated control whether the user asked for no motion.
+pub(crate) fn set_reduce_motion(ctx: &egui::Context, reduce: bool) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("lumen_reduce_motion"), reduce));
+}
+
+/// How long a fade should take: `seconds`, or zero when motion is reduced.
+pub(crate) fn motion_time(ctx: &egui::Context, seconds: f32) -> f32 {
+    let reduce = ctx
+        .data(|data| data.get_temp::<bool>(egui::Id::new("lumen_reduce_motion")))
+        .unwrap_or(false);
+    if reduce { 0.0 } else { seconds }
+}
+
 pub(crate) fn configure_ui(ctx: &egui::Context) {
     configure_theme(ctx, Theme::Dark, false);
 }

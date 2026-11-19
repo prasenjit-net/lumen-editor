@@ -1,7 +1,6 @@
 use super::Workbench;
 use super::widgets::{canvas, surface};
 use crate::app::command::Command;
-use crate::icon;
 use crate::model::{display_name, previewable::AlternateView};
 use eframe::egui::{self, RichText};
 impl Workbench<'_> {
@@ -30,7 +29,7 @@ impl Workbench<'_> {
     /// Recently opened folders, then files. Whether an entry still exists is only
     /// known when it is opened; a missing folder is reported and pruned, a missing
     /// file reports a recoverable error, and neither disturbs open buffers.
-    fn recent_files_list(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn recent_files_list(&mut self, ui: &mut egui::Ui) {
         const SHOWN: usize = 5;
         let colors = crate::ui::theme::palette(ui.visuals());
         let take = |paths: &[std::path::PathBuf]| -> Vec<std::path::PathBuf> {
@@ -112,45 +111,7 @@ impl Workbench<'_> {
             return;
         }
         let Some(index) = self.editor.active_index() else {
-            ui.vertical_centered(|ui| {
-                ui.add_space(super::widgets::empty_state_top(ui));
-                ui.label(
-                    RichText::new("LUMEN")
-                        .size(28.0)
-                        .strong()
-                        .color(colors.muted),
-                );
-                ui.label(RichText::new("A focused local file editor").color(colors.muted));
-                ui.add_space(20.0);
-                if ui
-                    .button(format!("{}  Open File", icon::FILE_ARROW_UP))
-                    .clicked()
-                {
-                    self.command(Command::OpenFile);
-                }
-                if ui
-                    .button(format!("{}  Open Folder", icon::FOLDER_OPEN))
-                    .clicked()
-                {
-                    self.command(Command::OpenFolder);
-                }
-                if ui
-                    .button(format!("{}  New Text File", icon::FILE_PLUS))
-                    .clicked()
-                {
-                    self.command(Command::NewUntitled);
-                }
-                ui.label(
-                    RichText::new(format!(
-                        "{} to open a file  •  {} for a new file",
-                        super::shortcut::primary("O"),
-                        super::shortcut::primary("N")
-                    ))
-                    .size(crate::ui::theme::META_SIZE)
-                    .color(colors.muted),
-                );
-                self.recent_files_list(ui);
-            });
+            self.welcome_page(ui);
             return;
         };
         if self.editor.files[index].is_view_tab() {

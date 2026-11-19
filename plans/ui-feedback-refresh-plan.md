@@ -438,8 +438,9 @@ settings-file path sits above the list as a long line of text (`ui/settings.rs`,
 
 **Change.** Show origin metadata only when a value differs from its default. Show
 Details and the gear when the row is hovered or focused. Replace the path line
-with an "Open settings file" link that shows the full path on hover and in its
-context menu.
+with the file name (full path on hover); the header's existing "Open saved config
+file" action opens it. Details and the gear sit on the first line, so revealing
+them never moves the rows below.
 
 **Acceptance.** More settings fit in the same viewport without smaller text.
 Pending and Draft/Live markers from the earlier Settings work are unchanged.
@@ -536,6 +537,27 @@ tests, and records before/after captures.
 PR 1 alone fixes the "did my click register?" problem across the app and should
 land first. PR 2 depends on PR 1's busy and done states. PRs 3–5 are independent
 of each other.
+
+## Implementation status
+
+Five stacked PRs, each on the previous branch: #70 control states, #71 progress and
+notices, #72 glanceable state, #73 editor cues, and the welcome/motion/Settings PR.
+
+Done as planned: findings 1, 2, 5, 6 (PR 1); 3 and 4 in part (PR 2); 8, 9, 10 (PR 3);
+7 (PR 4); 11, 12 in part, 13 (PR 5).
+
+Not done, for follow-up:
+
+- Notification bell and history (the icon font has no bell glyph yet).
+- The "done" check flash on a control after it finishes, and the 300 ms delay
+  before status-bar progress appears.
+- A repeated identical status message does not re-post until call sites move from
+  `view.status` to `Notices::post`; task failures do not raise a notice yet.
+- Motion: hover and toggle fades and the toast fade-in are done; the toast
+  slide and the badge pop are not.
+- A few checkboxes in the Git dialogs and the CSV editor still use the plain
+  egui checkbox.
+- Light, High Contrast, Windows and Linux were not looked at live.
 
 ## Verification
 

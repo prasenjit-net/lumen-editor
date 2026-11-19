@@ -49,6 +49,7 @@ mod task_output;
 mod tasks;
 mod terminal;
 pub(crate) mod theme;
+mod welcome;
 mod widgets;
 mod workspace_search;
 mod workspace_search_diff;

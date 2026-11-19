@@ -200,14 +200,13 @@ fn toolbar(ui: &mut egui::Ui, state: &mut SettingsState, wide: bool) {
         }
     });
     if let Some(path) = &state.selected().path {
-        ui.add(
-            egui::Label::new(
-                RichText::new(path.display().to_string())
-                    .small()
-                    .color(colors.muted),
-            )
-            .truncate(),
+        // The header's "Open saved config file" opens it; the full path is a hover away.
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
         );
+        ui.add(egui::Label::new(RichText::new(name).small().color(colors.muted)).truncate())
+            .on_hover_text(path.display().to_string());
     }
     if !wide {
         egui::ComboBox::from_id_salt("settings_category")
@@ -325,6 +324,60 @@ fn unavailable_in_this_build(setting: &Setting) -> bool {
     !cfg!(feature = "language-server") && setting.id.starts_with("language.")
 }
 
+/// The Details toggle and the gear menu of one setting row. Returns true while
+/// the row should stay revealed: its menu is open or one of them has focus.
+fn row_tools(
+    ui: &mut egui::Ui,
+    state: &mut SettingsState,
+    setting: &Setting,
+    show_details: bool,
+    details_id: egui::Id,
+) -> bool {
+    let colors = crate::ui::theme::palette(ui.visuals());
+    let toggle = ui
+        .add(
+            egui::Button::new(
+                RichText::new(if show_details {
+                    "Hide details"
+                } else {
+                    "Details"
+                })
+                .small()
+                .color(colors.muted),
+            )
+            .frame(false),
+        )
+        .on_hover_text("Show the setting ID, where its value comes from, and its default");
+    if toggle.clicked() {
+        ui.data_mut(|data| data.insert_temp(details_id, !show_details));
+    }
+    let gear = ui.menu_button(icon::GEAR, |ui| {
+        if ui.button("Remove Override (inherit)").clicked() {
+            state.selected_mut().draft.remove(setting.id);
+            ui.close();
+        }
+        if ui.button("Set Built-in Default").clicked() {
+            state
+                .selected_mut()
+                .draft
+                .insert(setting.id.into(), setting.default_value());
+            ui.close();
+        }
+        if ui.button("Copy Setting ID").clicked() {
+            ui.ctx().copy_text(setting.id.into());
+            ui.close();
+        }
+    });
+    let menu_open = gear.inner.is_some();
+    let focused = toggle.has_focus() || gear.response.has_focus();
+    super::widgets::named(
+        gear.response.on_hover_text("Setting actions"),
+        true,
+        "Setting actions",
+    );
+    menu_open || focused
+}
+
 fn setting_row(ui: &mut egui::Ui, state: &mut SettingsState, setting: &Setting) {
     let colors = crate::ui::theme::palette(ui.visuals());
     let modified = state.selected().persisted.contains_key(setting.id);
@@ -335,9 +388,20 @@ fn setting_row(ui: &mut egui::Ui, state: &mut SettingsState, setting: &Setting) 
     let show_details = ui
         .data(|data| data.get_temp::<bool>(details_id))
         .unwrap_or(false);
+    // Details and the gear appear while the row is hovered or focused (or its menu
+    // or details are open). They live on the first line, so showing them never
+    // moves the rows below.
+    let reveal_id = ui.id().with(("setting_reveal", setting.id));
+    let (previous_rect, kept_open): (Option<egui::Rect>, bool) = ui
+        .data(|data| data.get_temp(reveal_id))
+        .unwrap_or((None, false));
+    let reveal = kept_open
+        || show_details
+        || previous_rect.is_some_and(|rect| ui.rect_contains_pointer(rect));
     ui.add_space(6.0);
     let top = ui.cursor().top();
     let left = ui.cursor().left();
+    let mut keep_open = false;
     ui.add_enabled_ui(!unavailable, |ui| {
         let (effective, origin) = state.effective(setting, None);
         let mut value = state
@@ -369,55 +433,19 @@ fn setting_row(ui: &mut egui::Ui, state: &mut SettingsState, setting: &Setting) 
             } else if modified {
                 ui.label(RichText::new("Modified").small().color(colors.muted));
             }
+            if reveal {
+                keep_open = row_tools(ui, state, setting, show_details, details_id);
+            }
         });
         ui.add(egui::Label::new(RichText::new(setting.help).color(colors.muted)).wrap());
-        ui.horizontal_wrapped(|ui| {
-            let status = if pending {
-                format!("Draft: {value} · Live: {effective}")
-            } else {
-                format!("Live: {effective}")
-            };
-            ui.label(RichText::new(status).small().color(colors.muted));
-            let toggle = ui
-                .add(
-                    egui::Button::new(
-                        RichText::new(if show_details {
-                            "Hide details"
-                        } else {
-                            "Details"
-                        })
-                        .small()
-                        .color(colors.muted),
-                    )
-                    .frame(false),
-                )
-                .on_hover_text("Show the setting ID, where its value comes from, and its default");
-            if toggle.clicked() {
-                ui.data_mut(|data| data.insert_temp(details_id, !show_details));
-            }
-            let gear = ui.menu_button(icon::GEAR, |ui| {
-                if ui.button("Remove Override (inherit)").clicked() {
-                    state.selected_mut().draft.remove(setting.id);
-                    ui.close();
-                }
-                if ui.button("Set Built-in Default").clicked() {
-                    state
-                        .selected_mut()
-                        .draft
-                        .insert(setting.id.into(), setting.default_value());
-                    ui.close();
-                }
-                if ui.button("Copy Setting ID").clicked() {
-                    ui.ctx().copy_text(setting.id.into());
-                    ui.close();
-                }
-            });
-            super::widgets::named(
-                gear.response.on_hover_text("Setting actions"),
-                true,
-                "Setting actions",
+        // The live value is only worth a line while a draft differs from it.
+        if pending {
+            ui.label(
+                RichText::new(format!("Draft: {value} · Live: {effective}"))
+                    .small()
+                    .color(colors.muted),
             );
-        });
+        }
         if show_details {
             ui.add(
                 egui::Label::new(
@@ -436,6 +464,11 @@ fn setting_row(ui: &mut egui::Ui, state: &mut SettingsState, setting: &Setting) 
             );
         }
     });
+    let row = egui::Rect::from_min_max(
+        egui::pos2(left, top),
+        egui::pos2(ui.max_rect().right(), ui.cursor().top()),
+    );
+    ui.data_mut(|data| data.insert_temp(reveal_id, (Some(row), keep_open)));
     if pending {
         // A draft that is not live yet reads differently from a saved value.
         ui.painter().vline(
@@ -701,7 +734,37 @@ mod tests {
                 .any(|text| text.contains(setting.id) && !text.starts_with("@id:")),
             "the technical ID waits behind Details"
         );
-        assert!(all.iter().any(|text| text == "Details"));
+        assert!(
+            !all.iter().any(|text| text == "Details"),
+            "details and the gear wait for hover or focus: {all:?}"
+        );
+        // Hovering the row reveals them without moving the row below.
+        let help_y = |output: &egui::FullOutput| label_position(output, setting.help).y;
+        let before = help_y(&output);
+        let over = label_position(&output, setting.name);
+        frame(&mut app, &ctx, 900.0, vec![egui::Event::PointerMoved(over)]);
+        let hovered = frame(&mut app, &ctx, 900.0, vec![]);
+        let all = texts(&hovered);
+        assert!(all.iter().any(|text| text == "Details"), "{all:?}");
+        assert_eq!(
+            help_y(&hovered),
+            before,
+            "revealing never shifts the layout"
+        );
+        // Moving away hides them again.
+        frame(&mut app, &ctx, 900.0, vec![egui::Event::PointerGone]);
+        let away = frame(&mut app, &ctx, 900.0, vec![]);
+        assert!(!texts(&away).iter().any(|text| text == "Details"));
+    }
+
+    #[test]
+    fn the_config_path_shows_as_a_file_name_with_the_full_path_on_hover() {
+        let (mut app, ctx) = open_settings("");
+        app.view.settings.user.path = Some("/home/me/.lumen/settings.toml".into());
+        let output = frame(&mut app, &ctx, 900.0, vec![]);
+        let all = texts(&output);
+        assert!(all.iter().any(|text| text == "settings.toml"), "{all:?}");
+        assert!(!all.iter().any(|text| text.contains("/home/me")), "{all:?}");
     }
 
     #[test]

@@ -13,6 +13,8 @@ use eframe::egui::{self, RichText};
 
 /// Width of a toast's text column.
 const TEXT_WIDTH: f32 = 290.0;
+/// Seconds a toast takes to fade in.
+const FADE_IN_SECS: f32 = 0.18;
 /// Space kept below the toasts: the status bar plus a margin.
 const BOTTOM_OFFSET: f32 = 22.0 + 10.0;
 
@@ -44,6 +46,18 @@ impl Workbench<'_> {
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
                 for notice in &toasts {
+                    // A toast fades in over a moment; with reduced motion it is
+                    // simply there.
+                    let fade = crate::ui::theme::motion_time(ctx, FADE_IN_SECS);
+                    let opacity = if fade > 0.0 {
+                        ((now - notice.posted_at) as f32 / fade).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    };
+                    if opacity < 1.0 {
+                        ctx.request_repaint();
+                    }
+                    ui.set_opacity(opacity);
                     widgets::floating_frame(ctx)
                         .inner_margin(egui::Margin::symmetric(12, 10))
                         .show(ui, |ui| {

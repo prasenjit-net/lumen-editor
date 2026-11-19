@@ -418,6 +418,10 @@ impl LumenApp {
             self.view.sidebar_visible = sidebar;
             self.view.settings.applied_sidebar = Some(sidebar);
         }
+        crate::ui::theme::set_reduce_motion(
+            ctx,
+            self.view.settings.boolean("workbench.reduce_motion"),
+        );
         let scale = f64::from(self.view.settings.number("workbench.ui_scale", None));
         if self.view.settings.applied_scale != Some(scale) {
             ctx.set_zoom_factor(scale as f32);

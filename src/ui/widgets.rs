@@ -26,15 +26,33 @@ pub(crate) fn tool_button(
     let rect = response.rect.shrink(inset);
     let radius = CornerRadius::same(3);
     let mut shapes = Vec::new();
-    if on {
-        shapes.push(egui::Shape::rect_filled(rect, radius, colors.control_on));
+    // Fills fade in and out (a moment, not a flourish). Reduced motion makes the
+    // animation time zero, so they jump to their target; a control's first frame
+    // never fades.
+    let ctx = ui.ctx().clone();
+    let on_amount = ctx.animate_bool_with_time(
+        response.id.with("tool_on"),
+        on,
+        crate::ui::theme::motion_time(&ctx, 0.15),
+    );
+    if on_amount > 0.0 {
+        shapes.push(egui::Shape::rect_filled(
+            rect,
+            radius,
+            colors.control_on.linear_multiply(on_amount),
+        ));
         shapes.push(egui::Shape::rect_stroke(
             rect,
             radius,
-            Stroke::new(1.0_f32, colors.control_on_edge),
+            Stroke::new(1.0_f32, colors.control_on_edge.linear_multiply(on_amount)),
             egui::StrokeKind::Inside,
         ));
     }
+    let hover_amount = ctx.animate_bool_with_time(
+        response.id.with("tool_hover"),
+        response.enabled() && response.hovered(),
+        crate::ui::theme::motion_time(&ctx, 0.12),
+    );
     if response.enabled() {
         if response.is_pointer_button_down_on() {
             shapes.push(egui::Shape::rect_filled(
@@ -42,8 +60,12 @@ pub(crate) fn tool_button(
                 radius,
                 colors.control_pressed,
             ));
-        } else if response.hovered() {
-            shapes.push(egui::Shape::rect_filled(rect, radius, colors.control_hover));
+        } else if hover_amount > 0.0 {
+            shapes.push(egui::Shape::rect_filled(
+                rect,
+                radius,
+                colors.control_hover.linear_multiply(hover_amount),
+            ));
         }
         // Focus is drawn for the keyboard only; a pointer press never shows it.
         if response.has_focus() && !response.is_pointer_button_down_on() && !response.clicked() {
@@ -1170,6 +1192,7 @@ mod tests {
     fn tool_buttons_paint_hover_pressed_and_on_states() {
         let ctx = egui::Context::default();
         configure_ui(&ctx);
+        crate::ui::theme::set_reduce_motion(&ctx, true);
         let colors = crate::ui::theme::Theme::Dark.palette();
         let at = egui::pos2(10.0, 10.0);
         let button = |pressed| egui::Event::PointerButton {
@@ -1197,6 +1220,55 @@ mod tests {
             vec![button(false), egui::Event::PointerGone],
         );
         assert!(has_fill(&on, colors.control_on), "an on toggle is filled");
+    }
+
+    fn max_fill_alpha(output: &egui::FullOutput) -> u8 {
+        fn walk(shape: &egui::Shape) -> u8 {
+            match shape {
+                egui::Shape::Rect(rect) => rect.fill.a(),
+                egui::Shape::Vec(shapes) => shapes.iter().map(walk).max().unwrap_or(0),
+                _ => 0,
+            }
+        }
+        output
+            .shapes
+            .iter()
+            .map(|c| walk(&c.shape))
+            .max()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn hover_fades_in_unless_motion_is_reduced_and_idle_frames_stay_idle() {
+        let at = egui::pos2(10.0, 10.0);
+        let full = crate::ui::theme::Theme::Dark.palette().control_hover.a();
+        for reduce in [false, true] {
+            let ctx = egui::Context::default();
+            configure_ui(&ctx);
+            crate::ui::theme::set_reduce_motion(&ctx, reduce);
+            tool_frame(&ctx, false, true, vec![]);
+            tool_frame(&ctx, false, true, vec![egui::Event::PointerMoved(at)]);
+            let first = tool_frame(&ctx, false, true, vec![]);
+            let alpha = max_fill_alpha(&first);
+            if reduce {
+                assert_eq!(alpha, full, "reduced motion jumps straight to the fill");
+            } else {
+                assert!(
+                    alpha < full,
+                    "the first hover frame is only part way: {alpha}"
+                );
+            }
+        }
+        // Nothing moving means nothing asks for another frame.
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        tool_frame(&ctx, false, true, vec![]);
+        let idle = tool_frame(&ctx, false, true, vec![]);
+        let delay = idle
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .map(|viewport| viewport.repaint_delay);
+        assert_eq!(delay, Some(std::time::Duration::MAX), "{delay:?}");
     }
 
     #[test]
