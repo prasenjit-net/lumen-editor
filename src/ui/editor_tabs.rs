@@ -949,15 +949,17 @@ fn tab(
                 let hovered = ui.rect_contains_pointer(response.rect.union(close_area));
                 title_response = Some(response);
                 close = widgets::named(
-                    ui.add_sized(
-                        [ACTION_SIZE, 22.0],
-                        egui::Button::new(if marks.dirty && !hovered {
-                            "●"
-                        } else {
-                            icon::X
-                        })
-                        .frame(false),
-                    )
+                    widgets::tool_button(ui, false, 0.0, |ui| {
+                        ui.add_sized(
+                            [ACTION_SIZE, 22.0],
+                            egui::Button::new(if marks.dirty && !hovered {
+                                "●"
+                            } else {
+                                icon::X
+                            })
+                            .frame(false),
+                        )
+                    })
                     .on_hover_text(close_tooltip),
                     true,
                     close_tooltip,

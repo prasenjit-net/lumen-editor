@@ -30,19 +30,19 @@ impl Workbench<'_> {
             (
                 icon::PANEL_BOTTOM,
                 self.visible_bottom_panel(),
-                "Toggle Bottom Panel",
+                "Bottom Panel",
                 Command::ToggleBottomPanel,
             ),
             (
                 icon::SIDEBAR_RIGHT,
                 self.view.agents.open,
-                "Toggle Right Panel (Coding Agents)",
+                "Right Panel (Coding Agents)",
                 Command::ToggleAgentPanel,
             ),
             (
                 icon::SIDEBAR_LEFT,
                 self.view.sidebar_visible,
-                "Toggle Left Sidebar",
+                "Left Sidebar",
                 Command::ToggleSidebar,
             ),
         ];
@@ -50,9 +50,11 @@ impl Workbench<'_> {
         ui.add_space(EDGE_MARGIN);
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing.x = TOGGLE_SPACING;
-            for (glyph, shown, tooltip, command) in toggles {
-                let response = ui
-                    .add(
+            for (glyph, shown, name, command) in toggles {
+                let tooltip = format!("{} {name}", if shown { "Hide" } else { "Show" });
+                let tooltip = tooltip.as_str();
+                let response = super::widgets::tool_button(ui, shown, 0.0, |ui| {
+                    ui.add(
                         egui::Button::new(RichText::new(glyph).size(14.0).color(if shown {
                             colors.text
                         } else {
@@ -63,8 +65,17 @@ impl Workbench<'_> {
                         .corner_radius(3)
                         .min_size(egui::vec2(TOGGLE_SIZE.0, TOGGLE_SIZE.1)),
                     )
-                    .on_hover_text(tooltip);
-                let response = super::widgets::named(response, true, tooltip);
+                })
+                .on_hover_text(tooltip);
+                let response = super::widgets::named(response, true, &format!("Toggle {name}"));
+                response.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::Checkbox,
+                        true,
+                        shown,
+                        format!("Toggle {name}"),
+                    )
+                });
                 if response.clicked() {
                     self.command(command);
                 }
@@ -108,37 +119,49 @@ impl Workbench<'_> {
                 .map(|run| run.id);
             ui.scope(|ui| {
                 ui.spacing_mut().item_spacing.x = TOGGLE_SPACING;
-                let stop = ui
-                    .add_enabled(
+                let stop = super::widgets::tool_button(ui, false, 0.0, |ui| {
+                    ui.add_enabled(
                         active.is_some(),
-                        egui::Button::new(RichText::new(icon::STOP).size(14.0).color(colors.error))
-                            .fill(egui::Color32::TRANSPARENT)
-                            .stroke(egui::Stroke::NONE)
-                            .corner_radius(3)
-                            .min_size(egui::vec2(TOGGLE_SIZE.0, TOGGLE_SIZE.1)),
-                    )
-                    .on_hover_text("Stop the selected task")
-                    .on_disabled_hover_text("The selected task is not running");
-                let stop = super::widgets::named(stop, active.is_some(), "Stop selected task");
-                if let (true, Some(run_id)) = (stop.clicked(), active) {
-                    commands.push(Command::StopTaskRun(run_id));
-                }
-                let run = ui
-                    .add_enabled(
-                        selected_label.is_some(),
-                        egui::Button::new(
-                            RichText::new(icon::PLAY).size(14.0).color(colors.success),
-                        )
+                        egui::Button::new(RichText::new(icon::STOP).size(14.0).color(
+                            if active.is_some() {
+                                colors.error
+                            } else {
+                                colors.disabled_fg
+                            },
+                        ))
                         .fill(egui::Color32::TRANSPARENT)
                         .stroke(egui::Stroke::NONE)
                         .corner_radius(3)
                         .min_size(egui::vec2(TOGGLE_SIZE.0, TOGGLE_SIZE.1)),
                     )
-                    .on_hover_text(match &selected_label {
-                        Some(name) => format!("Run task '{name}'"),
-                        None => "Choose a task to run first".into(),
-                    })
-                    .on_disabled_hover_text("Choose a task to run first");
+                })
+                .on_hover_text("Stop the selected task")
+                .on_disabled_hover_text("The selected task is not running");
+                let stop = super::widgets::named(stop, active.is_some(), "Stop selected task");
+                if let (true, Some(run_id)) = (stop.clicked(), active) {
+                    commands.push(Command::StopTaskRun(run_id));
+                }
+                let run = super::widgets::tool_button(ui, false, 0.0, |ui| {
+                    ui.add_enabled(
+                        selected_label.is_some(),
+                        egui::Button::new(RichText::new(icon::PLAY).size(14.0).color(
+                            if selected_label.is_some() {
+                                colors.success
+                            } else {
+                                colors.disabled_fg
+                            },
+                        ))
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::NONE)
+                        .corner_radius(3)
+                        .min_size(egui::vec2(TOGGLE_SIZE.0, TOGGLE_SIZE.1)),
+                    )
+                })
+                .on_hover_text(match &selected_label {
+                    Some(name) => format!("Run task '{name}'"),
+                    None => "Choose a task to run first".into(),
+                })
+                .on_disabled_hover_text("Choose a task to run first");
                 let run = super::widgets::named(run, selected_label.is_some(), "Run selected task");
                 if run.clicked() {
                     commands.push(Command::RunSelectedTask);
@@ -374,5 +397,96 @@ mod tests {
         app.view.tasks.selected = Some(TaskKey::new(Scope::Workspace, "build"));
         let text = render(&mut app, &ctx, vec![]).join(" ");
         assert!(text.contains("Build app"), "{text}");
+    }
+    #[test]
+    fn disabled_run_and_stop_are_neutral_not_green_or_red() {
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        let colors = crate::ui::theme::Theme::Dark.palette();
+        let mut app = app_with_task();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(600.0, 200.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                app.render_component(ctx, |workbench| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            workbench.task_launcher(ui)
+                        });
+                    });
+                })
+            },
+        );
+        for glyph in [icon::PLAY, icon::STOP] {
+            let color = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == glyph => {
+                        text.galley.job.sections.first().map(|s| s.format.color)
+                    }
+                    _ => None,
+                })
+                .expect("glyph drawn");
+            assert_ne!(color, colors.error, "{glyph:?}");
+            assert_ne!(color, colors.success, "{glyph:?}");
+        }
+    }
+
+    #[test]
+    fn toggle_tooltips_name_the_action_and_state() {
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        ctx.enable_accesskit();
+        let mut app = app_with_task();
+        app.view.sidebar_visible = true;
+        app.view.agents.open = false;
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(600.0, 200.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                app.render_component(ctx, |workbench| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            workbench.panel_toggles(ui)
+                        });
+                    });
+                })
+            },
+        );
+        let nodes: Vec<_> = output
+            .platform_output
+            .accesskit_update
+            .iter()
+            .flat_map(|update| update.nodes.iter())
+            .filter(|(_, node)| node.label().is_some_and(|l| l.starts_with("Toggle ")))
+            .map(|(_, node)| {
+                (
+                    node.label().unwrap().to_owned(),
+                    format!("{:?}", node.toggled()),
+                )
+            })
+            .collect();
+        assert!(
+            nodes.contains(&("Toggle Left Sidebar".into(), "Some(True)".into())),
+            "{nodes:?}"
+        );
+        assert!(
+            nodes.contains(&(
+                "Toggle Right Panel (Coding Agents)".into(),
+                "Some(False)".into()
+            )),
+            "{nodes:?}"
+        );
     }
 }

@@ -453,7 +453,9 @@ fn control(ui: &mut egui::Ui, setting: &Setting, value: &mut Value) -> bool {
             .add(egui::DragValue::new(value).range(min..=max).speed(0.1))
             .on_hover_text(setting.name)
             .changed(),
-        (Control::Bool, Value::Bool(value)) => ui.checkbox(value, setting.name).changed(),
+        (Control::Bool, Value::Bool(value)) => {
+            super::widgets::checkbox(ui, value, setting.name).changed()
+        }
         (Control::Choice(choices), Value::Choice(value)) => {
             let before = value.clone();
             egui::ComboBox::from_id_salt("value")
@@ -490,8 +492,16 @@ fn footer(ui: &mut egui::Ui, state: &mut SettingsState) -> Option<Command> {
         if ui
             .add_enabled(
                 can_save,
-                egui::Button::new(RichText::new("Apply").color(colors.on_accent))
-                    .fill(colors.accent),
+                egui::Button::new(RichText::new("Apply").color(if can_save {
+                    colors.on_accent
+                } else {
+                    colors.disabled_fg
+                }))
+                .fill(if can_save {
+                    colors.accent
+                } else {
+                    colors.disabled_bg
+                }),
             )
             .clicked()
         {
