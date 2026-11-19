@@ -30,6 +30,7 @@ mod markdown_preview;
 mod markdown_render;
 mod match_highlight;
 mod navigation;
+mod notices;
 mod output;
 mod palette;
 mod popup_place;

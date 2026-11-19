@@ -201,6 +201,26 @@ impl Workbench<'_> {
             (None, None) => String::new(),
         };
         let lsp = self.view.language_server_status.as_ref().map(lsp_label);
+        // A running Git operation takes the message slot; otherwise the newest
+        // notice, which fades out on its own.
+        let now = ctx.input(|input| input.time);
+        let busy_op = self
+            .view
+            .source_control
+            .loading
+            .then_some(self.view.source_control.active_op)
+            .flatten();
+        let (message, message_opacity, message_glyph) = match busy_op {
+            Some(op) => (format!("{}…", op.progress()), 1.0, None),
+            None => match self.view.notices.status_line(now) {
+                Some((notice, opacity)) => (
+                    notice.text.clone(),
+                    opacity,
+                    super::notices::glyph(notice.severity),
+                ),
+                None => (String::new(), 1.0, None),
+            },
+        };
         TopBottomPanel::bottom("status")
             .exact_height(22.0)
             .frame(
@@ -259,15 +279,25 @@ impl Workbench<'_> {
                             |ui| {
                                 ui.scope(|ui| {
                                     ui.set_max_width((left - problems_width).max(0.0));
+                                    let ink = Color32::WHITE.gamma_multiply(message_opacity);
+                                    if busy_op.is_some() {
+                                        ui.add(egui::Spinner::new().size(10.0).color(ink));
+                                    } else if let Some(glyph) = message_glyph {
+                                        ui.label(
+                                            RichText::new(glyph)
+                                                .size(crate::ui::theme::META_SIZE)
+                                                .color(ink),
+                                        );
+                                    }
                                     ui.add(
                                         egui::Label::new(
-                                            RichText::new(&self.view.status)
+                                            RichText::new(&message)
                                                 .size(crate::ui::theme::META_SIZE)
-                                                .color(Color32::WHITE),
+                                                .color(ink),
                                         )
                                         .truncate(),
                                     )
-                                    .on_hover_text(&self.view.status);
+                                    .on_hover_text(&message);
                                 });
                                 if ui
                                     .add(
@@ -605,6 +635,46 @@ mod tests {
         assert!(
             right <= width - super::LAUNCHER_WIDTH.min(width / 2.0),
             "{right}"
+        );
+    }
+    #[test]
+    fn a_running_git_operation_names_itself_in_the_status_bar() {
+        use crate::app::view_state::GitOp;
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let mut app = crate::app::LumenApp::default();
+        app.view.status = "Ready".into();
+        let run = |app: &mut crate::app::LumenApp| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 400.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| app.render_component(ctx, |workbench| workbench.status_bar(ctx)),
+            )
+        };
+        let text = |output: &egui::FullOutput| {
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("|")
+        };
+        assert!(!text(&run(&mut app)).contains("Pushing"));
+        app.view.source_control.loading = true;
+        app.view.source_control.active_op = Some(GitOp::Push);
+        assert!(text(&run(&mut app)).contains("Pushing…"));
+        app.view.source_control.loading = false;
+        assert!(
+            !text(&run(&mut app)).contains("Pushing"),
+            "cleared when the job ends"
         );
     }
 }

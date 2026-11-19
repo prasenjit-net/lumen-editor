@@ -226,6 +226,27 @@ impl ChangeGroup {
     }
 }
 
+/// Git operations that report progress on the control that started them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GitOp {
+    Commit,
+    Push,
+    Pull,
+    Fetch,
+}
+
+impl GitOp {
+    /// Present tense, for a button or the status bar while it runs.
+    pub(crate) fn progress(self) -> &'static str {
+        match self {
+            Self::Commit => "Committing",
+            Self::Push => "Pushing",
+            Self::Pull => "Pulling",
+            Self::Fetch => "Fetching",
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct SourceControlView {
     pub(crate) workspace: Option<PathBuf>,
@@ -238,6 +259,10 @@ pub(crate) struct SourceControlView {
     /// Commit drafts of repositories that are not currently selected.
     pub(crate) parked_drafts: std::collections::BTreeMap<PathBuf, CommitDraft>,
     pub(crate) loading: bool,
+    /// The operation the user started, claimed by the next mutation that runs.
+    pub(crate) next_op: Option<GitOp>,
+    /// The operation running now, for the control that started it to show.
+    pub(crate) active_op: Option<GitOp>,
     pub(crate) error: Option<String>,
     /// Initial branch typed for "Initialize Repository"; empty means `main`.
     pub(crate) init_branch: String,
@@ -497,6 +522,7 @@ pub(crate) struct ViewState {
     >,
     pub(crate) sidebar_visible: bool,
     pub(crate) status: String,
+    pub(crate) notices: super::notices::Notices,
     pub(crate) safety_notices: Vec<String>,
     pub(crate) safety_details_open: bool,
     /// Document waiting on the unsaved-changes prompt. A stable ID, so reordering
@@ -651,6 +677,7 @@ impl Default for ViewState {
             language_server_diagnostics: std::collections::HashMap::new(),
             sidebar_visible: true,
             status: "Ready".into(),
+            notices: Default::default(),
             safety_notices: Vec::new(),
             safety_details_open: false,
             pending_close: None,

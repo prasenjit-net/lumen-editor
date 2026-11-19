@@ -142,6 +142,24 @@ impl Workbench<'_> {
                     commands.push(Command::StopTaskRun(run_id));
                 }
                 let run = super::widgets::tool_button(ui, false, 0.0, |ui| {
+                    if active.is_some() {
+                        // Running: the glyph gives way to a spinner and the button waits.
+                        let (rect, response) = ui.allocate_exact_size(
+                            egui::vec2(TOGGLE_SIZE.0, TOGGLE_SIZE.1),
+                            egui::Sense::hover(),
+                        );
+                        egui::Spinner::new()
+                            .size(13.0)
+                            .color(colors.success)
+                            .paint_at(
+                                ui,
+                                egui::Rect::from_center_size(
+                                    rect.center(),
+                                    egui::Vec2::splat(13.0),
+                                ),
+                            );
+                        return response;
+                    }
                     ui.add_enabled(
                         selected_label.is_some(),
                         egui::Button::new(RichText::new(icon::PLAY).size(14.0).color(

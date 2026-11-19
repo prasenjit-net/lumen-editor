@@ -258,11 +258,13 @@ impl LumenApp {
     /// Claims the single mutation slot, or explains why the action is refused.
     fn begin_source_mutation(&mut self) -> bool {
         if self.source_mutation_in_flight() {
+            self.view.source_control.next_op = None;
             self.view.status = "Wait for the current Git operation to finish".into();
             return false;
         }
         self.source_control_job = None;
         self.view.source_control.loading = true;
+        self.view.source_control.active_op = self.view.source_control.next_op.take();
         true
     }
 
@@ -342,6 +344,7 @@ impl LumenApp {
             );
             return;
         }
+        self.view.source_control.next_op = Some(super::view_state::GitOp::Pull);
         self.run_source_repo_operation(ctx, "Pulled latest changes", |service, root| {
             service.pull(root)
         });
@@ -478,6 +481,7 @@ impl LumenApp {
     }
 
     pub(crate) fn fetch_source_control(&mut self, ctx: &egui::Context) {
+        self.view.source_control.next_op = Some(super::view_state::GitOp::Fetch);
         self.run_source_repo_operation(ctx, "Fetched remote changes", |service, root| {
             service.fetch(root)
         });
@@ -534,6 +538,7 @@ impl LumenApp {
     }
 
     pub(crate) fn push_source_control(&mut self, ctx: &egui::Context) {
+        self.view.source_control.next_op = Some(super::view_state::GitOp::Push);
         self.run_source_repo_operation(ctx, "Pushed local commits", |service, root| {
             service.push(root)
         });
@@ -673,6 +678,7 @@ impl LumenApp {
         else {
             return;
         };
+        self.view.source_control.next_op = Some(super::view_state::GitOp::Commit);
         if !self.begin_source_mutation() {
             return;
         }

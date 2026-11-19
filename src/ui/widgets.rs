@@ -59,6 +59,28 @@ pub(crate) fn tool_button(
     response
 }
 
+/// A spinner just left of a button's centred `label`, for a control that is
+/// working. egui's spinner asks for repaints, so it keeps turning.
+pub(crate) fn spinner_before_label(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    label: &str,
+    color: Color32,
+) {
+    const SIZE: f32 = 12.0;
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let text_width =
+        ui.fonts_mut(|fonts| fonts.layout_no_wrap(label.to_owned(), font, color).size().x);
+    let center = egui::pos2(
+        response.rect.center().x - text_width / 2.0 - SIZE,
+        response.rect.center().y,
+    );
+    egui::Spinner::new()
+        .size(SIZE)
+        .color(color)
+        .paint_at(ui, egui::Rect::from_center_size(center, Vec2::splat(SIZE)));
+}
+
 /// A checkbox whose box has a visible border, so an unchecked box doesn't
 /// disappear into the surface behind it.
 pub(crate) fn checkbox(
