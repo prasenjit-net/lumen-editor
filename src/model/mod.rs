@@ -10,7 +10,6 @@ mod editor;
 mod file_name;
 pub(crate) mod image_asset;
 pub(crate) mod markdown;
-pub(crate) mod markdown_lite;
 pub(crate) mod output_log;
 pub(crate) mod patch_view;
 pub(crate) mod previewable;

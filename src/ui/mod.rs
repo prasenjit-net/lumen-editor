@@ -1,7 +1,6 @@
 //! Workbench components and shared drawing primitives.
 mod activity_bar;
 pub(crate) mod agent_install;
-mod agent_message;
 mod agent_panel;
 mod bottom_tabs;
 mod breadcrumbs;
@@ -28,6 +27,7 @@ mod image_viewer;
 mod language_edit;
 mod language_navigation;
 mod markdown_preview;
+mod markdown_render;
 mod match_highlight;
 mod navigation;
 mod output;

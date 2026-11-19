@@ -21,12 +21,22 @@ use crate::{
 use eframe::egui::{self, Key, RichText, ScrollArea, Sense, SidePanel, Stroke};
 use lumen_agent_core::{ProviderId, SessionId};
 
-const DEFAULT_WIDTH: f32 = 300.0;
+const DEFAULT_WIDTH: f32 = 380.0;
 const MIN_WIDTH: f32 = 240.0;
-const MAX_WIDTH: f32 = 600.0;
+const MAX_WIDTH: f32 = 900.0;
+/// Window width kept for the activity bar, a narrow sidebar and a usable editor.
+const RESERVED_FOR_WORKBENCH: f32 = 420.0;
 const ROW_HEIGHT: f32 = 40.0;
 /// Width of the provider colour bar on a row's left edge.
 const ACCENT_BAR: f32 = 3.0;
+
+/// How wide the panel may be in a window `window` wide: wide enough to read a
+/// conversation on a large screen, never so wide that it crowds out the editor.
+/// A width saved on a bigger screen is clamped into this range.
+pub(super) fn panel_width_range(window: f32) -> std::ops::RangeInclusive<f32> {
+    let max = (window - RESERVED_FOR_WORKBENCH).clamp(MIN_WIDTH, MAX_WIDTH);
+    MIN_WIDTH..=max
+}
 
 /// "5m", "3h", "2d": compact age for the second line of a row.
 pub(super) fn age_text(now: u64, then: u64) -> String {
@@ -85,9 +95,10 @@ impl Workbench<'_> {
                     .unwrap_or_else(|| (("", colors.muted), "No active chats".into()))
             })
             .collect();
+        let width_range = panel_width_range(ctx.content_rect().width());
         SidePanel::right("agent_panel")
-            .default_width(DEFAULT_WIDTH)
-            .width_range(MIN_WIDTH..=MAX_WIDTH)
+            .default_width(DEFAULT_WIDTH.min(*width_range.end()))
+            .width_range(width_range)
             .resizable(true)
             .frame(super::widgets::canvas(ctx))
             .show(ctx, |ui| {
@@ -535,7 +546,15 @@ fn start_chat(
 
 #[cfg(test)]
 mod tests {
-    use super::age_text;
+    use super::{MAX_WIDTH, MIN_WIDTH, age_text, panel_width_range};
+
+    #[test]
+    fn panel_width_grows_with_the_window_but_leaves_the_editor_room() {
+        assert_eq!(panel_width_range(500.0), MIN_WIDTH..=MIN_WIDTH);
+        assert_eq!(panel_width_range(800.0), MIN_WIDTH..=380.0);
+        assert_eq!(panel_width_range(1280.0), MIN_WIDTH..=860.0);
+        assert_eq!(panel_width_range(2560.0), MIN_WIDTH..=MAX_WIDTH);
+    }
 
     #[test]
     fn ages_are_compact_and_blank_when_unknown() {

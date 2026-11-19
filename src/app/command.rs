@@ -326,6 +326,8 @@ pub(crate) enum Command {
     EditTable(DocumentId, super::visual_editor::TableEdit),
     /// A link clicked in the given preview tab.
     OpenPreviewLink(DocumentId, String),
+    /// A link clicked in an agent reply, resolved against the session's folder.
+    OpenChatLink(lumen_agent_core::SessionId, String),
     /// Reorder a document tab, by stable ID.
     MoveTab(DocumentId, TabMove),
     MoveActiveTabLeft,

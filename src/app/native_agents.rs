@@ -1134,6 +1134,65 @@ mod tests {
     }
 
     #[test]
+    fn replies_render_as_markdown_and_wrap_at_every_panel_width() {
+        let bullet = "a list item long enough that it cannot fit on one line of the panel";
+        for width in [240.0, 380.0, 580.0] {
+            let (mut app, ctx) = fixture();
+            ctx.data_mut(|data| {
+                data.insert_persisted(
+                    egui::Id::new("agent_panel"),
+                    egui::containers::panel::PanelState {
+                        rect: egui::Rect::from_min_size(
+                            egui::pos2(1000.0 - width, 0.0),
+                            egui::vec2(width, 700.0),
+                        ),
+                    },
+                )
+            });
+            app.execute(Command::NativeNewSession(ProviderId::Codex), &ctx);
+            let id = app.view.agent_panel.visible_chat().unwrap();
+            app.view.agent_panel.draft_mut(id).push_str(&format!(
+                "\n\n- **Bold lead:** {bullet}\n\n| Column | Another |\n|---|---|\n| a | b |"
+            ));
+            app.execute(Command::ChatSend(id), &ctx);
+            settle(&mut app, &ctx);
+            let mut output = frame(&mut app, &ctx, 1000.0);
+            for _ in 0..3 {
+                output = frame(&mut app, &ctx, 1000.0);
+            }
+            let panel_left = 1000.0 - width;
+            // The reply's list item: its own galley, without the "- " the user typed.
+            let item = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text.starts_with("Bold lead:") => {
+                        Some((text.galley.clone(), text.pos))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("rendered list item at {width}"));
+            let rect = item.0.rect.translate(item.1.to_vec2());
+            assert!(rect.left() > panel_left, "inside the panel at {width}");
+            assert!(
+                rect.right() <= 1000.0,
+                "ends at {} at {width}",
+                rect.right()
+            );
+            if width < 400.0 {
+                assert!(item.0.rows.len() > 1, "wraps at {width}");
+            }
+            assert!(has_text(&output, "Column"), "the table renders at {width}");
+            // The reply's text never shows raw table syntax (the user's own message does).
+            let raw_reply = output.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Text(t)
+                    if t.galley.job.text.starts_with("echo:") && t.galley.job.text.contains("|---|"))
+            });
+            assert!(!raw_reply, "table syntax shown raw at {width}");
+        }
+    }
+
+    #[test]
     fn approval_navigation_is_pinned_reveals_the_request_and_disappears_after_stop() {
         for width in [240.0, 300.0, 600.0] {
             let (mut app, ctx) = fixture();
