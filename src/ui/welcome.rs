@@ -162,9 +162,132 @@ fn heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(4.0);
 }
 
+/// App icon, name and a one-line description.
+fn header(ui: &mut egui::Ui, icon_texture: Option<&egui::TextureHandle>) {
+    let colors = crate::ui::theme::palette(ui.visuals());
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 14.0;
+        if let Some(texture) = icon_texture {
+            ui.image((texture.id(), egui::vec2(ICON_SIZE, ICON_SIZE)));
+        }
+        ui.vertical(|ui| {
+            ui.label(
+                RichText::new("Lumen")
+                    .size(22.0)
+                    .strong()
+                    .color(colors.text),
+            );
+            let tagline = "Edit code, run tasks, commit and ask a coding agent in one window.";
+            ui.add(egui::Label::new(RichText::new(tagline).color(colors.muted)).wrap());
+        });
+    });
+}
+
+/// The Start column; returns the command of the entry clicked.
+fn start_links(ui: &mut egui::Ui) -> Option<Command> {
+    heading(ui, "Start");
+    let entries = [
+        (
+            icon::FILE_PLUS,
+            "New Text File",
+            Some("N"),
+            Command::NewUntitled,
+        ),
+        (
+            icon::FILE_ARROW_UP,
+            "Open File",
+            Some("O"),
+            Command::OpenFile,
+        ),
+        (icon::FOLDER_OPEN, "Open Folder", None, Command::OpenFolder),
+        (
+            icon::GIT_BRANCH,
+            "Clone Repository…",
+            None,
+            Command::OpenCloneDialog,
+        ),
+    ];
+    let mut chosen = None;
+    for (glyph, label, shortcut, command) in entries {
+        let shortcut = shortcut.map(super::shortcut::primary);
+        if link_row(ui, &format!("{glyph}  {label}"), shortcut.as_deref(), true).clicked() {
+            chosen = Some(command);
+        }
+    }
+    chosen
+}
+
+struct Entry {
+    glyph: &'static str,
+    title: &'static str,
+    shortcut: Option<String>,
+    description: &'static str,
+    command: Command,
+}
+
+fn feature_entries(agents: bool) -> Vec<Entry> {
+    let mut entries = vec![Entry {
+        glyph: icon::MAGNIFYING_GLASS,
+        title: "Command Palette",
+        shortcut: Some(super::shortcut::primary("Shift+P")),
+        description: "Every command, searchable",
+        command: Command::Palette,
+    }];
+    if agents {
+        entries.push(Entry {
+            glyph: icon::AGENT,
+            title: "Coding Agents",
+            shortcut: Some(super::shortcut::primary("Shift+A")),
+            description: "Ask Codex or Claude Code about this folder",
+            command: Command::ToggleAgentPanel,
+        });
+    }
+    entries.push(Entry {
+        glyph: icon::PLAY,
+        title: "Tasks",
+        shortcut: None,
+        description: "Pick a task in the title bar and press Run",
+        command: Command::ActivateActivity(Activity::RunDebug),
+    });
+    entries.push(Entry {
+        glyph: icon::GIT_BRANCH,
+        title: "Source Control",
+        shortcut: None,
+        description: "Stage, commit, push and browse history",
+        command: Command::ActivateActivity(Activity::SourceControl),
+    });
+    entries
+}
+
+/// The feature tiles, two to a row when there is room.
+fn feature_tiles(ui: &mut egui::Ui, per_row: usize, agents: bool) -> Option<Command> {
+    heading(ui, "Get to know Lumen");
+    let entries = feature_entries(agents);
+    let mut chosen = None;
+    for row in entries.chunks(per_row) {
+        ui.columns(per_row, |columns| {
+            for (column, entry) in columns.iter_mut().zip(row) {
+                let shortcut = entry.shortcut.as_deref();
+                if tile(
+                    column,
+                    entry.glyph,
+                    entry.title,
+                    shortcut,
+                    entry.description,
+                )
+                .clicked()
+                {
+                    chosen = Some(entry.command.clone());
+                }
+            }
+        });
+        ui.add_space(8.0);
+    }
+    chosen
+}
+
 impl Workbench<'_> {
     pub(super) fn welcome_page(&mut self, ui: &mut egui::Ui) {
-        let colors = crate::ui::theme::palette(ui.visuals());
         let icon_texture = app_icon(ui.ctx());
         let two_columns = ui.available_width() >= TWO_COLUMNS_FROM;
         let agents = self.view.settings.boolean("agent.enabled");
@@ -180,120 +303,41 @@ impl Workbench<'_> {
                     ui.add_space(pad);
                     ui.vertical(|ui| {
                         ui.set_width(content);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 14.0;
-                            if let Some(texture) = &icon_texture {
-                                ui.image((texture.id(), egui::vec2(ICON_SIZE, ICON_SIZE)));
-                            }
-                            ui.vertical(|ui| {
-                                ui.label(
-                                    RichText::new("Lumen")
-                                        .size(22.0)
-                                        .strong()
-                                        .color(colors.text),
-                                );
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(
-                                            "Edit code, run tasks, commit and ask a coding agent in one window.",
-                                        )
-                                        .color(colors.muted),
-                                    )
-                                    .wrap(),
-                                );
-                            });
-                        });
+                        header(ui, icon_texture.as_ref());
                         ui.add_space(22.0);
-                        let start = |this: &mut Self, ui: &mut egui::Ui, chosen: &mut Option<Command>| {
-                            let _ = this;
-                            heading(ui, "Start");
-                            for (glyph, label, shortcut, command) in [
-                                (icon::FILE_PLUS, "New Text File", Some("N"), Command::NewUntitled),
-                                (icon::FILE_ARROW_UP, "Open File", Some("O"), Command::OpenFile),
-                                (icon::FOLDER_OPEN, "Open Folder", None, Command::OpenFolder),
-                                (icon::GIT_BRANCH, "Clone Repository…", None, Command::OpenCloneDialog),
-                            ] {
-                                let shortcut = shortcut.map(super::shortcut::primary);
-                                if link_row(ui, &format!("{glyph}  {label}"), shortcut.as_deref(), true)
-                                    .clicked()
-                                {
-                                    *chosen = Some(command);
-                                }
-                            }
-                        };
                         if two_columns {
                             ui.columns(2, |columns| {
-                                start(self, &mut columns[0], &mut chosen);
+                                chosen = start_links(&mut columns[0]).or(chosen.take());
                                 heading(&mut columns[1], "Recent");
                                 self.recent_files_list(&mut columns[1]);
                             });
                         } else {
-                            start(self, ui, &mut chosen);
+                            chosen = start_links(ui).or(chosen.take());
                             ui.add_space(14.0);
                             heading(ui, "Recent");
                             self.recent_files_list(ui);
                         }
                         ui.add_space(24.0);
-                        heading(ui, "Get to know Lumen");
-                        let mut tiles: Vec<(&str, &str, Option<String>, &str, Command)> = vec![(
-                            icon::MAGNIFYING_GLASS,
-                            "Command Palette",
-                            Some(super::shortcut::primary("Shift+P")),
-                            "Every command, searchable",
-                            Command::Palette,
-                        )];
-                        if agents {
-                            tiles.push((
-                                icon::AGENT,
-                                "Coding Agents",
-                                Some(super::shortcut::primary("Shift+A")),
-                                "Ask Codex or Claude Code about this folder",
-                                Command::ToggleAgentPanel,
-                            ));
-                        }
-                        tiles.push((
-                            icon::PLAY,
-                            "Tasks",
-                            None,
-                            "Pick a task in the title bar and press Run",
-                            Command::ActivateActivity(Activity::RunDebug),
-                        ));
-                        tiles.push((
-                            icon::GIT_BRANCH,
-                            "Source Control",
-                            None,
-                            "Stage, commit, push and browse history",
-                            Command::ActivateActivity(Activity::SourceControl),
-                        ));
                         let per_row = if two_columns { 2 } else { 1 };
-                        for row in tiles.chunks(per_row) {
-                            ui.columns(per_row, |columns| {
-                                for (column, (glyph, title, shortcut, description, command)) in
-                                    columns.iter_mut().zip(row)
-                                {
-                                    if tile(column, glyph, title, shortcut.as_deref(), description)
-                                        .clicked()
-                                    {
-                                        chosen = Some(command.clone());
-                                    }
-                                }
-                            });
-                            ui.add_space(8.0);
-                        }
+                        chosen = feature_tiles(ui, per_row, agents).or(chosen.take());
                         ui.add_space(16.0);
                     });
                 });
             });
         if let Some(command) = chosen {
-            // Activating the activity that is already showing would hide it.
-            let already_showing = matches!(
-                &command,
-                Command::ActivateActivity(activity)
-                    if self.view.sidebar_visible && self.view.activity == *activity
-            );
-            if !already_showing {
-                self.command(command);
-            }
+            self.run_welcome_command(command);
+        }
+    }
+
+    /// Activating the activity that is already showing would hide it.
+    fn run_welcome_command(&mut self, command: Command) {
+        let already_showing = matches!(
+            &command,
+            Command::ActivateActivity(activity)
+                if self.view.sidebar_visible && self.view.activity == *activity
+        );
+        if !already_showing {
+            self.command(command);
         }
     }
 }
