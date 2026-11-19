@@ -134,3 +134,48 @@ fn no_targets_changes_nothing() {
     assert!(app.editor.files.is_empty());
     assert_eq!(app.view.status, before);
 }
+
+#[test]
+fn shell_command_install_reports_its_outcome_and_rejects_overlapping_requests() {
+    use crate::services::cli_launcher::{LauncherAction, LauncherTarget, ScriptFlavor};
+    let (mut app, _storage) = test_app(TestDialogs::default());
+    let ctx = eframe::egui::Context::default();
+    let dir = tempfile::tempdir().unwrap();
+    let target = LauncherTarget {
+        file: dir.path().join("lumen"),
+        flavor: ScriptFlavor::Posix,
+        elevate: false,
+        register_path: false,
+    };
+    app.start_launcher_job(
+        LauncherAction::Install,
+        PathBuf::from("/opt/lumen"),
+        target.clone(),
+        &ctx,
+    );
+    assert_eq!(app.view.status, "Installing the 'lumen' shell command…");
+    app.start_launcher_job(
+        LauncherAction::Uninstall,
+        PathBuf::new(),
+        target.clone(),
+        &ctx,
+    );
+    assert_eq!(
+        app.view.status,
+        "The 'lumen' shell command is already being changed"
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while app.view.launcher_job.is_some() && std::time::Instant::now() < deadline {
+        app.poll_launcher_job(&ctx);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        app.view.status.starts_with(&format!(
+            "Installed the 'lumen' command at {}",
+            target.file.display()
+        )),
+        "{}",
+        app.view.status
+    );
+    assert!(target.file.exists());
+}

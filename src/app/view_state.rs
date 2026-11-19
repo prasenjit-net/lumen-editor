@@ -388,6 +388,8 @@ pub(crate) struct AgentsView {
 }
 
 pub(crate) struct ViewState {
+    /// A running "Shell Command: Install/Uninstall" change.
+    pub(crate) launcher_job: Option<super::cli_install::LauncherJob>,
     pub(crate) clone_dialog: Option<super::git_clone::CloneDialog>,
     pub(crate) branch_dialog: Option<super::git_branches::BranchDialog>,
     pub(crate) stash_dialog: Option<super::git_stash::StashDialog>,
@@ -573,6 +575,7 @@ impl ViewState {
 impl Default for ViewState {
     fn default() -> Self {
         Self {
+            launcher_job: None,
             clone_dialog: None,
             branch_dialog: None,
             stash_dialog: None,

@@ -2,6 +2,7 @@
 pub(crate) mod agent_panel_store;
 pub(crate) mod agent_sessions_store;
 pub(crate) mod agent_transcripts_store;
+pub(crate) mod cli_launcher;
 mod clipboard;
 mod dialogs;
 pub(crate) mod file_index;

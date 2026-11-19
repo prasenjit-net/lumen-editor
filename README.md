@@ -114,7 +114,26 @@ The repository’s [Release workflow](.github/workflows/release.yml) builds plat
 
 ## Command-line usage
 
-The executable built by Cargo is named `lumen-editor`; examples below assume it is on your `PATH`:
+### The `lumen` shell command
+
+Run **Shell Command: Install 'lumen' command in PATH** from the command palette to get a short `lumen` command that opens Lumen without holding the terminal (options such as `--help` still run in the foreground so their output is visible):
+
+| Platform | Launcher | Notes |
+|---|---|---|
+| macOS | `/usr/local/bin/lumen` | Asks for an administrator password when that folder is not writable. |
+| Linux | `~/.local/bin/lumen` (or `$XDG_BIN_HOME/lumen`) | The status bar warns if the folder is not on your `PATH`. |
+| Windows | `%LOCALAPPDATA%\Lumen\bin\lumen.cmd` | The folder is added to your user `PATH`; open a new terminal to use it. |
+
+The launcher records the path of the running Lumen executable, so run the command again after moving or reinstalling Lumen elsewhere. Lumen only replaces or removes a launcher it wrote itself; an unrelated `lumen` file is left unchanged and reported. **Shell Command: Uninstall 'lumen' command from PATH** removes it (and, on Windows, the `PATH` entry).
+
+```sh
+lumen .
+lumen src/main.rs:42:7
+```
+
+### Arguments
+
+The executable built by Cargo is named `lumen-editor`; the examples below call it directly, and `lumen` accepts the same arguments:
 
 ```sh
 lumen-editor [OPTIONS] [PATH[:LINE[:COLUMN]]]...

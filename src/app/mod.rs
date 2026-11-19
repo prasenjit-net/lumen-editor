@@ -4,6 +4,7 @@ pub(crate) mod agent_panel;
 pub(crate) mod capture;
 pub(crate) mod chat_attachments;
 
+pub(crate) mod cli_install;
 mod cli_open;
 mod clipboard;
 pub(crate) mod command;
@@ -238,6 +239,7 @@ impl eframe::App for LumenApp {
         self.poll_source_control(ctx);
         self.poll_repo_extras(ctx);
         self.poll_clone(ctx);
+        self.poll_launcher_job(ctx);
         self.poll_branches(ctx);
         self.poll_stashes(ctx);
         self.poll_history(ctx);
