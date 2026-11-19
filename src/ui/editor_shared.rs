@@ -75,6 +75,16 @@ impl Workbench<'_> {
                 .settings
                 .document_boolean("editor.bracket_matching", path),
         });
+        surface.set_cues(lumen_editor_surface::Cues {
+            current_line: self
+                .view
+                .settings
+                .document_boolean("editor.highlight_current_line", path),
+            indent_guides: self
+                .view
+                .settings
+                .document_boolean("editor.indent_guides", path),
+        });
         surface.set_typography(lumen_editor_surface::Typography {
             font_size: self.view.settings.number("editor.font_size", path),
             line_height: self.view.settings.number("editor.line_height", path),

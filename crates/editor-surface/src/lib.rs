@@ -2,6 +2,7 @@
 mod accessibility;
 mod commands;
 mod composition_ui;
+mod cues;
 mod folding;
 mod geometry;
 mod gutter;
@@ -9,6 +10,7 @@ mod input;
 mod shaping;
 mod visual_navigation;
 
+pub use cues::Cues;
 use egui::{
     Align2, Color32, FontId, Id, Pos2, Rect, Response, ScrollArea, Sense, Stroke, Ui, vec2,
 };
@@ -29,6 +31,7 @@ const GEOMETRY_CACHE_LIMIT: usize = 20;
 
 #[derive(Default)]
 pub struct EditorSurface {
+    cues: Cues,
     typography: Typography,
     indentation: Indentation,
     pairing: PairingOptions,
@@ -218,6 +221,11 @@ impl EditorSurface {
     pub fn set_indentation(&mut self, indentation: Indentation) {
         self.indentation = indentation;
     }
+    /// Turn the current-line band and indent guides on or off. Display only.
+    pub fn set_cues(&mut self, cues: Cues) {
+        self.cues = cues;
+    }
+
     pub fn set_pairing(&mut self, pairing: PairingOptions) {
         self.pairing = pairing;
     }
@@ -369,6 +377,105 @@ impl EditorSurface {
         }
         geometry
     }
+    /// Paints the current-line band and indent guides behind the text and
+    /// returns the rows that hold a caret (for the gutter). Everything is placed
+    /// from the same geometry as the text, and nothing here moves a caret.
+    fn paint_cues(
+        &self,
+        ui: &Ui,
+        painter: &egui::Painter,
+        geometry: &TextGeometry,
+        buffer: &EditorBuffer,
+        text_clip: Rect,
+        response: &egui::Response,
+    ) -> BTreeSet<usize> {
+        let mut active_rows = BTreeSet::new();
+        if (!self.cues.current_line && !self.cues.indent_guides) || self.composition.is_some() {
+            return active_rows;
+        }
+        let rows = geometry.row_rects();
+        let focused = response.has_focus();
+        if self.cues.current_line && focused {
+            for selection in buffer.selections().selections() {
+                if selection.range().is_empty()
+                    && let Some(row) =
+                        geometry.row_at_y(&rows, geometry.caret_rect(selection.head).center().y)
+                {
+                    active_rows.insert(row);
+                }
+            }
+            let band = ui.visuals().text_color().linear_multiply(0.07);
+            for row in &active_rows {
+                let rect = rows[*row];
+                painter.rect_filled(
+                    Rect::from_min_max(
+                        egui::pos2(text_clip.left(), rect.top()),
+                        egui::pos2(text_clip.right(), rect.bottom()),
+                    ),
+                    0.0,
+                    band,
+                );
+            }
+        }
+        if self.cues.indent_guides {
+            let width = self.indentation.effective(buffer.text()).width.max(1);
+            let raw = |row: usize| cues::level_of(geometry.row_text(row), width);
+            let visible =
+                |rect: &Rect| rect.bottom() >= text_clip.top() && rect.top() <= text_clip.bottom();
+            // Measure one indentation step from a visible indented row, so the
+            // guides follow whatever the font and tab rendering actually do.
+            let step = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, rect)| visible(rect))
+                .find_map(|(row, _)| {
+                    let columns = cues::leading_columns(geometry.row_text(row), width)?;
+                    let chars = geometry
+                        .row_text(row)
+                        .chars()
+                        .take_while(|ch| ch.is_whitespace())
+                        .count();
+                    (columns > 0).then(|| {
+                        (geometry.row_x_after(row, chars) - geometry.origin.x) / columns as f32
+                            * width as f32
+                    })
+                });
+            if let Some(step) = step.filter(|step| *step > 1.0) {
+                let faint = ui.visuals().text_color().linear_multiply(0.14);
+                let strong = ui.visuals().text_color().linear_multiply(0.38);
+                let block = focused
+                    .then(|| {
+                        let caret_row = geometry.row_at_y(
+                            &rows,
+                            geometry
+                                .caret_rect(
+                                    buffer.selections().selections()
+                                        [buffer.selections().primary_index()]
+                                    .head,
+                                )
+                                .center()
+                                .y,
+                        )?;
+                        cues::enclosing_block(&raw, rows.len(), caret_row)
+                    })
+                    .flatten();
+                for (row, rect) in rows.iter().enumerate().filter(|(_, rect)| visible(rect)) {
+                    for guide in 0..cues::resolved_level(&raw, rows.len(), row) {
+                        let emphasised = block
+                            .as_ref()
+                            .is_some_and(|(index, range)| *index == guide && range.contains(&row));
+                        painter.vline(
+                            (geometry.origin.x + guide as f32 * step).round() + 0.5,
+                            rect.y_range(),
+                            Stroke::new(1.0_f32, if emphasised { strong } else { faint }),
+                        );
+                    }
+                }
+            }
+        }
+        active_rows
+    }
+
     pub fn show(&mut self, ui: &mut Ui, id: Id, buffer: &mut EditorBuffer) -> SurfaceOutput {
         self.fold_suspended = false;
         self.folds_changed = false;
@@ -473,6 +580,8 @@ impl EditorSurface {
                     }
                 }
             }
+            let active_rows =
+                self.paint_cues(ui, &painter, &geometry, buffer, text_clip, &response);
             for (index, selection) in buffer.selections().selections().iter().enumerate() {
                 if geometry.preedit_rects().is_some()
                     && index == buffer.selections().primary_index()
@@ -612,7 +721,12 @@ impl EditorSurface {
                     Align2::RIGHT_TOP,
                     geometry.source_line_for_row(index).to_string(),
                     self.typography.font_id(),
-                    ui.visuals().weak_text_color(),
+                    // The caret's line number stands out from the rest.
+                    if active_rows.contains(&index) {
+                        ui.visuals().text_color()
+                    } else {
+                        ui.visuals().weak_text_color()
+                    },
                 );
                 if let Some(range) = self
                     .fold_ranges

@@ -125,6 +125,7 @@ fn bracket_matching_uses_syntax_spans_after_crlf_projection() {
 
 mod accessibility;
 mod commands;
+mod cues;
 mod folding;
 mod ime;
 mod shaped;

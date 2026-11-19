@@ -132,6 +132,8 @@ pub struct TextGeometry {
     folded: Arc<Vec<Range<usize>>>,
     source_lines: usize,
     row_lines: Arc<Vec<usize>>,
+    /// Where each row starts in the visual text: (byte, character).
+    row_starts: Arc<Vec<(usize, usize)>>,
 }
 
 impl TextGeometry {
@@ -281,15 +283,16 @@ impl TextGeometry {
             .collect();
         // One row per visual line (no wrapping), whichever renderer draws it.
         let mut character = 0;
-        let row_lines = visual
-            .split('\n')
-            .map(|row| {
-                let byte = byte_offsets[character.min(byte_offsets.len() - 1)];
-                let line = line_starts.partition_point(|start| *start <= byte);
-                character += row.chars().count() + 1;
-                line
-            })
-            .collect();
+        let mut visual_byte = 0;
+        let mut row_lines = Vec::new();
+        let mut row_starts = Vec::new();
+        for row in visual.split('\n') {
+            let byte = byte_offsets[character.min(byte_offsets.len() - 1)];
+            row_lines.push(line_starts.partition_point(|start| *start <= byte));
+            row_starts.push((visual_byte, character));
+            character += row.chars().count() + 1;
+            visual_byte += row.len() + 1;
+        }
         Self {
             galley,
             visual: Arc::from(visual),
@@ -310,6 +313,7 @@ impl TextGeometry {
             folded: Arc::new(folded.to_vec()),
             source_lines: line_starts.len(),
             row_lines: Arc::new(row_lines),
+            row_starts: Arc::new(row_starts),
         }
     }
 
@@ -465,6 +469,29 @@ impl TextGeometry {
 
     pub(crate) fn source_line_for_row(&self, row: usize) -> usize {
         self.row_lines[row]
+    }
+
+    /// The visual text of one row, without its newline.
+    pub(crate) fn row_text(&self, row: usize) -> &str {
+        let (start, _) = self.row_starts[row];
+        let end = self
+            .row_starts
+            .get(row + 1)
+            .map_or(self.visual.len(), |(next, _)| next - 1);
+        &self.visual[start..end.max(start)]
+    }
+
+    /// Where the first character after `chars` characters of `row` sits, in
+    /// the same space as `origin`. Used to measure an indentation step in pixels.
+    pub(crate) fn row_x_after(&self, row: usize, chars: usize) -> f32 {
+        let (_, start) = self.row_starts[row];
+        self.visual_caret(start + chars).left()
+    }
+
+    /// The row whose vertical extent holds `y`, if any.
+    pub(crate) fn row_at_y(&self, rows: &[Rect], y: f32) -> Option<usize> {
+        rows.iter()
+            .position(|rect| rect.top() <= y && y < rect.bottom())
     }
 
     pub fn row_rects(&self) -> Vec<Rect> {
