@@ -100,6 +100,14 @@ cargo build --release
 
 Native build dependencies depend on your distribution and desktop setup. If compilation reports a missing system library, install the corresponding development package and retry.
 
+### Homebrew (macOS, Apple Silicon)
+
+```sh
+brew install --cask prasenjit-net/tap/lumen
+```
+
+The cask is updated automatically by the Release workflow and removes the quarantine flag because builds are not notarized.
+
 ### Release artifacts
 
 The repository’s [Release workflow](.github/workflows/release.yml) builds platform artifacts and SHA-256 checksums. Published builds are not signed or notarized. See the repository’s [Releases](https://github.com/prasenjit-net/lumen-editor/releases) for available versions.
