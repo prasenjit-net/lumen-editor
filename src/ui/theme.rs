@@ -164,7 +164,7 @@ impl Theme {
                 scrim: Color32::from_black_alpha(56),
                 error: Color32::from_rgb(165, 25, 25),
                 warning: Color32::from_rgb(125, 88, 0),
-                success: Color32::from_rgb(0, 112, 64),
+                success: Color32::from_rgb(0, 98, 54),
                 info: Color32::from_rgb(0, 95, 160),
                 codex: Color32::from_rgb(0, 120, 100),
                 claude: Color32::from_rgb(168, 84, 40),
@@ -199,7 +199,7 @@ impl Theme {
                 disabled_bg: Color32::BLACK,
                 disabled_fg: Color32::from_gray(150),
                 checkbox_border: Color32::WHITE,
-                active: Color32::from_rgb(0, 65, 100),
+                active: Color32::from_rgb(0, 45, 80),
                 accent: Color32::YELLOW,
                 on_accent: Color32::BLACK,
                 danger: Color32::from_rgb(255, 120, 120),
@@ -540,6 +540,20 @@ mod tests {
                     ratio >= 3.0,
                     "{theme:?}: {name} glyph on title is {ratio:.2}:1"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn change_colors_stay_readable_on_the_panel_and_the_selection() {
+        for theme in [Theme::Dark, Theme::Light, Theme::HighContrast] {
+            let colors = theme.palette();
+            for marker in ['M', 'A', 'U', 'D', '!', 'S', '?'] {
+                let tint = change_color(&colors, marker);
+                for (surface, name) in [(colors.panel, "panel"), (colors.active, "selection")] {
+                    let ratio = contrast(tint, surface);
+                    assert!(ratio >= 4.5, "{theme:?} {marker} on {name}: {ratio:.2}");
+                }
             }
         }
     }

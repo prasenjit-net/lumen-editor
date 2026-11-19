@@ -911,15 +911,18 @@ fn tab(
     let mut select = false;
     let mut close = false;
     let mut title_response = None;
+    // The tab's own fill goes into a slot reserved first, so it can follow hover
+    // (known only after the tab is laid out) and still sit behind the frame.
+    let background = ui.painter().add(egui::Shape::Noop);
+    let corners = CornerRadius {
+        nw: 3,
+        ne: 3,
+        sw: 0,
+        se: 0,
+    };
     let frame = Frame::new()
-        .fill(if selected { colors.bg } else { colors.tab })
         .inner_margin(Margin::symmetric(10, 6))
-        .corner_radius(CornerRadius {
-            nw: 3,
-            ne: 3,
-            sw: 0,
-            se: 0,
-        })
+        .corner_radius(corners)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
@@ -952,10 +955,21 @@ fn tab(
                     widgets::tool_button(ui, false, 0.0, |ui| {
                         ui.add_sized(
                             [ACTION_SIZE, 22.0],
-                            egui::Button::new(if marks.dirty && !hovered {
-                                "●"
-                            } else {
-                                icon::X
+                            // The × shows on the active tab and under the pointer; an
+                            // unsaved tab shows its dot until then. Its slot stays
+                            // allocated either way, so tabs never shift.
+                            egui::Button::new({
+                                let glyph = if marks.dirty && !hovered {
+                                    "●"
+                                } else {
+                                    icon::X
+                                };
+                                let visible = selected || hovered || marks.dirty;
+                                RichText::new(glyph).color(if visible {
+                                    colors.text
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                })
                             })
                             .frame(false),
                         )
@@ -967,6 +981,19 @@ fn tab(
                 .clicked();
             });
         });
+    let mut fills = vec![egui::Shape::rect_filled(
+        frame.response.rect,
+        corners,
+        if selected { colors.bg } else { colors.tab },
+    )];
+    if !selected && frame.response.contains_pointer() {
+        fills.push(egui::Shape::rect_filled(
+            frame.response.rect,
+            corners,
+            colors.control_hover,
+        ));
+    }
+    ui.painter().set(background, egui::Shape::Vec(fills));
     if selected {
         ui.painter().hline(
             frame.response.rect.x_range(),

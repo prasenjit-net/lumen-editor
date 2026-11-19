@@ -7,6 +7,8 @@ use eframe::egui::{self, Stroke};
 impl Workbench<'_> {
     pub(crate) fn activity_bar(&mut self, ctx: &egui::Context) {
         let colors = crate::ui::theme::palette(&ctx.style().visuals);
+        let scm_changes = self.source_change_count();
+        let (problem_errors, _) = self.status_diagnostic_counts();
         egui::SidePanel::left("activity")
             .exact_width(52.0)
             .resizable(false)
@@ -24,11 +26,31 @@ impl Workbench<'_> {
                         ] {
                             let selected =
                                 self.view.sidebar_visible && self.view.activity == activity;
+                            let count = if activity == Activity::SourceControl {
+                                scm_changes
+                            } else {
+                                0
+                            };
+                            let name = if count > 0 {
+                                format!(
+                                    "{}, {count} {}",
+                                    activity.title(),
+                                    if count == 1 { "change" } else { "changes" }
+                                )
+                            } else {
+                                activity.title().to_owned()
+                            };
                             let response = widgets::named(
-                                widgets::icon_button(ui, glyph, selected)
-                                    .on_hover_text(activity.title()),
+                                widgets::icon_button(ui, glyph, selected).on_hover_text(&name),
                                 true,
-                                activity.title(),
+                                &name,
+                            );
+                            widgets::count_badge(
+                                ui,
+                                response.rect.right_bottom() + egui::vec2(-13.0, -12.0),
+                                count,
+                                colors.accent,
+                                colors.on_accent,
                             );
                             if selected {
                                 ui.painter().vline(
@@ -79,10 +101,30 @@ impl Workbench<'_> {
                         .into_iter()
                         .filter(|(glyph, ..)| agents_enabled || *glyph != icon::AGENT)
                         {
+                            let errors = if glyph == icon::WARNING {
+                                problem_errors
+                            } else {
+                                0
+                            };
+                            let name = if errors > 0 {
+                                format!(
+                                    "{tooltip}, {errors} {}",
+                                    if errors == 1 { "error" } else { "errors" }
+                                )
+                            } else {
+                                tooltip.clone()
+                            };
                             let response = widgets::named(
-                                widgets::icon_button(ui, glyph, selected).on_hover_text(&tooltip),
+                                widgets::icon_button(ui, glyph, selected).on_hover_text(&name),
                                 true,
-                                &tooltip,
+                                &name,
+                            );
+                            widgets::count_badge(
+                                ui,
+                                response.rect.right_bottom() + egui::vec2(-13.0, -12.0),
+                                errors,
+                                colors.danger,
+                                colors.on_danger,
                             );
                             if selected {
                                 ui.painter().vline(
@@ -341,5 +383,71 @@ mod tests {
         app.execute(Command::ToggleAgentPanel, &ctx);
         assert!(!app.view.agents.open);
         assert!(app.view.status.contains("turned off"));
+    }
+    fn texts(output: &egui::FullOutput) -> Vec<String> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn snapshot_with(changes: usize) -> crate::services::source_control::GitSnapshot {
+        use crate::services::source_control::{GitChange, GitSnapshot};
+        GitSnapshot {
+            branch: "main".into(),
+            changes: (0..changes)
+                .map(|n| GitChange::new(format!("f{n}.rs"), ' ', 'M'))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn source_control_shows_its_change_count_capped_at_ninety_nine_plus() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let mut app = LumenApp::default();
+        assert!(
+            !texts(&frame(&mut app, &ctx, 900.0, vec![]))
+                .iter()
+                .any(|t| t == "2")
+        );
+        app.view.source_control.snapshot = Some(snapshot_with(2));
+        assert!(
+            texts(&frame(&mut app, &ctx, 900.0, vec![]))
+                .iter()
+                .any(|t| t == "2")
+        );
+        app.view.source_control.snapshot = Some(snapshot_with(150));
+        assert!(
+            texts(&frame(&mut app, &ctx, 900.0, vec![]))
+                .iter()
+                .any(|t| t == "99+")
+        );
+    }
+
+    #[test]
+    fn the_badge_count_is_part_of_the_accessible_name() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        ctx.enable_accesskit();
+        let mut app = LumenApp::default();
+        app.view.source_control.snapshot = Some(snapshot_with(1));
+        let output = frame(&mut app, &ctx, 900.0, vec![]);
+        let labels: Vec<String> = output
+            .platform_output
+            .accesskit_update
+            .iter()
+            .flat_map(|update| update.nodes.iter())
+            .filter_map(|(_, node)| node.label().map(str::to_owned))
+            .collect();
+        assert!(
+            labels.iter().any(|l| l == "SOURCE CONTROL, 1 change"),
+            "{labels:?}"
+        );
     }
 }

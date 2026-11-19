@@ -345,7 +345,9 @@ behavior are unchanged.
 Problems shows no error count. Explorer rows show a Git letter, but the file name
 keeps the default color (`ui/widgets.rs:626-709`).
 
-**Change.** Add count badges, capped at "99+", on Source Control (changed files
+**Change.** Git state is only read while the Source Control pane is open, so also
+refresh it in the background (once on opening a folder, then every 30 s while the
+pane is closed). Add count badges, capped at "99+", on Source Control (changed files
 across loaded repositories) and on Problems (errors). Both counts come from
 state that is already loaded. Add the count to each accessible name, for example
 "Source Control, 2 changes". Tint changed Explorer names with
@@ -372,21 +374,19 @@ and problem counts stay.
 **Acceptance.** Status-bar width tests cover the branch item at narrow widths.
 Clicking it dispatches `ActivateActivity(SourceControl)`.
 
-#### 10. Tabs and pickers give little feedback (S–M)
+#### 10. Tabs give little feedback (S)
 
 **Problem.** Inactive tabs have no hover state, and every tab draws its close ×
-at all times, with no hover target under the × (`ui/editor_tabs.rs:901-984`).
-The command palette and Quick Open don't show which characters matched
-(`ui/palette.rs`, `ui/navigation.rs`).
+at all times (`ui/editor_tabs.rs:901-984`). (The first draft of this plan also
+said the command palette and Quick Open don't highlight matches; they do, via
+`ui/match_highlight.rs`, so that part is dropped.)
 
 **Change.** Add a tab hover fill. Show × on the active tab and on hovered tabs.
-Unsaved tabs keep their dot, which turns into × on hover as it does today. Draw
-× with `tool_button()`. Always allocate the × area so the tab layout never
-shifts. Highlight matched substrings in palette and Quick Open results.
+Unsaved tabs keep their dot, which turns into × on hover as it does today. Always
+allocate the × area so the tab layout never shifts.
 
 **Acceptance.** Tab sizing tests in `ui/editor_tabs/tests.rs` pass unchanged.
-Middle-click close, the context menu and ⌘W/Ctrl+W behave as before. Each
-matched substring is highlighted once per result.
+Middle-click close, the context menu and ⌘W/Ctrl+W behave as before.
 
 ### Phase 3: first impression and finish
 
@@ -529,7 +529,7 @@ tests, and records before/after captures.
 | --- | --- | --- | --- |
 | 1. Control states | Theme roles; `tool_button()`, toggle and `link_button()`; secondary and primary fills; checkbox border; disabled style; migrate every icon button | 1, 2, 5, 6 | Every enabled control shows hover, pressed and focus; disabled controls carry no semantic color; header, tab and activity tests pass unchanged |
 | 2. Progress and notices | Operation kinds for Git jobs, busy and done states, status-bar progress, notice model, toasts, bell, Push/Pull button, task Run state | 3, 4 | No `view.status` writes remain; errors persist and info expires under synthetic time; Git and task tests cover success, failure and cancel |
-| 3. Glanceable state | Activity badges, Explorer name tint, status-bar hover and branch item, tab hover and close behavior, palette match highlight | 8, 9, 10 | Badge, status-width and tab-sizing tests pass at 900, 1280 and 1920 px |
+| 3. Glanceable state | Activity badges, Explorer name tint, status-bar hover and branch item, tab hover and close behavior, background Git refresh | 8, 9, 10 | Badge, status-width and tab-sizing tests pass at 900, 1280 and 1920 px |
 | 4. Editor cues | Current line, active line number and indent guides in editor-surface, plus two settings | 7 | Alignment holds across font size, scale, wrap, scroll and fold; settings turn each cue off |
 | 5. Welcome and motion | New welcome screen, transitions, `reduce_motion`, Settings row cleanup | 11, 12, 13 | Welcome fits 220 px groups; no idle repaints; reduce-motion tests pass |
 

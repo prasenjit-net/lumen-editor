@@ -59,6 +59,70 @@ pub(crate) fn tool_button(
     response
 }
 
+/// Text for a badge count: "99+" past two digits.
+pub(crate) fn badge_text(count: usize) -> String {
+    if count > 99 {
+        "99+".into()
+    } else {
+        count.to_string()
+    }
+}
+
+/// A small filled count badge centred on `center`. Draws nothing for zero.
+pub(crate) fn count_badge(
+    ui: &egui::Ui,
+    center: egui::Pos2,
+    count: usize,
+    fill: Color32,
+    ink: Color32,
+) {
+    if count == 0 {
+        return;
+    }
+    let galley = ui
+        .painter()
+        .layout_no_wrap(badge_text(count), FontId::proportional(9.5), ink);
+    let size = Vec2::new((galley.size().x + 8.0).max(16.0), 16.0);
+    let rect = egui::Rect::from_center_size(center, size);
+    ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
+    ui.painter().galley(
+        egui::pos2(
+            rect.center().x - galley.size().x / 2.0,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        ink,
+    );
+}
+
+/// A clickable item on the status bar: a translucent white fill on hover and
+/// while pressed, and a pointing hand. Built like `tool_button`, behind the item.
+pub(crate) fn status_item(
+    ui: &mut egui::Ui,
+    add: impl FnOnce(&mut egui::Ui) -> egui::Response,
+) -> egui::Response {
+    let slot = ui.painter().add(egui::Shape::Noop);
+    let response = add(ui).on_hover_cursor(egui::CursorIcon::PointingHand);
+    let fill = if response.is_pointer_button_down_on() {
+        Some(Color32::from_white_alpha(56))
+    } else if response.hovered() {
+        Some(Color32::from_white_alpha(36))
+    } else {
+        None
+    };
+    if let Some(fill) = fill {
+        ui.painter().set(
+            slot,
+            egui::Shape::rect_filled(
+                response.rect.expand2(Vec2::new(4.0, 0.0)),
+                CornerRadius::same(3),
+                fill,
+            ),
+        );
+    }
+    response
+}
+
 /// A spinner just left of a button's centred `label`, for a control that is
 /// working. egui's spinner asks for repaints, so it keeps turning.
 pub(crate) fn spinner_before_label(
@@ -781,17 +845,21 @@ pub(crate) fn explorer_row_with_icon(
         x += 20.0;
     }
     let badge_width = if badge.is_some() { BADGE_COLUMN } else { 0.0 };
+    // A changed entry's name takes its status color, so changes show at a glance.
+    let name_color = badge.map_or(colors.text, |badge| {
+        crate::ui::theme::change_color(&colors, badge)
+    });
     let name = fit_galley(
         ui,
         &text,
         FontId::proportional(13.0),
-        colors.text,
+        name_color,
         rect.right() - badge_width - x - 6.0,
     );
     painter.galley(
         egui::pos2(x, rect.center().y - name.size().y / 2.0),
         name,
-        colors.text,
+        name_color,
     );
     if let Some(badge) = badge {
         painter.text(

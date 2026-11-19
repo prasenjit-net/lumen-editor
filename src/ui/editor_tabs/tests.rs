@@ -678,3 +678,54 @@ fn a_task_editor_tab_is_reachable_through_overflow() {
     let tab = label_rect(&output, "New task");
     assert!(tab.left() >= 0.0 && tab.right() <= 248.0, "{tab:?}");
 }
+
+#[test]
+fn only_the_active_and_hovered_tabs_show_a_close_glyph() {
+    use crate::app::LumenApp;
+    let ctx = egui::Context::default();
+    crate::ui::theme::configure_ui(&ctx);
+    let mut app = LumenApp::default();
+    app.editor.new_file();
+    app.editor.new_file();
+    app.editor.new_file();
+    app.editor.files[2].dirty = true;
+    let id = app.editor.files[1].id;
+    app.editor.activate(id);
+    let output = ctx.run(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(900.0, 200.0),
+            )),
+            ..Default::default()
+        },
+        |ctx| {
+            app.render_component(ctx, |workbench| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    workbench.editor_tabs(ui);
+                });
+            })
+        },
+    );
+    let colors = |glyph: &str| -> Vec<u8> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == glyph => {
+                    text.galley.job.sections.first().map(|s| s.format.color.a())
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let closes = colors(crate::icon::X);
+    assert_eq!(closes.len(), 2, "two clean tabs draw a ×: {closes:?}");
+    assert_eq!(
+        closes.iter().filter(|a| **a == 0).count(),
+        1,
+        "the inactive one is invisible"
+    );
+    assert_eq!(colors("●").len(), 1, "the unsaved tab keeps its dot");
+    assert!(colors("●").iter().all(|a| *a > 0));
+}

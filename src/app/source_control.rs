@@ -20,6 +20,8 @@ pub(crate) struct SourceControlJob {
 }
 
 const SOURCE_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
+/// With the pane closed the repository is read this many times less often.
+const HIDDEN_REFRESH_FACTOR: u32 = 2;
 
 /// Closing a diff discards only a clean document opened just for that preview.
 /// A dirty document becomes a regular tab so unsaved work stays reachable.
@@ -109,6 +111,7 @@ impl LumenApp {
     pub(crate) fn ensure_source_control(&mut self, ctx: &egui::Context) {
         if self.view.activity != Activity::SourceControl || !self.view.sidebar_visible {
             self.view.source_control.commit_focused = false;
+            self.refresh_source_control_in_background(ctx);
             return;
         }
         self.ensure_repo_extras(ctx);
@@ -127,6 +130,27 @@ impl LumenApp {
             } else {
                 ctx.request_repaint_after(SOURCE_REFRESH_INTERVAL - elapsed);
             }
+        }
+    }
+
+    /// Keeps the change count, branch and Explorer markers current while the
+    /// Source Control pane is closed: one read on opening a folder, then a slow
+    /// poll. It never runs over a Git job and does nothing without a folder.
+    fn refresh_source_control_in_background(&mut self, ctx: &egui::Context) {
+        if self.editor.workspace.is_none() || self.source_control_job.is_some() {
+            return;
+        }
+        let interval = SOURCE_REFRESH_INTERVAL * HIDDEN_REFRESH_FACTOR;
+        let due = self.view.source_control.workspace != self.editor.workspace
+            || self
+                .view
+                .source_control
+                .last_refresh
+                .is_none_or(|last| last.elapsed() >= interval);
+        if due {
+            self.refresh_source_control(ctx);
+        } else if let Some(last) = self.view.source_control.last_refresh {
+            ctx.request_repaint_after(interval.saturating_sub(last.elapsed()));
         }
     }
 
@@ -1156,6 +1180,34 @@ mod tests {
         app.view.source_control.commit_focused = false;
         app.ensure_source_control(&ctx);
         assert!(app.source_control_job.is_some());
+    }
+
+    #[test]
+    fn a_closed_pane_refreshes_in_the_background_only_when_due_and_never_over_a_job() {
+        let mut app = app_with_change(
+            std::path::Path::new("/workspace"),
+            std::path::Path::new("src/main.rs"),
+        );
+        app.view.activity = Activity::Explorer;
+        let ctx = egui::Context::default();
+        // Fresh data: nothing to do.
+        app.view.source_control.last_refresh = Some(std::time::Instant::now());
+        app.ensure_source_control(&ctx);
+        assert!(app.source_control_job.is_none());
+        // Stale by the slower interval: one read starts.
+        app.view.source_control.last_refresh =
+            Some(std::time::Instant::now() - SOURCE_REFRESH_INTERVAL * HIDDEN_REFRESH_FACTOR);
+        app.ensure_source_control(&ctx);
+        assert!(app.source_control_job.is_some());
+        // A running job is left alone.
+        let job_before = app.source_control_job.is_some();
+        app.view.source_control.last_refresh = None;
+        app.ensure_source_control(&ctx);
+        assert_eq!(app.source_control_job.is_some(), job_before);
+        // No folder, no reads.
+        let mut empty = LumenApp::default();
+        empty.ensure_source_control(&ctx);
+        assert!(empty.source_control_job.is_none());
     }
 
     fn repo(root: &str, branch: &str) -> GitSnapshot {
