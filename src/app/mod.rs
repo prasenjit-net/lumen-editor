@@ -28,6 +28,7 @@ mod language_edits;
 mod language_services;
 pub(crate) mod native_agents;
 mod navigation;
+pub(crate) mod notices;
 pub(crate) mod output;
 pub(crate) mod preview;
 pub(crate) mod repo_extras;
@@ -232,6 +233,7 @@ impl eframe::App for LumenApp {
         });
         self.render_component(ctx, |workbench| workbench.safety_details_dialog(ctx));
         self.render_component(ctx, |workbench| workbench.workspace_replace_preview(ctx));
+        self.render_component(ctx, |workbench| workbench.notice_toasts(ctx));
         self.maintain_documents(ctx);
         self.maintain_previews(ctx);
         self.poll_images(ctx);
@@ -249,6 +251,7 @@ impl eframe::App for LumenApp {
         self.poll_terminal(ctx);
         self.poll_native_agents(ctx);
         self.log_status_changes();
+        self.observe_notices(ctx);
         self.sync_output();
     }
 }

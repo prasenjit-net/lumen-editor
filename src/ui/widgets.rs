@@ -9,6 +9,186 @@ pub(crate) fn named(response: egui::Response, enabled: bool, name: &str) -> egui
     response
 }
 
+/// Paint the state of an icon-only control behind the button `add` creates:
+/// hover, pressed, on (toggles) and keyboard focus. The button itself is built
+/// by the caller, so its widget ID, rect, enabled state and text are unchanged;
+/// the fill goes into a slot reserved before it, so the glyph stays on top.
+/// `inset` shrinks the painted area inside the button rect.
+pub(crate) fn tool_button(
+    ui: &mut egui::Ui,
+    on: bool,
+    inset: f32,
+    add: impl FnOnce(&mut egui::Ui) -> egui::Response,
+) -> egui::Response {
+    let colors = crate::ui::theme::palette(ui.visuals());
+    let slot = ui.painter().add(egui::Shape::Noop);
+    let response = add(ui);
+    let rect = response.rect.shrink(inset);
+    let radius = CornerRadius::same(3);
+    let mut shapes = Vec::new();
+    // Fills fade in and out (a moment, not a flourish). Reduced motion makes the
+    // animation time zero, so they jump to their target; a control's first frame
+    // never fades.
+    let ctx = ui.ctx().clone();
+    let on_amount = ctx.animate_bool_with_time(
+        response.id.with("tool_on"),
+        on,
+        crate::ui::theme::motion_time(&ctx, 0.15),
+    );
+    if on_amount > 0.0 {
+        shapes.push(egui::Shape::rect_filled(
+            rect,
+            radius,
+            colors.control_on.linear_multiply(on_amount),
+        ));
+        shapes.push(egui::Shape::rect_stroke(
+            rect,
+            radius,
+            Stroke::new(1.0_f32, colors.control_on_edge.linear_multiply(on_amount)),
+            egui::StrokeKind::Inside,
+        ));
+    }
+    let hover_amount = ctx.animate_bool_with_time(
+        response.id.with("tool_hover"),
+        response.enabled() && response.hovered(),
+        crate::ui::theme::motion_time(&ctx, 0.12),
+    );
+    if response.enabled() {
+        if response.is_pointer_button_down_on() {
+            shapes.push(egui::Shape::rect_filled(
+                rect,
+                radius,
+                colors.control_pressed,
+            ));
+        } else if hover_amount > 0.0 {
+            shapes.push(egui::Shape::rect_filled(
+                rect,
+                radius,
+                colors.control_hover.linear_multiply(hover_amount),
+            ));
+        }
+        // Focus is drawn for the keyboard only; a pointer press never shows it.
+        if response.has_focus() && !response.is_pointer_button_down_on() && !response.clicked() {
+            shapes.push(egui::Shape::rect_stroke(
+                rect,
+                radius,
+                Stroke::new(1.0_f32, colors.accent),
+                egui::StrokeKind::Inside,
+            ));
+        }
+    }
+    ui.painter().set(slot, egui::Shape::Vec(shapes));
+    response
+}
+
+/// Text for a badge count: "99+" past two digits.
+pub(crate) fn badge_text(count: usize) -> String {
+    if count > 99 {
+        "99+".into()
+    } else {
+        count.to_string()
+    }
+}
+
+/// A small filled count badge centred on `center`. Draws nothing for zero.
+pub(crate) fn count_badge(
+    ui: &egui::Ui,
+    center: egui::Pos2,
+    count: usize,
+    fill: Color32,
+    ink: Color32,
+) {
+    if count == 0 {
+        return;
+    }
+    let galley = ui
+        .painter()
+        .layout_no_wrap(badge_text(count), FontId::proportional(9.5), ink);
+    let size = Vec2::new((galley.size().x + 8.0).max(16.0), 16.0);
+    let rect = egui::Rect::from_center_size(center, size);
+    ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
+    ui.painter().galley(
+        egui::pos2(
+            rect.center().x - galley.size().x / 2.0,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        ink,
+    );
+}
+
+/// A clickable item on the status bar: a translucent white fill on hover and
+/// while pressed, and a pointing hand. Built like `tool_button`, behind the item.
+pub(crate) fn status_item(
+    ui: &mut egui::Ui,
+    add: impl FnOnce(&mut egui::Ui) -> egui::Response,
+) -> egui::Response {
+    let slot = ui.painter().add(egui::Shape::Noop);
+    let response = add(ui).on_hover_cursor(egui::CursorIcon::PointingHand);
+    let fill = if response.is_pointer_button_down_on() {
+        Some(Color32::from_white_alpha(56))
+    } else if response.hovered() {
+        Some(Color32::from_white_alpha(36))
+    } else {
+        None
+    };
+    if let Some(fill) = fill {
+        ui.painter().set(
+            slot,
+            egui::Shape::rect_filled(
+                response.rect.expand2(Vec2::new(4.0, 0.0)),
+                CornerRadius::same(3),
+                fill,
+            ),
+        );
+    }
+    response
+}
+
+/// A spinner just left of a button's centred `label`, for a control that is
+/// working. egui's spinner asks for repaints, so it keeps turning.
+pub(crate) fn spinner_before_label(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    label: &str,
+    color: Color32,
+) {
+    const SIZE: f32 = 12.0;
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let text_width =
+        ui.fonts_mut(|fonts| fonts.layout_no_wrap(label.to_owned(), font, color).size().x);
+    let center = egui::pos2(
+        response.rect.center().x - text_width / 2.0 - SIZE,
+        response.rect.center().y,
+    );
+    egui::Spinner::new()
+        .size(SIZE)
+        .color(color)
+        .paint_at(ui, egui::Rect::from_center_size(center, Vec2::splat(SIZE)));
+}
+
+/// A checkbox whose box has a visible border, so an unchecked box doesn't
+/// disappear into the surface behind it.
+pub(crate) fn checkbox(
+    ui: &mut egui::Ui,
+    value: &mut bool,
+    label: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    let colors = crate::ui::theme::palette(ui.visuals());
+    ui.scope(|ui| {
+        let widgets = &mut ui.visuals_mut().widgets;
+        for state in [
+            &mut widgets.inactive,
+            &mut widgets.hovered,
+            &mut widgets.active,
+        ] {
+            state.bg_stroke = Stroke::new(1.0_f32, colors.checkbox_border);
+        }
+        ui.checkbox(value, label)
+    })
+    .inner
+}
+
 pub(crate) struct HeaderAction {
     pub(crate) glyph: &'static str,
     pub(crate) tooltip: &'static str,
@@ -264,11 +444,12 @@ fn header_row(
             ),
             Vec2::splat(BUTTON_SIZE),
         );
-        let button = header_ui
-            .add_enabled_ui(action.enabled, |ui| {
+        let button = tool_button(&mut header_ui, false, 0.0, |ui| {
+            ui.add_enabled_ui(action.enabled, |ui| {
                 ui.put(button_rect, egui::Button::new(action.glyph).frame(false))
             })
-            .inner;
+            .inner
+        });
         // egui shows a disabled widget's tooltip only through the disabled variant.
         let button = if action.enabled {
             button.on_hover_text(action.tooltip)
@@ -552,11 +733,12 @@ pub(crate) fn disclosure_row(
                 ),
                 Vec2::splat(BUTTON),
             );
-            let button = ui
-                .add_enabled_ui(spec.enabled, |ui| {
+            let button = tool_button(ui, false, 0.0, |ui| {
+                ui.add_enabled_ui(spec.enabled, |ui| {
                     ui.put(button_rect, egui::Button::new(spec.glyph).frame(false))
                 })
-                .inner;
+                .inner
+            });
             // egui shows tooltips on disabled widgets only via the disabled variant.
             let button = if spec.enabled {
                 button.on_hover_text(spec.tooltip)
@@ -685,17 +867,21 @@ pub(crate) fn explorer_row_with_icon(
         x += 20.0;
     }
     let badge_width = if badge.is_some() { BADGE_COLUMN } else { 0.0 };
+    // A changed entry's name takes its status color, so changes show at a glance.
+    let name_color = badge.map_or(colors.text, |badge| {
+        crate::ui::theme::change_color(&colors, badge)
+    });
     let name = fit_galley(
         ui,
         &text,
         FontId::proportional(13.0),
-        colors.text,
+        name_color,
         rect.right() - badge_width - x - 6.0,
     );
     painter.galley(
         egui::pos2(x, rect.center().y - name.size().y / 2.0),
         name,
-        colors.text,
+        name_color,
     );
     if let Some(badge) = badge {
         painter.text(
@@ -710,17 +896,19 @@ pub(crate) fn explorer_row_with_icon(
 }
 pub(crate) fn icon_button(ui: &mut egui::Ui, icon: &str, selected: bool) -> egui::Response {
     let colors = crate::ui::theme::palette(ui.visuals());
-    ui.add(
-        egui::Button::new(RichText::new(icon).size(24.0).color(if selected {
-            colors.text
-        } else {
-            colors.muted
-        }))
-        .fill(Color32::TRANSPARENT)
-        .stroke(Stroke::NONE)
-        .corner_radius(CornerRadius::ZERO)
-        .min_size(Vec2::splat(48.0)),
-    )
+    tool_button(ui, false, 4.0, |ui| {
+        ui.add(
+            egui::Button::new(RichText::new(icon).size(24.0).color(if selected {
+                colors.text
+            } else {
+                colors.muted
+            }))
+            .fill(Color32::TRANSPARENT)
+            .stroke(Stroke::NONE)
+            .corner_radius(CornerRadius::ZERO)
+            .min_size(Vec2::splat(48.0)),
+        )
+    })
 }
 pub(crate) fn file_icon(path: &Path) -> &'static str {
     match path
@@ -952,6 +1140,176 @@ mod tests {
         }
         assert!(gaps[0] < gaps[1] && gaps[1] < gaps[2], "{gaps:?}");
         assert!(gaps[0] >= 12.0 && gaps[2] <= 130.0, "{gaps:?}");
+    }
+
+    fn tool_frame(
+        ctx: &egui::Context,
+        on: bool,
+        enabled: bool,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    Vec2::new(200.0, 100.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default()
+                    .frame(Frame::NONE)
+                    .show(ctx, |ui| {
+                        tool_button(ui, on, 0.0, |ui| {
+                            ui.add_enabled(
+                                enabled,
+                                egui::Button::new("X")
+                                    .frame(false)
+                                    .min_size(Vec2::new(26.0, 22.0)),
+                            )
+                        });
+                    });
+            },
+        )
+    }
+
+    fn has_fill(output: &egui::FullOutput, fill: Color32) -> bool {
+        fn walk(shape: &egui::Shape, fill: Color32) -> bool {
+            match shape {
+                egui::Shape::Rect(rect) => rect.fill == fill,
+                egui::Shape::Vec(shapes) => shapes.iter().any(|shape| walk(shape, fill)),
+                _ => false,
+            }
+        }
+        output
+            .shapes
+            .iter()
+            .any(|clipped| walk(&clipped.shape, fill))
+    }
+
+    #[test]
+    fn tool_buttons_paint_hover_pressed_and_on_states() {
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        crate::ui::theme::set_reduce_motion(&ctx, true);
+        let colors = crate::ui::theme::Theme::Dark.palette();
+        let at = egui::pos2(10.0, 10.0);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let idle = tool_frame(&ctx, false, true, vec![]);
+        assert!(!has_fill(&idle, colors.control_hover));
+        assert!(!has_fill(&idle, colors.control_on));
+
+        tool_frame(&ctx, false, true, vec![egui::Event::PointerMoved(at)]);
+        let hovered = tool_frame(&ctx, false, true, vec![]);
+        assert!(has_fill(&hovered, colors.control_hover));
+
+        let pressed = tool_frame(&ctx, false, true, vec![button(true)]);
+        assert!(has_fill(&pressed, colors.control_pressed), "pressed fill");
+        assert!(!has_fill(&pressed, colors.control_hover));
+
+        let on = tool_frame(
+            &ctx,
+            true,
+            true,
+            vec![button(false), egui::Event::PointerGone],
+        );
+        assert!(has_fill(&on, colors.control_on), "an on toggle is filled");
+    }
+
+    fn max_fill_alpha(output: &egui::FullOutput) -> u8 {
+        fn walk(shape: &egui::Shape) -> u8 {
+            match shape {
+                egui::Shape::Rect(rect) => rect.fill.a(),
+                egui::Shape::Vec(shapes) => shapes.iter().map(walk).max().unwrap_or(0),
+                _ => 0,
+            }
+        }
+        output
+            .shapes
+            .iter()
+            .map(|c| walk(&c.shape))
+            .max()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn hover_fades_in_unless_motion_is_reduced_and_idle_frames_stay_idle() {
+        let at = egui::pos2(10.0, 10.0);
+        let full = crate::ui::theme::Theme::Dark.palette().control_hover.a();
+        for reduce in [false, true] {
+            let ctx = egui::Context::default();
+            configure_ui(&ctx);
+            crate::ui::theme::set_reduce_motion(&ctx, reduce);
+            tool_frame(&ctx, false, true, vec![]);
+            tool_frame(&ctx, false, true, vec![egui::Event::PointerMoved(at)]);
+            let first = tool_frame(&ctx, false, true, vec![]);
+            let alpha = max_fill_alpha(&first);
+            if reduce {
+                assert_eq!(alpha, full, "reduced motion jumps straight to the fill");
+            } else {
+                assert!(
+                    alpha < full,
+                    "the first hover frame is only part way: {alpha}"
+                );
+            }
+        }
+        // Nothing moving means nothing asks for another frame.
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        tool_frame(&ctx, false, true, vec![]);
+        let idle = tool_frame(&ctx, false, true, vec![]);
+        let delay = idle
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .map(|viewport| viewport.repaint_delay);
+        assert_eq!(delay, Some(std::time::Duration::MAX), "{delay:?}");
+    }
+
+    #[test]
+    fn disabled_tool_buttons_show_no_hover_or_pressed_fill() {
+        let ctx = egui::Context::default();
+        configure_ui(&ctx);
+        let colors = crate::ui::theme::Theme::Dark.palette();
+        let at = egui::pos2(10.0, 10.0);
+        tool_frame(&ctx, false, false, vec![egui::Event::PointerMoved(at)]);
+        let output = tool_frame(&ctx, false, false, vec![]);
+        assert!(!has_fill(&output, colors.control_hover));
+        assert!(!has_fill(&output, colors.control_pressed));
+    }
+
+    #[test]
+    fn checkbox_box_has_a_visible_border_in_every_theme() {
+        for theme in [
+            crate::ui::theme::Theme::Dark,
+            crate::ui::theme::Theme::Light,
+            crate::ui::theme::Theme::HighContrast,
+        ] {
+            let ctx = egui::Context::default();
+            ctx.set_style(egui::Style {
+                visuals: crate::ui::theme::visuals(theme),
+                ..Default::default()
+            });
+            let mut value = false;
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    checkbox(ui, &mut value, "Option");
+                });
+            });
+            let border = theme.palette().checkbox_border;
+            assert!(
+                output.shapes.iter().any(|clipped| matches!(
+                    &clipped.shape,
+                    egui::Shape::Rect(rect) if rect.stroke.color == border && rect.stroke.width > 0.0
+                )),
+                "{theme:?}"
+            );
+        }
     }
 
     fn actions() -> [HeaderAction; 3] {

@@ -1,0 +1,1239 @@
+<title>Lumen UI Refresh</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+@font-face{font-family:"LumenIcons";src:url(data:font/ttf;base64,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BgYPKRUPBgYPFRUPBQUPLRUPBgYPFRQQBQUQMBQQBQUQFBUQBQUQMRUPBgYPFRUPBgYPAAAAAAQANgABAAAAAAABAAsAAAABAAAAAAACAAcACwADAAEECQABABYAEgADAAEECQACAA4AKEx1bWVuIEljb25zUmVndWxhcgBMAHUAbQBlAG4AIABJAGMAbwBuAHMAUgBlAGcAdQBsAGEAcgACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC4AAAECAQMBBAEFAQYBBwEIAQkBCgELAKsBDAENAQ4AWwAOAQ8BEAERARIBEwEUARUBFgEXARgBGQEaARsBHAEdAR4BHwEgASEBIgEjASQBJQEmAO8BJwEoASkBKgRmaWxlCWZpbGVfcGx1cwlmaWxlX2NvZGUNZmlsZV9hcnJvd191cAVmaWxlcwRjb3B5C2Zsb3BweV9kaXNrBmZvbGRlcgtmb2xkZXJfb3BlbgpuZXdfZm9sZGVyCmNhcmV0X2Rvd24LY2FyZXRfcmlnaHQFY2hlY2sHcmVmcmVzaAdkaXNjYXJkCXJlcG9fcHVsbAlyZXBvX3B1c2gIdGVybWluYWwHaGlzdG9yeQZvdXRwdXQFYWdlbnQEc2VuZARzdG9wCWNsZWFyX2FsbAtyZXBsYWNlX2FsbAxjb2xsYXBzZV9hbGwEZ2VhcgpnaXRfYnJhbmNoEG1hZ25pZnlpbmdfZ2xhc3MEcGxheQxzaWRlYmFyX2xlZnQNc2lkZWJhcl9yaWdodAxwYW5lbF9ib3R0b20FZXJyb3IHd2FybmluZwVkZWJ1Zw5icmFja2V0c19jdXJseQpmaXRfc2NyZWVuB3ByZXZpZXcFdGFibGUJcGFwZXJjbGlwAAA=) format("truetype");font-display:block}
+@font-face{font-family:"LumenFileIcons";src:url(data:font/ttf;base64,AAEAAAAMAIAAAwBAT1MvMkldhMwAAAz4AAAAYGNtYXDNDt+DAAANWAAAANRjdnQgAEQFEQAADiwAAAAEZ2FzcP//AAMAAA+0AAAACGdseWbw+0LfAAAAzAAAC4ZoZWFkH7MMrAAADIgAAAA2aGhlYQ5pBe4AAAzUAAAAJGhtdHgIYACCAAAMwAAAABRsb2NhDIINfQAADHQAAAAUbWF4cADPEzIAAAxUAAAAIG5hbWUZmjMxAAAOMAAAAWJwb3N0/wQAZwAAD5QAAAAgAAEAXP5mB6QGZgAWAAABESEAASYIASchERYXHgMzMj4DBgYBnv7D/YmE/s/+h2YBfgoYV26ychUTXYJzjAZb+8r+uf2IiAE8AYdpBEwHETxMdT0xVE9hAAAEAD7+ZgfCBmYAAwAHAAsADwAAEyETIREhAyERIRMhESEDIUQHGwn41gYnA/niB3kF+HwEZgf7pwZm/vv+sP8A/qr/AP6w/vsAAAL//f5fCBYGbgCzAMcAAAEWBw4BBw4BJy4BJw4BBw4CByIVHgEXFgYHDgEHBiYnLgEnIiYjIgYjDgEHDgEnLgEnLgE3PgE3LgEnLgInNCMOAQcGJicuAScmNjc+ATc0NjU0JjUuAScuATc2Nz4BFx4BFz4BNz4CNzI1LgEnJjY3PgE3NhYXHgEXMhYzMjYzPgE3PgEXHgMXHgEHDgEHHgEXHgIXFDM+ATc2FhceARcWBgcOAQcUBhUUFhUeAQU+AiYnLgIGBw4CFhceAjYHuVwlDToHEj8qB1oaDC0LBx0bDwwLIQwQGiIokicjPBAMIQsGDAUokCcDJQYRODItkhYrHhELIQwMNwsHIhsKFxZPFiI7EhFFEAkWIBZPFgsLCVgaMhgSEj0RQCoIWRoQOREFEBoIDAwhCxAaIieSKCI9EQsgDAUMBieQKAMlBhFAKhBGLDsYKh8RDCELCzgMByEbChcWTxYiPBIQRBEJFh8WTxYMDAda/QlOcjgCISV6kaVPT3I4AyElepGlAdsgWy2UFSoeEQIkBgs4DAchGwoXFk8WIT4SEEMRCRYfFk8WDAwJWBoxGBINOgcSPyoWWxYMLAsHHhsPCwshDBAbIiiQJyM+EAwhCwYMBSiQJwMkBhE5MjWUKx4RAyMHEUQQChEVCBcWTxYiOxIRRRAJFyAWTxYLCwpYGSsfEQUaDxEEEUEqFlsWCywMBxwbDwwMIQsQGiInkigjPBELIQwFCwYnkigCI/MlepKlT09yOAMhJXqSpU9OcjgCAAAEAAD+aggABmIAIAA6AEYAXQAAATMyFxYEFxYXFBcVDgEHAgcABSMmJy4BJyYDNTQ3EiU2BSIOBBQeBDI+BDc0LgQHMhYVFAYjIiY1NDYBER4CMxY7ARUhNTMyNRE0JisBNTYkA5aiZGi4AStrlg4KBgoEP9X+/f6NpJO9huRWiyMWRwEd8wGjeeTAoXA+PG2eu+Dr4b+hcUIDP2+evN2bRGhiSkZoYwEBBAgKChcbPP2eXDwfHWZRATwGYiAt1KHo7B4WbhleGf7X1f7vIQ5ENb1+wgEcpDpoAU/tt3E+b6C+4O3gvqBvPz9voL7gdnbgvJ5wQPJoRkZmaERHZ/4s/WgDEQoKUlI+AdQhJ1IECgAACgAG/mYH+gZoAZ0B5QIfAjQCQwJLAlUCXQJpAnMAAAEVFzM+ATc2FgcOAQcVFxQ7ATIdAQ4CBxUWFTMeARcyFgcOAQcVFB4BFx4BFx4BBwYHFRYzHgEXFhQHDgEHFRQWFxYXFgYHBgciFQYUFhUWFxYGByIHBgciBisBFAYVFBUUFx4BFxYGByMGFR4BFxYGIy4BJyMHBjMVFCsBJicjIgYVFAYVFAYnJicjIgYVDgEHBiMiJic1JicjIgYVDgEHBiInLgEnIyIGDwEGIyI1NDUnNCsBDgMHLgQ1JjU0IyImIyIGBw4BBwYmPQEnIw4BBwYmNz4BNzUnIyI9AT4CNzU2IzQmKwEiJiMiJjc2NzU0JicmIy4BJy4BNz4BNzU0Iy4BJyY0Nz4BNzUvASY0NzI1NzU2NCY1LgEnJjYzPgE3MzQ2NTQ1NCcuAScmNjsBNDM1JjUmNhcyFzM3NiM1NDsBHgIXMzY1MjY3NTQ2NTQ2FxYXMzI2NzQ3PgE3PgEzFx4BFzMyNj8BPgE3PgEfAR4BFzMyNjc1Njc2MhcVFh8BMzY3NhYVFBYVBjsBFjI1Njc2FhUBITIXFhcWFRQHBgcGIx4BFx4DFxYVFBceATMyNz4CNzU0NjsBNS4BJy4BJy4BNzY3NS4CJyYnIwYHBiIvASMGBwYHBgEhIicmJy4ENTQnLgErARUzMhYdARQGIyEWFzM2MzYWFx4BFxUeAjMWNzY3NT4BNzYfATM0NgEXFBYUBxQOAQcGByIdARQXFDsBEQUzMjc+Ajc2LgIrARYkFBYyNjQmIgE0JiIGFBYzMjYkIgYUFjI2NAE0JiMiBhUUFjMyNgEyNjQmIgYVFBYGLwoLEDwPDxYIBQoFChRcHQQPEgMLChA6EA8NCAkkBQUKBA8yEBAJDigfCgoEMRIPDw8yEAMHJxYOCBA2GwsEBBMhCAUOCQkBARAyDwoJCQUVBQYICXgLBQsFCBoXEDoQCgoKCh8TJisLBw0KIw8dKgoIDAUUBQsTBAUBKBQVCAwFHgUIIggKIAoTBwYHPQofCR8KHQcSDBsHBx4MEAYKCgUKBQgECAoyCg8aCwoQOw8PFwcFCwUKZB8EDxIDAQoGAgMPPBAPDQgfFAMHCwoKMgoQCQ4SNAsKCjMKDw8PMhAKPAgIClsEBAofCggNDw88EAsJCQUVBQgND28KFQcXDx87CgsKCh4UDh4fBgoKBAUBCiQPHigKBwYHCgUVBQcQEQoGLwcKBAsDAwUeBQ4dBwoKHwoeBAUBJwsIGgcTCwoULiMPIwsBCgoIDBY7Dxn7ogL9PB9fLjMeIDEVCgUVBQUWDhADHxQNJB8eFAkKCQMCCEcPPBAFHgUXEAgqHRseOByV1gkxNQ8zD1kLJEGdfRQEc/7RHQs0EwIIAwUCEw88JbW1BwMDB/2kFCgKVCUXJwgFFQUzP1kmSooxZwUUBRE1egoY+2EeBAQJFAFOLAkeCtQBOOgoFAMNCgQIAxwpEP0L/aMlLiYmLgTbJi4lJRcZJPxkLiYmLiUBvCAdGSMgHBYfApYXJiYuJSAFeD0KBQkFCBYPDzwQCwkKHxQOHR8GCgsKBQoFIw8OLgsUBAUHBAUUBQgbECgUHwoCIAYHIwgKHwoJDwgIJwsPGwgRDgoECgwEEzMHGwcIAgEJBQoFAQEKCQoyCgkWCQsUDzIQDxkFCwUKC1sdDBwNCA8xEA4OCB0VCwgPMhAVBQMCKB8MCAozCg8PEDIPAgg9ChIBAVwJBw0IEQUEDgYLCQYfPAoKAggFFQUHDQ9uCgUJBQcWDxA8DwoJHxQOHiAFCQsFBQojDx8oCggGBwoFEwUIHA8GLwcUFQUeBQgkBwoeChUJPAgaBwoeCgUKDQMKKAoPIwULBQUJBQECCQkKMgoPGgkLQRoPFggTCglcHgQQEgMBCgUDAhA8Dw8MCB4UAwcLCgoyCg4GChE0CwUCAgozCg4FCQoPMRAFAgInFggICjsWCg8jCAwPDzwQCgcHCxMJERb+xwofPDNGPDwxIBUFCQUEFQ0WCzA1ChQNBxQJFRkGMggCgwUeBQUKBQgrHmouCSkrQReGLzAqDw9aCRU5fRT8VgsaSwcfDxgWCxcmJiuDAwjJBwMfKBUIGBgUWxQLExYTChMKKQsUWxQ1DR8OKALSPAMNCgUJDhABJwsKMmR6CgHZjQoEBwoJDiscEDcnLicnLiX8dBcmJS8lIFkmLiUlLwVOGSMfHRkkI/29JS4mJRgZIwABAAD/MAgABZwAEQAAASEiBhURFBYzITI2NRE0JiMhAzL9mFJ4eFIGbFJ4eFL8ygWceFf7Mld4eFcEAFZ4AAEAAP9fCAAFbQAYAAAFISInJjURNDc2MyEXITIWFSEREyEDBgcGBmj6Vkw6ODg6TAJEwgKkUHL5lNAGctoTMzahOThSBIhSODnDclH8OwMH/MdAKCkAAwAA/zAIAAWcABEAFQAZAAABISchIgYVERQWMyEyNjURNCYBITUhJSE1IQc2/MrO/ZhSeHhSBmxSeHj9rPxkA5wBMvsyBM4Ezc94V/syV3h4VwQAVnj8AMrPzwAAAAEAAAAJEwEAhAAAAAAAAgAAAAEAAQAAAEAALgAAAAAAAAAAACwAUQF2Af8FSwVqBZUFwwABAAAAAQAAEpH5o18PPPUACwgAAAAAANRj0H4AAAAA5C/x/v+F/icIewcMAAAACAACAAAAAAAACAAARABcAD7//gAAAAYAAAAAAAAAAQAABmb+ZgAACAD/hf+GCHsAAQAAAAAAAAAAAAAAAAAAAAEABAgAAZAABQAABTMFmQAAAR4FMwWZAAAD1wBmAhIAAAIABQkAAAAAAAAAAAAAEgAAAAQAAAAAAAAAUGZFZAHA5gn//wZm/mYAAAZmAZoAAAABAAAAAAAAAAAAAAAgAAEAAAAEAAAAAwAAACQAAAAEAAAAZAADAAEAAAAkAAMACgAAAGQABABAAAAADAAIAAIABOYJ5hLmFeZq5ov//wAA5gnmEuYV5mrmi///GfgZ8BnuGZoZegABAAAAAAAAAAAAAAAAAAwAAAAAAHAAAAAAAAAACAAA5gkAAOYJAAAAAQAA5hIAAOYSAAAAAgAA5hUAAOYVAAAAAwAA5moAAOZqAAAABAAA5osAAOaLAAAABQAPAksADwJLAAAABgAPB3AADwdwAAAABwAPDIIADwyCAAAACABEBREAAAAHAFoAAwABBAkAAABCAAAAAwABBAkAAQAsAEIAAwABBAkAAgAOAG4AAwABBAkAAwA4AHwAAwABBAkABAAsAEIAAwABBAkABQBAALQAAwABBAkABgAUAPQAQwBvAHAAeQByAGkAZwBoAHQAIAAoAGMAKQAgADIAMAAxADYALAAgAFIAeQBhAG4AIABNAGMASQBuAHQAeQByAGUAUwB5AG0AYgBvAGwAcwAgAE4AZQByAGQAIABGAG8AbgB0ACAATQBvAG4AbwBSAGUAZwB1AGwAYQByAFMAeQBtAGIAbwBsAHMAIABOAGUAcgBkACAARgBvAG4AdAAgAE0AbwBuAG8AIAAzAC4ANAAuADAAVgBlAHIAcwBpAG8AbgAgADAAMAAxAC4AMAAwADAAOwBOAGUAcgBkACAARgBvAG4AdABzACAAMwAuADQALgAwAFMAeQBtAGIAbwBsAHMATgBGAE0AAAADAAAAAAAA/wEAZgAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAf//AAI=) format("truetype");font-display:block}
+
+/* Layout: one reading column (max 1180px); the live mock sits on a dark full-width plate in the middle of it. */
+:root{
+  --bg:#f4f5f7; --surface:#ffffff; --ink:#15181c; --ink-2:#4a5361; --line:#dce0e5;
+  --accent:#0a6cb0; --accent-soft:#e3eff8; --plate:#101214; --plate-ink:#d6dae0;
+  --sev-1:#b42318; --sev-1-soft:#fdecea; --sev-2:#8a5a00; --sev-2-soft:#fbf1dc; --sev-3:#1d6f47; --sev-3-soft:#e3f4ea;
+  --f-display:"Space Grotesk","Helvetica Neue",Arial,sans-serif;
+  --f-body:"Inter",-apple-system,"Segoe UI",Arial,sans-serif;
+  --f-mono:"JetBrains Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0e1114; --surface:#15191e; --ink:#e6e9ed; --ink-2:#a1aab6; --line:#262c34;
+  --accent:#4aa8ec; --accent-soft:#0f2a3f; --plate:#08090b; --plate-ink:#d6dae0;
+  --sev-1:#ff8b7c; --sev-1-soft:#3a1714; --sev-2:#e4b54a; --sev-2-soft:#33280f; --sev-3:#55c792; --sev-3-soft:#10301f;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0e1114; --surface:#15191e; --ink:#e6e9ed; --ink-2:#a1aab6; --line:#262c34;
+  --accent:#4aa8ec; --accent-soft:#0f2a3f; --plate:#08090b; --plate-ink:#d6dae0;
+  --sev-1:#ff8b7c; --sev-1-soft:#3a1714; --sev-2:#e4b54a; --sev-2-soft:#33280f; --sev-3:#55c792; --sev-3-soft:#10301f;
+  color-scheme:dark}
+
+[hidden]{display:none!important}
+html,body{background:var(--bg)}
+body{color:var(--ink);font:15px/1.6 var(--f-body);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0}
+.wrap{max-width:1180px;margin:0 auto;padding-block:40px 64px;display:flex;flex-direction:column;gap:56px}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;letter-spacing:-.01em}
+h1{font-size:clamp(30px,4.2vw,44px);line-height:1.08;font-weight:600}
+h2{font-size:26px;line-height:1.2;font-weight:600}
+h3{font-size:17px;line-height:1.3;font-weight:600}
+p{margin:0}
+code,.mono{font-family:var(--f-mono);font-size:.86em}
+code{background:var(--accent-soft);padding:1px 5px;border-radius:4px;color:var(--ink)}
+a{color:var(--accent)}
+.eyebrow{font:500 12px/1.4 var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
+.lede{font-size:18px;line-height:1.6;max-width:68ch;color:var(--ink)}
+.muted{color:var(--ink-2)}
+section{display:flex;flex-direction:column;gap:20px}
+.sec-head{display:flex;flex-direction:column;gap:8px;max-width:72ch}
+
+/* header diagnosis */
+.diag{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.diag div{border-top:2px solid var(--ink);padding-top:12px;display:flex;flex-direction:column;gap:6px}
+.diag b{font-family:var(--f-display);font-size:18px;font-weight:600}
+.diag p{color:var(--ink-2);font-size:14px}
+@media (max-width:760px){.diag{grid-template-columns:1fr}}
+
+/* mock controls */
+.plate{background:var(--plate);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:14px;color:var(--plate-ink)}
+.plate-bar{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;justify-content:space-between}
+.seg{display:inline-flex;background:#1d2024;border-radius:8px;padding:3px;gap:2px}
+.seg button{all:unset;cursor:pointer;font:600 13px/1 var(--f-body);color:#aab2bd;padding:9px 16px;border-radius:6px}
+.seg button[aria-pressed="true"]{background:#2d6fa3;color:#fff}
+.seg button:focus-visible{outline:2px solid #4aa8ec;outline-offset:2px}
+.chk{display:inline-flex;gap:8px;align-items:center;font-size:13px;color:#aab2bd;cursor:pointer}
+.chk input{accent-color:#2d8fd6;width:15px;height:15px}
+.try{font-size:13px;color:#9aa3ad;display:flex;flex-wrap:wrap;gap:6px 14px}
+.try b{color:#d6dae0;font-weight:600}
+.mockscroll{overflow-x:auto;border-radius:8px}
+.plate-note{font-size:12.5px;color:#8b939d}
+
+/* ============ Lumen kit (single dark look: the app's own Dark theme) ============ */
+.lk,.lumen{
+  --l-bg:#1e1e1e;--l-panel:#252526;--l-side:#333333;--l-tab:#2d2d2d;--l-title:#3c3c3c;--l-status:#007acc;
+  --l-active:#04395e;--l-text:#cccccc;--l-muted:#9d9d9d;--l-titlemuted:#a8a8a8;--l-hover:#2b2b2b;--l-input:#313131;
+  --l-canvas:#181818;--l-float:#454545;--l-accent:#007acc;--l-err:#f48771;--l-warn:#cca700;--l-ok:#23d18b;--l-info:#75beff;
+  /* proposed roles */
+  --c-hover:rgba(255,255,255,.09);--c-press:rgba(255,255,255,.17);--c-on:rgba(0,122,204,.34);--c-on-line:rgba(60,160,232,.9);
+  --b2:#3a3d41;--b2-h:#46494e;--b2-p:#2c2f33;--b1-h:#1a8ad4;--b1-p:#0068ad;--dis-fg:#626262;--dis-bg:#2d2d2d;
+  --ui:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  --code:Menlo,"SF Mono",Consolas,"JetBrains Mono",monospace;
+  font-family:var(--ui);color:var(--l-text);
+}
+.ic{font-family:"LumenIcons",sans-serif;font-style:normal;line-height:1;display:inline-block}
+.fi{font-family:"LumenFileIcons",sans-serif;font-style:normal;line-height:1;display:inline-block;width:20px;font-size:15px}
+.lumen{width:1120px;height:640px;position:relative;background:var(--l-canvas);display:flex;flex-direction:column;overflow:hidden;font-size:13px;user-select:none;border-radius:8px}
+.lumen button{font-family:inherit}
+.lumen *:focus{outline:none}
+[data-mode="today"] button:focus-visible{outline:1px dotted rgba(255,255,255,.35)}
+
+/* title strip */
+.l-title{height:32px;background:var(--l-title);display:flex;align-items:center;position:relative;flex:none}
+.lights{display:flex;gap:8px;padding-left:12px;width:80px}
+.lights i{width:12px;height:12px;border-radius:50%;background:#ff5f57}
+.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+.l-wintitle{position:absolute;left:50%;transform:translateX(-50%);font-size:13px;color:var(--l-text);pointer-events:none}
+.l-launch{margin-left:auto;display:flex;align-items:center;gap:2px;padding-right:10px}
+.l-launch .gap{width:16px}
+.tasksel{all:unset;cursor:pointer;font-size:11px;color:var(--l-text);padding:3px 6px;border-radius:3px;display:inline-flex;gap:6px;align-items:center}
+.tasksel .ic{font-size:10px}
+
+/* ---- toolbar icon button (.tb) ---- */
+.tb{all:unset;box-sizing:border-box;cursor:pointer;width:26px;height:22px;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;color:var(--l-text);font-size:14px;position:relative}
+.tb .ic{font-size:14px}
+.tb.run{color:var(--l-ok)}.tb.stop{color:var(--l-err)}
+.tb.tog{color:var(--l-titlemuted)}.tb.tog.on{color:var(--l-text)}
+[data-mode="today"] .tb:disabled,[data-mode="today"] .tb.f-dis{opacity:.45;cursor:default}
+[data-mode="proposed"] .tb{transition:background-color .12s ease,color .12s ease}
+[data-mode="proposed"] .tb:hover:not(:disabled),[data-mode="proposed"] .tb.f-hover{background:var(--c-hover);color:#fff}
+[data-mode="proposed"] .tb.run:hover:not(:disabled){color:var(--l-ok)}
+[data-mode="proposed"] .tb.stop:hover:not(:disabled){color:#ff9c8a}
+[data-mode="proposed"] .tb:active:not(:disabled),[data-mode="proposed"] .tb.f-press{background:var(--c-press)}
+[data-mode="proposed"] .tb:active:not(:disabled) .ic,[data-mode="proposed"] .tb.f-press .ic{transform:translateY(.5px) scale(.94)}
+[data-mode="proposed"] .tb.tog{color:var(--l-titlemuted)}
+[data-mode="proposed"] .tb.tog.on,[data-mode="proposed"] .tb.f-on{background:var(--c-on);box-shadow:inset 0 0 0 1px var(--c-on-line);color:#fff}
+[data-mode="proposed"] .tb:disabled,[data-mode="proposed"] .tb.f-dis{color:var(--dis-fg);background:none;cursor:default}
+[data-mode="proposed"] .tb:focus-visible,[data-mode="proposed"] .tb.f-focus{box-shadow:0 0 0 1px var(--l-accent)}
+[data-mode="proposed"] .tb.is-done{color:var(--l-ok)}
+.tb .spin,.btn .spin{display:none}
+[data-mode="proposed"] .is-busy .spin{display:inline-block}
+[data-mode="proposed"] .tb.is-busy .ic{display:none}
+.ii{display:inline-block;width:12px;height:12px;box-sizing:border-box;border:1.3px solid currentColor;border-radius:50%;font:700 8.5px/9.5px var(--ui);text-align:center;font-style:normal}
+[data-mode="proposed"] .tb.is-busy{color:var(--l-text);cursor:progress}
+[data-mode="proposed"] .tb.run.is-busy{color:var(--l-ok)}
+[data-mode="proposed"] .only-p[hidden]{display:none!important}
+[data-mode="proposed"] .tab:not(.act):hover .x{visibility:visible}
+[data-mode="proposed"] button.si:focus-visible{box-shadow:inset 0 0 0 1px #fff}
+.spin{display:inline-block;width:11px;height:11px;border-radius:50%;border:1.6px solid currentColor;border-right-color:transparent;animation:spin .8s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---- text buttons (.btn) ---- */
+.btn{all:unset;box-sizing:border-box;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:24px;padding:0 10px;border-radius:3px;font-size:12.5px;color:var(--l-text);white-space:nowrap;position:relative}
+.btn .ic{font-size:13px}
+[data-mode="today"] .btn{background:transparent}
+[data-mode="today"] .btn:hover:not(:disabled),[data-mode="today"] .btn.f-hover{background:var(--l-hover)}
+[data-mode="today"] .btn:active:not(:disabled),[data-mode="today"] .btn.f-press,[data-mode="today"] .btn:focus-visible,[data-mode="today"] .btn.f-focus,[data-mode="today"] .btn.f-on{background:var(--l-active);box-shadow:inset 0 0 0 1px var(--l-accent)}
+[data-mode="today"] .btn.primary{background:var(--l-accent);color:#fff}
+[data-mode="today"] .btn:disabled,[data-mode="today"] .btn.f-dis,[data-mode="today"] .btn.f-busy{opacity:.45;cursor:default}
+[data-mode="proposed"] .btn{background:var(--b2);transition:background-color .12s ease}
+[data-mode="proposed"] .btn:hover:not(:disabled),[data-mode="proposed"] .btn.f-hover{background:var(--b2-h)}
+[data-mode="proposed"] .btn:active:not(:disabled),[data-mode="proposed"] .btn.f-press{background:var(--b2-p);transform:translateY(.5px)}
+[data-mode="proposed"] .btn.f-on{background:var(--c-on);box-shadow:inset 0 0 0 1px var(--c-on-line);color:#fff}
+[data-mode="proposed"] .btn.primary{background:var(--l-accent);color:#fff}
+[data-mode="proposed"] .btn.primary:hover:not(:disabled),[data-mode="proposed"] .btn.primary.f-hover{background:var(--b1-h)}
+[data-mode="proposed"] .btn.primary:active:not(:disabled),[data-mode="proposed"] .btn.primary.f-press{background:var(--b1-p)}
+[data-mode="proposed"] .btn:disabled:not(.is-busy):not(.is-done),[data-mode="proposed"] .btn.f-dis{background:var(--dis-bg);color:var(--dis-fg);cursor:default}
+[data-mode="proposed"] .btn:focus-visible,[data-mode="proposed"] .btn.f-focus{outline:1px solid var(--l-accent);outline-offset:2px}
+[data-mode="proposed"] .btn.is-busy{cursor:progress}
+[data-mode="proposed"] .btn.is-busy .ic{display:none}
+[data-mode="proposed"] .btn.is-done{background:#1d3b2c;color:var(--l-ok)}
+.btn.link{background:transparent!important;padding:0 2px;color:var(--l-text)}
+[data-mode="proposed"] .btn.link:hover{text-decoration:underline;color:#fff}
+
+/* main area */
+.l-main{flex:1;display:flex;gap:2px;padding:2px;min-height:0}
+.l-act{width:48px;background:var(--l-side);border-radius:5px;display:flex;flex-direction:column;align-items:center;flex:none}
+.l-act .grow{flex:1}
+.av{all:unset;box-sizing:border-box;cursor:pointer;width:48px;height:46px;display:flex;align-items:center;justify-content:center;color:var(--l-muted);position:relative}
+.av .ic{font-size:23px}
+.av.sel{color:var(--l-text)}
+.av.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--l-accent)}
+[data-mode="proposed"] .av{transition:color .12s ease}
+[data-mode="proposed"] .av:hover{color:#e8e8e8}
+[data-mode="proposed"] .av.sel{color:#fff}
+[data-mode="proposed"] .av:active .ic{transform:scale(.94)}
+[data-mode="proposed"] .av:focus-visible{box-shadow:inset 0 0 0 1px var(--l-accent)}
+.badge{display:none;position:absolute;right:7px;bottom:7px;min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;background:var(--l-accent);color:#fff;font:600 9.5px/16px var(--ui);text-align:center}
+[data-mode="proposed"] .badge.show{display:block;animation:pop .25s ease}
+.dot{position:absolute;right:10px;top:10px;width:8px;height:8px;border-radius:50%;background:var(--l-warn);display:none}
+@keyframes pop{0%{transform:scale(.4)}70%{transform:scale(1.15)}100%{transform:scale(1)}}
+
+.l-side{width:250px;background:var(--l-panel);border-radius:5px;display:flex;flex-direction:column;flex:none;min-width:0;position:relative}
+.ph{height:35px;display:flex;align-items:center;padding:0 6px 0 20px;flex:none}
+.ph .t{font-size:11px;letter-spacing:.02em;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ph .acts{display:flex;gap:4px}
+.ph .tb{width:22px;height:22px}
+.ph .tb .ic{font-size:13.5px}
+.tree{display:flex;flex-direction:column}
+.row{height:22px;display:flex;align-items:center;cursor:pointer;position:relative;padding-right:6px;white-space:nowrap}
+.row .car{width:16px;text-align:center;font-size:11px;color:var(--l-text)}
+.row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.row .gb{width:18px;text-align:center;font-size:11.5px}
+.row:hover{background:var(--l-hover)}
+[data-mode="proposed"] .row:hover{background:#2a2d2e}
+.row.sel,.row.sel:hover{background:var(--l-active)}
+.gb.m{color:var(--l-info)}.gb.u{color:var(--l-ok)}
+[data-mode="proposed"] .row .nm.m{color:#8cc8ff}
+[data-mode="proposed"] .row .nm.u{color:#5fd7a2}
+.inl{margin:1px 6px 1px 0;flex:1;height:20px;box-sizing:border-box;background:var(--l-input);border:1px solid var(--l-accent);color:var(--l-text);font:13px var(--ui);padding:0 4px}
+.empty{padding:16px 20px;color:var(--l-muted);font-size:12.5px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+
+/* source control */
+.scm{display:flex;flex-direction:column;gap:6px;padding:0 10px 0 12px}
+.scm textarea{all:unset;box-sizing:border-box;width:100%;height:46px;background:var(--l-input);border-radius:3px;padding:5px 7px;font-size:12.5px;color:var(--l-text);white-space:pre-wrap;cursor:text}
+.scm textarea::placeholder{color:#8b8b8b}
+[data-mode="proposed"] .scm textarea{box-shadow:inset 0 0 0 1px #3c3c3c}
+[data-mode="proposed"] .scm textarea:focus{box-shadow:inset 0 0 0 1px var(--l-accent)}
+.split{display:flex;gap:1px}
+.split .commit{flex:1;border-radius:3px 0 0 3px;height:26px}
+.split .drop{width:24px;padding:0;border-radius:0 3px 3px 0;height:26px}
+.sync{width:100%;height:26px}
+.grp{height:22px;display:flex;align-items:center;gap:4px;margin:4px -10px 0 -12px;padding-left:4px;font-size:11px;cursor:default}
+.grp .ic{font-size:11px;width:16px;text-align:center}
+.cnt{background:var(--l-input);color:var(--l-muted);border-radius:8px;padding:0 6px;font-size:10px;line-height:15px}
+.chg{margin:0 -10px 0 -12px;padding-left:20px}
+.chg .dir{color:var(--l-muted);font-size:11.5px;margin-left:6px}
+.menu{position:absolute;z-index:20;background:var(--l-panel);border:1px solid var(--l-float);border-radius:5px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,.55);display:flex;flex-direction:column;min-width:190px}
+.menu .cap{font-size:11px;color:var(--l-muted);padding:3px 8px 5px;border-bottom:1px solid #3a3a3a;margin-bottom:3px}
+.menu button{all:unset;cursor:pointer;font-size:12.5px;padding:3px 8px;border-radius:3px;display:flex;justify-content:space-between}
+.menu button:hover{background:var(--l-active)}
+.menu button .k{color:var(--l-muted);font-size:11px}
+
+/* center */
+.l-center{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.l-ed{flex:1;background:var(--l-bg);border-radius:5px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.tabs{height:34px;display:flex;align-items:flex-end;gap:2px;padding:0 4px 0 0;flex:none}
+.tabs .plus{margin-left:auto;align-self:center}
+.tab{height:34px;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:0 6px 0 10px;background:var(--l-tab);color:var(--l-muted);border-radius:3px 3px 0 0;cursor:pointer;position:relative;min-width:96px;max-width:170px}
+.tab .fi{font-size:13px;width:16px}
+.tab .tl{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tab .x .ic{font-size:12px}
+.tab.act{background:var(--l-bg);color:var(--l-text);box-shadow:inset 0 1px 0 var(--l-accent)}
+.tab .x{width:22px;height:22px;font-size:12px}
+.tab .x .dirty{font-size:12px}
+[data-mode="proposed"] .tab{transition:background-color .12s ease,color .12s ease}
+[data-mode="proposed"] .tab:not(.act):hover{background:#333334;color:#dcdcdc}
+[data-mode="proposed"] .tab:not(.act):not(.dirty) .x{visibility:hidden}
+[data-mode="proposed"] .tab:hover .x{visibility:visible}
+.crumbs{height:22px;display:flex;align-items:center;gap:4px;padding-left:16px;font-size:12px;color:var(--l-muted);flex:none}
+.crumbs .ic{font-size:9px}
+.crumbs span.last{color:var(--l-text)}
+.code{flex:1;overflow:hidden;font:13px/18px var(--code);padding-top:6px;position:relative;cursor:text}
+.ln{display:flex;height:18px;position:relative}
+.ln .no{width:44px;text-align:right;padding-right:18px;color:#a8a8a8;flex:none}
+.ln .tx{white-space:pre;position:relative;flex:1}
+[data-mode="proposed"] .ln .no{color:#858585}
+[data-mode="proposed"] .ln.cur .no{color:#c6c6c6}
+[data-mode="proposed"] .ln.cur .tx{background:rgba(255,255,255,.035);box-shadow:inset 0 1px 0 #2e2e2e,inset 0 -1px 0 #2e2e2e}
+.g{position:absolute;top:0;bottom:0;width:1px;background:#3b3b3b;display:none}
+.g.on{background:#6b6b6b}
+[data-mode="proposed"] .g{display:block}
+.caret{position:absolute;top:1px;width:2px;height:16px;background:#aeafad;animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.k-kw{color:#c586c0}.k-ty{color:#4ec9b0}.k-fn{color:#dcdcaa}.k-st{color:#ce9178}.k-nu{color:#b5cea8}.k-co{color:#6a9955}.k-pr{color:#9cdcfe}.k-md{color:#569cd6}
+
+.l-bottom{height:190px;background:var(--l-bg);border-radius:5px;display:flex;flex-direction:column;flex:none}
+.btabs{height:35px;display:flex;align-items:center;gap:14px;padding:0 6px 0 20px;flex:none}
+.btab{all:unset;cursor:pointer;font-size:11px;color:var(--l-muted);position:relative;padding:2px 0;display:inline-flex;gap:6px;align-items:center}
+.btab.act{color:var(--l-text)}
+.btab.act::after{content:"";position:absolute;left:0;right:0;bottom:-3px;height:1px;background:var(--l-accent)}
+[data-mode="proposed"] .btab:hover{color:#e0e0e0}
+.btabs .acts{margin-left:auto;display:flex;gap:4px}
+.term{flex:1;overflow:hidden;padding:4px 20px;font:12.5px/17px var(--code);white-space:pre;color:#cccccc}
+.term .ok{color:#23d18b}.term .dim{color:#8a8a8a}.term .er{color:#f14c4c}
+
+.l-agent{width:290px;background:var(--l-bg);border-radius:5px;display:flex;flex-direction:column;flex:none}
+.agent-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:60px 16px 0;gap:8px;text-align:center}
+.agent-empty .ic{font-size:26px;color:#4ebea0}
+.agent-empty b{font-weight:500;font-size:13.5px}
+.agent-empty p{font-size:12px;color:var(--l-muted)}
+.composer{margin:auto 10px 10px;background:var(--l-input);border-radius:3px;padding:8px;display:flex;flex-direction:column;gap:8px;font-size:12.5px;color:#8b8b8b}
+
+/* status bar */
+.l-status{position:relative;height:22px;background:var(--l-status);display:flex;align-items:center;padding:0 6px;color:#fff;font-size:11px;flex:none;gap:2px}
+.si{all:unset;height:22px;display:inline-flex;align-items:center;gap:5px;padding:0 6px;white-space:nowrap;cursor:default}
+button.si{cursor:pointer}
+.si .ic{font-size:11px}
+[data-mode="proposed"] button.si:hover{background:rgba(255,255,255,.14)}
+[data-mode="proposed"] button.si:active{background:rgba(255,255,255,.22)}
+.si.msg{max-width:430px;overflow:hidden;text-overflow:ellipsis;transition:opacity .35s ease}
+.si.msg span{overflow:hidden;text-overflow:ellipsis}
+.si.msg.fade{opacity:0}
+.si.msg .spin{width:9px;height:9px;border-width:1.4px}
+.st-right{margin-left:auto;display:flex;align-items:center}
+.only-p{display:none!important}
+[data-mode="proposed"] .only-p{display:inline-flex!important}
+[data-mode="proposed"] .only-t{display:none!important}
+.bell{position:relative}
+.bell svg{width:12px;height:12px}
+.bell .n{position:absolute;top:2px;right:1px;width:7px;height:7px;border-radius:50%;background:#ffcc66;display:none}
+.bell.has .n{display:block}
+
+/* toasts */
+.l-toasts{position:absolute;right:12px;bottom:32px;display:flex;flex-direction:column;gap:8px;z-index:30;width:330px}
+.toast{background:var(--l-panel);border:1px solid var(--l-float);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.55);padding:10px 10px 10px 12px;display:flex;flex-direction:column;gap:10px;animation:slide .18s ease-out}
+.toast .top{display:flex;gap:9px;align-items:flex-start}
+.toast .top .ic{font-size:14px;margin-top:1px}
+.toast .msg{flex:1;font-size:12.5px;line-height:1.45}
+.toast .msg small{display:block;color:var(--l-muted);font-size:11.5px;margin-top:2px}
+.toast .acts{display:flex;justify-content:flex-end;gap:6px}
+.toast.k-error .top>.ic{color:var(--l-err)}.toast.k-info .top>.ic{color:var(--l-info)}.toast.k-success .top>.ic{color:var(--l-ok)}.toast.k-warn .top>.ic{color:var(--l-warn)}
+@keyframes slide{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
+.nc{position:absolute;right:8px;bottom:26px;width:330px;background:var(--l-panel);border:1px solid var(--l-float);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.55);z-index:31;font-size:12px}
+.nc h5{margin:0;padding:8px 12px;font:600 11px var(--ui);letter-spacing:.04em;border-bottom:1px solid #3a3a3a;display:flex;justify-content:space-between}
+.nc ul{list-style:none;margin:0;padding:4px 0;max-height:180px;overflow:auto}
+.nc li{padding:6px 12px;display:flex;gap:8px;align-items:flex-start}
+.nc li .ic{font-size:12px;margin-top:2px}
+
+/* welcome (shared by mock + comparison) */
+.wel{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.wel-t{align-items:center;padding-top:90px;gap:0;text-align:center}
+.wel-t .logo{font-size:28px;font-weight:700;color:var(--l-muted);letter-spacing:.02em}
+.wel-t .sub{color:var(--l-muted);margin-bottom:20px}
+.wel-t .btn{background:transparent!important;font-size:13px;height:22px}
+.wel-t .btn:hover{background:var(--l-hover)!important}
+.wel-t .hint{font-size:11px;color:var(--l-muted)}
+.wel-t .rh{font-size:11px;color:var(--l-muted);margin-top:18px}
+.wel-t .rec{font-size:12px;height:20px}
+.wel-p{padding:52px 48px 0;gap:26px;max-width:640px;margin:0 auto;width:100%;box-sizing:border-box}
+.wh{display:flex;gap:16px;align-items:center}
+.wh img{width:56px;height:56px}
+.wh h4{margin:0;font:600 22px/1.2 var(--ui);color:#e6e6e6}
+.wh p{margin:2px 0 0;color:var(--l-muted);font-size:13px}
+.wcols{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+.wcol h6,.wel-p h6{margin:0 0 6px;font:600 11px var(--ui);letter-spacing:.06em;text-transform:uppercase;color:var(--l-muted)}
+.wl{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:8px;height:24px;padding:0 6px;margin-left:-6px;border-radius:3px;font-size:13px;color:#4fa8ea;width:100%}
+.wl .ic{font-size:14px;color:#4fa8ea;width:16px}
+.wl .k{margin-left:auto;color:var(--l-muted);font-size:11px}
+.wl .p{color:var(--l-muted);font-size:11.5px;margin-left:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wl:hover{background:rgba(90,93,94,.28)}
+.wl.file{color:var(--l-text)}
+.wtiles{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.wt{all:unset;box-sizing:border-box;cursor:pointer;border:1px solid #333;border-radius:5px;padding:10px 12px;display:grid;grid-template-columns:22px 1fr auto;gap:2px 10px;align-items:start}
+.wt .ic{font-size:16px;grid-column:1;grid-row:1 / span 2;margin-top:2px;color:#e8b43a}
+.wt b{grid-column:2;grid-row:1;font-weight:500;font-size:13px;color:#e0e0e0;white-space:nowrap}
+.wt .d{grid-column:2 / span 2;grid-row:2;font-size:11.5px;color:var(--l-muted);line-height:1.4}
+.wt .k{grid-column:3;grid-row:1;font-size:11px;color:var(--l-muted)}
+.wt:hover{background:#262728;border-color:#454545}
+
+/* callouts */
+.co{display:none;position:absolute;z-index:25;width:18px;height:18px;border-radius:50%;background:#f5b400;color:#111;font:700 10.5px/18px var(--ui);text-align:center;box-shadow:0 0 0 2px #101214;pointer-events:none}
+.lumen.callouts .co{display:block}
+
+/* ============ report pieces ============ */
+.matrix-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table.mx{border-collapse:collapse;width:100%;min-width:860px;font-size:13.5px}
+.mx th,.mx td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+.mx thead th{font:600 12px var(--f-mono);letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);background:var(--surface)}
+.mx tbody tr:last-child td{border-bottom:0}
+.mx td.state{font-weight:600;white-space:nowrap}
+.mx td.note{color:var(--ink-2);max-width:340px;font-size:13px}
+.specs{display:flex;gap:6px;align-items:center;background:#1e1e1e;border-radius:6px;padding:7px 8px;width:max-content}
+.specs .chipbg{display:inline-flex;align-items:center;gap:3px;padding:3px;border-radius:4px}
+.specs .on-panel{background:#252526}.specs .on-title{background:#3c3c3c}
+.specs .btn{min-width:72px}
+.specs .tb{cursor:default}
+.specs .btn{cursor:default}
+
+.caps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+@media (max-width:900px){.caps{grid-template-columns:1fr}}
+.cap{display:flex;flex-direction:column;gap:8px;margin:0}
+.shot{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--line);background:#1e1e1e}
+.shot img{display:block;width:100%;height:auto}
+.mk{position:absolute;transform:translate(-50%,-50%);width:17px;height:17px;border-radius:50%;background:#f5b400;color:#111;font:700 10px/17px var(--f-body);text-align:center;box-shadow:0 0 0 2px #111;pointer-events:none}
+.cap figcaption{font-size:13px;color:var(--ink-2)}
+.cap figcaption b{color:var(--ink);font-weight:600}
+
+.wcomp{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+@media (max-width:900px){.wcomp{grid-template-columns:1fr}}
+.wbox{display:flex;flex-direction:column;gap:8px}
+.wbox .lab{font:600 12px var(--f-mono);letter-spacing:.05em;text-transform:uppercase;color:var(--ink-2)}
+.wscreen{height:470px;background:#1e1e1e;border-radius:8px;display:flex;overflow:hidden;border:1px solid var(--line)}
+.wscreen .wel-p{padding:30px 28px 0;gap:20px}
+@media (max-width:560px){.wscreen{height:auto;min-height:470px}.wscreen .wcols,.wscreen .wtiles{grid-template-columns:1fr}}
+.shot img{cursor:zoom-in}
+.zoom{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));cursor:zoom-out}
+.zoom img{max-width:100%;max-height:100%;border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.6)}
+.wscreen .wel-t{padding-top:70px}
+
+.phase{display:flex;flex-direction:column;gap:0;border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+.phase-h{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;padding:16px 20px;border-bottom:1px solid var(--line)}
+.phase-h h3{font-size:19px}
+.phase-h p{color:var(--ink-2);font-size:14px;flex-basis:100%}
+.tag{font:600 11px/1 var(--f-mono);letter-spacing:.05em;padding:5px 8px;border-radius:4px;text-transform:uppercase}
+.t1{background:var(--sev-1-soft);color:var(--sev-1)}.t2{background:var(--sev-2-soft);color:var(--sev-2)}.t3{background:var(--sev-3-soft);color:var(--sev-3)}
+.find{display:grid;grid-template-columns:44px minmax(0,1fr) minmax(0,.62fr);gap:6px 20px;padding:16px 20px;border-bottom:1px solid var(--line)}
+.find:last-child{border-bottom:0}
+.find .n{font:600 15px/24px var(--f-mono);color:var(--ink-2)}
+.find .n span{display:inline-block;width:26px;height:26px;border-radius:50%;background:#f5b400;color:#111;text-align:center;line-height:26px;font-size:12px}
+.find h4{margin:0 0 4px;font:600 15.5px/1.35 var(--f-body)}
+.find .what{color:var(--ink-2);font-size:14px}
+.find .fix{font-size:14px;margin-top:8px}
+.find .fix b{font-weight:600}
+.find .meta{font-size:12.5px;color:var(--ink-2);display:flex;flex-direction:column;gap:6px;border-left:1px solid var(--line);padding-left:16px}
+.find .meta code{font-size:11.5px;word-break:break-all}
+.size{font:600 11px var(--f-mono);color:var(--ink)}
+@media (max-width:760px){.find{grid-template-columns:34px minmax(0,1fr)}.find .meta{grid-column:2;border-left:0;padding-left:0}}
+
+.prs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;counter-reset:pr}
+@media (max-width:980px){.prs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.prs{grid-template-columns:1fr}}
+.pr{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+.pr .no{font:600 12px var(--f-mono);color:var(--accent)}
+.pr b{font-size:15px}
+.pr p{font-size:13px;color:var(--ink-2)}
+.pr .items{font:500 12px var(--f-mono);color:var(--ink-2);margin-top:auto}
+
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}
+@media (max-width:760px){.two{grid-template-columns:1fr}}
+ul.plain{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14.5px}
+.dec{display:flex;flex-direction:column;gap:12px;counter-reset:d}
+.dec li{list-style:none;border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--surface);font-size:14.5px}
+.dec li b{display:block;margin-bottom:2px}
+.dec li span{color:var(--ink-2);font-size:13.5px}
+.dec{padding:0;margin:0}
+footer.meth{border-top:1px solid var(--line);padding-top:20px;font-size:13px;color:var(--ink-2);display:flex;flex-direction:column;gap:8px;max-width:80ch}
+
+@media (prefers-reduced-motion: reduce){
+  .lumen *,.lk *{transition:none!important;animation-duration:0s!important}
+  .spin{animation:spin 1.6s linear infinite!important}
+  .caret{animation:none!important}
+}
+</style>
+
+<div class="wrap">
+
+<header style="display:flex;flex-direction:column;gap:18px">
+  <div class="eyebrow">UI/UX review · Lumen 0.6.3 · feature/agent-chat-rendering @ d662ef3 · 19 Nov 2026</div>
+  <h1>Lumen UI refresh plan</h1>
+  <p class="muted" style="font-size:14px">Companion to <a href="../ui-feedback-refresh-plan.md">plans/ui-feedback-refresh-plan.md</a>, which is the plan of record. This page is an HTML approximation for discussion, not a pixel specification.</p>
+  <p class="lede">Lumen's layout, palette and feature set are in good shape. What's missing is response. Most controls look the same before, during and after a click, toggles barely show whether they're on, and the result of an action arrives as a line of small white text in the status bar. The app feels inert even when it's working. This plan fixes that first, then adds the at-a-glance cues and first-run polish that make an editor feel finished. No code has been changed yet.</p>
+  <div class="diag">
+    <div><b>Controls don't react</b><p>30 frameless buttons in 16 UI files, plus the activity bar, the title-bar toggles and Run/Stop, show no hover, pressed or keyboard-focus state.</p></div>
+    <div><b>On and off look alike</b><p>Panel toggles differ only by glyph color (#cccccc vs #a8a8a8). Disabled Stop stays red and disabled Apply stays blue, so they still look clickable.</p></div>
+    <div><b>Results whisper</b><p>218 code paths write to one 11px status line. At least 25 are errors, and they look exactly like successes. Messages never clear.</p></div>
+  </div>
+</header>
+
+<section id="mock">
+  <div class="sec-head">
+    <h2>Try it: today vs proposed</h2>
+    <p class="muted">A clickable stand-in for the workbench, drawn with Lumen's own colors, sizes and icon font. Flip between the two modes and repeat the same clicks.</p>
+  </div>
+  <div class="plate">
+    <div class="plate-bar">
+      <div class="seg" role="group" aria-label="Mock mode">
+        <button id="mToday" aria-pressed="true">Today</button>
+        <button id="mProp" aria-pressed="false">Proposed</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="coChk"> Show finding numbers</label>
+    </div>
+    <div class="try"><span><b>Try:</b></span><span>hover the Explorer header icons</span><span>click the three panel toggles (top right)</span><span>Run the task</span><span>open Source Control and Commit</span><span>Source Control ⋯ → Pull (fails on purpose)</span><span>click a code line</span><span>close every tab</span></div>
+    <div class="mockscroll">
+      <div class="lumen lk" id="lumen" data-mode="today">
+        <div class="l-title">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <div class="l-wintitle" id="winTitle">main.rs — Lumen</div>
+          <div class="l-launch">
+            <button class="tasksel" id="taskSel" title="Choose the task to run"><span id="taskLab">Build app</span><span class="ic">&#xe00b;</span></button>
+            <button class="tb run" id="runBtn" title="Run task 'Build app'" aria-label="Run selected task"><span class="ic">&#xe020;</span><span class="spin"></span><span class="co" style="left:4px;top:22px">3</span></button>
+            <button class="tb stop" id="stopBtn" disabled title="The selected task is not running" aria-label="Stop selected task"><span class="ic">&#xe019;</span><span class="co" style="left:4px;top:22px">6</span></button>
+            <span class="gap"></span>
+            <button class="tb tog on" id="togL" aria-label="Toggle Left Sidebar" aria-pressed="true"><span class="ic">&#xe021;</span></button>
+            <button class="tb tog" id="togR" aria-label="Toggle Right Panel (Coding Agents)" aria-pressed="false"><span class="ic">&#xe022;</span></button>
+            <button class="tb tog" id="togB" aria-label="Toggle Bottom Panel" aria-pressed="false"><span class="ic">&#xe023;</span><span class="co" style="right:-4px;top:18px">2</span></button>
+          </div>
+        </div>
+        <div class="l-main">
+          <nav class="l-act" aria-label="Activities">
+            <button class="av sel" data-view="explorer" title="Explorer" aria-label="Explorer"><span class="ic">&#xe004;</span></button>
+            <button class="av" data-view="search" title="Search" aria-label="Search"><span class="ic">&#xe01f;</span></button>
+            <button class="av" data-view="scm" title="Source Control" aria-label="Source Control"><span class="ic">&#xe01e;</span><span class="badge" id="scmBadge">2</span><span class="co" style="right:0;top:2px">8</span></button>
+            <button class="av" data-view="debug" title="Run and Debug" aria-label="Run and Debug"><span class="ic">&#xe026;</span></button>
+            <div class="grow"></div>
+            <button class="av" data-panel="agents" title="Coding Agents (⇧⌘A)" aria-label="Coding Agents"><span class="ic">&#xe017;</span></button>
+            <button class="av" data-panel="terminal" title="Terminal (Ctrl+`)" aria-label="Terminal"><span class="ic">&#xe014;</span></button>
+            <button class="av" data-panel="output" title="Output" aria-label="Output"><span class="ic">&#xe016;</span></button>
+            <button class="av" data-panel="problems" title="Problems" aria-label="Problems"><span class="ic">&#xe025;</span></button>
+            <button class="av" data-panel="settings" title="Settings (⌘,)" aria-label="Settings"><span class="ic">&#xe01d;</span></button>
+          </nav>
+          <aside class="l-side" id="side">
+            <div id="v-explorer">
+              <div class="ph"><span class="t">EXPLORER</span>
+                <div class="acts" style="position:relative">
+                  <button class="tb" id="exNewFile" title="New File" aria-label="New File"><span class="ic">&#xe001;</span></button>
+                  <button class="tb" id="exNewFolder" title="New Folder" aria-label="New Folder"><span class="ic">&#xe009;</span></button>
+                  <button class="tb" id="exRefresh" title="Refresh Explorer" aria-label="Refresh Explorer"><span class="ic">&#xe010;</span></button>
+                  <button class="tb" id="exCollapse" title="Collapse Folders" aria-label="Collapse Folders"><span class="ic">&#xe01c;</span></button>
+                  <span class="co" style="left:38px;top:24px">1</span>
+                </div>
+              </div>
+              <div class="tree" id="tree"></div>
+            </div>
+            <div id="v-scm" hidden>
+              <div class="ph"><span class="t">SOURCE CONTROL</span>
+                <div class="acts">
+                  <button class="tb" id="scRefresh" title="Refresh" aria-label="Refresh Source Control"><span class="ic">&#xe010;</span></button>
+                  <button class="tb" id="scMore" title="More Actions…" aria-label="More Actions"><span class="ic">&#xe00a;</span></button>
+                </div>
+              </div>
+              <div class="scm">
+                <textarea id="msg" aria-label="Commit message" placeholder="Message (⌘↵ to commit on 'main')">Note the RK4 integrator TODO</textarea>
+                <div class="split">
+                  <button class="btn primary commit" id="commitBtn"><span class="spin"></span><span class="ic">&#xe00d;</span><span class="lb">Commit</span></button>
+                  <button class="btn primary drop" title="Commit options" aria-label="Commit options"><span class="ic">&#xe00b;</span></button>
+                </div>
+                <button class="btn sync only-p" id="syncBtn" hidden><span class="spin"></span><span class="ic">&#xe013;</span><span class="lb">Push 1 commit</span></button>
+                <div id="scmList"></div>
+              </div>
+            </div>
+            <div id="v-search" hidden>
+              <div class="ph"><span class="t">SEARCH</span></div>
+              <div class="scm"><textarea id="scmSearch" aria-label="Search" style="height:24px" placeholder="Search"></textarea></div>
+            </div>
+            <div id="v-debug" hidden>
+              <div class="ph"><span class="t">RUN AND DEBUG</span></div>
+              <div class="empty">Tasks for orbit<div class="row" style="width:100%;margin-left:-20px;padding-left:20px"><span class="ic" style="width:20px;color:#23d18b">&#xe020;</span><span class="nm">Build app</span></div><div class="row" style="width:100%;margin-left:-20px;padding-left:20px"><span class="ic" style="width:20px;color:#23d18b">&#xe020;</span><span class="nm">Test</span></div></div>
+            </div>
+          </aside>
+          <section class="l-center">
+            <div class="l-ed">
+              <div class="tabs" id="tabs"></div>
+              <div id="edBody" style="flex:1;display:flex;flex-direction:column;min-height:0;position:relative"></div>
+            </div>
+            <div class="l-bottom" id="bottom" hidden>
+              <div class="btabs" id="btabs"></div>
+              <div class="term" id="term"></div>
+            </div>
+          </section>
+          <aside class="l-agent" id="agent" hidden>
+            <div class="btabs"><button class="btab act">Codex</button><button class="btab">Claude Code</button><div class="acts"><button class="tb" id="agClose" title="Close" aria-label="Close agents"><span class="ic">&#xe00e;</span></button></div></div>
+            <div class="agent-empty" id="agBody"><span class="ic">&#xe017;</span><b>Ask Codex anything about this folder</b><p>It can read, edit and run commands here. You approve anything risky.</p><button class="btn primary" id="agStart"><span class="ic">&#xe00f;</span>Start chat</button></div>
+          </aside>
+        </div>
+        <footer class="l-status">
+          <button class="si only-p" id="stBranch" title="main · 1 commit to push · click to open Source Control"><span class="ic">&#xe01e;</span><span id="stBranchLab">main ↑1</span></button>
+          <button class="si" id="stProblems" title="Show Problems"><span class="ic">&#xe024;</span>0 <span class="ic">&#xe025;</span>0</button>
+          <span class="si msg" id="stMsg" style="position:relative"></span>
+          <span class="co" style="left:170px;top:-22px">4</span>
+          <div class="st-right">
+            <button class="si" id="stPos" title="Go to Line…"><span id="stPosLab">Ln 20, Col 9</span></button>
+            <span class="si">Rust</span><span class="si">UTF-8</span><span class="si">LF</span>
+            <button class="si bell only-p" id="bell" title="Notifications" aria-label="Notifications"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 11V7a4 4 0 0 1 8 0v4l1 1H3l1-1Z"/><path d="M6.5 13.5a1.6 1.6 0 0 0 3 0"/></svg><span class="n"></span></button>
+          </div>
+          <span class="co" style="right:170px;top:-22px">9</span>
+        </footer>
+        <div class="l-toasts" id="toasts" aria-live="polite"></div>
+      </div>
+    </div>
+    <p class="plate-note">HTML approximation using Lumen's Dark palette (<code style="background:#1d2024;color:#c9d1d9">theme.rs</code>) and the bundled icon font. Timings are simulated and nothing here talks to Git. The dotted focus outline in Today mode is added for this page; the app shows no focus at all on these controls.</p>
+  </div>
+</section>
+
+<section id="states">
+  <div class="sec-head">
+    <h2>One set of states for every control</h2>
+    <p class="muted">Every clickable thing should come from one of three shared widgets: a toolbar icon, a toggle and a text button. Each widget needs the same eight states. Today several of those states look identical, which is why a click goes unnoticed. The proposed column is the spec for the shared widget.</p>
+  </div>
+  <div class="matrix-scroll">
+    <table class="mx">
+      <thead><tr><th>State</th><th>Today: icon · toggle · button</th><th>Proposed: icon · toggle · button</th><th>What changes for the user</th></tr></thead>
+      <tbody id="mxBody"></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="captures">
+  <div class="sec-head">
+    <h2>What today's build looks like</h2>
+    <p class="muted">Captured from a debug build of d662ef3 with <code>LUMEN_CAPTURE</code>, using a throwaway home folder and a small fixture repo. Numbers match the findings below.</p>
+  </div>
+  <div class="caps">
+    <figure class="cap">
+      <div class="shot"><img src="ui-feedback-refresh/today-welcome.jpg" alt="Lumen welcome screen today: gray LUMEN wordmark, three text-only buttons, empty explorer" width="1600" height="950">
+        </div>
+      <figcaption><b>Welcome.</b> The three actions render as plain text. The hint sits directly under them, and nothing says what Lumen can do. The left-sidebar toggle is on but looks the same as the two that are off.</figcaption>
+    </figure>
+    <figure class="cap">
+      <div class="shot"><img src="ui-feedback-refresh/today-workbench.jpg" alt="Lumen workbench today with main.rs open" width="1600" height="950">
+        </div>
+      <figcaption><b>Workbench.</b> No current-line highlight or indent guides. Source Control shows no change count even though the repo has changes. "Opened 2 items from the command line" stays in the status bar for the whole session.</figcaption>
+    </figure>
+    <figure class="cap">
+      <div class="shot"><img src="ui-feedback-refresh/today-settings.jpg" alt="Lumen settings page today" width="1600" height="950">
+        </div>
+      <figcaption><b>Settings.</b> Checkboxes have no border, so an unchecked one nearly disappears. Apply is disabled but still blue. Each row repeats "Live: true · Details · ⚙".</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="welcome">
+  <div class="sec-head">
+    <h2>First run: today vs proposed</h2>
+    <p class="muted">The welcome screen is the first thing a new user sees. The proposal uses only commands that already exist, adds the app icon, and points at the four features that set Lumen apart.</p>
+  </div>
+  <div class="wcomp">
+    <div class="wbox"><div class="lab">Today</div><div class="wscreen lk" data-mode="today" id="wToday"></div></div>
+    <div class="wbox"><div class="lab">Proposed</div><div class="wscreen lk" data-mode="proposed" id="wProp"></div></div>
+  </div>
+</section>
+
+<section id="plan">
+  <div class="sec-head">
+    <h2>Findings and plan</h2>
+    <p class="muted">Three phases, ordered by how much each one changes how the app feels. Phase 1 is what you asked about. File references are relative to <code>src/</code> unless noted.</p>
+  </div>
+
+  <div class="phase">
+    <div class="phase-h"><span class="tag t1">Phase 1</span><h3>Make every click answer</h3><p>Shared control states, visible toggles, progress for slow actions, and a feedback channel people notice. This is the part that makes the app feel responsive.</p></div>
+
+    <div class="find"><div class="n"><span>1</span></div><div>
+      <h4>Icon buttons don't react to hover, press or keyboard focus</h4>
+      <p class="what">egui never paints a frame for a <code>frame(false)</code> button, and the theme gives idle, hovered and pressed widgets the same text color. The activity bar, panel toggles and Run/Stop force a transparent fill and a fixed glyph color, so they never change either.</p>
+      <p class="fix"><b>Change:</b> add one <code>tool_button()</code> to <code>ui/widgets.rs</code> with hover, pressed, on, busy, done, disabled and focus states drawn from new theme roles (<code>control_hover</code>, <code>control_pressed</code>, <code>control_on</code>). Migrate every icon button to it and keep widget IDs stable.</p>
+    </div><div class="meta"><span class="size">Size M</span><code>ui/theme.rs:322-335</code><code>ui/widgets.rs:269, 557, 711</code><code>ui/task_launcher.rs:54-65, 111-135</code><code>egui-0.33.3 button.rs:303-318</code></div></div>
+
+    <div class="find"><div class="n"><span>2</span></div><div>
+      <h4>Toggles don't show whether they're on</h4>
+      <p class="what">The title-bar panel toggles are on or off only by glyph color, #cccccc against #a8a8a8 on a #3c3c3c strip. In the capture, the "on" left-sidebar toggle is indistinguishable from the two "off" ones.</p>
+      <p class="fix"><b>Change:</b> the "on" state becomes an accent-tinted chip with a 1px accent edge. Tooltips name the action ("Hide Left Sidebar" or "Show Left Sidebar"), and the accessible state reports selected. The same style applies to option toggles in Find, Problems filters and Settings scope.</p>
+    </div><div class="meta"><span class="size">Size S</span><code>ui/task_launcher.rs:27-74</code><code>ui/editor_find.rs</code><code>ui/problems.rs</code></div></div>
+
+    <div class="find"><div class="n"><span>3</span></div><div>
+      <h4>Slow actions look like nothing happened</h4>
+      <p class="what">Commit, push, pull, fetch, clone, stash and refresh run on background threads and only set <code>loading = true</code>, which greys out the buttons. No "Pushing…" or "Committing…" text exists anywhere, and the UI has only three spinners (CSV, image and Markdown loading).</p>
+      <p class="fix"><b>Change:</b> the control that started the work shows a spinner and a verb ("Pushing…"). Anything over about 300 ms also gets a status-bar progress item. On success the control flashes a check for 1.2 s and then returns to idle. When there are commits to push, a visible Push button appears under Commit; Pull, Push and Fetch stay in the ⋯ menu as well.</p>
+    </div><div class="meta"><span class="size">Size M</span><code>app/source_control.rs:259-267, 699-788</code><code>ui/source_control.rs:914-983</code><code>ui/source_control_menu.rs:27-35</code><code>app/task_runs.rs</code></div></div>
+
+    <div class="find"><div class="n"><span>4</span></div><div>
+      <h4>Results land in one easy-to-miss status line</h4>
+      <p class="what">218 code paths write <code>view.status</code>, and at least 25 of them are errors. Every message is the same 11px white text on blue, with no icon or severity, and it stays until something replaces it. "Opened 2 items from the command line" sat there for the whole capture session.</p>
+      <p class="fix"><b>Change:</b> replace the string with a small <code>Notice { severity, text, action }</code> model. Info and success messages show with an icon in the status bar and fade after about 5 s. Warnings and errors become a toast in the bottom-right that stays until dismissed and can carry an action (Show Output, Retry). A bell in the status bar keeps the history. Migrate the error messages first.</p>
+    </div><div class="meta"><span class="size">Size M</span><code>ui/chrome.rs:256-271</code><code>app/view_state.rs (status)</code><code>new: app/notices.rs, ui/notices.rs</code></div></div>
+
+    <div class="find"><div class="n"><span>5</span></div><div>
+      <h4>Text buttons look like labels</h4>
+      <p class="what">The theme sets the idle button fill to transparent, so "Open File", "Open Folder", "Details" and "Clone Repository…" read as plain text until hovered. The hover fill (#2b2b2b on #252526) is about 1.06:1, and the pressed and keyboard-focus states share the same look.</p>
+      <p class="fix"><b>Change:</b> add a secondary button fill (#3a3d41, hover #46494e, pressed #2c2f33) and keep the accent fill for the one primary action. Links that should read as text stay text-only, with an underline on hover.</p>
+    </div><div class="meta"><span class="size">Size S</span><code>ui/theme.rs:329-346</code><code>ui/editor.rs:125-142</code><code>ui/settings.rs</code><code>ui/source_control.rs:388-404</code></div></div>
+
+    <div class="find"><div class="n"><span>6</span></div><div>
+      <h4>Checkboxes and disabled controls are ambiguous</h4>
+      <p class="what">The checkbox box (#313131 on #1e1e1e) has no border, so an unchecked box nearly vanishes. Disabled controls keep their semantic color at half opacity: Apply stays blue and Stop stays red, so both still read as available.</p>
+      <p class="fix"><b>Change:</b> give checkboxes a 1px #6b6b6b border, with an accent fill when checked. Disabled controls use a neutral fill and muted text and never a faded semantic color, and they keep their disabled-reason tooltip.</p>
+    </div><div class="meta"><span class="size">Size S</span><code>ui/settings.rs:490-505</code><code>ui/task_launcher.rs:111-122</code><code>ui/theme.rs</code></div></div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-h"><span class="tag t2">Phase 2</span><h3>Make state visible at a glance</h3><p>Small, always-on cues that tell people where they are and what changed, without opening anything.</p></div>
+
+    <div class="find"><div class="n"><span>7</span></div><div>
+      <h4>The editor lacks the cues that make it feel alive</h4>
+      <p class="what">There is no current-line highlight, the active line number looks like every other one, and there are no indent guides. The editor surface has no code for either (bracket matching exists).</p>
+      <p class="fix"><b>Change:</b> draw a subtle current-line band, a brighter active line number, and indent guides with the enclosing block's guide emphasized. Draw them from the same galley and viewport as the text, following the single-layout-authority rule in <code>AGENTS.md</code>. Add settings to turn each one off.</p>
+    </div><div class="meta"><span class="size">Size M</span><code>crates/editor-surface/src/gutter.rs</code><code>crates/editor-surface/src/lib.rs</code><code>crates/settings-core/src/editor.rs</code></div></div>
+
+    <div class="find"><div class="n"><span>8</span></div><div>
+      <h4>Nothing tells you something changed</h4>
+      <p class="what">The only activity-bar badge is the agent attention dot. Source Control shows no count of changed files and Problems shows no error count. In the Explorer, changed files get a status letter but their names keep the default color.</p>
+      <p class="fix"><b>Change:</b> add count badges on Source Control (changed files) and Problems (errors), using data that is already loaded, and tint changed file names with the same color as their Git letter.</p>
+    </div><div class="meta"><span class="size">Size S</span><code>ui/activity_bar.rs:94-101</code><code>ui/widgets.rs:626-709</code><code>ui/explorer.rs:12-39</code></div></div>
+
+    <div class="find"><div class="n"><span>9</span></div><div>
+      <h4>Status bar items don't look clickable</h4>
+      <p class="what">Problems, Ln/Col and the language-server label are clickable, but they have no hover fill or pointer change. The Git branch and push/pull state don't appear outside the Source Control view.</p>
+      <p class="fix"><b>Change:</b> give clickable items a hover fill (white at 14%) and a pressed fill (22%). Add a branch item ("main ↑1") from the existing snapshot that opens Source Control when clicked.</p>
+    </div><div class="meta"><span class="size">Size S</span><code>ui/chrome.rs:181-339</code></div></div>
+
+    <div class="find"><div class="n"><span>10</span></div><div>
+      <h4>Tabs and pickers give little feedback</h4>
+      <p class="what">Inactive tabs have no hover state, and every tab draws its close × all the time, with no hover target under the ×. The command palette doesn't highlight which characters matched the query.</p>
+      <p class="fix"><b>Change:</b> add a tab hover fill. Show × on the active tab and on hover, and keep the dirty dot visible. Give × a hover square. Highlight matched characters in the palette and Quick Open.</p>
+    </div><div class="meta"><span class="size">Size S–M</span><code>ui/editor_tabs.rs:901-984</code><code>ui/palette.rs</code><code>ui/navigation.rs</code></div></div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-h"><span class="tag t3">Phase 3</span><h3>First impression and finish</h3><p>What a new user sees in the first minute, and the motion that makes the rest feel smooth.</p></div>
+
+    <div class="find"><div class="n"><span>11</span></div><div>
+      <h4>The welcome screen undersells the app</h4>
+      <p class="what">The welcome screen shows a gray "LUMEN" wordmark, three text-only buttons and a hint line jammed underneath. It doesn't mention agents, Git, tasks or the terminal, and the app icon, which has a strong look, isn't used anywhere in the UI.</p>
+      <p class="fix"><b>Change:</b> show the app icon and name with a one-line description, a Start column (New Text File, Open File, Open Folder, Clone Repository), a Recent column, and four "get to know Lumen" entry points with their shortcuts. Every action is an existing command.</p>
+    </div><div class="meta"><span class="size">Size S–M</span><code>ui/editor.rs:114-153</code><code>ui/explorer.rs (empty state)</code><code>assets/icons/lumen.png</code></div></div>
+
+    <div class="find"><div class="n"><span>12</span></div><div>
+      <h4>Nothing moves</h4>
+      <p class="what">There are no transitions anywhere: hover fills, toggles and panels all snap. Combined with item 1, that makes the UI feel unresponsive.</p>
+      <p class="fix"><b>Change:</b> add 100–150 ms fades for hover and toggle fills, a short slide-in for toasts, a spinner for busy controls, and a pop when a badge count changes. Use <code>ctx.animate_bool_with_time</code>, which needs no new dependency. Add a reduce-motion setting.</p>
+    </div><div class="meta"><span class="size">Size S, after item 1</span><code>ui/widgets.rs</code><code>crates/settings-core/src/appearance.rs</code></div></div>
+
+    <div class="find"><div class="n"><span>13</span></div><div>
+      <h4>Settings rows are noisy</h4>
+      <p class="what">Every row repeats "Live: true · Details · ⚙", and the full settings-file path sits above the list as a long line of text. The value metadata competes with the setting itself.</p>
+      <p class="fix"><b>Change:</b> show origin metadata only when a value differs from the default, reveal Details and the gear on row hover or focus, and move the file path behind a copyable "Open settings file" link.</p>
+    </div><div class="meta"><span class="size">Size S</span><code>ui/settings.rs (setting_row, toolbar)</code></div></div>
+  </div>
+</section>
+
+<section id="delivery">
+  <div class="sec-head">
+    <h2>Suggested delivery</h2>
+    <p class="muted">Five reviewable PRs. The first one alone fixes the "did my click register?" problem across the whole app.</p>
+  </div>
+  <div class="prs">
+    <div class="pr"><span class="no">PR 1</span><b>Control states</b><p>Theme roles plus shared tool button, toggle and text-button styles. Migrate all icon buttons, checkboxes and disabled styles.</p><span class="items">Items 1, 2, 5, 6</span></div>
+    <div class="pr"><span class="no">PR 2</span><b>Progress and notices</b><p>Busy and done states on Git and task actions, the status-bar progress item, the Notice model, toasts and the bell.</p><span class="items">Items 3, 4</span></div>
+    <div class="pr"><span class="no">PR 3</span><b>Glanceable state</b><p>Activity badges, Explorer name tints, status-bar hover and branch item, tab hover and close behavior, palette match highlights.</p><span class="items">Items 8, 9, 10</span></div>
+    <div class="pr"><span class="no">PR 4</span><b>Editor cues</b><p>Current line, active line number and indent guides in editor-surface, each with a setting.</p><span class="items">Item 7</span></div>
+    <div class="pr"><span class="no">PR 5</span><b>Welcome and motion</b><p>New welcome screen, transitions with a reduce-motion setting, and Settings row cleanup.</p><span class="items">Items 11, 12, 13</span></div>
+  </div>
+  <p class="muted" style="font-size:14px">Each PR adds regression tests, following the existing render-level pattern of reading <code>output.shapes</code>: hover, pressed and on fills appear, disabled controls carry no semantic color, toasts persist for errors and expire for info. Each one also gets before/after captures at 900, 1280 and 1920 px in Dark, Light and High Contrast. The new roles need light and high-contrast values, and High Contrast relies on borders rather than fills.</p>
+</section>
+
+<section id="scope">
+  <div class="two">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <h2 style="font-size:22px">What stays the same</h2>
+      <ul class="plain">
+        <li>Compact VS Code-style density, row heights, 5px pane corners and the 2px gutter.</li>
+        <li>The Dark palette values in <code>AGENTS.md</code>. New roles are added, and none are changed.</li>
+        <li>Native traffic lights and menus, the system UI font and the monospace editor font.</li>
+        <li>Command routing, document safety, dialogs and every existing workflow.</li>
+        <li>No gradients, no floating cards and no new permanent toolbars.</li>
+      </ul>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <h2 style="font-size:22px">Decisions I need from you</h2>
+      <ol class="dec">
+        <li><b>Toggle "on" style</b><span>I recommend an accent-tinted chip (shown in the mock). The alternative is a neutral gray chip, which is quieter but easier to miss.</span></li>
+        <li><b>When to use toasts</b><span>I recommend errors and anything that needs a decision only. Routine successes stay in the status bar and fade out.</span></li>
+        <li><b>Tab close button</b><span>I recommend showing × on the active tab and on hover, as VS Code does. Today every tab shows it.</span></li>
+        <li><b>Status-bar branch item</b><span>This is a small new item. Say yes if you want branch and push state visible outside Source Control.</span></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<footer class="meth">
+  <b style="color:var(--ink)">How this was reviewed</b>
+  <p>I read the shared theme and widgets, the activity bar, title strip, launcher, status bar, Explorer, tabs, editor group, Source Control, Settings and chat code, and checked egui 0.33.3's button rendering to confirm the missing states. I compared against the earlier plans in <code>plans/ui-enhancement-review.md</code> and <code>plans/ui-ux-visual-improvement-plan.md</code> and left out what they already finished. Captures come from the app's own debug capture on macOS. Light and High Contrast themes, Windows and screen readers were not checked for this review.</p>
+</footer>
+</div>
+
+<script>
+(() => {
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const L = $('#lumen');
+const ICON = {error:'&#xe024;', warn:'&#xe025;', info:'<b class="ii">i</b>', success:'&#xe00d;'};
+
+/* ---------------- files ---------------- */
+const FILES = {
+  'main.rs': [
+    'use std::collections::HashMap;','','mod ui;','','/// A tiny orbital simulator.','#[derive(Debug, Clone)]','pub struct Body {','    pub name: String,','    pub mass: f64,','    pub position: (f64, f64),','    pub velocity: (f64, f64),','}','','impl Body {','    pub fn new(name: &str, mass: f64) -> Self {','        Self { name: name.to_string(), mass, position: (0.0, 0.0), velocity: (0.0, 0.0) }','    }','','    pub fn kinetic_energy(&self) -> f64 {','        let (vx, vy) = self.velocity;','        0.5 * self.mass * (vx * vx + vy * vy)','    }','}','','fn main() {','    let mut bodies: HashMap<String, Body> = HashMap::new();','    for (name, mass) in [("sun", 1.989e30), ("earth", 5.972e24)] {','        bodies.insert(name.into(), Body::new(name, mass));','    }','    let total: f64 = bodies.values().map(Body::kinetic_energy).sum();','    println!("Total kinetic energy: {total:.3e} J");','    ui::render(&bodies);','}','','// TODO: integrate with RK4'],
+  'mod.rs': ['use std::collections::HashMap;','use crate::Body;','','pub fn render(bodies: &HashMap<String, Body>) {','    for body in bodies.values() {','        println!("{:>8}  m={:.2e}", body.name, body.mass);','    }','}'],
+  'README.md': ['# Orbit','','A fixture project for UI captures.']
+};
+const PATHS = {'main.rs':['orbit','src','main.rs'],'mod.rs':['orbit','src','ui','mod.rs'],'README.md':['orbit','README.md']};
+const FICON = {'main.rs':['&#xe68b;','#e38a3c'],'mod.rs':['&#xe68b;','#e38a3c'],'README.md':['&#xe609;','#5cc6e6'],'Cargo.toml':['&#xe68b;','#e38a3c'],'todo.md':['&#xe609;','#4f9fe0'],'notes.md':['&#xe609;','#4f9fe0']};
+
+const KW = new Set(['use','mod','pub','struct','impl','fn','let','mut','for','in','return','match','if','else','Self','self','as','crate']);
+function highlight(line, md) {
+  if (md) return line.startsWith('#') ? '<span class="k-md">' + esc(line) + '</span>' : esc(line);
+  const re = /(\/\/.*$)|("(?:[^"\\]|\\.)*")|(#\[[^\]]*\])|(\b\d[\d_.e]*\b)|([A-Za-z_][A-Za-z0-9_]*!?)|(\s+)|([\s\S])/g;
+  let out = '', m, toks = [];
+  while ((m = re.exec(line))) toks.push(m);
+  toks.forEach((t, i) => {
+    const s = t[0];
+    if (t[1]) out += '<span class="k-co">' + esc(s) + '</span>';
+    else if (t[2]) out += '<span class="k-st">' + esc(s) + '</span>';
+    else if (t[3]) out += '<span class="k-kw">' + esc(s) + '</span>';
+    else if (t[4]) out += '<span class="k-nu">' + esc(s) + '</span>';
+    else if (t[5]) {
+      const rest = line.slice(t.index + s.length);
+      const prev = line.slice(0, t.index);
+      let cls = '';
+      if (KW.has(s)) cls = 'k-kw';
+      else if (s.endsWith('!')) cls = 'k-fn';
+      else if (/^[A-Z]/.test(s)) cls = 'k-ty';
+      else if (/^\s*\(/.test(rest) || /^::</.test(rest)) cls = 'k-fn';
+      else if (/^\s*:(?!:)/.test(rest) || /\.$/.test(prev)) cls = 'k-pr';
+      else if (/^(f64|f32|u8|u32|usize|i32|str|bool)$/.test(s)) cls = 'k-ty';
+      out += cls ? '<span class="' + cls + '">' + esc(s) + '</span>' : esc(s);
+    } else out += esc(s);
+  });
+  return out;
+}
+
+/* ---------------- state ---------------- */
+const S = {
+  mode:'today', sidebar:true, view:'explorer', agents:false, bottom:false, btab:'terminal',
+  tabs:['main.rs','mod.rs','README.md'], active:'main.rs', dirty:new Set(['mod.rs']),
+  cur:20, running:false, runTimer:null, staged:2, ahead:1, scBusy:false,
+  open:{orbit:true, src:true, docs:false, ui:false}, extra:[], notices:[], agentStarted:false
+};
+const P = () => S.mode === 'proposed';
+
+/* ---------------- explorer ---------------- */
+function treeRows() {
+  const r = [];
+  r.push({id:'orbit', name:'orbit', dir:true, depth:0});
+  if (S.open.orbit) {
+    const dirtyRepo = S.staged > 0;
+    r.push({id:'docs', name:'docs', dir:true, depth:1, git:dirtyRepo ? 'u' : null});
+    if (S.open.docs) { r.push({id:'notes.md', name:'notes.md', depth:2}); r.push({id:'todo.md', name:'todo.md', depth:2, git:dirtyRepo ? 'u' : null}); }
+    r.push({id:'src', name:'src', dir:true, depth:1, git:dirtyRepo ? 'm' : null});
+    if (S.open.src) {
+      r.push({id:'ui', name:'ui', dir:true, depth:2});
+      if (S.open.ui) r.push({id:'mod.rs', name:'mod.rs', depth:3});
+      if (S.inline) r.push({inline:true, depth:2});
+      S.extra.forEach(n => r.push({id:n, name:n, depth:2, git:'u', dirx:n.endsWith('/')}));
+      r.push({id:'main.rs', name:'main.rs', depth:2, git:dirtyRepo ? 'm' : null});
+    }
+    r.push({id:'Cargo.toml', name:'Cargo.toml', depth:1});
+    r.push({id:'README.md', name:'README.md', depth:1});
+  }
+  return r;
+}
+function folderIcon(id, open) {
+  if (id === 'docs') return ['&#xf0c82;', '#4f9fe0'];
+  if (id === 'src' || id === 'ui') return [open ? '&#xf0770;' : '&#xf024b;', '#3fb393'];
+  return [open ? '&#xf0770;' : '&#xf024b;', '#d6a84e'];
+}
+function renderTree() {
+  const t = $('#tree');
+  t.innerHTML = treeRows().map(r => {
+    const pad = 8 + r.depth * 12;
+    if (r.inline) return '<div class="row" style="padding-left:' + (pad + 16) + 'px;background:none"><span class="fi" style="color:#9aa0a8">&#xe612;</span><input class="inl" id="inl" placeholder="' + (S.inline === 'folder' ? 'Folder name' : 'File name or path') + '" aria-label="New name"></div>';
+    const [g, c] = r.dir ? folderIcon(r.id, S.open[r.id]) : (FICON[r.name] || ['&#xe612;', '#9aa0a8']);
+    const car = r.dir ? '<span class="car ic">' + (S.open[r.id] ? '&#xe00b;' : '&#xe00c;') + '</span>' : '<span class="car"></span>';
+    const sel = !r.dir && r.id === S.active && S.tabs.includes(r.id) ? ' sel' : '';
+    const gl = r.git ? '<span class="gb ' + r.git + '">' + (r.git === 'm' ? (r.dir ? '•' : 'M') : (r.dir ? '•' : 'U')) + '</span>' : '';
+    return '<div class="row' + sel + '" data-id="' + esc(r.id) + '" data-dir="' + (r.dir ? 1 : 0) + '" style="padding-left:' + pad + 'px"' + ' title="' + esc(r.name) + '">' + car + '<span class="fi" style="color:' + c + '">' + g + '</span><span class="nm' + (r.git ? ' ' + r.git : '') + '">' + esc(r.name) + '</span>' + gl + '</div>';
+  }).join('');
+  const inl = $('#inl');
+  if (inl) {
+    inl.focus();
+    inl.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { S.inline = null; renderTree(); }
+      if (e.key === 'Enter') {
+        const v = inl.value.trim();
+        if (!v) return;
+        const kind = S.inline; S.inline = null; S.extra.push(kind === 'folder' ? v + '/' : v);
+        renderTree();
+        status('Created src/' + v + (kind === 'folder' ? '/' : ''), 'success');
+      }
+    });
+  }
+}
+$('#tree').addEventListener('click', e => {
+  const row = e.target.closest('.row[data-id]'); if (!row) return;
+  const id = row.dataset.id;
+  if (row.dataset.dir === '1') { S.open[id] = !S.open[id]; renderTree(); return; }
+  if (FILES[id]) { if (!S.tabs.includes(id)) S.tabs.push(id); S.active = id; S.cur = 1; renderEditor(); renderTree(); }
+});
+
+/* ---------------- source control ---------------- */
+function renderScm() {
+  const list = $('#scmList');
+  const rows = S.staged ? [
+    ['main.rs', 'src', 'M', 'm'], ['todo.md', 'docs', 'U', 'u']
+  ] : [];
+  list.innerHTML = '<div class="grp"><span class="ic">&#xe00b;</span>STAGED CHANGES <span class="cnt">' + S.staged + '</span></div>' +
+    (rows.length ? rows.map(r => '<div class="row chg"><span class="fi" style="color:' + FICON[r[0]][1] + '">' + FICON[r[0]][0] + '</span><span class="nm ' + r[3] + '">' + r[0] + '<span class="dir">' + r[1] + '</span></span><span class="gb ' + r[3] + '">' + r[2] + '</span></div>').join('')
+      : '<div class="empty" style="padding:6px 8px">No staged changes</div>');
+  const cb = $('#commitBtn');
+  cb.disabled = !S.staged || S.scBusy;
+  $('#msg').disabled = S.scBusy;
+  const sync = $('#syncBtn');
+  sync.hidden = !(S.ahead > 0);
+  sync.disabled = S.scBusy;
+  if (!sync.classList.contains('is-busy') && !sync.classList.contains('is-done')) sync.querySelector('.lb').textContent = 'Push ' + S.ahead + ' commit' + (S.ahead === 1 ? '' : 's');
+  $('#scmBadge').textContent = S.staged;
+  $('#scmBadge').classList.toggle('show', S.staged > 0);
+  $('#stBranchLab').textContent = 'main' + (S.ahead ? ' ↑' + S.ahead : '');
+}
+function busyBtn(btn, label) {
+  btn.dataset.lb = btn.querySelector('.lb') ? btn.querySelector('.lb').textContent : '';
+  btn.classList.add('is-busy'); btn.disabled = true;
+  if (btn.querySelector('.lb')) btn.querySelector('.lb').textContent = label;
+}
+function doneBtn(btn, label, after) {
+  btn.classList.remove('is-busy');
+  btn.classList.add('is-done');
+  const ic = btn.querySelector('.ic'); const old = ic ? ic.innerHTML : null;
+  if (ic) ic.innerHTML = '&#xe00d;';
+  if (btn.querySelector('.lb')) btn.querySelector('.lb').textContent = label;
+  setTimeout(() => {
+    btn.classList.remove('is-done');
+    if (ic && old !== null) ic.innerHTML = old;
+    if (btn.querySelector('.lb')) btn.querySelector('.lb').textContent = btn.dataset.lb;
+    after && after();
+  }, 1200);
+}
+$('#commitBtn').addEventListener('click', () => {
+  if (!S.staged || S.scBusy) return;
+  const btn = $('#commitBtn'); const files = S.staged; S.scBusy = true; const ep = S.epoch;
+  if (P()) { busyBtn(btn, 'Committing…'); status('Committing ' + files + ' files', 'info', {progress:true}); }
+  renderScm();
+  setTimeout(() => {
+    if (ep !== S.epoch) return;
+    S.staged = 0; S.ahead += 1; S.scBusy = false; $('#msg').value = '';
+    if (P()) { doneBtn(btn, 'Committed', renderScm); status('Committed ' + files + ' files to main', 'success'); }
+    else status('Committed changes');
+    renderScm(); renderTree();
+  }, 1300);
+});
+function gitOp(kind) {
+  if (S.scBusy) { status('Wait for the current Git operation to finish'); return; }
+  S.scBusy = true; renderScm();
+  const sync = $('#syncBtn'); const ep = S.epoch;
+  if (P()) {
+    if (kind === 'push' && !sync.hidden) busyBtn(sync, 'Pushing…');
+    status({push:'Pushing main to origin', pull:'Pulling from origin', fetch:'Fetching origin'}[kind], 'info', {progress:true});
+  }
+  setTimeout(() => {
+    if (ep !== S.epoch) return;
+    S.scBusy = false;
+    if (kind === 'push') {
+      const n = S.ahead; S.ahead = 0;
+      if (P()) { if (sync.classList.contains('is-busy')) doneBtn(sync, 'Pushed', renderScm); status('Pushed ' + n + ' commit' + (n === 1 ? '' : 's') + ' to origin/main', 'success'); }
+      else status('Pushed to origin');
+    } else if (kind === 'fetch') {
+      P() ? status('Fetched origin · main is up to date', 'success') : status('Fetched');
+    } else {
+      const err = 'ssh: connect to host github.com port 22: Network is unreachable';
+      if (P()) { status('', 'info', {clear:true}); toast({kind:'error', text:'Could not pull from origin', detail:err, actions:[{label:'Show Output'}, {label:'Retry', primary:true, run:() => gitOp('pull')}], sticky:true}); }
+      else status('Could not pull: ' + err);
+    }
+    renderScm();
+  }, kind === 'pull' ? 1500 : 1900);
+}
+$('#syncBtn').addEventListener('click', () => gitOp('push'));
+$('#scRefresh').addEventListener('click', e => { spinOnce(e.currentTarget); status('Source control refreshed', 'success'); });
+$('#scMore').addEventListener('click', e => {
+  e.stopPropagation();
+  closeMenus();
+  const r = e.currentTarget.getBoundingClientRect(), base = L.getBoundingClientRect();
+  const m = document.createElement('div'); m.className = 'menu'; m.id = 'scMenu';
+  m.style.left = (r.left - base.left - 160) + 'px'; m.style.top = (r.bottom - base.top + 4) + 'px';
+  m.innerHTML = '<div class="cap">orbit · main</div><button data-op="pull">Pull</button><button data-op="push">Push</button><button data-op="fetch">Fetch</button>';
+  L.appendChild(m);
+  m.addEventListener('click', ev => { const b = ev.target.closest('button'); if (!b) return; closeMenus(); gitOp(b.dataset.op); });
+});
+function closeMenus() { $$('.menu', L).forEach(m => m.remove()); const nc = $('.nc', L); if (nc) nc.remove(); }
+document.addEventListener('click', e => { if (!e.target.closest('.menu') && !e.target.closest('.nc') && !e.target.closest('#bell')) closeMenus(); });
+
+/* ---------------- editor ---------------- */
+function indentOf(lines, i) {
+  const ind = l => l.trim() === '' ? -1 : Math.floor((l.length - l.trimStart().length) / 4);
+  let v = ind(lines[i]);
+  if (v >= 0) return v;
+  let a = 0, b = 0;
+  for (let j = i - 1; j >= 0; j--) if (ind(lines[j]) >= 0) { a = ind(lines[j]); break; }
+  for (let j = i + 1; j < lines.length; j++) if (ind(lines[j]) >= 0) { b = ind(lines[j]); break; }
+  return Math.min(a, b);
+}
+function renderTabs() {
+  const tabs = $('#tabs');
+  tabs.innerHTML = S.tabs.map(n => {
+    const [g, c] = FICON[n];
+    const dirty = S.dirty.has(n);
+    return '<div class="tab' + (n === S.active ? ' act' : '') + (dirty ? ' dirty' : '') + '" data-tab="' + n + '" title="orbit/' + PATHS[n].slice(1).join('/') + '"><span class="fi" style="color:' + c + '">' + g + '</span><span class="tl">' + n + '</span><button class="tb x" data-close="' + n + '" title="Close (⌘W)" aria-label="Close ' + n + '"><span class="ic' + (dirty ? ' dirty' : '') + '">' + (dirty ? '●' : '&#xe00e;') + '</span></button>' + (n === 'main.rs' ? '<span class="co" style="right:-4px;top:2px">10</span>' : '') + '</div>';
+  }).join('') + '<button class="tb plus" title="New Text File (⌘N)" aria-label="New Text File"><span class="ic">&#xe00f;</span></button>';
+  $$('.tab.dirty', tabs).forEach(t => {
+    const ic = $('.x .ic', t);
+    t.addEventListener('mouseenter', () => { ic.innerHTML = '&#xe00e;'; ic.classList.remove('dirty'); });
+    t.addEventListener('mouseleave', () => { ic.textContent = '●'; ic.classList.add('dirty'); });
+  });
+}
+$('#tabs').addEventListener('click', e => {
+  const x = e.target.closest('[data-close]');
+  if (x) { const n = x.dataset.close; S.tabs = S.tabs.filter(t => t !== n); if (S.active === n) S.active = S.tabs[S.tabs.length - 1] || null; renderEditor(); renderTree(); return; }
+  const t = e.target.closest('.tab');
+  if (t) { S.active = t.dataset.tab; S.cur = 1; renderEditor(); renderTree(); return; }
+  if (e.target.closest('.plus')) status('New untitled file');
+});
+function renderEditor() {
+  renderTabs();
+  const body = $('#edBody');
+  $('#winTitle').textContent = (S.active || '') + (S.active ? ' — Lumen' : 'Lumen');
+  if (!S.active) { body.innerHTML = welcomeHTML(S.mode, true); bindWelcome(body); $('#stPosLab').textContent = ''; return; }
+  const lines = FILES[S.active];
+  const md = S.active.endsWith('.md');
+  S.cur = Math.min(S.cur, lines.length);
+  const ci = S.cur - 1;
+  const L0 = indentOf(lines, ci);
+  let lo = ci, hi = ci;
+  if (L0 > 0) {
+    while (lo > 0 && indentOf(lines, lo - 1) >= L0) lo--;
+    while (hi < lines.length - 1 && indentOf(lines, hi + 1) >= L0) hi++;
+  }
+  const crumbs = PATHS[S.active].map((p, i, a) => '<span' + (i === a.length - 1 ? ' class="last"' : '') + '>' + p + '</span>').join('<span class="ic">&#xe00c;</span>');
+  const caretCol = lines[ci].length - lines[ci].trimStart().length;
+  body.innerHTML = '<div class="crumbs">' + crumbs + '</div><div class="code" id="code">' + lines.map((l, i) => {
+    const ind = indentOf(lines, i);
+    let guides = '';
+    for (let k = 0; k < ind; k++) guides += '<i class="g' + (L0 > 0 && k === L0 - 1 && i >= lo && i <= hi ? ' on' : '') + '" style="left:' + (k * 4) + 'ch"></i>';
+    return '<div class="ln' + (i === ci ? ' cur' : '') + '" data-i="' + (i + 1) + '"><span class="no">' + (i + 1) + '</span><span class="tx">' + guides + highlight(l, md) + (i === ci ? '<span class="caret" style="left:' + caretCol + 'ch"></span>' : '') + '</span></div>';
+  }).join('') + '<span class="co" style="left:300px;top:' + (6 + ci * 18) + 'px">7</span></div>';
+  $('#stPosLab').textContent = 'Ln ' + S.cur + ', Col ' + (caretCol + 1);
+}
+$('#edBody').addEventListener('click', e => {
+  const ln = e.target.closest('.ln'); if (!ln) return;
+  S.cur = +ln.dataset.i; renderEditor();
+});
+
+/* ---------------- welcome ---------------- */
+function welcomeHTML(mode, inMock) {
+  if (mode === 'today') return '<div class="wel wel-t">' +
+    '<div class="logo">LUMEN</div><div class="sub">A focused local file editor</div>' +
+    '<button class="btn" data-w="open"><span class="ic">&#xe003;</span>Open File</button>' +
+    '<button class="btn" data-w="folder"><span class="ic">&#xe008;</span>Open Folder</button>' +
+    '<button class="btn" data-w="new"><span class="ic">&#xe001;</span>New Text File</button>' +
+    '<div class="hint">⌘O to open a file  •  ⌘N for a new file</div>' +
+    '<div class="rh">Recent folders</div><button class="btn rec">orbit  ·  code</button><button class="btn rec">lumen-editor  ·  CodeProjects</button></div>';
+  return '<div class="wel wel-p">' +
+    '<div class="wh"><img src="../../assets/icons/lumen.png" alt="" width="56" height="56"><div><h4>Lumen</h4><p>Edit code, run tasks, commit and ask a coding agent in one window.</p></div></div>' +
+    '<div class="wcols"><div class="wcol"><h6>Start</h6>' +
+      '<button class="wl" data-w="new"><span class="ic">&#xe001;</span>New Text File<span class="k">⌘N</span></button>' +
+      '<button class="wl" data-w="open"><span class="ic">&#xe003;</span>Open File…<span class="k">⌘O</span></button>' +
+      '<button class="wl" data-w="folder"><span class="ic">&#xe008;</span>Open Folder…</button>' +
+      '<button class="wl" data-w="clone"><span class="ic">&#xe01e;</span>Clone Repository…</button></div>' +
+    '<div class="wcol"><h6>Recent</h6>' +
+      '<button class="wl file"><span class="ic" style="color:#d6a84e">&#xe007;</span>orbit<span class="p">~/code</span></button>' +
+      '<button class="wl file"><span class="ic" style="color:#d6a84e">&#xe007;</span>lumen-editor<span class="p">~/CodeProjects</span></button>' +
+      '<button class="wl file"><span class="ic" style="color:#9aa0a8">&#xe000;</span>main.rs<span class="p">orbit/src</span></button></div></div>' +
+    '<div><h6>Get to know Lumen</h6><div class="wtiles">' +
+      '<button class="wt"><span class="ic">&#xe027;</span><b>Command Palette</b><span class="k">⇧⌘P</span><span class="d">Every command, searchable</span></button>' +
+      '<button class="wt"><span class="ic">&#xe017;</span><b>Coding Agents</b><span class="k">⇧⌘A</span><span class="d">Ask Codex or Claude Code about a folder</span></button>' +
+      '<button class="wt"><span class="ic">&#xe020;</span><b>Tasks</b><span class="k"></span><span class="d">Pick a task in the title bar and press Run</span></button>' +
+      '<button class="wt"><span class="ic">&#xe01e;</span><b>Source Control</b><span class="k"></span><span class="d">Stage, commit, push and browse history</span></button>' +
+    '</div></div></div>';
+}
+function bindWelcome(root) {
+  $$('[data-w]', root).forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.w === 'new') { S.tabs = ['main.rs']; S.active = 'main.rs'; renderEditor(); renderTree(); }
+    else status(b.dataset.w === 'clone' ? 'Clone Repository opens a dialog' : 'A native file dialog opens here');
+  }));
+}
+
+/* ---------------- bottom panel ---------------- */
+function renderBottom() {
+  const tabs = [['terminal','TERMINAL'],['output','OUTPUT'],['problems','PROBLEMS']];
+  if (S.taskTab) tabs.push(['task','Build app']);
+  $('#btabs').innerHTML = tabs.map(([id, lab]) => '<button class="btab' + (S.btab === id ? ' act' : '') + '" data-bt="' + id + '">' + (id === 'task' ? (S.running ? '<span class="spin only-p" style="width:8px;height:8px;border-width:1.3px"></span>' : '<span class="ic" style="color:#23d18b;font-size:10px">&#xe00d;</span>') : '') + lab + '</button>').join('') +
+    '<div class="acts"><button class="tb" title="Clear" aria-label="Clear"><span class="ic">&#xe01a;</span></button><button class="tb" id="bClose" title="Close Panel" aria-label="Close Panel"><span class="ic">&#xe00e;</span></button></div>';
+  const term = $('#term');
+  if (S.btab === 'terminal') term.innerHTML = '<span class="dim">Restored session: Thu Nov 19 09:28:13 PST 2026</span>\nyou@machine orbit % ';
+  else if (S.btab === 'output') term.innerHTML = '<span class="dim">[09:28:13] editor  Lumen 0.6.3 started\n[09:28:14] git     Read status for orbit (2 changes)</span>';
+  else if (S.btab === 'problems') term.innerHTML = '<span class="dim">No problems have been detected in the open files.</span>';
+  else term.innerHTML = S.taskOut.join('\n');
+}
+$('#btabs').addEventListener('click', e => {
+  if (e.target.closest('#bClose')) { S.bottom = false; layout(); return; }
+  const b = e.target.closest('[data-bt]'); if (b) { S.btab = b.dataset.bt; renderBottom(); }
+});
+
+/* ---------------- tasks ---------------- */
+const BUILD = ['<span class="dim">&gt; cargo build</span>','   Compiling serde v1.0.215','   Compiling orbit v0.1.0 (~/code/orbit)','<span class="ok">    Finished</span> `dev` profile [unoptimized + debuginfo] target(s) in 3.08s','<span class="dim">Task finished · exit code 0</span>'];
+$('#runBtn').addEventListener('click', () => {
+  if (S.running) return;
+  S.running = true; S.taskTab = true; S.btab = 'task'; S.bottom = true; S.taskOut = [BUILD[0]];
+  const run = $('#runBtn'); const stop = $('#stopBtn');
+  stop.disabled = false; stop.title = 'Stop the selected task';
+  if (P()) { run.classList.add('is-busy'); run.disabled = true; status('Running Build app', 'info', {progress:true}); }
+  layout(); renderBottom();
+  let i = 1;
+  S.runTimer = setInterval(() => {
+    S.taskOut.push(BUILD[i]); i++;
+    if (i >= BUILD.length) {
+      clearInterval(S.runTimer); S.running = false;
+      stop.disabled = true; stop.title = 'The selected task is not running';
+      if (P()) { run.disabled = false; doneTb(run); status('Build app finished in 3.1 s', 'success'); }
+      else { status("Task 'Build app' finished"); }
+    }
+    if (S.btab === 'task') renderBottom();
+  }, 750);
+});
+$('#stopBtn').addEventListener('click', () => {
+  if (!S.running) return;
+  clearInterval(S.runTimer); S.running = false;
+  S.taskOut.push('<span class="er">Task stopped</span>');
+  const run = $('#runBtn'); run.classList.remove('is-busy'); run.disabled = false;
+  $('#stopBtn').disabled = true;
+  P() ? status('Build app stopped', 'warn') : status("Stopped task 'Build app'");
+  renderBottom();
+});
+function doneTb(btn) {
+  btn.classList.remove('is-busy'); btn.classList.add('is-done');
+  const ic = btn.querySelector('.ic'); const old = ic.innerHTML; ic.innerHTML = '&#xe00d;';
+  setTimeout(() => { btn.classList.remove('is-done'); ic.innerHTML = old; }, 1200);
+}
+$('#taskSel').addEventListener('click', () => status('Task list: Build app, Test'));
+
+/* ---------------- status + toasts ---------------- */
+let stTimer = null, stFade = null;
+function status(text, kind = 'info', opt = {}) {
+  const el = $('#stMsg');
+  clearTimeout(stTimer); clearTimeout(stFade); el.classList.remove('fade');
+  if (!P()) { el.textContent = text; el.title = text; return; }
+  if (opt.clear || !text) { el.innerHTML = ''; return; }
+  const color = {success:'#ffffff', warn:'#ffe08a', error:'#ffd0c8', info:'#ffffff'}[kind];
+  el.innerHTML = (opt.progress ? '<span class="spin"></span>' : '<span class="ic" style="color:' + color + '">' + ICON[kind] + '</span>') + '<span>' + esc(text) + (opt.progress ? '…' : '') + '</span>';
+  el.title = text;
+  if (!opt.progress) stTimer = setTimeout(() => { el.classList.add('fade'); stFade = setTimeout(() => { el.innerHTML = ''; el.classList.remove('fade'); }, 380); }, 4500);
+}
+function toast(n) {
+  if (!P()) return;
+  S.notices.unshift(n);
+  $('#bell').classList.add('has');
+  const t = document.createElement('div');
+  t.className = 'toast k-' + n.kind; t.setAttribute('role', n.kind === 'error' ? 'alert' : 'status');
+  t.innerHTML = '<div class="top"><span class="ic">' + ICON[n.kind] + '</span><div class="msg">' + esc(n.text) + (n.detail ? '<small>' + esc(n.detail) + '</small>' : '') + '</div><button class="tb tx" title="Dismiss" aria-label="Dismiss"><span class="ic">&#xe00e;</span></button></div>' +
+    (n.actions && n.actions.length ? '<div class="acts">' + n.actions.map((a, i) => '<button class="btn' + (a.primary ? ' primary' : '') + '" data-a="' + i + '">' + esc(a.label) + '</button>').join('') + '</div>' : '');
+  $('#toasts').appendChild(t);
+  const close = () => t.remove();
+  $('.tx', t).addEventListener('click', close);
+  $$('[data-a]', t).forEach(b => b.addEventListener('click', () => { const a = n.actions[+b.dataset.a]; close(); if (a.run) a.run(); else { S.bottom = true; S.btab = 'output'; layout(); renderBottom(); } }));
+  if (!n.sticky) setTimeout(close, 6000);
+}
+$('#bell').addEventListener('click', e => {
+  e.stopPropagation();
+  const had = $('.nc', L); closeMenus(); if (had) return;
+  const nc = document.createElement('div'); nc.className = 'nc';
+  nc.innerHTML = '<h5>NOTIFICATIONS <span style="color:#9d9d9d;font-weight:400">' + S.notices.length + '</span></h5><ul>' + (S.notices.length ? S.notices.map(n => '<li><span class="ic" style="color:' + (n.kind === 'error' ? '#f48771' : '#75beff') + '">' + ICON[n.kind] + '</span><span>' + esc(n.text) + '<br><span style="color:#9d9d9d">' + esc(n.detail || '') + '</span></span></li>').join('') : '<li style="color:#9d9d9d">No new notifications</li>') + '</ul>';
+  L.appendChild(nc);
+  $('#bell').classList.remove('has');
+});
+$('#stProblems').addEventListener('click', () => { S.bottom = !(S.bottom && S.btab === 'problems'); S.btab = 'problems'; layout(); renderBottom(); });
+$('#stBranch').addEventListener('click', () => { S.view = 'scm'; S.sidebar = true; layout(); });
+$('#stPos').addEventListener('click', () => status('Go to Line opens here'));
+
+/* ---------------- layout / chrome ---------------- */
+function layout() {
+  $('#side').hidden = !S.sidebar;
+  $('#agent').hidden = !S.agents;
+  $('#bottom').hidden = !S.bottom;
+  ['explorer','scm','search','debug'].forEach(v => $('#v-' + v).hidden = S.view !== v);
+  $$('.av[data-view]').forEach(b => b.classList.toggle('sel', S.sidebar && S.view === b.dataset.view));
+  $$('.av[data-panel]').forEach(b => {
+    const p = b.dataset.panel;
+    b.classList.toggle('sel', p === 'agents' ? S.agents : (S.bottom && S.btab === p));
+  });
+  const tog = [['#togL', S.sidebar, 'Left Sidebar'], ['#togR', S.agents, 'Right Panel'], ['#togB', S.bottom, 'Bottom Panel']];
+  tog.forEach(([id, on, name]) => {
+    const b = $(id); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+    b.title = P() ? (on ? 'Hide ' : 'Show ') + name : 'Toggle ' + name + (name === 'Right Panel' ? ' (Coding Agents)' : '');
+  });
+  if (S.bottom) renderBottom();
+}
+$$('.av[data-view]').forEach(b => b.addEventListener('click', () => {
+  const v = b.dataset.view;
+  if (S.sidebar && S.view === v) S.sidebar = false; else { S.view = v; S.sidebar = true; }
+  layout();
+}));
+$$('.av[data-panel]').forEach(b => b.addEventListener('click', () => {
+  const p = b.dataset.panel;
+  if (p === 'agents') S.agents = !S.agents;
+  else if (p === 'settings') { status('Settings opens as an editor tab (not part of this mock)'); return; }
+  else { S.bottom = !(S.bottom && S.btab === p); S.btab = p; }
+  layout();
+}));
+$('#togL').addEventListener('click', () => { S.sidebar = !S.sidebar; layout(); });
+$('#togR').addEventListener('click', () => { S.agents = !S.agents; layout(); });
+$('#togB').addEventListener('click', () => { S.bottom = !S.bottom; layout(); });
+$('#agClose').addEventListener('click', () => { S.agents = false; layout(); });
+$('#agStart').addEventListener('click', () => { $('#agBody').innerHTML = '<div class="composer" style="margin-top:auto">Message Codex…<div style="display:flex;justify-content:flex-end"><button class="btn primary" disabled><span class="ic">&#xe018;</span>Send</button></div></div>'; $('#agBody').style.justifyContent = 'flex-end'; $('#agBody').style.padding = '0'; });
+
+function spinOnce(btn) {
+  if (!P()) return;
+  const ic = btn.querySelector('.ic');
+  ic.animate([{transform:'rotate(0deg)'}, {transform:'rotate(360deg)'}], {duration:520, easing:'ease-out'});
+}
+$('#exRefresh').addEventListener('click', e => { spinOnce(e.currentTarget); status('Explorer refreshed', 'success'); });
+$('#exCollapse').addEventListener('click', () => { S.open.src = false; S.open.docs = false; S.open.ui = false; renderTree(); });
+$('#exNewFile').addEventListener('click', () => { S.open.src = true; S.inline = 'file'; renderTree(); });
+$('#exNewFolder').addEventListener('click', () => { S.open.src = true; S.inline = 'folder'; renderTree(); });
+
+/* ---------------- mode ---------------- */
+function setMode(m) {
+  S.mode = m;
+  S.epoch = (S.epoch || 0) + 1;
+  if (S.running) { clearInterval(S.runTimer); S.running = false; $('#stopBtn').disabled = true; }
+  L.dataset.mode = m;
+  $('#mToday').setAttribute('aria-pressed', m === 'today');
+  $('#mProp').setAttribute('aria-pressed', m === 'proposed');
+  $('#toasts').innerHTML = ''; closeMenus();
+  $$('.is-busy,.is-done', L).forEach(b => b.classList.remove('is-busy', 'is-done'));
+  $('#runBtn').disabled = false;
+  S.scBusy = false;
+  const st = $('#stMsg'); clearTimeout(stTimer);
+  if (m === 'today') { st.textContent = 'Opened 2 items from the command line'; }
+  else { st.innerHTML = ''; status('Opened orbit', 'success'); }
+  layout(); renderTree(); renderScm(); renderEditor();
+}
+$('#mToday').addEventListener('click', () => setMode('today'));
+$('#mProp').addEventListener('click', () => setMode('proposed'));
+$('#coChk').addEventListener('change', e => L.classList.toggle('callouts', e.target.checked));
+
+/* ---------------- state matrix ---------------- */
+const MX = [
+  ['Idle', '', 'Text buttons get a visible fill, so they read as buttons before you hover.'],
+  ['Hover', 'f-hover', 'Today the icon and the toggle don\'t change at all, and the button\'s hover fill is about 1.06:1 against the panel.'],
+  ['Pressed', 'f-press', 'Today icons and toggles don\'t change while pressed. Proposed: a darker fill and a half-pixel nudge while the pointer is down.'],
+  ['On', 'f-on', 'Today on vs off is #cccccc vs #a8a8a8. Proposed: an accent chip that reads as pushed in. Each cell shows off, then on.'],
+  ['Busy', 'f-busy', 'Today the control just goes disabled. Proposed: a spinner and a verb ("Pushing…"), so the click clearly registered.'],
+  ['Done', 'f-done', 'Today nothing changes on the control itself. Proposed: a check in success green for 1.2 s, then back to idle.'],
+  ['Disabled', 'f-dis', 'Today red Stop and blue Apply keep their color at half opacity. Proposed: neutral gray only.'],
+  ['Keyboard focus', 'f-focus', 'Today icons show nothing and buttons reuse the pressed look. Proposed: a 1px accent ring, shown only for keyboard focus.']
+];
+function spec(mode, st) {
+  const busy = st === 'f-busy', done = st === 'f-done', on = st === 'f-on';
+  let icon, tog, btn;
+  if (mode === 'today') {
+    icon = '<span class="tb' + (busy || st === 'f-dis' ? ' f-dis' : '') + '"><span class="ic">' + (st === 'f-dis' ? '&#xe019;' : '&#xe010;') + '</span></span>';
+    if (st === 'f-dis') icon = '<span class="tb stop f-dis"><span class="ic">&#xe019;</span></span>';
+    tog = on ? '<span class="tb tog"><span class="ic">&#xe021;</span></span><span class="tb tog on"><span class="ic">&#xe021;</span></span>' : '<span class="tb tog"><span class="ic">&#xe021;</span></span>';
+    const cls = st === 'f-dis' ? ' primary f-dis' : busy ? ' f-busy' : (st && !done ? ' ' + st : '');
+    btn = '<span class="btn' + cls + '">' + (st === 'f-dis' ? 'Apply' : on ? 'User' : 'Push') + '</span>';
+  } else {
+    if (busy) icon = '<span class="tb is-busy"><span class="ic">&#xe010;</span><span class="spin"></span></span>';
+    else if (done) icon = '<span class="tb is-done"><span class="ic">&#xe00d;</span></span>';
+    else if (st === 'f-dis') icon = '<span class="tb stop f-dis"><span class="ic">&#xe019;</span></span>';
+    else icon = '<span class="tb ' + st + '"><span class="ic">&#xe010;</span></span>';
+    tog = on ? '<span class="tb tog"><span class="ic">&#xe021;</span></span><span class="tb tog on"><span class="ic">&#xe021;</span></span>'
+      : '<span class="tb tog ' + (['f-hover','f-press','f-focus'].includes(st) ? st : (st === 'f-dis' ? 'f-dis' : '')) + '"><span class="ic">&#xe021;</span></span>';
+    if (busy) btn = '<span class="btn is-busy"><span class="spin"></span>Pushing…</span>';
+    else if (done) btn = '<span class="btn is-done"><span class="ic">&#xe00d;</span>Pushed</span>';
+    else if (st === 'f-dis') btn = '<span class="btn primary f-dis">Apply</span>';
+    else btn = '<span class="btn ' + st + '">' + (on ? 'User' : 'Push') + '</span>';
+  }
+  return '<div class="specs lk" data-mode="' + mode + '"><span class="chipbg on-panel">' + icon + '</span><span class="chipbg on-title">' + tog + '</span><span class="chipbg on-panel">' + btn + '</span></div>';
+}
+$('#mxBody').innerHTML = MX.map(([lab, st, note]) => '<tr><td class="state">' + lab + '</td><td>' + spec('today', st) + '</td><td>' + spec('proposed', st) + '</td><td class="note">' + note + '</td></tr>').join('');
+
+/* ---------------- welcome comparison ---------------- */
+$('#wToday').innerHTML = welcomeHTML('today');
+$('#wProp').innerHTML = welcomeHTML('proposed');
+
+/* ---------------- capture zoom ---------------- */
+$$('.shot img').forEach(img => img.addEventListener('click', () => {
+  const z = document.createElement('div'); z.className = 'zoom'; z.setAttribute('role', 'dialog'); z.setAttribute('aria-label', img.alt);
+  z.innerHTML = '<img src="' + img.getAttribute('src') + '" alt="' + esc(img.alt) + '">';
+  const close = () => { z.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  z.addEventListener('click', close); document.addEventListener('keydown', onKey);
+  document.body.appendChild(z);
+}));
+
+/* ---------------- boot ---------------- */
+setMode('today');
+})();
+</script>

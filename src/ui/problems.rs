@@ -87,11 +87,13 @@ impl Workbench<'_> {
                             // narrow widths.
                             ui.horizontal_wrapped(|ui| {
                                 ui.spacing_mut().item_spacing.x = 8.0;
-                                ui.checkbox(
+                                super::widgets::checkbox(
+                                    ui,
                                     &mut self.view.problems.show_errors,
                                     format!("{error_count} Errors"),
                                 );
-                                ui.checkbox(
+                                super::widgets::checkbox(
+                                    ui,
                                     &mut self.view.problems.show_warnings,
                                     format!("{warning_count} Warnings"),
                                 );

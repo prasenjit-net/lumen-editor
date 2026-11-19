@@ -110,6 +110,16 @@ impl LumenApp {
 
     /// Record status-bar messages and terminal errors as they change, so every
     /// user-visible outcome (including failures) is also in the log.
+    /// Turns a changed status message into a notice and keeps the clock running
+    /// only while a notice is still changing on screen.
+    pub(crate) fn observe_notices(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|input| input.time);
+        self.view.notices.observe_status(&self.view.status, now);
+        if let Some(wait) = self.view.notices.next_change(now) {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait.max(0.016)));
+        }
+    }
+
     pub(crate) fn log_status_changes(&mut self) {
         if self.view.status != self.logged_status {
             self.logged_status.clone_from(&self.view.status);

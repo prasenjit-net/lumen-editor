@@ -257,7 +257,7 @@ fn form(
             if response.changed() {
                 tab.draft.group = Some(group).filter(|text| !text.is_empty());
             }
-            ui.checkbox(&mut tab.draft.is_default, "Default for group");
+            super::widgets::checkbox(ui, &mut tab.draft.is_default, "Default for group");
         },
     );
     row(

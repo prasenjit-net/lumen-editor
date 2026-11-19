@@ -201,6 +201,41 @@ impl Workbench<'_> {
             (None, None) => String::new(),
         };
         let lsp = self.view.language_server_status.as_ref().map(lsp_label);
+        let branch_label = self.view.source_control.snapshot.as_ref().map(|snapshot| {
+            let (ahead, behind) = snapshot
+                .upstream
+                .as_ref()
+                .and_then(|upstream| upstream.ahead_behind)
+                .unwrap_or((0, 0));
+            let mut label = format!("{} {}", icon::GIT_BRANCH, snapshot.branch);
+            if ahead > 0 {
+                label.push_str(&format!(" ↑{ahead}"));
+            }
+            if behind > 0 {
+                label.push_str(&format!(" ↓{behind}"));
+            }
+            label
+        });
+        // A running Git operation takes the message slot; otherwise the newest
+        // notice, which fades out on its own.
+        let now = ctx.input(|input| input.time);
+        let busy_op = self
+            .view
+            .source_control
+            .loading
+            .then_some(self.view.source_control.active_op)
+            .flatten();
+        let (message, message_opacity, message_glyph) = match busy_op {
+            Some(op) => (format!("{}…", op.progress()), 1.0, None),
+            None => match self.view.notices.status_line(now) {
+                Some((notice, opacity)) => (
+                    notice.text.clone(),
+                    opacity,
+                    super::notices::glyph(notice.severity),
+                ),
+                None => (String::new(), 1.0, None),
+            },
+        };
         TopBottomPanel::bottom("status")
             .exact_height(22.0)
             .frame(
@@ -226,32 +261,41 @@ impl Workbench<'_> {
                         // Reserve the right-hand facts first so a long transient
                         // message can never push them (or the counts) off screen.
                         // Under pressure the language/EOL facts go first, then the
-                        // language-server state; the cursor position and the problem
-                        // counts always stay.
-                        let right_width = |ui: &egui::Ui, meta: bool, server: bool| {
-                            let mut right = gap;
-                            if meta {
-                                right += width(ui, &meta_label) + gap;
-                            }
-                            if let Some(label) = &position_label {
-                                right += width(ui, label) + gap;
-                            }
-                            if server && let Some((label, ..)) = &lsp {
-                                right += width(ui, label) + gap;
-                            }
-                            right
-                        };
+                        // language-server state, then the branch; the cursor position
+                        // and the problem counts always stay.
+                        let right_width =
+                            |ui: &egui::Ui, meta: bool, server: bool, branch: bool| {
+                                let mut right = gap;
+                                if branch && let Some(label) = &branch_label {
+                                    right += width(ui, label) + gap;
+                                }
+                                if meta {
+                                    right += width(ui, &meta_label) + gap;
+                                }
+                                if let Some(label) = &position_label {
+                                    right += width(ui, label) + gap;
+                                }
+                                if server && let Some((label, ..)) = &lsp {
+                                    right += width(ui, label) + gap;
+                                }
+                                right
+                            };
                         let total = ui.available_width();
                         let budget = total * 0.7;
                         let mut show_meta = true;
                         let mut show_server = true;
-                        if right_width(ui, show_meta, show_server) > budget {
+                        let mut show_branch = true;
+                        if right_width(ui, show_meta, show_server, show_branch) > budget {
                             show_meta = false;
                         }
-                        if right_width(ui, show_meta, show_server) > budget {
+                        if right_width(ui, show_meta, show_server, show_branch) > budget {
                             show_server = false;
                         }
-                        let right = right_width(ui, show_meta, show_server).min(budget);
+                        if right_width(ui, show_meta, show_server, show_branch) > budget {
+                            show_branch = false;
+                        }
+                        let right =
+                            right_width(ui, show_meta, show_server, show_branch).min(budget);
                         let left = (total - right - gap).max(0.0);
                         ui.allocate_ui_with_layout(
                             egui::vec2(left, 22.0),
@@ -259,18 +303,28 @@ impl Workbench<'_> {
                             |ui| {
                                 ui.scope(|ui| {
                                     ui.set_max_width((left - problems_width).max(0.0));
+                                    let ink = Color32::WHITE.gamma_multiply(message_opacity);
+                                    if busy_op.is_some() {
+                                        ui.add(egui::Spinner::new().size(10.0).color(ink));
+                                    } else if let Some(glyph) = message_glyph {
+                                        ui.label(
+                                            RichText::new(glyph)
+                                                .size(crate::ui::theme::META_SIZE)
+                                                .color(ink),
+                                        );
+                                    }
                                     ui.add(
                                         egui::Label::new(
-                                            RichText::new(&self.view.status)
+                                            RichText::new(&message)
                                                 .size(crate::ui::theme::META_SIZE)
-                                                .color(Color32::WHITE),
+                                                .color(ink),
                                         )
                                         .truncate(),
                                     )
-                                    .on_hover_text(&self.view.status);
+                                    .on_hover_text(&message);
                                 });
-                                if ui
-                                    .add(
+                                if super::widgets::status_item(ui, |ui| {
+                                    ui.add(
                                         egui::Button::new(
                                             RichText::new(&problems_label)
                                                 .size(crate::ui::theme::META_SIZE)
@@ -278,8 +332,9 @@ impl Workbench<'_> {
                                         )
                                         .frame(false),
                                     )
-                                    .on_hover_text("Show Problems")
-                                    .clicked()
+                                })
+                                .on_hover_text("Show Problems")
+                                .clicked()
                                 {
                                     self.command(Command::ToggleProblems);
                                 }
@@ -303,8 +358,8 @@ impl Workbench<'_> {
                                 );
                             }
                             if let Some(label) = &position_label
-                                && ui
-                                    .add(
+                                && super::widgets::status_item(ui, |ui| {
+                                    ui.add(
                                         egui::Label::new(
                                             RichText::new(label)
                                                 .size(crate::ui::theme::META_SIZE)
@@ -312,14 +367,15 @@ impl Workbench<'_> {
                                         )
                                         .sense(egui::Sense::click()),
                                     )
-                                    .on_hover_text("Go to Line…")
-                                    .clicked()
+                                })
+                                .on_hover_text("Go to Line…")
+                                .clicked()
                             {
                                 self.command(Command::GoToLine);
                             }
                             if show_server && let Some((label, tooltip, is_error)) = &lsp {
-                                let response = ui
-                                    .add(
+                                let response = super::widgets::status_item(ui, |ui| {
+                                    ui.add(
                                         egui::Label::new(
                                             RichText::new(label)
                                                 .size(crate::ui::theme::META_SIZE)
@@ -327,9 +383,35 @@ impl Workbench<'_> {
                                         )
                                         .sense(egui::Sense::click()),
                                     )
-                                    .on_hover_text(tooltip);
+                                })
+                                .on_hover_text(tooltip);
                                 if response.clicked() && *is_error {
                                     self.view.language_server_details_open = true;
+                                }
+                            }
+                            if show_branch
+                                && let Some(label) = &branch_label
+                                && super::widgets::status_item(ui, |ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(label)
+                                                .size(crate::ui::theme::META_SIZE)
+                                                .color(Color32::WHITE),
+                                        )
+                                        .sense(egui::Sense::click()),
+                                    )
+                                })
+                                .on_hover_text("Current branch · open Source Control")
+                                .clicked()
+                            {
+                                // Activating the visible activity would hide it again.
+                                use crate::app::view_state::Activity;
+                                if !(self.view.sidebar_visible
+                                    && self.view.activity == Activity::SourceControl)
+                                {
+                                    self.command(Command::ActivateActivity(
+                                        Activity::SourceControl,
+                                    ));
                                 }
                             }
                         });
@@ -338,7 +420,17 @@ impl Workbench<'_> {
             });
     }
 
-    fn status_diagnostic_counts(&self) -> (usize, usize) {
+    /// Changed files across every loaded repository.
+    pub(super) fn source_change_count(&self) -> usize {
+        let source = &self.view.source_control;
+        if source.repositories.is_empty() {
+            source.snapshot.as_ref().map_or(0, |s| s.changes.len())
+        } else {
+            source.repositories.iter().map(|s| s.changes.len()).sum()
+        }
+    }
+
+    pub(super) fn status_diagnostic_counts(&self) -> (usize, usize) {
         use lumen_language_services::diagnostics::DiagnosticSeverity::{Error, Warning};
         let count = |severity| {
             self.view
@@ -606,5 +698,89 @@ mod tests {
             right <= width - super::LAUNCHER_WIDTH.min(width / 2.0),
             "{right}"
         );
+    }
+    #[test]
+    fn a_running_git_operation_names_itself_in_the_status_bar() {
+        use crate::app::view_state::GitOp;
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let mut app = crate::app::LumenApp::default();
+        app.view.status = "Ready".into();
+        let run = |app: &mut crate::app::LumenApp| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 400.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| app.render_component(ctx, |workbench| workbench.status_bar(ctx)),
+            )
+        };
+        let text = |output: &egui::FullOutput| {
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("|")
+        };
+        assert!(!text(&run(&mut app)).contains("Pushing"));
+        app.view.source_control.loading = true;
+        app.view.source_control.active_op = Some(GitOp::Push);
+        assert!(text(&run(&mut app)).contains("Pushing…"));
+        app.view.source_control.loading = false;
+        assert!(
+            !text(&run(&mut app)).contains("Pushing"),
+            "cleared when the job ends"
+        );
+    }
+    #[test]
+    fn the_branch_item_shows_ahead_and_behind_and_is_dropped_before_the_position() {
+        use crate::services::source_control::{GitSnapshot, GitUpstream};
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let mut app = crate::app::LumenApp::default();
+        app.editor.new_file();
+        // The cursor position comes from the shared editing buffer.
+        app.editor.files[0].enable_shared_editing();
+        app.view.source_control.snapshot = Some(GitSnapshot {
+            branch: "feature/a-rather-long-branch-name".into(),
+            upstream: Some(GitUpstream {
+                name: "origin/feature".into(),
+                ahead_behind: Some((2, 1)),
+            }),
+            ..Default::default()
+        });
+        let shown = |width: f32, app: &mut crate::app::LumenApp| {
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 300.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| app.render_component(ctx, |workbench| workbench.status_bar(ctx)),
+            );
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("|")
+        };
+        let wide = shown(1200.0, &mut app);
+        assert!(wide.contains("a-rather-long-branch-name ↑2 ↓1"), "{wide}");
+        let narrow = shown(260.0, &mut app);
+        assert!(!narrow.contains("branch-name"), "{narrow}");
+        assert!(narrow.contains("Ln "), "position stays: {narrow}");
     }
 }

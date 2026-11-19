@@ -40,6 +40,21 @@ pub(crate) struct Palette {
     /// is darker than an ordinary panel.
     pub(crate) title_muted: Color32,
     pub(crate) hover: Color32,
+    /// Fills for icon-only controls: pointer over, pointer down, and a toggle
+    /// that is on (with its inset edge). Translucent so they work on any pane.
+    pub(crate) control_hover: Color32,
+    pub(crate) control_pressed: Color32,
+    pub(crate) control_on: Color32,
+    pub(crate) control_on_edge: Color32,
+    /// Ordinary text buttons (idle, hover, pressed); the accent fill stays for
+    /// the one primary action in a view.
+    pub(crate) button_secondary: Color32,
+    pub(crate) button_secondary_hover: Color32,
+    pub(crate) button_secondary_pressed: Color32,
+    /// A disabled control is neutral; it never keeps a faded semantic color.
+    pub(crate) disabled_bg: Color32,
+    pub(crate) disabled_fg: Color32,
+    pub(crate) checkbox_border: Color32,
     pub(crate) input: Color32,
     pub(crate) diff_removed_bg: Color32,
     pub(crate) diff_added_bg: Color32,
@@ -92,6 +107,16 @@ impl Theme {
             scrim: Color32::from_black_alpha(100),
             title_muted: Color32::from_gray(168),
             hover: Color32::from_rgb(43, 43, 43),
+            control_hover: Color32::from_white_alpha(23),
+            control_pressed: Color32::from_white_alpha(43),
+            control_on: Color32::from_rgba_unmultiplied(0, 122, 204, 87),
+            control_on_edge: Color32::from_rgba_unmultiplied(60, 160, 232, 230),
+            button_secondary: Color32::from_rgb(58, 61, 65),
+            button_secondary_hover: Color32::from_rgb(70, 73, 78),
+            button_secondary_pressed: Color32::from_rgb(44, 47, 51),
+            disabled_bg: Color32::from_rgb(45, 45, 45),
+            disabled_fg: Color32::from_rgb(110, 110, 110),
+            checkbox_border: Color32::from_rgb(107, 107, 107),
             input: Color32::from_rgb(49, 49, 49),
             diff_removed_bg: Color32::from_rgb(64, 37, 37),
             diff_added_bg: Color32::from_rgb(34, 67, 44),
@@ -122,6 +147,16 @@ impl Theme {
                 border: Color32::from_gray(190),
                 float_border: Color32::from_gray(160),
                 hover: Color32::from_gray(224),
+                control_hover: Color32::from_black_alpha(15),
+                control_pressed: Color32::from_black_alpha(31),
+                control_on: Color32::from_rgba_unmultiplied(0, 95, 160, 41),
+                control_on_edge: Color32::from_rgb(0, 95, 160),
+                button_secondary: Color32::from_rgb(225, 228, 232),
+                button_secondary_hover: Color32::from_rgb(212, 216, 221),
+                button_secondary_pressed: Color32::from_rgb(200, 204, 209),
+                disabled_bg: Color32::from_gray(236),
+                disabled_fg: Color32::from_gray(130),
+                checkbox_border: Color32::from_gray(120),
                 active: Color32::from_rgb(190, 220, 245),
                 accent: Color32::from_rgb(0, 95, 160),
                 title_muted: Color32::from_gray(96),
@@ -129,7 +164,7 @@ impl Theme {
                 scrim: Color32::from_black_alpha(56),
                 error: Color32::from_rgb(165, 25, 25),
                 warning: Color32::from_rgb(125, 88, 0),
-                success: Color32::from_rgb(0, 112, 64),
+                success: Color32::from_rgb(0, 98, 54),
                 info: Color32::from_rgb(0, 95, 160),
                 codex: Color32::from_rgb(0, 120, 100),
                 claude: Color32::from_rgb(168, 84, 40),
@@ -154,7 +189,17 @@ impl Theme {
                 border: Color32::WHITE,
                 float_border: Color32::WHITE,
                 hover: Color32::from_gray(55),
-                active: Color32::from_rgb(0, 65, 100),
+                control_hover: Color32::from_white_alpha(40),
+                control_pressed: Color32::from_white_alpha(64),
+                control_on: Color32::TRANSPARENT,
+                control_on_edge: Color32::YELLOW,
+                button_secondary: Color32::BLACK,
+                button_secondary_hover: Color32::from_gray(55),
+                button_secondary_pressed: Color32::from_gray(80),
+                disabled_bg: Color32::BLACK,
+                disabled_fg: Color32::from_gray(150),
+                checkbox_border: Color32::WHITE,
+                active: Color32::from_rgb(0, 45, 80),
                 accent: Color32::YELLOW,
                 on_accent: Color32::BLACK,
                 danger: Color32::from_rgb(255, 120, 120),
@@ -237,6 +282,19 @@ pub(crate) fn syntax_palette(scheme: &str) -> lumen_editor_surface::SyntaxPalett
             tag: Color32::from_rgb(86, 156, 214),
         },
     }
+}
+
+/// Tell every animated control whether the user asked for no motion.
+pub(crate) fn set_reduce_motion(ctx: &egui::Context, reduce: bool) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("lumen_reduce_motion"), reduce));
+}
+
+/// How long a fade should take: `seconds`, or zero when motion is reduced.
+pub(crate) fn motion_time(ctx: &egui::Context, seconds: f32) -> f32 {
+    let reduce = ctx
+        .data(|data| data.get_temp::<bool>(egui::Id::new("lumen_reduce_motion")))
+        .unwrap_or(false);
+    if reduce { 0.0 } else { seconds }
 }
 
 pub(crate) fn configure_ui(ctx: &egui::Context) {
@@ -335,12 +393,18 @@ pub(crate) fn visuals(theme: Theme) -> egui::Visuals {
     }
     visuals.widgets.noninteractive.fg_stroke.color = colors.muted;
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, colors.border);
+    visuals.widgets.inactive.weak_bg_fill = colors.button_secondary;
     visuals.widgets.hovered.bg_fill = colors.hover;
-    visuals.widgets.hovered.weak_bg_fill = colors.hover;
+    visuals.widgets.hovered.weak_bg_fill = colors.button_secondary_hover;
     visuals.widgets.hovered.bg_stroke = Stroke::NONE;
     visuals.widgets.active.bg_fill = colors.active;
-    visuals.widgets.active.weak_bg_fill = colors.active;
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, colors.accent);
+    visuals.widgets.active.weak_bg_fill = colors.button_secondary_pressed;
+    visuals.widgets.active.bg_stroke = Stroke::NONE;
+    if theme == Theme::HighContrast {
+        // Fills are invisible on black; the border carries every state.
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, colors.border);
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, colors.text);
+    }
     visuals.widgets.open.bg_fill = colors.active;
     visuals.widgets.open.weak_bg_fill = colors.active;
     visuals.widgets.open.bg_stroke.color = colors.accent;
@@ -489,6 +553,20 @@ mod tests {
                     ratio >= 3.0,
                     "{theme:?}: {name} glyph on title is {ratio:.2}:1"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn change_colors_stay_readable_on_the_panel_and_the_selection() {
+        for theme in [Theme::Dark, Theme::Light, Theme::HighContrast] {
+            let colors = theme.palette();
+            for marker in ['M', 'A', 'U', 'D', '!', 'S', '?'] {
+                let tint = change_color(&colors, marker);
+                for (surface, name) in [(colors.panel, "panel"), (colors.active, "selection")] {
+                    let ratio = contrast(tint, surface);
+                    assert!(ratio >= 4.5, "{theme:?} {marker} on {name}: {ratio:.2}");
+                }
             }
         }
     }

@@ -23,5 +23,15 @@ pub(crate) const SCHEMA: SectionSchema = SectionSchema {
             control: Control::Number(0.75, 2.0),
             document: false,
         },
+        Setting {
+            id: "workbench.reduce_motion",
+            default: DefaultValue::Bool(false),
+            name: "Reduce Motion",
+            category: "Appearance",
+            help: "Show hover, toggle and notification changes at once instead of fading them. Spinners still turn.",
+            aliases: "animation transitions accessibility motion",
+            control: Control::Bool,
+            document: false,
+        },
     ],
 };

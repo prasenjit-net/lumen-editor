@@ -6,7 +6,7 @@ use super::{
         CHANGE_ROW_HEIGHT, ChangeRow, ListRow, RepoKind, RepoRow, change_row, list_row, repo_row,
         repository_kind,
     },
-    widgets::{RowAction, disclosure_row, explorer_row, overflow_menu},
+    widgets::{self, RowAction, disclosure_row, explorer_row, overflow_menu},
 };
 use crate::app::view_state::{ChangeGroup, ExtraSection};
 use crate::{
@@ -698,6 +698,9 @@ impl Workbench<'_> {
         if self.commit_button(ui, can_commit) || (commit_shortcut && can_commit) {
             commands.push(Command::CommitSourceControl);
         }
+        if let Some(command) = self.sync_button(ui, snapshot, idle) {
+            commands.push(command);
+        }
         ui.add_space(4.0);
         if self.view.source_control.amend_commit {
             ui.horizontal(|ui| {
@@ -911,6 +914,74 @@ impl Workbench<'_> {
         self.view.source_control.extras.loaded = Some(extras);
     }
 
+    /// Pull when the branch is behind its upstream, otherwise Push when it is
+    /// ahead. Shows the running operation on the button that started it.
+    fn sync_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: &GitSnapshot,
+        idle: bool,
+    ) -> Option<Command> {
+        use crate::app::view_state::GitOp;
+        let (ahead, behind) = snapshot
+            .upstream
+            .as_ref()
+            .and_then(|upstream| upstream.ahead_behind)
+            .unwrap_or((0, 0));
+        let working = self.view.source_control.active_op.filter(|op| {
+            self.view.source_control.loading && matches!(op, GitOp::Push | GitOp::Pull)
+        });
+        let (op, count, command, glyph, tooltip) = if behind > 0 || working == Some(GitOp::Pull) {
+            (
+                GitOp::Pull,
+                behind,
+                Command::PullSourceControl,
+                crate::icon::REPO_PULL,
+                "Pull the commits this branch is missing from its upstream",
+            )
+        } else if ahead > 0 || working == Some(GitOp::Push) {
+            (
+                GitOp::Push,
+                ahead,
+                Command::PushSourceControl,
+                crate::icon::REPO_PUSH,
+                "Push this branch's local commits to its upstream",
+            )
+        } else {
+            return None;
+        };
+        let colors = crate::ui::theme::palette(ui.visuals());
+        let busy = working == Some(op);
+        let noun = if count == 1 { "commit" } else { "commits" };
+        let verb = if op == GitOp::Pull { "Pull" } else { "Push" };
+        let label = if busy {
+            format!("{}…", op.progress())
+        } else {
+            format!("{glyph} {verb} {count} {noun}")
+        };
+        ui.add_space(4.0);
+        let button = egui::Button::new(RichText::new(&label).color(if idle || busy {
+            colors.text
+        } else {
+            colors.disabled_fg
+        }))
+        .min_size(egui::vec2(ui.available_width(), 24.0));
+        let response = if busy {
+            ui.add(button.sense(egui::Sense::hover()))
+        } else {
+            ui.add_enabled(idle, button)
+        };
+        if busy {
+            widgets::spinner_before_label(ui, &response, &label, colors.text);
+        }
+        let response = if idle || busy {
+            response.on_hover_text(tooltip)
+        } else {
+            response.on_disabled_hover_text("Another Git operation is running")
+        };
+        (response.clicked() && !busy).then_some(command)
+    }
+
     /// The split Commit button: commit on the left, options on the right.
     /// Returns true when the primary part was clicked.
     fn commit_button(&mut self, ui: &mut egui::Ui, can_commit: bool) -> bool {
@@ -926,34 +997,50 @@ impl Workbench<'_> {
         } else {
             colors.muted
         };
-        let label = if self.view.source_control.amend_commit {
+        let committing = self.view.source_control.loading
+            && self.view.source_control.active_op == Some(crate::app::view_state::GitOp::Commit);
+        let label = if committing {
+            "Committing…".to_owned()
+        } else if self.view.source_control.amend_commit {
             format!("{} Amend", crate::icon::CHECK)
         } else {
             format!("{} Commit", crate::icon::CHECK)
+        };
+        let (fill, text_color) = if committing {
+            (colors.accent, colors.on_accent)
+        } else {
+            (fill, text_color)
         };
         let mut clicked = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 1.0;
             let width = (ui.available_width() - DROP - 1.0).max(24.0);
-            clicked = ui
-                .add_enabled(
-                    can_commit,
-                    egui::Button::new(RichText::new(label).color(text_color))
-                        .fill(fill)
-                        .corner_radius(egui::CornerRadius {
-                            nw: 3,
-                            sw: 3,
-                            ne: 0,
-                            se: 0,
-                        })
-                        .min_size(egui::vec2(width, 24.0)),
-                )
+            let button = egui::Button::new(RichText::new(&label).color(text_color))
+                .fill(fill)
+                .corner_radius(egui::CornerRadius {
+                    nw: 3,
+                    sw: 3,
+                    ne: 0,
+                    se: 0,
+                })
+                .min_size(egui::vec2(width, 24.0));
+            // While committing the button stays fully coloured but does nothing.
+            let response = if committing {
+                ui.add(button.sense(egui::Sense::hover()))
+            } else {
+                ui.add_enabled(can_commit, button)
+            };
+            if committing {
+                widgets::spinner_before_label(ui, &response, &label, text_color);
+            }
+            clicked = response
                 .on_hover_text(if self.view.source_control.amend_commit {
                     "Amend the most recent commit"
                 } else {
                     "Commit the staged changes"
                 })
-                .clicked();
+                .clicked()
+                && !committing;
             let drop = egui::Button::new(RichText::new(crate::icon::CARET_DOWN).color(text_color))
                 .fill(fill)
                 .corner_radius(egui::CornerRadius {
