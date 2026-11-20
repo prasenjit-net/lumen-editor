@@ -1038,7 +1038,10 @@ mod tests {
         for width in [620.0, 1000.0, 1800.0] {
             frame(&mut app, &ctx, width);
             let output = frame(&mut app, &ctx, width);
-            assert!(has_text(&output, "You"), "user label at {width}");
+            assert!(
+                has_text(&output, "approve: touch file"),
+                "your message, in its bubble, at {width}"
+            );
             assert!(has_text(&output, "Codex"), "agent label at {width}");
             assert!(has_text(&output, "Permission needed"), "{width}");
             assert!(
