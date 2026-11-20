@@ -113,6 +113,13 @@ fn command_named(name: &str) -> Option<Step> {
     if let Some(text) = name.strip_prefix("text:") {
         return Some(Step::Text(text.to_owned()));
     }
+    // An existing chat by its session number, for screenshots of a saved conversation.
+    if let Some(session) = name.strip_prefix("chat:") {
+        return session
+            .parse()
+            .ok()
+            .map(|id| Step::Command(Command::OpenChat(lumen_agent_core::SessionId(id))));
+    }
     match name {
         "problems" => Some(Command::ToggleProblems),
         "agents" => Some(Command::ToggleAgentPanel),
