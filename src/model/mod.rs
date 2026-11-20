@@ -3,6 +3,7 @@ pub(crate) mod agent_registry;
 pub(crate) mod agent_scheduler;
 pub(crate) mod agent_transcript;
 pub(crate) mod breadcrumbs;
+pub(crate) mod chat_turns;
 pub(crate) mod csv;
 mod document;
 mod document_id;
