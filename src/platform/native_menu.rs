@@ -1,4 +1,8 @@
 use crate::app::{command::Command, settings::ThemeChoice};
+#[cfg(any(target_os = "windows", test))]
+use crate::ui::theme::Theme;
+#[cfg(any(target_os = "windows", test))]
+use std::cell::Cell;
 use std::sync::mpsc::{self, Receiver};
 
 use eframe::egui;
@@ -16,6 +20,29 @@ pub struct NativeMenu {
     close_folder: MenuItem,
     edits: Vec<MenuItem>,
     find: Vec<MenuItem>,
+    /// The window the menu bar is attached to.
+    #[cfg(target_os = "windows")]
+    window: Cell<Option<isize>>,
+    #[cfg(target_os = "windows")]
+    bar: MenuBar,
+}
+
+/// The theme the Windows menu bar is drawn with. Each change makes Windows
+/// redraw the window frame, so it is sent once rather than every frame.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Default)]
+struct MenuBar {
+    dark: Cell<Option<bool>>,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl MenuBar {
+    /// Whether the bar should now be dark for the workbench `theme`, or `None`
+    /// when it already is what that theme needs. High Contrast is a dark theme.
+    fn update(&self, theme: Theme) -> Option<bool> {
+        let dark = theme != Theme::Light;
+        (self.dark.replace(Some(dark)) != Some(dark)).then_some(dark)
+    }
 }
 
 impl NativeMenu {
@@ -214,6 +241,10 @@ impl NativeMenu {
             close_folder,
             edits,
             find,
+            #[cfg(target_os = "windows")]
+            window: Cell::new(None),
+            #[cfg(target_os = "windows")]
+            bar: MenuBar::default(),
         })
     }
 
@@ -228,12 +259,38 @@ impl NativeMenu {
             let hwnd = handle.hwnd.get();
             unsafe {
                 let before = client_height(hwnd);
+                // Dark, like the workbench before settings apply; `set_theme`
+                // switches it to the chosen theme on the first frame.
                 self._menu
                     .init_for_hwnd_with_theme(hwnd, muda::MenuTheme::Dark)?;
                 grow_by(hwnd, before - client_height(hwnd));
             }
+            self.window.set(Some(hwnd));
+            self.bar.update(Theme::Dark);
         }
         Ok(())
+    }
+
+    /// Draw the menu bar to match the workbench `theme`: light for Light, dark
+    /// otherwise. Only the bar follows; Windows draws the drop-down menus.
+    #[cfg(target_os = "windows")]
+    pub fn set_theme(&self, theme: Theme) {
+        let Some(hwnd) = self.window.get() else {
+            return;
+        };
+        let Some(dark) = self.bar.update(theme) else {
+            return;
+        };
+        let theme = if dark {
+            muda::MenuTheme::Dark
+        } else {
+            muda::MenuTheme::Light
+        };
+        // SAFETY: `attach` recorded the live eframe window, which this (UI)
+        // thread owns for as long as the app runs.
+        if let Err(error) = unsafe { self._menu.set_theme_for_hwnd(hwnd, theme) } {
+            crate::services::logger::warn("menu", &format!("menu bar theme: {error}"));
+        }
     }
 
     pub fn actions(&self) -> Vec<Command> {
@@ -352,4 +409,29 @@ fn plain_item(command: Command, title: &str) -> MenuItem {
         true,
         None,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_menu_bar_follows_the_workbench_theme_and_changes_once() {
+        let bar = MenuBar::default();
+        // Attached dark, like the workbench before settings apply.
+        assert_eq!(bar.update(Theme::Dark), Some(true));
+        assert_eq!(bar.update(Theme::Dark), None, "already dark");
+        assert_eq!(
+            bar.update(Theme::Light),
+            Some(false),
+            "Light gets a light bar"
+        );
+        assert_eq!(bar.update(Theme::Light), None, "sent once, not every frame");
+        assert_eq!(
+            bar.update(Theme::HighContrast),
+            Some(true),
+            "High Contrast is dark"
+        );
+        assert_eq!(bar.update(Theme::Dark), None);
+    }
 }
