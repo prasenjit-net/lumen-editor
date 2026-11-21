@@ -413,6 +413,12 @@ impl LumenApp {
             crate::ui::theme::configure_theme(ctx, theme, follow_system);
             self.view.settings.applied_theme = Some((theme, follow_system));
         }
+        // `configure_theme` themes the title bar through winit; the menu bar is
+        // drawn by muda and follows here. It only redraws when the theme changes.
+        #[cfg(target_os = "windows")]
+        if let Some(menu) = &self.native_menu {
+            menu.set_theme(theme);
+        }
         let sidebar = self.view.settings.boolean("workbench.sidebar_visible");
         if self.view.settings.applied_sidebar != Some(sidebar) {
             self.view.sidebar_visible = sidebar;
