@@ -16,8 +16,8 @@ use crate::{
     icon,
     model::{
         agent_scheduler::WaitReason,
+        chat_turns::{self, Part, Turn},
         patch_view::{self, PatchFile, PatchLineKind},
-        tool_groups::{self, Block},
     },
     services::source_control::DiffSide,
 };
@@ -25,11 +25,14 @@ use eframe::egui::{self, Color32, Frame, Key, Margin, Modifiers, RichText, Scrol
 use lumen_agent_core::{
     RequestToken, SessionId,
     event::ApprovalRequest,
-    model::{ItemKind, ToolCall, ToolKind, ToolStatus},
+    model::{ItemKind, ToolCall, ToolKind},
 };
 use std::path::PathBuf;
 
-const TEXT_SIZE: f32 = 12.5;
+mod steps;
+mod timeline;
+
+const TEXT_SIZE: f32 = 13.0;
 
 /// The subtle identity colour of a provider's sessions.
 pub(super) fn provider_color(
@@ -80,7 +83,20 @@ impl Workbench<'_> {
         let accent = provider_color(&colors, provider);
 
         let width = ui.available_width();
-        let (column, inset) = column_layout(width);
+        // Keep a gutter for the message timeline once there is more than one message.
+        let prompt_count = hub.live(id).map_or(0, |live| {
+            live.model
+                .items
+                .iter()
+                .filter(|item| matches!(item.kind, ItemKind::User(_)))
+                .count()
+        });
+        let reserve = if prompt_count >= 2 && width >= timeline::MIN_WIDTH {
+            timeline::RESERVE
+        } else {
+            0.0
+        };
+        let (column, inset) = column_layout(width, reserve);
         let focus_composer = self.view.agent_panel.take_composer_focus();
         let scroll_request = self.view.agent_panel.take_scroll_request(id);
         let draft_empty = self.view.agent_panel.draft_mut(id).trim().is_empty();
@@ -181,34 +197,28 @@ impl Workbench<'_> {
                             user_tops: &mut user_tops,
                         };
                         let items = &live.model.items;
-                        // Whether the previous item was a tool call; `None` before the first.
-                        let mut previous: Option<bool> = None;
-                        for block in tool_groups::blocks(items) {
-                            let is_tool = match &block {
-                                Block::Item(index) => match &items[*index].kind {
-                                    ItemKind::Tool(_) => true,
-                                    // An empty reply draws nothing, so it takes no space.
-                                    ItemKind::Agent { text, .. } if text.trim().is_empty() => {
-                                        continue;
-                                    }
-                                    _ => false,
-                                },
-                                Block::Explored(_) => true,
-                            };
-                            ui.add_space(item_gap(previous, is_tool));
-                            previous = Some(is_tool);
-                            match block {
-                                Block::Item(index) => {
-                                    transcript_item(ui, index, &items[index], &mut pass)
-                                }
-                                Block::Explored(group) => {
-                                    explored_group(ui, items, &group, &mut pass)
-                                }
+                        let turns = chat_turns::turns(items);
+                        let working = matches!(
+                            status,
+                            SessionStatus::Working
+                                | SessionStatus::Waiting(_)
+                                | SessionStatus::NeedsAttention
+                        );
+                        let last = turns.len().saturating_sub(1);
+                        for (position, turn) in turns.iter().enumerate() {
+                            if position > 0 {
+                                ui.add_space(TURN_GAP);
                             }
+                            // Only the newest turn can still be in progress.
+                            let finished = position < last || !working;
+                            turn_view(ui, items, turn, finished, &mut pass);
                         }
+                        let mut after_content = !turns.is_empty();
                         for request in &live.model.pending_approvals {
-                            ui.add_space(item_gap(previous, false));
-                            previous = Some(false);
+                            if after_content {
+                                ui.add_space(PART_GAP);
+                            }
+                            after_content = true;
                             let response = approval_card(ui, id, request, &colors, pass.commands);
                             // Navigation is scoped to this frame and exact request token.
                             // A resolved request or another session cannot inherit it.
@@ -217,7 +227,9 @@ impl Workbench<'_> {
                             }
                         }
                         if let SessionStatus::Working | SessionStatus::Waiting(_) = &status {
-                            ui.add_space(item_gap(previous, false));
+                            if after_content {
+                                ui.add_space(PART_GAP);
+                            }
                             working_indicator(ui, &status, accent, &colors);
                         }
                         let end = ui.allocate_response(egui::vec2(1.0, 12.0), egui::Sense::hover());
@@ -239,25 +251,44 @@ impl Workbench<'_> {
             self.view.agent_panel.mark_seen(id, items);
         }
         let unseen = self.view.agent_panel.unseen_items(id, items);
-        let overflow = output.content_size.y > viewport.height() + 1.0;
-        let (previous, next) = adjacent_messages(&user_tops, viewport.top());
-        let navigation = ui
+        let prompts: Vec<timeline::Prompt> = hub.live(id).map_or_else(Vec::new, |live| {
+            user_tops
+                .iter()
+                .filter_map(|&(index, top)| match &live.model.items.get(index)?.kind {
+                    ItemKind::User(text) => Some(timeline::Prompt {
+                        index,
+                        top,
+                        text: text.as_str(),
+                    }),
+                    _ => None,
+                })
+                .collect()
+        });
+        let column_span = egui::Rangef::new(
+            ui.max_rect().left() + inset,
+            ui.max_rect().left() + inset + column,
+        );
+        let sticky = timeline::sticky(
+            ui,
+            viewport,
+            column_span,
+            &prompts,
+            egui::Id::new(("chat_sticky", id.0)),
+            &colors,
+        );
+        let jump = timeline::gutter(
+            ui,
+            viewport,
+            &prompts,
+            egui::Id::new(("chat_timeline", id.0)),
+            &colors,
+        );
+        let latest = ui
             .push_id(("chat_navigation", id.0), |ui| {
-                conversation_navigation(
-                    ui,
-                    viewport,
-                    &NavigationState {
-                        show_arrows: overflow && !user_tops.is_empty(),
-                        previous,
-                        next,
-                        at_end,
-                        unseen,
-                    },
-                    &colors,
-                )
+                conversation_navigation(ui, viewport, &NavigationState { at_end, unseen }, &colors)
             })
             .inner;
-        if let Some(request) = navigation {
+        if let Some(request) = jump.or(sticky).or(latest) {
             self.view.agent_panel.request_scroll(id, request);
             ui.ctx().request_repaint();
         }
@@ -274,29 +305,22 @@ const GUTTER: f32 = 8.0;
 const MAX_COLUMN: f32 = 760.0;
 /// Space inside an item (name to body, card rows) and between consecutive tool calls.
 const INNER_GAP: f32 = 4.0;
-/// Extra space between conversation items, on top of `INNER_GAP`.
-const ITEM_GAP: f32 = 10.0;
+/// Space between one turn (your message and the reply) and the next.
+const TURN_GAP: f32 = 24.0;
+/// Space between the parts of a reply: steps, answers, approvals.
+const PART_GAP: f32 = 12.0;
 
 /// The conversation column's width and its left inset for a panel `width`
-/// wide. Never wider than the panel: a floor larger than the pane pushed the
-/// composer off-screen.
-fn column_layout(width: f32) -> (f32, f32) {
-    let column = (width - 2.0 * GUTTER)
+/// wide, keeping `reserve` free at the left for the message timeline. Never
+/// wider than the panel: a floor larger than the pane pushed the composer
+/// off-screen.
+fn column_layout(width: f32, reserve: f32) -> (f32, f32) {
+    let column = (width - 2.0 * GUTTER - reserve)
         .max(80.0)
         .min(width.max(0.0))
         .min(MAX_COLUMN);
-    let inset = GUTTER.max((width - column) / 2.0);
+    let inset = (GUTTER + reserve).max((width - column) / 2.0);
     (column, inset)
-}
-
-/// Space before an item: none for the first, tight between tool calls (they
-/// read as one run of work), wider between everything else.
-fn item_gap(previous: Option<bool>, is_tool: bool) -> f32 {
-    match previous {
-        None => 0.0,
-        Some(true) if is_tool => 0.0,
-        Some(_) => ITEM_GAP,
-    }
 }
 
 /// What the empty chat's starting actions may do right now.
@@ -365,41 +389,22 @@ fn at_bottom(offset: f32, viewport: f32, content: f32) -> bool {
     offset + viewport >= content - SLACK
 }
 
-/// The user messages just above and just below the viewport's top edge, given
-/// each message's top in the same coordinates. A message that is already at the
-/// top counts as "here", so Previous/Next always move.
-fn adjacent_messages(tops: &[(usize, f32)], viewport_top: f32) -> (Option<usize>, Option<usize>) {
-    const SLACK: f32 = 6.0;
-    let previous = tops
-        .iter()
-        .rev()
-        .find(|(_, top)| *top < viewport_top - SLACK)
-        .map(|(index, _)| *index);
-    let next = tops
-        .iter()
-        .find(|(_, top)| *top > viewport_top + SLACK)
-        .map(|(index, _)| *index);
-    (previous, next)
-}
-
 struct NavigationState {
-    show_arrows: bool,
-    previous: Option<usize>,
-    next: Option<usize>,
     at_end: bool,
     unseen: usize,
 }
 
-/// Floating controls over the bottom of the transcript: Previous/Next message
-/// and Jump to latest (with a count when content arrived while reading above).
-/// They only request a scroll; streaming never moves the viewport by itself.
+/// "Jump to latest" over the bottom of the transcript, with a count when content
+/// arrived while you were reading above. It only requests a scroll; streaming
+/// never moves the viewport by itself. Moving between your own messages is the
+/// timeline's job (`timeline.rs`).
 fn conversation_navigation(
     ui: &mut egui::Ui,
     viewport: egui::Rect,
     state: &NavigationState,
     colors: &theme::Palette,
 ) -> Option<ScrollRequest> {
-    if !state.show_arrows && state.at_end {
+    if state.at_end {
         return None;
     }
     let rect = egui::Rect::from_min_max(
@@ -441,26 +446,6 @@ fn conversation_navigation(
             request = Some(ScrollRequest::Latest);
         }
     }
-    if state.show_arrows {
-        if chip(
-            ui,
-            "Next".into(),
-            state.next.is_some(),
-            "Scroll to the next message you sent",
-            false,
-        ) {
-            request = state.next.map(ScrollRequest::Item);
-        }
-        if chip(
-            ui,
-            "Prev".into(),
-            state.previous.is_some(),
-            "Scroll to the previous message you sent",
-            false,
-        ) {
-            request = state.previous.map(ScrollRequest::Item);
-        }
-    }
     request
 }
 
@@ -479,104 +464,71 @@ struct TranscriptPass<'a> {
     user_tops: &'a mut Vec<(usize, f32)>,
 }
 
-fn transcript_item(
+/// One turn: your message, then the agent's reply as steps and answers.
+fn turn_view(
     ui: &mut egui::Ui,
-    index: usize,
-    item: &lumen_agent_core::model::TranscriptItem,
+    items: &[lumen_agent_core::model::TranscriptItem],
+    turn: &Turn,
+    finished: bool,
     pass: &mut TranscriptPass,
 ) {
-    let colors = pass.colors;
-    match &item.kind {
-        ItemKind::User(text) => {
-            let response = user_bubble(ui, text, colors);
-            pass.user_tops.push((index, response.rect.top()));
-            if pass.scroll_to == Some(index) {
-                response.scroll_to_me(Some(egui::Align::Min));
-            }
+    if let Some(prompt) = turn.prompt
+        && let ItemKind::User(text) = &items[prompt].kind
+    {
+        let response = user_bubble(ui, text, pass.colors);
+        pass.user_tops.push((prompt, response.rect.top()));
+        if pass.scroll_to == Some(prompt) {
+            response.scroll_to_me(Some(egui::Align::Min));
         }
-        ItemKind::Agent { text, phase, .. } => agent_block(ui, &item.id.0, text, *phase, pass),
-        ItemKind::Tool(call) => tool_row(ui, &item.id.0, call, pass),
-        ItemKind::Plan(entries) => plan_card(ui, entries, colors),
-        ItemKind::Error(text) => notice_card(ui, text, colors.error),
-        ItemKind::Notice(text) => {
-            ui.label(
-                RichText::new(text)
-                    .size(crate::ui::theme::META_SIZE)
-                    .color(colors.muted),
-            );
+    }
+    if turn.parts.is_empty() {
+        return;
+    }
+    if turn.prompt.is_some() {
+        ui.add_space(PART_GAP);
+    }
+    responder(ui, pass);
+    for (position, part) in turn.parts.iter().enumerate() {
+        ui.add_space(if position == 0 { 6.0 } else { PART_GAP });
+        match part {
+            Part::Steps(blocks) => steps::steps(
+                ui,
+                items,
+                blocks,
+                finished && turn.answered_after(position),
+                pass,
+            ),
+            Part::Answer(index) => {
+                if let ItemKind::Agent { text, .. } = &items[*index].kind {
+                    markdown_render::show(
+                        ui,
+                        text,
+                        Metrics::CHAT,
+                        Host::Chat {
+                            session: pass.session,
+                            item: &items[*index].id.0,
+                        },
+                        false,
+                        pass.commands,
+                    );
+                }
+            }
         }
     }
 }
 
-/// A run of finished reads and searches as one expandable summary. Each call
-/// keeps its own row (and its own expansion state) inside the group.
-fn explored_group(
-    ui: &mut egui::Ui,
-    items: &[lumen_agent_core::model::TranscriptItem],
-    group: &[usize],
-    pass: &mut TranscriptPass,
-) {
-    let colors = pass.colors;
-    let id = egui::Id::new(("chat_explored", pass.session.0, &items[group[0]].id.0));
-    let mut open = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-    let summary = tool_groups::summary(items, group);
-    let header = Frame::default()
-        .fill(colors.panel)
-        .corner_radius(3)
-        .inner_margin(Margin::symmetric(8, 4))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(if open {
-                        icon::CARET_DOWN
-                    } else {
-                        icon::CARET_RIGHT
-                    })
-                    .size(theme::META_SIZE)
-                    .color(colors.muted),
-                );
-                ui.add(
-                    egui::Label::new(RichText::new(&summary).size(11.5).color(colors.text))
-                        .truncate(),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new("done").size(10.5).color(colors.success));
-                });
-            });
-        });
-    let toggle = ui
-        .interact(
-            header.response.rect,
-            id.with("toggle"),
-            egui::Sense::click(),
-        )
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(if open {
-            "Hide these calls"
-        } else {
-            "Show every call in this group"
-        });
-    toggle.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::WidgetType::CollapsingHeader,
-            true,
-            open,
-            summary.clone(),
-        )
+/// Who is replying, once at the top of each reply.
+fn responder(ui: &mut egui::Ui, pass: &TranscriptPass) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(RichText::new("●").size(9.0).color(pass.accent));
+        ui.label(
+            RichText::new(pass.provider.label())
+                .size(theme::META_SIZE)
+                .strong()
+                .color(pass.accent),
+        );
     });
-    if toggle.clicked() {
-        open = !open;
-        ui.ctx().data_mut(|d| d.insert_temp(id, open));
-    }
-    if open {
-        ui.spacing_mut().item_spacing.y = 4.0;
-        for &index in group {
-            if let ItemKind::Tool(call) = &items[index].kind {
-                tool_row(ui, &items[index].id.0, call, pass);
-            }
-        }
-    }
 }
 
 fn empty_state(
@@ -640,65 +592,43 @@ fn empty_state(
     });
 }
 
-/// What you said: a quiet rounded card, labelled.
+/// What you said: a bubble at the right that fits its text, as in VS Code's
+/// chat, so your messages stand apart from the replies.
 fn user_bubble(ui: &mut egui::Ui, text: &str, colors: &theme::Palette) -> egui::Response {
-    Frame::default()
-        .fill(colors.input)
-        .corner_radius(3)
-        .inner_margin(Margin::symmetric(12, 8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new("You").size(10.5).strong().color(colors.muted));
-            ui.add(
-                egui::Label::new(RichText::new(text).size(TEXT_SIZE).color(colors.text))
-                    .selectable(true),
-            );
-        })
-        .response
-}
-
-/// What the agent said: no card, a coloured name, then the Markdown body.
-/// Working notes between steps are smaller and muted so the answer stands out.
-fn agent_block(
-    ui: &mut egui::Ui,
-    item_id: &str,
-    text: &str,
-    phase: lumen_agent_core::model::MessagePhase,
-    pass: &mut TranscriptPass,
-) {
-    let (colors, accent) = (pass.colors, pass.accent);
-    let note = phase == lumen_agent_core::model::MessagePhase::Commentary;
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("●").size(9.0).color(accent));
-        ui.label(
-            RichText::new(pass.provider.label())
-                .size(10.5)
-                .strong()
-                .color(accent),
+    const PADDING: egui::Vec2 = egui::vec2(12.0, 8.0);
+    let widest = (ui.available_width() * 0.85).max(120.0);
+    let job = |width: f32| {
+        let mut job = egui::text::LayoutJob::single_section(
+            text.to_owned(),
+            egui::TextFormat {
+                font_id: egui::FontId::proportional(TEXT_SIZE),
+                line_height: Some((TEXT_SIZE * 1.5).round()),
+                color: colors.text,
+                ..Default::default()
+            },
         );
-        if note {
-            ui.label(
-                RichText::new("working notes")
-                    .size(10.0)
-                    .color(colors.muted),
-            );
-        }
-    });
-    markdown_render::show(
-        ui,
-        text,
-        if note {
-            Metrics::CHAT_NOTES
-        } else {
-            Metrics::CHAT
-        },
-        Host::Chat {
-            session: pass.session,
-            item: item_id,
-        },
-        note,
-        pass.commands,
+        job.wrap = egui::text::TextWrapping::wrap_at_width(width);
+        job
+    };
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job(widest - 2.0 * PADDING.x)));
+    let inner = galley.size().x.ceil().min(widest - 2.0 * PADDING.x);
+    let size = egui::vec2(inner, galley.size().y) + 2.0 * PADDING;
+    // The row spans the column; the bubble sits at its right edge.
+    let (row, mut response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), size.y),
+        egui::Sense::hover(),
     );
+    let bubble = egui::Rect::from_min_size(egui::pos2(row.right() - size.x, row.top()), size);
+    ui.painter().rect_filled(bubble, 6.0, colors.input);
+    // Left-aligned inside the bubble (`put` would centre the text).
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(bubble.shrink2(PADDING))
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+        |ui| ui.add(egui::Label::new(job(inner)).wrap().selectable(true)),
+    );
+    response.rect = bubble;
+    response
 }
 
 fn tool_glyph(kind: ToolKind) -> &'static str {
@@ -709,75 +639,6 @@ fn tool_glyph(kind: ToolKind) -> &'static str {
         ToolKind::Search => icon::MAGNIFYING_GLASS,
         ToolKind::Fetch => icon::REPO_PULL,
         ToolKind::Other => icon::GEAR,
-    }
-}
-
-/// One tool call as a compact row: kind icon, what it did, and its state at the
-/// right. Output opens beneath it on demand; the header alone toggles it so the
-/// buttons in the detail stay clickable.
-fn tool_row(ui: &mut egui::Ui, item_id: &str, call: &ToolCall, pass: &mut TranscriptPass) {
-    let colors = pass.colors;
-    let (state, color) = match call.status {
-        ToolStatus::Pending | ToolStatus::Running => ("running", colors.accent),
-        ToolStatus::Completed => ("done", colors.success),
-        ToolStatus::Failed => ("failed", colors.error),
-        ToolStatus::Declined => ("declined", colors.warning),
-        ToolStatus::Cancelled => ("cancelled", colors.warning),
-    };
-    let has_detail = !call.preview.is_empty() || call.patch.is_some();
-    let id = egui::Id::new(("chat_tool", pass.session.0, item_id));
-    let mut open = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-    let mut toggle_rect = egui::Rect::NOTHING;
-    Frame::default()
-        .fill(colors.panel)
-        .corner_radius(3)
-        .inner_margin(Margin::symmetric(8, 4))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            let header = ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(tool_glyph(call.kind))
-                        .size(12.0)
-                        .color(colors.muted),
-                );
-                ui.add(
-                    egui::Label::new(RichText::new(&call.title).size(11.5).color(colors.text))
-                        .truncate(),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if has_detail {
-                        ui.label(
-                            RichText::new(if open {
-                                icon::CARET_DOWN
-                            } else {
-                                icon::CARET_RIGHT
-                            })
-                            .size(crate::ui::theme::META_SIZE)
-                            .color(colors.muted),
-                        );
-                    }
-                    ui.label(RichText::new(state).size(10.5).color(color));
-                    if matches!(call.status, ToolStatus::Running | ToolStatus::Pending) {
-                        ui.ctx()
-                            .request_repaint_after(std::time::Duration::from_millis(250));
-                    }
-                });
-            });
-            toggle_rect = header.response.rect;
-            toggle_rect.max.x = ui.max_rect().right();
-            if open && has_detail {
-                ui.add_space(2.0);
-                tool_detail(ui, item_id, call, pass);
-            }
-        });
-    if has_detail
-        && ui
-            .interact(toggle_rect, id.with("toggle"), egui::Sense::click())
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-    {
-        open = !open;
-        ui.ctx().data_mut(|d| d.insert_temp(id, open));
     }
 }
 
@@ -1642,20 +1503,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn previous_and_next_skip_the_message_already_at_the_top() {
-        let tops = [(0, -400.0), (3, -100.0), (5, 100.0), (8, 400.0)];
-        assert_eq!(adjacent_messages(&tops, 100.0), (Some(3), Some(8)));
-        assert_eq!(
-            adjacent_messages(&tops, 103.0),
-            (Some(3), Some(8)),
-            "within slack"
-        );
-        assert_eq!(adjacent_messages(&tops, -500.0), (None, Some(0)));
-        assert_eq!(adjacent_messages(&tops, 900.0), (Some(8), None));
-        assert_eq!(adjacent_messages(&[], 0.0), (None, None));
-    }
-
     fn frame(
         ctx: &egui::Context,
         requests: &[ApprovalRequest],
@@ -1797,21 +1644,231 @@ mod tests {
 
     #[test]
     fn the_column_fills_narrow_panels_and_is_centred_in_wide_ones() {
-        assert_eq!(column_layout(240.0), (224.0, GUTTER));
-        assert_eq!(column_layout(600.0), (584.0, GUTTER));
-        let (column, inset) = column_layout(1000.0);
+        assert_eq!(column_layout(240.0, 0.0), (224.0, GUTTER));
+        assert_eq!(column_layout(600.0, 0.0), (584.0, GUTTER));
+        let (column, inset) = column_layout(1000.0, 0.0);
         assert_eq!(column, MAX_COLUMN);
         assert_eq!(inset, 120.0);
         // Never wider than the panel itself.
-        assert!(column_layout(50.0).0 <= 50.0);
+        assert!(column_layout(50.0, 0.0).0 <= 50.0);
+        // The timeline's gutter comes off the left of a narrow column...
+        assert_eq!(column_layout(600.0, 20.0), (564.0, GUTTER + 20.0));
+        // ...and a wide panel already has room for it beside the centred column.
+        assert_eq!(column_layout(1000.0, 20.0), (MAX_COLUMN, 120.0));
+    }
+
+    fn draw(
+        ctx: &egui::Context,
+        width: f32,
+        events: Vec<egui::Event>,
+        mut body: impl FnMut(&mut egui::Ui),
+    ) -> egui::FullOutput {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default()
+                    .frame(Frame::NONE)
+                    .show(ctx, |ui| body(ui));
+            },
+        )
+    }
+
+    fn text_rects(output: &egui::FullOutput) -> Vec<(String, egui::Rect)> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some((
+                    text.galley.job.text.clone(),
+                    text.galley.rect.translate(text.pos.to_vec2()),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn find(output: &egui::FullOutput, needle: &str) -> Option<egui::Rect> {
+        text_rects(output)
+            .into_iter()
+            .find(|(text, _)| text.contains(needle))
+            .map(|(_, rect)| rect)
     }
 
     #[test]
-    fn tool_calls_run_together_and_other_items_get_room() {
-        assert_eq!(item_gap(None, false), 0.0);
-        assert_eq!(item_gap(Some(true), true), 0.0);
-        assert_eq!(item_gap(Some(true), false), ITEM_GAP);
-        assert_eq!(item_gap(Some(false), true), ITEM_GAP);
+    fn your_message_is_a_right_aligned_bubble_that_fits_its_text() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let colors = crate::ui::theme::Theme::Dark.palette();
+        let width = 400.0;
+        let mut bubble = egui::Rect::NOTHING;
+        for _ in 0..2 {
+            draw(&ctx, width, vec![], |ui| {
+                bubble = user_bubble(ui, "short", &colors).rect
+            });
+        }
+        assert!(
+            (bubble.right() - width).abs() < 1.0,
+            "right-aligned: {bubble:?}"
+        );
+        assert!(
+            bubble.width() < 120.0,
+            "fits a short message: {}",
+            bubble.width()
+        );
+        let long = "a message long enough to wrap onto several lines inside the bubble because it keeps going";
+        let mut output = None;
+        for _ in 0..2 {
+            output = Some(draw(&ctx, width, vec![], |ui| {
+                bubble = user_bubble(ui, long, &colors).rect
+            }));
+        }
+        assert!(
+            bubble.width() <= width * 0.85 + 0.5,
+            "at most 85%: {}",
+            bubble.width()
+        );
+        assert!(bubble.right() <= width + 0.5);
+        let text = find(&output.unwrap(), "a message long").unwrap();
+        assert!(text.height() > 30.0, "wraps inside the bubble");
+    }
+
+    fn agent(
+        id: &str,
+        phase: lumen_agent_core::model::MessagePhase,
+        text: &str,
+    ) -> lumen_agent_core::model::TranscriptItem {
+        lumen_agent_core::model::TranscriptItem {
+            id: lumen_agent_core::ItemId(id.into()),
+            turn: None,
+            kind: ItemKind::Agent {
+                text: text.into(),
+                phase,
+                finished: true,
+            },
+        }
+    }
+
+    fn tool_item(id: &str, kind: ToolKind, title: &str) -> lumen_agent_core::model::TranscriptItem {
+        let mut call = ToolCall::new(kind, title);
+        call.status = lumen_agent_core::model::ToolStatus::Completed;
+        call.preview = "output".into();
+        lumen_agent_core::model::TranscriptItem {
+            id: lumen_agent_core::ItemId(id.into()),
+            turn: None,
+            kind: ItemKind::Tool(call),
+        }
+    }
+
+    fn conversation() -> Vec<lumen_agent_core::model::TranscriptItem> {
+        use lumen_agent_core::model::MessagePhase;
+        vec![
+            lumen_agent_core::model::TranscriptItem {
+                id: lumen_agent_core::ItemId("u".into()),
+                turn: None,
+                kind: ItemKind::User("Why?".into()),
+            },
+            agent("n", MessagePhase::Commentary, "Looking at the renderer."),
+            tool_item("r", ToolKind::Read, "Read src/a.rs"),
+            tool_item("c", ToolKind::Command, "cargo test"),
+            agent("a", MessagePhase::Final, "Because of the wrap mode."),
+        ]
+    }
+
+    /// One frame of the steps of the first turn of `conversation()`.
+    fn steps_frame(
+        ctx: &egui::Context,
+        foldable: bool,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        let items = conversation();
+        let turns = chat_turns::turns(&items);
+        let Part::Steps(blocks) = &turns[0].parts[0] else {
+            panic!("steps first");
+        };
+        let colors = crate::ui::theme::Theme::Dark.palette();
+        let mut commands = Vec::new();
+        let mut tops = Vec::new();
+        let repo = |_: &std::path::Path| None;
+        draw(ctx, 360.0, events, |ui| {
+            let mut pass = TranscriptPass {
+                session: SessionId(1),
+                provider: lumen_agent_core::ProviderId::Codex,
+                accent: colors.codex,
+                colors: &colors,
+                repo_diff: &repo,
+                commands: &mut commands,
+                scroll_to: None,
+                user_tops: &mut tops,
+            };
+            steps::steps(ui, &items, blocks, foldable, &mut pass);
+        })
+    }
+
+    #[test]
+    fn finished_steps_fold_into_a_summary_that_opens_on_click() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        let output = steps_frame(&ctx, true, vec![]);
+        let summary = find(&output, "Worked through 3 steps").expect("summary line");
+        assert!(find(&output, "cargo test").is_none(), "folded");
+        let at = summary.center();
+        steps_frame(&ctx, true, vec![egui::Event::PointerMoved(at)]);
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        steps_frame(&ctx, true, vec![press(true)]);
+        steps_frame(&ctx, true, vec![press(false)]);
+        let output = steps_frame(&ctx, true, vec![]);
+        assert!(find(&output, "cargo test").is_some(), "opened");
+        assert!(find(&output, "Looking at the renderer").is_some());
+    }
+
+    #[test]
+    fn live_steps_show_open_on_a_rail_that_joins_their_icons() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::configure_ui(&ctx);
+        steps_frame(&ctx, false, vec![]);
+        let output = steps_frame(&ctx, false, vec![]);
+        assert!(
+            find(&output, "Worked through").is_none(),
+            "nothing folded while live"
+        );
+        let read = find(&output, "Read src/a.rs").expect("read step");
+        let command = find(&output, "cargo test").expect("command step");
+        assert!(read.top() < command.top(), "steps keep their order");
+        let border = crate::ui::theme::Theme::Dark.palette().float_border;
+        let rails: Vec<[egui::Pos2; 2]> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::LineSegment { points, stroke }
+                    if stroke.color == border && points[0].x == points[1].x =>
+                {
+                    Some(*points)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            rails.len(),
+            2,
+            "one rail between each pair of the three steps"
+        );
+        for rail in &rails {
+            assert!(rail[0].x < read.left(), "the rail runs in the icon gutter");
+        }
+        // The rail stops short of each step's first line, where its icon sits.
+        assert!(rails.iter().all(|rail| rail[1].y < command.top()));
     }
 
     #[test]

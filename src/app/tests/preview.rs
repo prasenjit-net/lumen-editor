@@ -236,3 +236,31 @@ fn relative_paths_resolve_against_the_source_directory() {
     );
     assert_eq!(resolve_relative(source, ""), None);
 }
+
+#[test]
+fn the_preview_uses_the_whole_editor_on_a_wide_screen() {
+    let (mut app, ctx) = fixture();
+    let paragraph = "word ".repeat(400);
+    let source = open_document(&mut app, "/w/wide.md", &format!("# Wide\n\n{paragraph}\n"));
+    app.execute(Command::OpenPreview(source), &ctx);
+    let width = 1600.0;
+    editor_frame_at_width(&mut app, &ctx, vec![], width);
+    let output = editor_frame_at_width(&mut app, &ctx, vec![], width);
+    let text = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.job.text.starts_with("word word") => {
+                Some(text.galley.rect.translate(text.pos.to_vec2()))
+            }
+            _ => None,
+        })
+        .expect("paragraph drawn");
+    // The old layout capped prose at 860 px; now only 26 px stay free at each side.
+    assert!(text.width() > 1200.0, "paragraph is {} wide", text.width());
+    assert!(
+        text.right() <= width,
+        "and still inside the editor: {}",
+        text.right()
+    );
+}

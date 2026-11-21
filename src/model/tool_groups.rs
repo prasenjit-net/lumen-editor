@@ -24,7 +24,15 @@ fn is_quiet(item: &TranscriptItem) -> bool {
 
 /// Running, failed, declined and cancelled calls, and everything that is not a
 /// tool call, break a run and stay visible on their own.
+#[cfg(test)]
 pub(crate) fn blocks(items: &[TranscriptItem]) -> Vec<Block> {
+    let all: Vec<usize> = (0..items.len()).collect();
+    blocks_in(items, &all)
+}
+
+/// [`blocks`] over the items at `indices` only (one turn's working steps), in
+/// their order. The indices refer to `items`.
+pub(crate) fn blocks_in(items: &[TranscriptItem], indices: &[usize]) -> Vec<Block> {
     let mut out = Vec::new();
     let mut run: Vec<usize> = Vec::new();
     let flush = |run: &mut Vec<usize>, out: &mut Vec<Block>| {
@@ -34,7 +42,8 @@ pub(crate) fn blocks(items: &[TranscriptItem]) -> Vec<Block> {
             out.extend(run.drain(..).map(Block::Item));
         }
     };
-    for (index, item) in items.iter().enumerate() {
+    for &index in indices {
+        let item = &items[index];
         if is_quiet(item) {
             run.push(index);
         } else {

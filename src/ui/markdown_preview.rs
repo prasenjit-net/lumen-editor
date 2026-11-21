@@ -9,9 +9,9 @@ use super::{
 use crate::model::previewable::PreviewKind;
 use eframe::egui::{self, RichText, ScrollArea};
 
-/// Readable line length for prose; wider windows center the column.
-const MAX_WIDTH: f32 = 860.0;
-const SIDE_PADDING: f32 = 20.0;
+/// Space around the document, as in VS Code's preview: it uses the whole
+/// editor, with this much room at each side.
+const SIDE_PADDING: i8 = 26;
 
 impl Workbench<'_> {
     pub(super) fn preview_page(&mut self, ui: &mut egui::Ui, index: usize) {
@@ -44,13 +44,15 @@ impl Workbench<'_> {
             .id_salt(("markdown-preview", preview))
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let width = (ui.available_width() - 2.0 * SIDE_PADDING).clamp(0.0, MAX_WIDTH);
-                let pad = ((ui.available_width() - width) / 2.0).max(0.0);
-                ui.horizontal_top(|ui| {
-                    ui.add_space(pad);
-                    ui.vertical(|ui| {
-                        ui.set_width(width);
-                        ui.add_space(12.0);
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin {
+                        left: SIDE_PADDING,
+                        right: SIDE_PADDING,
+                        top: 16,
+                        bottom: 32,
+                    })
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
                         let mut renderer = Renderer::new(
                             colors,
                             Metrics::PREVIEW,
@@ -63,9 +65,7 @@ impl Workbench<'_> {
                             &mut commands,
                         );
                         renderer.blocks(ui, &blocks, Metrics::PREVIEW.body);
-                        ui.add_space(24.0);
                     });
-                });
             });
         if anchor.is_some() {
             self.view.status = "No heading matches that link".into();
