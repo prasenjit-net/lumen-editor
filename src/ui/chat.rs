@@ -30,6 +30,7 @@ use lumen_agent_core::{
 use std::path::PathBuf;
 
 mod steps;
+mod timeline;
 
 const TEXT_SIZE: f32 = 13.0;
 
@@ -82,7 +83,20 @@ impl Workbench<'_> {
         let accent = provider_color(&colors, provider);
 
         let width = ui.available_width();
-        let (column, inset) = column_layout(width);
+        // Keep a gutter for the message timeline once there is more than one message.
+        let prompt_count = hub.live(id).map_or(0, |live| {
+            live.model
+                .items
+                .iter()
+                .filter(|item| matches!(item.kind, ItemKind::User(_)))
+                .count()
+        });
+        let reserve = if prompt_count >= 2 && width >= timeline::MIN_WIDTH {
+            timeline::RESERVE
+        } else {
+            0.0
+        };
+        let (column, inset) = column_layout(width, reserve);
         let focus_composer = self.view.agent_panel.take_composer_focus();
         let scroll_request = self.view.agent_panel.take_scroll_request(id);
         let draft_empty = self.view.agent_panel.draft_mut(id).trim().is_empty();
@@ -237,25 +251,44 @@ impl Workbench<'_> {
             self.view.agent_panel.mark_seen(id, items);
         }
         let unseen = self.view.agent_panel.unseen_items(id, items);
-        let overflow = output.content_size.y > viewport.height() + 1.0;
-        let (previous, next) = adjacent_messages(&user_tops, viewport.top());
-        let navigation = ui
+        let prompts: Vec<timeline::Prompt> = hub.live(id).map_or_else(Vec::new, |live| {
+            user_tops
+                .iter()
+                .filter_map(|&(index, top)| match &live.model.items.get(index)?.kind {
+                    ItemKind::User(text) => Some(timeline::Prompt {
+                        index,
+                        top,
+                        text: text.as_str(),
+                    }),
+                    _ => None,
+                })
+                .collect()
+        });
+        let column_span = egui::Rangef::new(
+            ui.max_rect().left() + inset,
+            ui.max_rect().left() + inset + column,
+        );
+        let sticky = timeline::sticky(
+            ui,
+            viewport,
+            column_span,
+            &prompts,
+            egui::Id::new(("chat_sticky", id.0)),
+            &colors,
+        );
+        let jump = timeline::gutter(
+            ui,
+            viewport,
+            &prompts,
+            egui::Id::new(("chat_timeline", id.0)),
+            &colors,
+        );
+        let latest = ui
             .push_id(("chat_navigation", id.0), |ui| {
-                conversation_navigation(
-                    ui,
-                    viewport,
-                    &NavigationState {
-                        show_arrows: overflow && !user_tops.is_empty(),
-                        previous,
-                        next,
-                        at_end,
-                        unseen,
-                    },
-                    &colors,
-                )
+                conversation_navigation(ui, viewport, &NavigationState { at_end, unseen }, &colors)
             })
             .inner;
-        if let Some(request) = navigation {
+        if let Some(request) = jump.or(sticky).or(latest) {
             self.view.agent_panel.request_scroll(id, request);
             ui.ctx().request_repaint();
         }
@@ -278,14 +311,15 @@ const TURN_GAP: f32 = 24.0;
 const PART_GAP: f32 = 12.0;
 
 /// The conversation column's width and its left inset for a panel `width`
-/// wide. Never wider than the panel: a floor larger than the pane pushed the
-/// composer off-screen.
-fn column_layout(width: f32) -> (f32, f32) {
-    let column = (width - 2.0 * GUTTER)
+/// wide, keeping `reserve` free at the left for the message timeline. Never
+/// wider than the panel: a floor larger than the pane pushed the composer
+/// off-screen.
+fn column_layout(width: f32, reserve: f32) -> (f32, f32) {
+    let column = (width - 2.0 * GUTTER - reserve)
         .max(80.0)
         .min(width.max(0.0))
         .min(MAX_COLUMN);
-    let inset = GUTTER.max((width - column) / 2.0);
+    let inset = (GUTTER + reserve).max((width - column) / 2.0);
     (column, inset)
 }
 
@@ -355,41 +389,22 @@ fn at_bottom(offset: f32, viewport: f32, content: f32) -> bool {
     offset + viewport >= content - SLACK
 }
 
-/// The user messages just above and just below the viewport's top edge, given
-/// each message's top in the same coordinates. A message that is already at the
-/// top counts as "here", so Previous/Next always move.
-fn adjacent_messages(tops: &[(usize, f32)], viewport_top: f32) -> (Option<usize>, Option<usize>) {
-    const SLACK: f32 = 6.0;
-    let previous = tops
-        .iter()
-        .rev()
-        .find(|(_, top)| *top < viewport_top - SLACK)
-        .map(|(index, _)| *index);
-    let next = tops
-        .iter()
-        .find(|(_, top)| *top > viewport_top + SLACK)
-        .map(|(index, _)| *index);
-    (previous, next)
-}
-
 struct NavigationState {
-    show_arrows: bool,
-    previous: Option<usize>,
-    next: Option<usize>,
     at_end: bool,
     unseen: usize,
 }
 
-/// Floating controls over the bottom of the transcript: Previous/Next message
-/// and Jump to latest (with a count when content arrived while reading above).
-/// They only request a scroll; streaming never moves the viewport by itself.
+/// "Jump to latest" over the bottom of the transcript, with a count when content
+/// arrived while you were reading above. It only requests a scroll; streaming
+/// never moves the viewport by itself. Moving between your own messages is the
+/// timeline's job (`timeline.rs`).
 fn conversation_navigation(
     ui: &mut egui::Ui,
     viewport: egui::Rect,
     state: &NavigationState,
     colors: &theme::Palette,
 ) -> Option<ScrollRequest> {
-    if !state.show_arrows && state.at_end {
+    if state.at_end {
         return None;
     }
     let rect = egui::Rect::from_min_max(
@@ -429,26 +444,6 @@ fn conversation_navigation(
             state.unseen > 0,
         ) {
             request = Some(ScrollRequest::Latest);
-        }
-    }
-    if state.show_arrows {
-        if chip(
-            ui,
-            "Next".into(),
-            state.next.is_some(),
-            "Scroll to the next message you sent",
-            false,
-        ) {
-            request = state.next.map(ScrollRequest::Item);
-        }
-        if chip(
-            ui,
-            "Prev".into(),
-            state.previous.is_some(),
-            "Scroll to the previous message you sent",
-            false,
-        ) {
-            request = state.previous.map(ScrollRequest::Item);
         }
     }
     request
@@ -1508,20 +1503,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn previous_and_next_skip_the_message_already_at_the_top() {
-        let tops = [(0, -400.0), (3, -100.0), (5, 100.0), (8, 400.0)];
-        assert_eq!(adjacent_messages(&tops, 100.0), (Some(3), Some(8)));
-        assert_eq!(
-            adjacent_messages(&tops, 103.0),
-            (Some(3), Some(8)),
-            "within slack"
-        );
-        assert_eq!(adjacent_messages(&tops, -500.0), (None, Some(0)));
-        assert_eq!(adjacent_messages(&tops, 900.0), (Some(8), None));
-        assert_eq!(adjacent_messages(&[], 0.0), (None, None));
-    }
-
     fn frame(
         ctx: &egui::Context,
         requests: &[ApprovalRequest],
@@ -1663,13 +1644,17 @@ mod tests {
 
     #[test]
     fn the_column_fills_narrow_panels_and_is_centred_in_wide_ones() {
-        assert_eq!(column_layout(240.0), (224.0, GUTTER));
-        assert_eq!(column_layout(600.0), (584.0, GUTTER));
-        let (column, inset) = column_layout(1000.0);
+        assert_eq!(column_layout(240.0, 0.0), (224.0, GUTTER));
+        assert_eq!(column_layout(600.0, 0.0), (584.0, GUTTER));
+        let (column, inset) = column_layout(1000.0, 0.0);
         assert_eq!(column, MAX_COLUMN);
         assert_eq!(inset, 120.0);
         // Never wider than the panel itself.
-        assert!(column_layout(50.0).0 <= 50.0);
+        assert!(column_layout(50.0, 0.0).0 <= 50.0);
+        // The timeline's gutter comes off the left of a narrow column...
+        assert_eq!(column_layout(600.0, 20.0), (564.0, GUTTER + 20.0));
+        // ...and a wide panel already has room for it beside the centred column.
+        assert_eq!(column_layout(1000.0, 20.0), (MAX_COLUMN, 120.0));
     }
 
     fn draw(

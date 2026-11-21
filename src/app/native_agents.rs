@@ -1808,19 +1808,22 @@ mod tests {
             !has_text(&output, "Latest"),
             "nothing to jump to at the end"
         );
+        // Trackpad-sized steps apply at once. One large wheel notch would be
+        // smoothed over many frames, and its tail would cancel later jumps, as a
+        // user's own scrolling rightly does.
         let pointer = egui::pos2(850.0, 300.0);
+        let wheel = (0..500).map(|_| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 7.0),
+            modifiers: egui::Modifiers::NONE,
+        });
         frame_with_events(
             &mut app,
             &ctx,
             1000.0,
-            vec![
-                egui::Event::PointerMoved(pointer),
-                egui::Event::MouseWheel {
-                    unit: egui::MouseWheelUnit::Point,
-                    delta: egui::vec2(0.0, 30000.0),
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
+            std::iter::once(egui::Event::PointerMoved(pointer))
+                .chain(wheel)
+                .collect(),
         );
         for _ in 0..4 {
             frame(&mut app, &ctx, 1000.0);
@@ -1831,7 +1834,26 @@ mod tests {
             "scrolled to the top"
         );
         assert!(has_text(&output, "Latest"));
-        assert!(has_text(&output, "Prev") && has_text(&output, "Next"));
+        // The message timeline sits in the transcript's left gutter: a column of
+        // dots, one per message (sampled, since forty do not all fit).
+        let dots: Vec<egui::Pos2> = {
+            let circles: Vec<egui::Pos2> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Circle(circle) if circle.radius <= 3.0 => Some(circle.center),
+                    _ => None,
+                })
+                .collect();
+            let column = circles
+                .iter()
+                .map(|dot| dot.x)
+                .max_by_key(|x| circles.iter().filter(|dot| dot.x == *x).count())
+                .expect("timeline dots");
+            circles.into_iter().filter(|dot| dot.x == column).collect()
+        };
+        assert!(dots.len() >= 10, "a dot column: {}", dots.len());
+        assert!(!has_text(&output, "Prev") && !has_text(&output, "Next"));
         // A reply arrives while the user is reading the start: it is announced,
         // and the viewport stays where it was.
         *app.view.agent_panel.draft_mut(id) = "hello".into();
@@ -1846,7 +1868,7 @@ mod tests {
             "reading position kept"
         );
         assert!(has_text(&output, "2 new"), "new content is flagged");
-        // Next moves to a later message of the user, never past the end.
+        // Choosing a message from the timeline moves the reading position to it.
         let button = |output: &egui::FullOutput, label: &str| {
             output.shapes.iter().find_map(|shape| match &shape.shape {
                 egui::Shape::Text(t) if t.galley.job.text.contains(label) => {
@@ -1874,18 +1896,40 @@ mod tests {
                 frame(app, &ctx, 1000.0);
             }
         };
-        let mut output = output;
-        for _ in 0..5 {
-            click(&mut app, button(&output, "Next").unwrap());
-            output = frame(&mut app, &ctx, 1000.0);
+        let handle = dots[dots.len() / 2];
+        frame_with_events(
+            &mut app,
+            &ctx,
+            1000.0,
+            vec![egui::Event::PointerMoved(handle)],
+        );
+        // The list lays itself out, then scrolls once to the dot under the pointer.
+        for _ in 0..3 {
+            frame(&mut app, &ctx, 1000.0);
         }
+        let listed = frame(&mut app, &ctx, 1000.0);
+        // The list's row is the leftmost "message 9" (the bubble is at the right).
+        let row = listed
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(t) if t.galley.job.text == "message 9" => {
+                    Some(t.galley.rect.translate(t.pos.to_vec2()).center())
+                }
+                _ => None,
+            })
+            .min_by(|a, b| a.x.total_cmp(&b.x))
+            .expect("the list names message 9");
+        assert!(row.x < handle.x + 300.0, "listed beside the handle");
+        click(&mut app, row);
+        let output = frame(&mut app, &ctx, 1000.0);
         assert!(
             visible_text_rect(&output, "message 0").is_none(),
-            "Next moved the reading position forward"
+            "the timeline moved the reading position forward"
         );
         assert!(
             visible_text_rect(&output, "message 9").is_some(),
-            "and by whole messages, not past the end"
+            "to the chosen message"
         );
         click(&mut app, button(&output, "2 new").unwrap());
         let output = frame(&mut app, &ctx, 1000.0);
