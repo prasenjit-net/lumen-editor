@@ -186,6 +186,8 @@ pub(crate) struct AgentPanel {
     queue_edit: Option<QueueEdit>,
     /// Answers being chosen for the agents' questions, by request.
     question_forms: HashMap<RequestToken, QuestionForm>,
+    /// Feedback being written on proposed plans, by request.
+    plan_notes: HashMap<RequestToken, String>,
 }
 
 impl Default for AgentPanel {
@@ -205,6 +207,7 @@ impl Default for AgentPanel {
             history_query: String::new(),
             queue_edit: None,
             question_forms: HashMap::new(),
+            plan_notes: HashMap::new(),
         }
     }
 }
@@ -217,11 +220,17 @@ impl AgentPanel {
             .or_insert_with(|| QuestionForm::new(&request.questions))
     }
 
-    /// Forget the forms of `session` whose questions no longer wait for an
-    /// answer. Other sessions' forms are kept.
+    /// The feedback being written on the plan of `token`.
+    pub(crate) fn plan_note(&mut self, token: &RequestToken) -> &mut String {
+        self.plan_notes.entry(token.clone()).or_default()
+    }
+
+    /// Forget the answers and feedback of `session`'s requests that no longer
+    /// wait for the user. Other sessions' are kept.
     pub(crate) fn forget_answered(&mut self, session: SessionId, waiting: &[RequestToken]) {
-        self.question_forms
-            .retain(|token, _| token.session != session || waiting.contains(token));
+        let keep = |token: &RequestToken| token.session != session || waiting.contains(token);
+        self.question_forms.retain(|token, _| keep(token));
+        self.plan_notes.retain(|token, _| keep(token));
     }
 
     /// Record whether the provider's program was found (`None`) or not (`Some(name)`).

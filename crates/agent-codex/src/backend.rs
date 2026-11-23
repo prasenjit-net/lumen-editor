@@ -501,7 +501,9 @@ impl CodexBackend {
                     ),
                 }
             }
-            O::ReplyApproval { token, decision } => self.reply_approval(op, token, decision),
+            O::ReplyApproval {
+                token, decision, ..
+            } => self.reply_approval(op, token, decision),
             O::ReplyQuestion { token, reply } => self.reply_question(op, token, reply),
             O::DetachSession { session } => {
                 match (self.thread_of(session), self.sessions.get(&session)) {

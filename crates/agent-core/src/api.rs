@@ -142,6 +142,9 @@ pub enum AgentOperation {
     ReplyApproval {
         token: RequestToken,
         decision: ApprovalDecisionId,
+        /// What the user told the agent with a refusal, if anything. Providers
+        /// without a way to pass it on ignore it.
+        note: Option<String>,
     },
     ReplyQuestion {
         token: RequestToken,

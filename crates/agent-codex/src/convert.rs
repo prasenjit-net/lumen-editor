@@ -806,6 +806,7 @@ pub fn approval_request(
             command: text(params, "command").map(str::to_string),
             paths: text(params, "cwd").map(PathBuf::from).into_iter().collect(),
             choices: approval_choices(true),
+            plan: None,
         }),
         "item/fileChange/requestApproval" => Some(ApprovalRequest {
             token,
@@ -816,6 +817,7 @@ pub fn approval_request(
                 .into_iter()
                 .collect(),
             choices: approval_choices(true),
+            plan: None,
         }),
         _ => None,
     }

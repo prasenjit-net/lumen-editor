@@ -518,6 +518,7 @@ fn an_approval_round_trip_answers_the_server_request_once_and_goes_stale_after()
     let (ok, events) = rig.run(AgentOperation::ReplyApproval {
         token: token.clone(),
         decision: ApprovalDecisionId("decline".into()),
+        note: None,
     });
     assert_eq!(ok, OperationOutcome::Succeeded(OperationOutput::Ack));
     assert!(
@@ -531,6 +532,7 @@ fn an_approval_round_trip_answers_the_server_request_once_and_goes_stale_after()
     let (again, _) = rig.run(AgentOperation::ReplyApproval {
         token,
         decision: ApprovalDecisionId("accept".into()),
+        note: None,
     });
     assert!(matches!(
         again,
@@ -556,6 +558,7 @@ fn unknown_decisions_and_wrong_tokens_are_refused_without_answering_the_server()
     let (bad, _) = rig.run(AgentOperation::ReplyApproval {
         token: token.clone(),
         decision: ApprovalDecisionId("acceptWithExecpolicyAmendment".into()),
+        note: None,
     });
     assert!(matches!(
         bad,
@@ -566,6 +569,7 @@ fn unknown_decisions_and_wrong_tokens_are_refused_without_answering_the_server()
     let (stale, _) = rig.run(AgentOperation::ReplyApproval {
         token: forged,
         decision: ApprovalDecisionId("accept".into()),
+        note: None,
     });
     assert!(matches!(
         stale,
@@ -576,6 +580,7 @@ fn unknown_decisions_and_wrong_tokens_are_refused_without_answering_the_server()
     let (stale, _) = rig.run(AgentOperation::ReplyApproval {
         token: old_generation,
         decision: ApprovalDecisionId("accept".into()),
+        note: None,
     });
     assert!(matches!(
         stale,
@@ -588,6 +593,7 @@ fn unknown_decisions_and_wrong_tokens_are_refused_without_answering_the_server()
     let (ok, _) = rig.run(AgentOperation::ReplyApproval {
         token,
         decision: ApprovalDecisionId("accept".into()),
+        note: None,
     });
     assert_eq!(
         ok,

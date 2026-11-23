@@ -1,13 +1,13 @@
 //! The agent's questions, docked above the message box: one question at a
 //! time with its options, an answer in your own words where the agent accepts
 //! one, and Back / Next / Submit. Skipping tells the agent to carry on.
-use super::TEXT_SIZE;
+use super::{TEXT_SIZE, docked};
 use crate::{
     icon,
     model::question_form::QuestionForm,
     ui::{theme, widgets},
 };
-use eframe::egui::{self, Frame, Key, Margin, RichText, ScrollArea, Sense, Stroke};
+use eframe::egui::{self, Frame, Key, Margin, RichText, Sense, Stroke};
 use lumen_agent_core::{Question, QuestionRequest, TypedAnswer, api::QuestionReply};
 
 /// Header, typed answer and footer rows, kept outside the scrolling part.
@@ -35,32 +35,21 @@ pub(super) fn question_card(
     let mut reply = keys(ui, base, questions, form, &holders);
     let question = questions.get(form.step())?;
     let mut keyboard = KeyboardScope::default();
-    let card = Frame::default()
-        .fill(colors.panel)
-        .corner_radius(3)
-        .inner_margin(Margin {
-            left: 14,
-            right: 12,
-            top: 8,
-            bottom: 10,
-        })
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 6.0;
-            ui.add_enabled_ui(!form.is_sent(), |ui| {
-                if header(ui, question, form, questions.len(), colors) {
-                    reply = reply.take().or_else(|| form.skip());
-                }
-                scrolling_body(ui, base, max_height, |ui| {
-                    body(ui, base, questions, question, form, colors, &mut keyboard);
-                });
-                typed_answer(ui, base, questions, question, form, &mut keyboard);
-                if let Some(footer_reply) = footer(ui, questions, form, colors, &mut keyboard) {
-                    reply = reply.take().or(Some(footer_reply));
-                }
+    docked::card(ui, colors.accent, colors, |ui| {
+        ui.add_enabled_ui(!form.is_sent(), |ui| {
+            if header(ui, question, form, questions.len(), colors) {
+                reply = reply.take().or_else(|| form.skip());
+            }
+            let limit = (max_height - CHROME_HEIGHT).max(80.0);
+            docked::scrolling(ui, base.with("body"), limit, |ui| {
+                body(ui, base, questions, question, form, colors, &mut keyboard);
             });
+            typed_answer(ui, base, questions, question, form, &mut keyboard);
+            if let Some(footer_reply) = footer(ui, questions, form, colors, &mut keyboard) {
+                reply = reply.take().or(Some(footer_reply));
+            }
         });
-    paint_edge(ui, card.response.rect, colors.accent);
+    });
     let holders: Vec<egui::Id> = keyboard
         .options
         .iter()
@@ -70,35 +59,6 @@ pub(super) fn question_card(
     ui.data_mut(|data| data.insert_temp(holders_key, holders));
     arrive(ui, base, form, &keyboard);
     reply
-}
-
-/// The question and its answers, scrolling past `max_height` less the
-/// header and footer. Docked in a panel that sizes itself from its content, a
-/// scroll area would never grow past the panel's last height, so it asks for
-/// the height its content had in the frame before.
-fn scrolling_body(
-    ui: &mut egui::Ui,
-    base: egui::Id,
-    max_height: f32,
-    add: impl FnOnce(&mut egui::Ui),
-) {
-    let id = base.with("body");
-    let limit = (max_height - CHROME_HEIGHT).max(80.0);
-    let wanted = ui
-        .data(|data| data.get_temp::<f32>(id))
-        .unwrap_or(limit)
-        .min(limit);
-    let output = ScrollArea::vertical()
-        .id_salt(id)
-        .max_height(limit)
-        .min_scrolled_height(wanted)
-        .auto_shrink([false, true])
-        .show(ui, add);
-    let content = output.content_size.y;
-    if (content.min(limit) - wanted).abs() > 0.5 {
-        ui.data_mut(|data| data.insert_temp(id, content));
-        ui.ctx().request_repaint();
-    }
 }
 
 /// Widgets of the card that take keys for it: its options and buttons, never
@@ -528,23 +488,6 @@ fn arrive(ui: &egui::Ui, base: egui::Id, form: &QuestionForm, keyboard: &Keyboar
     if let Some(id) = target {
         ui.memory_mut(|memory| memory.request_focus(id));
     }
-}
-
-/// The card's coloured left edge, as on the approval card.
-fn paint_edge(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32) {
-    ui.painter().rect_filled(
-        egui::Rect::from_min_max(
-            rect.left_top(),
-            egui::pos2(rect.left() + 3.0, rect.bottom()),
-        ),
-        egui::CornerRadius {
-            nw: 3,
-            sw: 3,
-            ne: 0,
-            se: 0,
-        },
-        color,
-    );
 }
 
 #[cfg(test)]

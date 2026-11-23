@@ -137,6 +137,15 @@ pub fn allow(request_id: &str, input: &Value) -> String {
         "response": {"behavior": "allow", "updatedInput": input}}}))
 }
 
+/// Allow a tool call and switch the session to permission `mode`, as approving
+/// a plan does.
+pub fn allow_setting_mode(request_id: &str, input: &Value, mode: &str) -> String {
+    line(json!({"type": "control_response", "response": {
+        "subtype": "success", "request_id": request_id,
+        "response": {"behavior": "allow", "updatedInput": input,
+            "updatedPermissions": [{"type": "setMode", "mode": mode, "destination": "session"}]}}}))
+}
+
 /// Deny a tool call with a message the agent sees.
 pub fn deny(request_id: &str, message: &str) -> String {
     line(json!({"type": "control_response", "response": {

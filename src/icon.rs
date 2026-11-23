@@ -48,3 +48,4 @@ pub const PREVIEW: &str = "\u{e02a}";
 pub const TABLE: &str = "\u{e02b}";
 pub const PAPERCLIP: &str = "\u{e02c}";
 pub const QUESTION: &str = "\u{e02d}";
+pub const CHECKLIST: &str = "\u{e02e}";

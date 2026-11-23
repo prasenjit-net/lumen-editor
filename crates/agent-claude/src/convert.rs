@@ -9,8 +9,8 @@ use lumen_agent_core::{
         QuestionAnswer, SessionConfig,
     },
     event::{
-        ApprovalChoice, ApprovalRequest, Question, QuestionOption, QuestionRequest, RiskLevel,
-        TurnOutcome, TypedAnswer, Usage,
+        ApprovalChoice, ApprovalRequest, PlanReview, Question, QuestionOption, QuestionRequest,
+        RiskLevel, TurnOutcome, TypedAnswer, Usage,
     },
     model::{ToolCall, ToolKind},
 };
@@ -29,6 +29,7 @@ pub fn tool_kind(name: &str) -> ToolKind {
         "Read" | "NotebookRead" => ToolKind::Read,
         "Glob" | "Grep" | "WebSearch" => ToolKind::Search,
         "WebFetch" => ToolKind::Fetch,
+        "ExitPlanMode" => ToolKind::Plan,
         _ => ToolKind::Other,
     }
 }
@@ -46,6 +47,12 @@ pub fn tool_paths(input: &Value) -> Vec<PathBuf> {
 pub fn tool_title(name: &str, input: &Value) -> String {
     if name == "AskUserQuestion" {
         return asked_title(input);
+    }
+    if name == "ExitPlanMode" {
+        return match text(input, "plan").and_then(lumen_agent_core::plan_title) {
+            Some(title) => format!("Proposed a plan: {title}"),
+            None => "Proposed a plan".to_string(),
+        };
     }
     let detail = match name {
         "Bash" => text(input, "command").map(str::to_string),
@@ -97,6 +104,10 @@ pub fn tool_call(name: &str, input: &Value, parent: Option<&str>) -> ToolCall {
     let mut call = ToolCall::new(tool_kind(name), tool_title(name, input));
     call.locations = tool_paths(input);
     call.patch = tool_patch(name, input);
+    if call.kind == ToolKind::Plan {
+        // The plan itself is what the transcript shows for it.
+        call.preview = text(input, "plan").unwrap_or_default().to_string();
+    }
     call.parent = parent.map(|id| lumen_agent_core::ItemId(id.to_string()));
     call
 }
@@ -185,6 +196,21 @@ pub fn usage(result: &Value) -> Usage {
 
 pub const ALLOW: &str = "allow";
 pub const DENY: &str = "deny";
+/// Approve a plan and let the agent edit files without asking.
+pub const PLAN_ACCEPT_EDITS: &str = "plan_accept_edits";
+/// Approve a plan; the agent still asks before each edit.
+pub const PLAN_APPROVE: &str = "plan_approve";
+/// Leave the plan unapproved; the agent keeps planning.
+pub const PLAN_KEEP: &str = "plan_keep";
+
+/// The permission mode a plan decision switches to, in Claude Code's terms.
+pub fn plan_mode(decision: &str) -> Option<&'static str> {
+    match decision {
+        PLAN_ACCEPT_EDITS => Some("acceptEdits"),
+        PLAN_APPROVE => Some("default"),
+        _ => None,
+    }
+}
 
 pub fn approval_request(request: &Value, token: RequestToken) -> Option<ApprovalRequest> {
     let tool = text(request, "tool_name")?;
@@ -201,6 +227,43 @@ pub fn approval_request(request: &Value, token: RequestToken) -> Option<Approval
             allows,
             risk,
         };
+    if tool == "ExitPlanMode" {
+        return Some(ApprovalRequest {
+            token,
+            summary: "Plan ready for review".into(),
+            command: None,
+            paths: Vec::new(),
+            choices: vec![
+                choice(
+                    PLAN_ACCEPT_EDITS,
+                    "Approve and accept edits",
+                    "the plan; the agent then edits files without asking",
+                    true,
+                    RiskLevel::Medium,
+                ),
+                choice(
+                    PLAN_APPROVE,
+                    "Approve",
+                    "the plan; the agent asks before each edit",
+                    true,
+                    RiskLevel::Low,
+                ),
+                choice(
+                    PLAN_KEEP,
+                    "Keep planning",
+                    "the plan stays unapproved and the agent keeps planning",
+                    false,
+                    RiskLevel::Low,
+                ),
+            ],
+            plan: Some(PlanReview {
+                text: text(&input, "plan").unwrap_or_default().to_string(),
+                file: text(&input, "planFilePath")
+                    .filter(|path| !path.is_empty())
+                    .map(PathBuf::from),
+            }),
+        });
+    }
     Some(ApprovalRequest {
         token,
         summary,
@@ -224,6 +287,7 @@ pub fn approval_request(request: &Value, token: RequestToken) -> Option<Approval
                 RiskLevel::Low,
             ),
         ],
+        plan: None,
     })
 }
 
@@ -348,6 +412,15 @@ pub const MODES: [(&str, &str); 5] = [
 ];
 
 pub const DEFAULT_MODE: &str = "manual";
+
+/// A permission mode Claude Code reports, as Lumen names it: Claude Code's
+/// `default` is the mode Lumen calls `manual`.
+pub fn lumen_mode(mode: &str) -> &str {
+    match mode {
+        "default" => DEFAULT_MODE,
+        other => other,
+    }
+}
 
 /// The user's choices for a session; `default` means "let Claude Code decide".
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -117,6 +117,11 @@ pub(crate) fn steps_summary(items: &[TranscriptItem], blocks: &[Block]) -> (Stri
     if fetches > 0 {
         done.push(format!("fetched {}", plural(fetches, "page", "pages")));
     }
+    match count_tools(ToolKind::Plan) {
+        0 => {}
+        1 => done.push("proposed a plan".to_string()),
+        plans => done.push(format!("proposed {plans} plans")),
+    }
     let errors = indices
         .iter()
         .filter(|&&i| matches!(items[i].kind, ItemKind::Error(_)))
@@ -243,6 +248,7 @@ mod tests {
             tool(ToolKind::Read),
             tool(ToolKind::Command),
             tool(ToolKind::FileEdit),
+            tool(ToolKind::Plan),
         ];
         let Part::Steps(blocks) = &turns(&items)[0].parts[0] else {
             panic!("steps");
@@ -250,8 +256,8 @@ mod tests {
         assert_eq!(
             steps_summary(&items, blocks),
             (
-                "Worked through 6 steps".to_string(),
-                "read 3 files, ran 1 command, edited 1 file".to_string()
+                "Worked through 7 steps".to_string(),
+                "read 3 files, ran 1 command, edited 1 file, proposed a plan".to_string()
             )
         );
     }

@@ -468,9 +468,10 @@ impl LumenApp {
         id: SessionId,
         token: RequestToken,
         decision: ApprovalDecisionId,
+        note: Option<String>,
     ) {
         if let Some(hub) = self.view.native_agents.as_mut() {
-            hub.reply_approval(id, token, decision);
+            hub.reply_approval(id, token, decision, note);
         }
     }
 
@@ -1075,7 +1076,7 @@ mod tests {
             .unwrap()
             .id
             .clone();
-        app.execute(Command::ChatApproval(id, request.token, allow), &ctx);
+        app.execute(Command::ChatApproval(id, request.token, allow, None), &ctx);
         app.view
             .agent_panel
             .draft_mut(id)
@@ -1330,6 +1331,120 @@ mod tests {
         press(&mut app, &ctx, egui::Key::Escape, egui::Modifiers::NONE);
         settle(&mut app, &ctx);
         assert_eq!(agent_said(&app, id).last().unwrap(), "answers: skipped");
+    }
+
+    /// A chat whose agent has just proposed the scripted plan.
+    fn planned_chat(app: &mut LumenApp, ctx: &egui::Context) -> SessionId {
+        app.execute(Command::NativeNewSession(ProviderId::Codex), ctx);
+        let id = app.view.agent_panel.visible_chat().unwrap();
+        app.view
+            .agent_panel
+            .draft_mut(id)
+            .push_str("plan: a scanner");
+        app.execute(Command::ChatSend(id), ctx);
+        settle(app, ctx);
+        settled_frame(app, ctx);
+        id
+    }
+
+    /// The glyph drawn on the same row as, and right of, the text `beside`.
+    fn glyph_beside(output: &egui::FullOutput, beside: &str, glyph: &str) -> egui::Pos2 {
+        let anchor = exact_text_rect(output, beside).expect("the anchor text");
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == glyph => {
+                    let rect = text.galley.rect.translate(text.pos.to_vec2());
+                    (rect.left() > anchor.right()
+                        && (rect.center().y - anchor.center().y).abs() < 6.0)
+                        .then_some(rect.center())
+                }
+                _ => None,
+            })
+            .expect("the glyph beside it")
+    }
+
+    #[test]
+    fn a_proposed_plan_is_read_above_the_message_box_and_approved() {
+        let (mut app, ctx) = fixture();
+        let id = planned_chat(&mut app, &ctx);
+        let output = settled_frame(&mut app, &ctx);
+        for text in [
+            "Scanner",
+            "Context",
+            "Read the build files.",
+            "Open",
+            "Approve and accept edits",
+            "Approve",
+            "Keep planning",
+            "Feedback for the agent (optional)",
+        ] {
+            assert!(has_text(&output, text), "{text}");
+        }
+        assert!(
+            !has_text(&output, "Permission needed") && !has_text(&output, "approval needed"),
+            "the plan is reviewed in its card, not as a tool approval"
+        );
+        let body = visible_text_rect(&output, "Read the build files.").unwrap();
+        let composer = visible_text_rect(&output, "Queue").expect("the composer");
+        assert!(
+            body.bottom() < composer.top(),
+            "docked above the message box"
+        );
+        click_text(&mut app, &ctx, "Approve and accept edits");
+        settle(&mut app, &ctx);
+        let output = settled_frame(&mut app, &ctx);
+        assert_eq!(agent_said(&app, id), ["plan: plan_accept_edits"]);
+        assert!(!has_text(&output, "Keep planning"), "the card is gone");
+        assert!(
+            has_text(&output, "proposed a plan"),
+            "the finished steps name the plan"
+        );
+    }
+
+    #[test]
+    fn feedback_keeps_the_agent_planning_and_the_plan_folds_away() {
+        let (mut app, ctx) = fixture();
+        let id = planned_chat(&mut app, &ctx);
+        // Folding keeps the title and the choices.
+        let output = settled_frame(&mut app, &ctx);
+        click_at(
+            &mut app,
+            &ctx,
+            glyph_beside(&output, "Scanner", crate::icon::CARET_DOWN),
+        );
+        let output = settled_frame(&mut app, &ctx);
+        assert!(!has_text(&output, "Read the build files."), "folded");
+        assert!(has_text(&output, "Scanner") && has_text(&output, "Approve"));
+        click_at(
+            &mut app,
+            &ctx,
+            glyph_beside(&output, "Scanner", crate::icon::CARET_RIGHT),
+        );
+        let output = settled_frame(&mut app, &ctx);
+        assert!(has_text(&output, "Read the build files."), "unfolded");
+        // Open goes to the plan's file.
+        click_text(&mut app, &ctx, "Open");
+        assert!(
+            app.view.status.contains("scanner.md"),
+            "{}",
+            app.view.status
+        );
+        // Feedback goes with the refusal, which then says so.
+        let field = visible_text_rect(&output, "Feedback for the agent").unwrap();
+        click_at(&mut app, &ctx, field.center());
+        frame_with_events(
+            &mut app,
+            &ctx,
+            1000.0,
+            vec![egui::Event::Text("Use cobra".into())],
+        );
+        let output = settled_frame(&mut app, &ctx);
+        assert!(!has_text(&output, "Keep planning") && has_text(&output, "Send feedback"));
+        click_text(&mut app, &ctx, "Send feedback");
+        settle(&mut app, &ctx);
+        assert_eq!(agent_said(&app, id), ["plan: plan_keep with Use cobra"]);
     }
 
     fn visible_text_rect(output: &egui::FullOutput, needle: &str) -> Option<egui::Rect> {
