@@ -145,7 +145,7 @@ pub enum AgentOperation {
     },
     ReplyQuestion {
         token: RequestToken,
-        answers: Vec<QuestionAnswer>,
+        reply: QuestionReply,
     },
     /// Release an idle runtime/subscriptions; native history is retained.
     DetachSession {
@@ -413,13 +413,31 @@ pub struct CommandDescriptor {
     pub description: String,
 }
 
+/// The user's response to a [`crate::QuestionRequest`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum QuestionAnswer {
-    Text(String),
-    Choice(String),
-    Choices(Vec<String>),
-    /// The user dismissed the question.
-    Cancelled,
+pub enum QuestionReply {
+    /// One answer per question, in the order they were asked.
+    Answered(Vec<QuestionAnswer>),
+    /// The user chose not to answer; the agent carries on without.
+    Skipped,
+}
+
+/// The answer to one question: options chosen by label, words typed, or both.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QuestionAnswer {
+    pub chosen: Vec<String>,
+    pub typed: Option<String>,
+}
+
+impl QuestionAnswer {
+    /// Everything answered, chosen labels first, as plain strings.
+    pub fn values(&self) -> Vec<String> {
+        self.chosen
+            .iter()
+            .cloned()
+            .chain(self.typed.clone().filter(|text| !text.trim().is_empty()))
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -6,10 +6,7 @@ use std::path::PathBuf;
 use crate::{
     AgentError, Capabilities, ItemId, OperationId, ProfileId, ProviderId, RequestToken,
     RuntimeGeneration, SessionId, TurnId,
-    api::{
-        AuthChallenge, AuthState, CommandDescriptor, OperationOutcome, QuestionAnswer,
-        SessionConfig,
-    },
+    api::{AuthChallenge, AuthState, CommandDescriptor, OperationOutcome, SessionConfig},
     model::{MessagePhase, PlanEntry, ToolCall, ToolStatus, ToolUpdate},
 };
 
@@ -140,18 +137,41 @@ pub struct ApprovalRequest {
     pub choices: Vec<ApprovalChoice>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum QuestionKind {
-    Text,
-    SingleChoice(Vec<String>),
-    MultiChoice(Vec<String>),
-}
-
+/// Questions the agent asks together; they are answered (or skipped) as one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QuestionRequest {
     pub token: RequestToken,
+    pub questions: Vec<Question>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Question {
+    /// What the provider uses to match the answer to the question.
+    pub id: String,
+    /// A short label for the question, possibly empty.
+    pub header: String,
     pub prompt: String,
-    pub kind: QuestionKind,
+    /// Suggested answers; empty when only a typed answer makes sense.
+    pub options: Vec<QuestionOption>,
+    /// Whether several options can be chosen.
+    pub multiple: bool,
+    pub typed: TypedAnswer,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuestionOption {
+    pub label: String,
+    /// What choosing it means, possibly empty.
+    pub description: String,
+}
+
+/// Whether a question also takes an answer in the user's own words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TypedAnswer {
+    None,
+    Text,
+    /// Typed, but hidden as it is entered (a password or token).
+    Secret,
 }
 
 /// A file change as reported by the provider (not Lumen's own disk comparison).
@@ -188,6 +208,3 @@ impl TurnOutcome {
         matches!(self, Self::Completed)
     }
 }
-
-/// An answer set a UI collected, kept next to the event types it answers.
-pub type Answers = Vec<QuestionAnswer>;

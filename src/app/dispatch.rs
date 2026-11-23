@@ -43,6 +43,7 @@ impl LumenApp {
             }
             Command::ChatSuggest(id, suggestion) => self.chat_suggest(id, suggestion),
             Command::ChatApproval(id, token, decision) => self.chat_approval(id, token, decision),
+            Command::ChatAnswer(id, token, reply) => self.chat_answer(id, token, reply),
             Command::ChatSetConfig(id, option, value) => self.chat_set_config(id, option, value),
             Command::ChatResetConfig(id, option) => self.chat_reset_config(id, option),
             Command::ArchiveChat(id) => self.archive_chat(id),

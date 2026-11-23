@@ -8,7 +8,8 @@ use lumen_agent_core::{
     SessionId, SubmitError, TurnId,
     api::{
         AgentBackend, AgentOperation, ApprovalDecisionId, ClientTurnId, ConfigPatch,
-        ConfigRevision, InputBlock, OperationOutcome, OperationOutput, QuestionAnswer, Request,
+        ConfigRevision, InputBlock, OperationOutcome, OperationOutput, QuestionAnswer,
+        QuestionReply, Request,
     },
     event::{AgentEvent, TurnOutcome},
     launcher::LaunchError,
@@ -596,7 +597,7 @@ fn unknown_decisions_and_wrong_tokens_are_refused_without_answering_the_server()
 }
 
 #[test]
-fn a_question_is_answered_with_the_native_shape_and_unsupported_requests_are_declined() {
+fn questions_are_answered_with_the_native_shape_and_unsupported_requests_are_declined() {
     let mut rig = Rig::new();
     rig.create(1);
     rig.start(1, "x");
@@ -604,25 +605,71 @@ fn a_question_is_answered_with_the_native_shape_and_unsupported_requests_are_dec
         "turn/started",
         json!({"threadId": THREAD, "turn": {"id": "turn-1"}}),
     );
+    // Several questions at once are answered together, each under its own id.
     rig.server_request(7, "item/tool/requestUserInput", json!({"threadId": THREAD, "turnId": "turn-1", "itemId": "i", "isBlocking": true,
-        "questions": [{"id": "q1", "header": "h", "question": "Which?", "options": [{"label": "a", "description": ""}]}]}));
+        "questions": [
+            {"id": "q1", "header": "h", "question": "Which?", "isOther": true, "options": [{"label": "a", "description": ""}]},
+            {"id": "q2", "header": "", "question": "Name?"}]}));
+    let events = rig.poll();
+    let asked = events
+        .iter()
+        .find_map(|e| match &e.event {
+            AgentEvent::QuestionRequested(request) => Some(request.clone()),
+            _ => None,
+        })
+        .expect("asked");
+    assert_eq!(asked.questions.len(), 2);
+    let (ok, _) = rig.run(AgentOperation::ReplyQuestion {
+        token: asked.token,
+        reply: QuestionReply::Answered(vec![
+            QuestionAnswer {
+                chosen: vec!["a".into()],
+                typed: Some("and more".into()),
+            },
+            QuestionAnswer {
+                chosen: Vec::new(),
+                typed: Some("Ada".into()),
+            },
+        ]),
+    });
+    assert_eq!(ok, OperationOutcome::Succeeded(OperationOutput::Ack));
+    let written = rig.written();
+    let reply = written
+        .iter()
+        .find(|m| m["id"] == 7)
+        .expect("the answers were sent");
+    assert_eq!(
+        reply["result"],
+        json!({"answers": {"q1": {"answers": ["a", "and more"]}, "q2": {"answers": ["Ada"]}}})
+    );
+    // Skipping answers every question with nothing.
+    rig.server_request(
+        8,
+        "item/tool/requestUserInput",
+        json!({"threadId": THREAD, "turnId": "turn-1", "itemId": "i", "isBlocking": true,
+        "questions": [{"id": "q3", "header": "", "question": "Why?"}]}),
+    );
     let token = pending_token(&rig.poll());
     let (ok, _) = rig.run(AgentOperation::ReplyQuestion {
         token,
-        answers: vec![QuestionAnswer::Choice("a".into())],
+        reply: QuestionReply::Skipped,
     });
     assert_eq!(ok, OperationOutcome::Succeeded(OperationOutput::Ack));
     assert!(
         rig.child()
             .written_text()
             .lines()
-            .any(|l| l == "{\"id\":7,\"result\":{\"answers\":{\"q1\":{\"answers\":[\"a\"]}}}}")
+            .any(|l| l == "{\"id\":8,\"result\":{\"answers\":{\"q3\":{\"answers\":[]}}}}")
     );
-    // Several questions at once, and a request type we do not handle: declined with feedback.
-    rig.server_request(8, "item/tool/requestUserInput", json!({"threadId": THREAD, "turnId": "turn-1", "itemId": "i", "isBlocking": true,
-        "questions": [{"id": "1", "header": "", "question": "a"}, {"id": "2", "header": "", "question": "b"}]}));
+    // A question without an id, and a request type we do not handle: declined with feedback.
     rig.server_request(
         9,
+        "item/tool/requestUserInput",
+        json!({"threadId": THREAD, "turnId": "turn-1", "itemId": "i", "isBlocking": true,
+        "questions": [{"header": "", "question": "a"}]}),
+    );
+    rig.server_request(
+        10,
         "item/permissions/requestApproval",
         json!({"threadId": THREAD, "turnId": "turn-1"}),
     );
@@ -633,7 +680,7 @@ fn a_question_is_answered_with_the_native_shape_and_unsupported_requests_are_dec
             .iter()
             .any(|m| m["id"] == id && m.get("error").is_some())
     };
-    assert!(errored(8) && errored(9), "{written:?}");
+    assert!(errored(9) && errored(10), "{written:?}");
     let warnings = events
         .iter()
         .filter(|e| matches!(e.event, AgentEvent::Diagnostic { .. }))

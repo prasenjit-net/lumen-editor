@@ -370,6 +370,13 @@ def _(g):
     g.line(pts, 1.3)
 
 
+@icon("QUESTION")
+def _(g):
+    g.ring((8, 8), 6.2, 1.2)
+    g.line(g.arc((8, 6.4), 2, 180, 420) + [(8, 9.1), (8, 9.7)], 1.3)
+    g.circ((8, 11.6), 0.85)
+
+
 def build():
     names = list(icons)
     codes = {n: 0xE000 + i for i, n in enumerate(names)}

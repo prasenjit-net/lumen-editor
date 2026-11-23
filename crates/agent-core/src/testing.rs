@@ -14,12 +14,12 @@ use crate::{
     SessionId, SubmitError, TurnId,
     api::{
         AgentBackend, AgentOperation, ApprovalDecisionId, AuthState, ConfigChoice, ConfigOption,
-        ConfigRevision, InputBlock, OperationOutcome, OperationOutput, QuestionAnswer, Request,
+        ConfigRevision, InputBlock, OperationOutcome, OperationOutput, QuestionReply, Request,
         SessionConfig, SessionSummary,
     },
     event::{
-        AgentEvent, ApprovalChoice, ApprovalRequest, QuestionKind, QuestionRequest, RiskLevel,
-        TurnOutcome,
+        AgentEvent, ApprovalChoice, ApprovalRequest, Question, QuestionOption, QuestionRequest,
+        RiskLevel, TurnOutcome, TypedAnswer,
     },
     launcher::{Child, ChildEvent, ChildLauncher, ChildSpec, ExitInfo, LaunchError, Wake},
     model::{MessagePhase, ToolCall, ToolKind, ToolStatus},
@@ -401,7 +401,7 @@ impl FakeBackend {
                 self.end_turn(session, TurnOutcome::Interrupted);
             }
             O::ReplyApproval { token, decision } => self.reply_approval(op, token, decision),
-            O::ReplyQuestion { token, answers } => self.reply_question(op, token, answers),
+            O::ReplyQuestion { token, reply } => self.reply_question(op, token, reply),
             O::DetachSession { session } => match self.sessions.get(&session) {
                 None => self.fail(
                     op,
@@ -551,8 +551,7 @@ impl FakeBackend {
                 Some(turn.clone()),
                 AgentEvent::QuestionRequested(QuestionRequest {
                     token: token.clone(),
-                    prompt: "Which one?".into(),
-                    kind: QuestionKind::SingleChoice(vec!["a".into(), "b".into()]),
+                    questions: scripted_questions(),
                 }),
             );
             self.sessions.get_mut(&session).expect("exists").active = Some(ActiveTurn {
@@ -693,12 +692,7 @@ impl FakeBackend {
         self.end_turn(session, TurnOutcome::Completed);
     }
 
-    fn reply_question(
-        &mut self,
-        op: OperationId,
-        token: RequestToken,
-        answers: Vec<QuestionAnswer>,
-    ) {
+    fn reply_question(&mut self, op: OperationId, token: RequestToken, reply: QuestionReply) {
         let Some(session) = self.find_request(&token) else {
             return self.fail(
                 op,
@@ -718,24 +712,78 @@ impl FakeBackend {
                 },
             );
         }
-        if answers.is_empty() {
-            return self.fail(
-                op,
-                AgentError::Provider {
-                    message: "no answer given".into(),
-                },
-            );
-        }
+        // What the agent was told, written into the transcript so a UI test
+        // can check exactly what was sent.
+        let told = match &reply {
+            QuestionReply::Answered(answers) if answers.len() != scripted_questions().len() => {
+                return self.fail(
+                    op,
+                    AgentError::Provider {
+                        message: "answer every question".into(),
+                    },
+                );
+            }
+            QuestionReply::Answered(answers) => format!(
+                "answers: {}",
+                answers
+                    .iter()
+                    .map(|answer| answer.values().join(", "))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            ),
+            QuestionReply::Skipped => "answers: skipped".to_string(),
+        };
         self.finish(op, OperationOutcome::Succeeded(OperationOutput::Ack));
         let turn = token.turn.clone();
+        let item = crate::ItemId(format!("{}-answers", turn.0));
         self.emit(
             None,
             Some(session),
-            Some(turn),
+            Some(turn.clone()),
             AgentEvent::QuestionResolved { token },
         );
+        for event in [
+            AgentEvent::MessageStarted {
+                item: item.clone(),
+                phase: MessagePhase::Final,
+            },
+            AgentEvent::TextDelta {
+                item: item.clone(),
+                delta: told,
+            },
+            AgentEvent::MessageFinished { item },
+        ] {
+            self.emit(None, Some(session), Some(turn.clone()), event);
+        }
         self.end_turn(session, TurnOutcome::Completed);
     }
+}
+
+/// What an `ask:` message asks: one single choice that also takes typed
+/// words, and one multiple choice.
+fn scripted_questions() -> Vec<Question> {
+    let option = |label: &str, description: &str| QuestionOption {
+        label: label.into(),
+        description: description.into(),
+    };
+    vec![
+        Question {
+            id: "q1".into(),
+            header: "Pick".into(),
+            prompt: "Which one?".into(),
+            options: vec![option("a", "The first"), option("b", "The second")],
+            multiple: false,
+            typed: TypedAnswer::Text,
+        },
+        Question {
+            id: "q2".into(),
+            header: "Extras".into(),
+            prompt: "Which extras?".into(),
+            options: vec![option("x", ""), option("y", "")],
+            multiple: true,
+            typed: TypedAnswer::None,
+        },
+    ]
 }
 
 impl AgentBackend for FakeBackend {
@@ -1140,6 +1188,7 @@ mod tests {
     use super::*;
     use crate::{
         ItemId,
+        api::QuestionAnswer,
         model::{Applied, SessionModel, TurnState},
     };
 
@@ -1354,7 +1403,7 @@ mod tests {
                 5,
                 AgentOperation::ReplyQuestion {
                     token: wrong,
-                    answers: vec![QuestionAnswer::Choice("a".into())],
+                    reply: QuestionReply::Skipped,
                 },
             ))
             .unwrap();
@@ -1369,7 +1418,13 @@ mod tests {
                 6,
                 AgentOperation::ReplyQuestion {
                     token,
-                    answers: vec![QuestionAnswer::Choice("a".into())],
+                    reply: QuestionReply::Answered(vec![
+                        QuestionAnswer {
+                            chosen: vec!["a".into()],
+                            typed: None,
+                        },
+                        QuestionAnswer::default(),
+                    ]),
                 },
             ))
             .unwrap();

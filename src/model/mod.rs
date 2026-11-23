@@ -14,6 +14,7 @@ pub(crate) mod markdown;
 pub(crate) mod output_log;
 pub(crate) mod patch_view;
 pub(crate) mod previewable;
+pub(crate) mod question_form;
 pub(crate) mod search;
 pub(crate) mod status_info;
 pub(crate) mod svg;

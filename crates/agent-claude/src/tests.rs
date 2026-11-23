@@ -8,7 +8,8 @@ use lumen_agent_core::{
     ProfileId, ProviderId, RuntimeGeneration, SessionId, TurnId,
     api::{
         AgentBackend, AgentOperation, ApprovalDecisionId, AuthState, ClientTurnId, ConfigPatch,
-        ConfigRevision, InputBlock, OperationOutcome, OperationOutput, Request,
+        ConfigRevision, InputBlock, OperationOutcome, OperationOutput, QuestionAnswer,
+        QuestionReply, Request,
     },
     event::{AgentEvent, TurnOutcome},
     launcher::{Child, ChildEvent, ChildLauncher, ChildSpec, LaunchError, Wake},
@@ -418,8 +419,165 @@ fn allow_returns_the_original_input() {
     );
 }
 
+fn ask(request_id: &str) -> Value {
+    json!({"type": "control_request", "request_id": request_id, "request": {
+        "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "tool_use_id": "toolu_q",
+        "input": {"questions": [
+            {"question": "How should I format the output?", "header": "Format", "multiSelect": false,
+             "options": [{"label": "Summary", "description": "Brief"}, {"label": "Detailed", "description": "Full"}]},
+            {"question": "Which sections?", "header": "Sections", "multiSelect": true,
+             "options": [{"label": "Intro", "description": ""}, {"label": "Outro", "description": ""}]}]}}})
+}
+
+fn asked(events: &[EventEnvelope]) -> lumen_agent_core::QuestionRequest {
+    events
+        .iter()
+        .find_map(|e| match &e.event {
+            AgentEvent::QuestionRequested(request) => Some(request.clone()),
+            _ => None,
+        })
+        .expect("a question was asked")
+}
+
+fn control_response(rig: &Rig, request_id: &str) -> Value {
+    rig.written()
+        .into_iter()
+        .find(|m| m["type"] == "control_response" && m["response"]["request_id"] == request_id)
+        .expect("a reply was written")
+}
+
 #[test]
-fn questions_are_declined_at_the_source_and_unknown_controls_are_refused() {
+fn questions_reach_the_user_and_answers_go_back_keyed_by_question_text() {
+    let mut rig = Rig::new();
+    rig.create(1);
+    rig.start(1, "x");
+    rig.say(ask("q"));
+    let request = asked(&rig.poll());
+    let summary: Vec<(&str, &str, bool, usize)> = request
+        .questions
+        .iter()
+        .map(|q| {
+            (
+                q.header.as_str(),
+                q.prompt.as_str(),
+                q.multiple,
+                q.options.len(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("Format", "How should I format the output?", false, 2),
+            ("Sections", "Which sections?", true, 2)
+        ]
+    );
+    assert_eq!(request.questions[0].options[0].description, "Brief");
+    // A question is not an approval: approving it is refused and it stays.
+    let (refused, _) = rig.run(AgentOperation::ReplyApproval {
+        token: request.token.clone(),
+        decision: ApprovalDecisionId("allow".into()),
+    });
+    assert!(matches!(
+        refused,
+        OperationOutcome::Failed(AgentError::Stale { .. })
+    ));
+    let (outcome, events) = rig.run(AgentOperation::ReplyQuestion {
+        token: request.token.clone(),
+        reply: QuestionReply::Answered(vec![
+            QuestionAnswer {
+                chosen: vec!["Summary".into()],
+                typed: None,
+            },
+            QuestionAnswer {
+                chosen: vec!["Intro".into()],
+                typed: Some("Appendix".into()),
+            },
+        ]),
+    });
+    assert_eq!(outcome, OperationOutcome::Succeeded(OperationOutput::Ack));
+    assert!(events.iter().any(|e| matches!(
+        &e.event,
+        AgentEvent::QuestionResolved { token } if *token == request.token
+    )));
+    let reply = control_response(&rig, "q");
+    let response = &reply["response"]["response"];
+    assert_eq!(response["behavior"], "allow");
+    assert_eq!(
+        response["updatedInput"]["answers"],
+        json!({"How should I format the output?": "Summary", "Which sections?": ["Intro", "Appendix"]})
+    );
+    assert_eq!(
+        response["updatedInput"]["questions"][1]["header"], "Sections",
+        "the questions are passed back as asked"
+    );
+    // Typed words alone answer a single-choice question.
+    rig.say(ask("q2"));
+    let request = asked(&rig.poll());
+    rig.run(AgentOperation::ReplyQuestion {
+        token: request.token,
+        reply: QuestionReply::Answered(vec![
+            QuestionAnswer {
+                chosen: Vec::new(),
+                typed: Some("As a table".into()),
+            },
+            QuestionAnswer::default(),
+        ]),
+    });
+    assert_eq!(
+        control_response(&rig, "q2")["response"]["response"]["updatedInput"]["answers"],
+        json!({"How should I format the output?": "As a table", "Which sections?": []})
+    );
+}
+
+#[test]
+fn skipped_questions_are_denied_with_guidance_and_a_turn_end_resolves_open_ones() {
+    let mut rig = Rig::new();
+    rig.create(1);
+    rig.start(1, "x");
+    rig.say(ask("q"));
+    let request = asked(&rig.poll());
+    let (outcome, _) = rig.run(AgentOperation::ReplyQuestion {
+        token: request.token.clone(),
+        reply: QuestionReply::Skipped,
+    });
+    assert_eq!(outcome, OperationOutcome::Succeeded(OperationOutput::Ack));
+    let response = &control_response(&rig, "q")["response"]["response"];
+    assert_eq!(response["behavior"], "deny");
+    assert!(
+        response["message"]
+            .as_str()
+            .unwrap()
+            .contains("best judgement"),
+        "{response}"
+    );
+    // Answering again is stale.
+    let (again, _) = rig.run(AgentOperation::ReplyQuestion {
+        token: request.token,
+        reply: QuestionReply::Skipped,
+    });
+    assert!(matches!(
+        again,
+        OperationOutcome::Failed(AgentError::Stale { .. })
+    ));
+    // A question still open when the turn ends is resolved as a question.
+    rig.say(ask("q2"));
+    let open = asked(&rig.poll());
+    rig.say(json!({"type": "result", "subtype": "success", "is_error": false}));
+    let events = rig.poll();
+    assert!(events.iter().any(|e| matches!(
+        &e.event,
+        AgentEvent::QuestionResolved { token } if *token == open.token
+    )));
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e.event, AgentEvent::ApprovalResolved { .. }))
+    );
+}
+
+#[test]
+fn unreadable_questions_and_unknown_controls_are_refused() {
     let mut rig = Rig::new();
     rig.create(1);
     rig.start(1, "x");
@@ -435,17 +593,13 @@ fn questions_are_declined_at_the_source_and_unknown_controls_are_refused() {
         e.event,
         AgentEvent::ApprovalRequested(_) | AgentEvent::QuestionRequested(_)
     )));
-    let written = rig.written();
-    let q = written
-        .iter()
-        .find(|m| m["response"]["request_id"] == "q")
-        .unwrap();
-    assert_eq!(q["response"]["response"]["behavior"], "deny");
-    let z = written
-        .iter()
-        .find(|m| m["response"]["request_id"] == "z")
-        .unwrap();
-    assert_eq!(z["response"]["subtype"], "error");
+    for id in ["q", "z"] {
+        assert_eq!(
+            control_response(&rig, id)["response"]["subtype"],
+            "error",
+            "{id}"
+        );
+    }
 }
 
 #[test]

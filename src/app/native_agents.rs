@@ -7,7 +7,7 @@ use crate::model::agent_scheduler::Ticket;
 use eframe::egui;
 use lumen_agent_core::{
     ProviderId, RequestToken, SessionId,
-    api::{ApprovalDecisionId, InputBlock},
+    api::{ApprovalDecisionId, InputBlock, QuestionReply},
 };
 use std::time::Duration;
 
@@ -471,6 +471,12 @@ impl LumenApp {
     ) {
         if let Some(hub) = self.view.native_agents.as_mut() {
             hub.reply_approval(id, token, decision);
+        }
+    }
+
+    pub(super) fn chat_answer(&mut self, id: SessionId, token: RequestToken, reply: QuestionReply) {
+        if let Some(hub) = self.view.native_agents.as_mut() {
+            hub.reply_question(id, token, reply);
         }
     }
 
@@ -1087,6 +1093,243 @@ mod tests {
         let output = frame(&mut app, &ctx, 1000.0);
         assert!(!has_text(&output, "Working"));
         assert!(!has_text(&output, "Stop"));
+    }
+
+    /// Where text reading exactly `needle` is drawn, if it is visible.
+    fn exact_text_rect(output: &egui::FullOutput, needle: &str) -> Option<egui::Rect> {
+        output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.job.text == needle => {
+                let rect = text.galley.rect.translate(text.pos.to_vec2());
+                shape.clip_rect.contains_rect(rect).then_some(rect)
+            }
+            _ => None,
+        })
+    }
+
+    fn click_at(app: &mut LumenApp, ctx: &egui::Context, at: egui::Pos2) {
+        frame_with_events(app, ctx, 1000.0, vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            frame_with_events(
+                app,
+                ctx,
+                1000.0,
+                vec![egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+        }
+    }
+
+    /// A frame after panels and scroll areas have taken their new sizes, which
+    /// they read from the frame before.
+    fn settled_frame(app: &mut LumenApp, ctx: &egui::Context) -> egui::FullOutput {
+        frame(app, ctx, 1000.0);
+        frame(app, ctx, 1000.0);
+        frame(app, ctx, 1000.0)
+    }
+
+    fn click_text(app: &mut LumenApp, ctx: &egui::Context, needle: &str) -> egui::FullOutput {
+        let output = settled_frame(app, ctx);
+        let at = exact_text_rect(&output, needle)
+            .unwrap_or_else(|| panic!("{needle:?} is on screen"))
+            .center();
+        click_at(app, ctx, at);
+        settled_frame(app, ctx)
+    }
+
+    fn press(app: &mut LumenApp, ctx: &egui::Context, key: egui::Key, modifiers: egui::Modifiers) {
+        frame_with_events(
+            app,
+            ctx,
+            1000.0,
+            vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }],
+        );
+    }
+
+    /// The card's Skip button: the close glyph on the row of its step count.
+    fn skip_button(output: &egui::FullOutput) -> egui::Pos2 {
+        let step = visible_text_rect(output, "/2").expect("the step count");
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == crate::icon::X => {
+                    let rect = text.galley.rect.translate(text.pos.to_vec2());
+                    (rect.left() > step.right() && (rect.center().y - step.center().y).abs() < 6.0)
+                        .then_some(rect.center())
+                }
+                _ => None,
+            })
+            .expect("Skip beside the step count")
+    }
+
+    /// A chat whose agent has just asked the scripted two questions.
+    fn asked_chat(app: &mut LumenApp, ctx: &egui::Context) -> SessionId {
+        app.execute(Command::NativeNewSession(ProviderId::Codex), ctx);
+        let id = app.view.agent_panel.visible_chat().unwrap();
+        app.view.agent_panel.draft_mut(id).push_str("ask: pick");
+        app.execute(Command::ChatSend(id), ctx);
+        settle(app, ctx);
+        settled_frame(app, ctx);
+        id
+    }
+
+    fn agent_said(app: &LumenApp, id: SessionId) -> Vec<String> {
+        app.view
+            .native_agents
+            .as_ref()
+            .unwrap()
+            .live(id)
+            .unwrap()
+            .model
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                lumen_agent_core::model::ItemKind::Agent { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_agents_questions_are_answered_one_at_a_time_above_the_message_box() {
+        let (mut app, ctx) = fixture();
+        let id = asked_chat(&mut app, &ctx);
+        let output = frame(&mut app, &ctx, 1000.0);
+        for text in ["Pick", "Which one?", "1/2", "The first", "The second"] {
+            assert!(has_text(&output, text), "{text}");
+        }
+        assert!(
+            !has_text(&output, "Which extras?"),
+            "one question at a time"
+        );
+        assert!(
+            !has_text(&output, "cannot show questions"),
+            "the question is shown, not refused"
+        );
+        let question = exact_text_rect(&output, "Which one?").unwrap();
+        let send = visible_text_rect(&output, "Queue").expect("the composer");
+        assert!(
+            question.bottom() < send.top(),
+            "docked above the message box"
+        );
+        // Next waits for an answer; choosing one moves on.
+        let output = click_text(&mut app, &ctx, "Next");
+        assert!(has_text(&output, "Which one?"), "nothing chosen yet");
+        click_text(&mut app, &ctx, "b");
+        let output = click_text(&mut app, &ctx, "Next");
+        for text in [
+            "Which extras?",
+            "2/2",
+            "Choose any that apply",
+            "Back",
+            "Submit",
+        ] {
+            assert!(has_text(&output, text), "{text}");
+        }
+        // Several answers toggle; Back keeps what was chosen.
+        click_text(&mut app, &ctx, "x");
+        click_text(&mut app, &ctx, "y");
+        click_text(&mut app, &ctx, "x");
+        click_text(&mut app, &ctx, "Back");
+        click_text(&mut app, &ctx, "Next");
+        click_text(&mut app, &ctx, "Submit");
+        settle(&mut app, &ctx);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert_eq!(agent_said(&app, id), ["answers: b | y"]);
+        assert!(!has_text(&output, "Which extras?"), "the card is gone");
+        assert!(
+            app.view
+                .native_agents
+                .as_ref()
+                .unwrap()
+                .live(id)
+                .unwrap()
+                .model
+                .pending_questions
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn typed_words_answer_a_question_and_skipping_lets_the_agent_carry_on() {
+        let (mut app, ctx) = fixture();
+        let id = asked_chat(&mut app, &ctx);
+        let output = frame(&mut app, &ctx, 1000.0);
+        let field = visible_text_rect(&output, "Or type your own answer").expect("a typed answer");
+        click_at(&mut app, &ctx, field.center());
+        frame_with_events(
+            &mut app,
+            &ctx,
+            1000.0,
+            vec![egui::Event::Text("my own".into())],
+        );
+        press(&mut app, &ctx, egui::Key::Enter, egui::Modifiers::NONE);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(
+            has_text(&output, "Which extras?"),
+            "Enter in the field moves on"
+        );
+        let output = settled_frame(&mut app, &ctx);
+        click_at(&mut app, &ctx, skip_button(&output));
+        settle(&mut app, &ctx);
+        assert_eq!(agent_said(&app, id), ["answers: skipped"]);
+    }
+
+    #[test]
+    fn keys_answer_only_while_the_card_has_focus() {
+        let (mut app, ctx) = fixture();
+        let id = asked_chat(&mut app, &ctx);
+        frame(&mut app, &ctx, 1000.0);
+        // Typing in the message box is not taken by the card.
+        app.view.agent_panel.request_composer_focus();
+        frame(&mut app, &ctx, 1000.0);
+        frame_with_events(&mut app, &ctx, 1000.0, vec![egui::Event::Text("2".into())]);
+        press(&mut app, &ctx, egui::Key::Num2, egui::Modifiers::NONE);
+        frame(&mut app, &ctx, 1000.0);
+        assert_eq!(
+            app.view.agent_panel.draft(id),
+            "2",
+            "the digit went to the draft"
+        );
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(
+            has_text(&output, "1/2"),
+            "no answer was chosen by the digit"
+        );
+        // With an option focused, digits choose and the arrows move.
+        click_text(&mut app, &ctx, "a");
+        press(&mut app, &ctx, egui::Key::Num2, egui::Modifiers::NONE);
+        press(&mut app, &ctx, egui::Key::Enter, egui::Modifiers::COMMAND);
+        let output = frame(&mut app, &ctx, 1000.0);
+        assert!(
+            has_text(&output, "Which extras?"),
+            "Ctrl/Cmd+Enter moves on"
+        );
+        press(&mut app, &ctx, egui::Key::Num1, egui::Modifiers::NONE);
+        press(&mut app, &ctx, egui::Key::ArrowDown, egui::Modifiers::NONE);
+        press(&mut app, &ctx, egui::Key::Space, egui::Modifiers::NONE);
+        press(&mut app, &ctx, egui::Key::Enter, egui::Modifiers::COMMAND);
+        settle(&mut app, &ctx);
+        assert_eq!(agent_said(&app, id), ["answers: b | x, y"]);
+        // Escape skips, again only from the card.
+        app.view.agent_panel.draft_mut(id).clear();
+        app.view.agent_panel.draft_mut(id).push_str("ask: again");
+        app.execute(Command::ChatSend(id), &ctx);
+        settle(&mut app, &ctx);
+        click_text(&mut app, &ctx, "b");
+        press(&mut app, &ctx, egui::Key::Escape, egui::Modifiers::NONE);
+        settle(&mut app, &ctx);
+        assert_eq!(agent_said(&app, id).last().unwrap(), "answers: skipped");
     }
 
     fn visible_text_rect(output: &egui::FullOutput, needle: &str) -> Option<egui::Rect> {

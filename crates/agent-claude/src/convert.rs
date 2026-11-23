@@ -6,9 +6,12 @@ use lumen_agent_core::{
     AgentError, RequestToken,
     api::{
         ApprovalDecisionId, AuthState, ConfigChoice, ConfigOption, ConfigRevision, InputBlock,
-        SessionConfig,
+        QuestionAnswer, SessionConfig,
     },
-    event::{ApprovalChoice, ApprovalRequest, RiskLevel, TurnOutcome, Usage},
+    event::{
+        ApprovalChoice, ApprovalRequest, Question, QuestionOption, QuestionRequest, RiskLevel,
+        TurnOutcome, TypedAnswer, Usage,
+    },
     model::{ToolCall, ToolKind},
 };
 use serde_json::{Value, json};
@@ -41,6 +44,9 @@ pub fn tool_paths(input: &Value) -> Vec<PathBuf> {
 
 /// A short title: the tool name plus the most telling input.
 pub fn tool_title(name: &str, input: &Value) -> String {
+    if name == "AskUserQuestion" {
+        return asked_title(input);
+    }
     let detail = match name {
         "Bash" => text(input, "command").map(str::to_string),
         "Glob" | "Grep" => text(input, "pattern").map(str::to_string),
@@ -219,6 +225,95 @@ pub fn approval_request(request: &Value, token: RequestToken) -> Option<Approval
             ),
         ],
     })
+}
+
+// --------------------------------------------------------------- questions
+
+/// An `AskUserQuestion` input as questions. Claude always accepts an answer
+/// in the user's own words, and matches answers by the question text, which is
+/// used as the id. `None` when there is no question to show.
+pub fn question_request(input: &Value, token: RequestToken) -> Option<QuestionRequest> {
+    let list = input.get("questions").and_then(Value::as_array)?;
+    let mut questions = Vec::with_capacity(list.len());
+    for question in list {
+        let prompt = text(question, "question").filter(|q| !q.trim().is_empty())?;
+        questions.push(Question {
+            id: prompt.to_string(),
+            header: text(question, "header").unwrap_or_default().to_string(),
+            prompt: prompt.to_string(),
+            options: question
+                .get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|option| {
+                    Some(QuestionOption {
+                        label: text(option, "label")?.to_string(),
+                        description: text(option, "description").unwrap_or_default().to_string(),
+                    })
+                })
+                .collect(),
+            multiple: question
+                .get("multiSelect")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            typed: TypedAnswer::Text,
+        });
+    }
+    (!questions.is_empty()).then_some(QuestionRequest { token, questions })
+}
+
+/// The tool input to allow an `AskUserQuestion` with: the original input plus
+/// `answers`, keyed by question text. A multiple-choice answer is a list of
+/// labels (and any typed words); a single answer is one string.
+pub fn answered(input: &Value, answers: &[QuestionAnswer]) -> Value {
+    let questions = input
+        .get("questions")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut map = serde_json::Map::new();
+    for (question, answer) in questions.iter().zip(answers) {
+        let Some(prompt) = text(question, "question") else {
+            continue;
+        };
+        let values = answer.values();
+        let multiple = question
+            .get("multiSelect")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let value = if multiple {
+            json!(values)
+        } else {
+            json!(values.join(", "))
+        };
+        map.insert(prompt.to_string(), value);
+    }
+    let mut updated = match input {
+        Value::Object(fields) => fields.clone(),
+        _ => serde_json::Map::new(),
+    };
+    updated.insert("answers".into(), Value::Object(map));
+    Value::Object(updated)
+}
+
+/// "Asked: Output, Access" from the questions' headers.
+fn asked_title(input: &Value) -> String {
+    let questions = input
+        .get("questions")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let headers: Vec<&str> = questions
+        .iter()
+        .filter_map(|q| text(q, "header"))
+        .filter(|h| !h.trim().is_empty())
+        .collect();
+    match (headers.is_empty(), questions.len()) {
+        (false, _) => format!("Asked: {}", headers.join(", ")),
+        (true, 1) => "Asked a question".to_string(),
+        (true, count) => format!("Asked {count} questions"),
+    }
 }
 
 // ------------------------------------------------------------------ config
@@ -457,6 +552,23 @@ mod tests {
         assert_eq!(tool_title("Mystery", &json!({})), "Mystery");
         assert_eq!(tool_kind("WebFetch"), ToolKind::Fetch);
         assert!(tool_title("Bash", &json!({"command": "x".repeat(500)})).len() < 200);
+    }
+
+    #[test]
+    fn asking_reads_as_what_was_asked() {
+        let ask =
+            |questions: Value| tool_title("AskUserQuestion", &json!({ "questions": questions }));
+        assert_eq!(
+            ask(
+                json!([{"question": "a?", "header": "Output"}, {"question": "b?", "header": "Access"}])
+            ),
+            "Asked: Output, Access"
+        );
+        assert_eq!(ask(json!([{"question": "a?"}])), "Asked a question");
+        assert_eq!(
+            ask(json!([{"question": "a?"}, {"question": "b?", "header": " "}])),
+            "Asked 2 questions"
+        );
     }
 
     #[test]

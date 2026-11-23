@@ -29,6 +29,7 @@ use lumen_agent_core::{
 };
 use std::path::PathBuf;
 
+mod questions;
 mod steps;
 mod timeline;
 
@@ -83,6 +84,8 @@ impl Workbench<'_> {
         let accent = provider_color(&colors, provider);
 
         let width = ui.available_width();
+        // Docked requests (the agent's questions) take at most this much height.
+        let docked_height = (ui.available_height() * 0.45).min(420.0);
         // Keep a gutter for the message timeline once there is more than one message.
         let prompt_count = hub.live(id).map_or(0, |live| {
             live.model
@@ -125,6 +128,36 @@ impl Workbench<'_> {
                                 .inner;
                             if let Some(error) = &live.error {
                                 notice_card(ui, error, colors.error);
+                            }
+                            let waiting: Vec<RequestToken> = live
+                                .model
+                                .pending_questions
+                                .iter()
+                                .map(|request| request.token.clone())
+                                .collect();
+                            self.view.agent_panel.forget_answered(id, &waiting);
+                            // The oldest questions first; the next show once answered.
+                            if let Some(request) = live.model.pending_questions.first() {
+                                let form = self.view.agent_panel.question_form(request);
+                                if let Some(reply) = ui
+                                    .push_id(("chat_questions", id.0), |ui| {
+                                        questions::question_card(
+                                            ui,
+                                            request,
+                                            form,
+                                            docked_height,
+                                            &colors,
+                                        )
+                                    })
+                                    .inner
+                                {
+                                    commands.push(Command::ChatAnswer(
+                                        id,
+                                        request.token.clone(),
+                                        reply,
+                                    ));
+                                }
+                                ui.add_space(6.0);
                             }
                             queue_list(ui, id, &live.prompts, &mut queue_edit, &mut commands);
                         }

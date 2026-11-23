@@ -14,7 +14,7 @@ use lumen_agent_core::{
     SessionId, TurnId,
     api::{
         AgentBackend, AgentOperation, ApprovalDecisionId, ClientTurnId, ConfigPatch, InputBlock,
-        OperationOutcome, OperationOutput, Request, SessionConfig,
+        OperationOutcome, OperationOutput, QuestionReply, Request, SessionConfig,
     },
     event::{AgentEvent, EventEnvelope, TurnOutcome},
     model::{SessionModel, TurnState},
@@ -106,6 +106,7 @@ pub(crate) struct Live {
 
 enum HeldReply {
     Approval(RequestToken, ApprovalDecisionId),
+    Question(RequestToken, QuestionReply),
 }
 
 impl Live {
@@ -421,6 +422,16 @@ impl AgentHub {
         self.hold_reply(session, HeldReply::Approval(token, decision));
     }
 
+    /// Answer (or skip) an agent's questions, sent like an approval reply.
+    pub(crate) fn reply_question(
+        &mut self,
+        session: SessionId,
+        token: RequestToken,
+        reply: QuestionReply,
+    ) {
+        self.hold_reply(session, HeldReply::Question(token, reply));
+    }
+
     fn hold_reply(&mut self, session: SessionId, reply: HeldReply) {
         let Some(live) = self.live.get_mut(&session) else {
             return;
@@ -696,6 +707,9 @@ impl AgentHub {
             let operation = match held {
                 Some(HeldReply::Approval(token, decision)) => {
                     AgentOperation::ReplyApproval { token, decision }
+                }
+                Some(HeldReply::Question(token, reply)) => {
+                    AgentOperation::ReplyQuestion { token, reply }
                 }
                 None => return,
             };

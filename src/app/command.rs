@@ -54,6 +54,12 @@ pub(crate) enum Command {
         lumen_agent_core::RequestToken,
         lumen_agent_core::api::ApprovalDecisionId,
     ),
+    /// Send the answers to (or skip) an agent's questions.
+    ChatAnswer(
+        lumen_agent_core::SessionId,
+        lumen_agent_core::RequestToken,
+        lumen_agent_core::api::QuestionReply,
+    ),
     /// Change one setting (model, permission mode, ...) of a session.
     ChatSetConfig(lumen_agent_core::SessionId, String, String),
     /// Return a setting to its default (not the same as picking a value).
