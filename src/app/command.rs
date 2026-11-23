@@ -49,10 +49,18 @@ pub(crate) enum Command {
         lumen_agent_core::SessionId,
         super::agent_panel::ChatSuggestion,
     ),
+    /// Answer an approval, with what the user said alongside (plan feedback).
     ChatApproval(
         lumen_agent_core::SessionId,
         lumen_agent_core::RequestToken,
         lumen_agent_core::api::ApprovalDecisionId,
+        Option<String>,
+    ),
+    /// Send the answers to (or skip) an agent's questions.
+    ChatAnswer(
+        lumen_agent_core::SessionId,
+        lumen_agent_core::RequestToken,
+        lumen_agent_core::api::QuestionReply,
     ),
     /// Change one setting (model, permission mode, ...) of a session.
     ChatSetConfig(lumen_agent_core::SessionId, String, String),

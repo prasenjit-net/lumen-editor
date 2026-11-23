@@ -18,7 +18,8 @@ use lumen_agent_core::{
     SubmitError, Support, TurnId,
     api::{
         AgentBackend, AgentOperation, ApprovalDecisionId, AuthState, ConfigPatch, ConfigRevision,
-        InputBlock, OperationOutcome, OperationOutput, QuestionAnswer, Request, SessionConfig,
+        InputBlock, OperationOutcome, OperationOutput, QuestionAnswer, QuestionReply, Request,
+        SessionConfig,
     },
     event::{AgentEvent, DiagnosticLevel},
     launcher::{Child, ChildEvent, ChildLauncher, ChildSpec, Wake},
@@ -116,8 +117,8 @@ struct ServerRequest {
     turn: TurnId,
     method: String,
     raw_id: Value,
-    /// The question id to answer, for `requestUserInput`.
-    question: Option<String>,
+    /// The ids of the questions to answer, in order, for `requestUserInput`.
+    questions: Vec<String>,
     token: RequestToken,
 }
 
@@ -500,8 +501,10 @@ impl CodexBackend {
                     ),
                 }
             }
-            O::ReplyApproval { token, decision } => self.reply_approval(op, token, decision),
-            O::ReplyQuestion { token, answers } => self.reply_question(op, token, answers),
+            O::ReplyApproval {
+                token, decision, ..
+            } => self.reply_approval(op, token, decision),
+            O::ReplyQuestion { token, reply } => self.reply_question(op, token, reply),
             O::DetachSession { session } => {
                 match (self.thread_of(session), self.sessions.get(&session)) {
                     (Some(_), Some(record)) if record.active.is_some() || record.starting => {
@@ -743,12 +746,7 @@ impl CodexBackend {
         self.settle(&request, true);
     }
 
-    fn reply_question(
-        &mut self,
-        op: OperationId,
-        token: RequestToken,
-        answers: Vec<QuestionAnswer>,
-    ) {
+    fn reply_question(&mut self, op: OperationId, token: RequestToken, reply: QuestionReply) {
         let Some(request) = self.take_request(&token) else {
             return self.fail(
                 op,
@@ -757,7 +755,7 @@ impl CodexBackend {
                 },
             );
         };
-        let Some(question) = request.question.clone() else {
+        if request.questions.is_empty() {
             self.server_requests.insert(token.native.clone(), request);
             return self.fail(
                 op,
@@ -765,19 +763,24 @@ impl CodexBackend {
                     what: "that question".into(),
                 },
             );
-        };
-        let texts: Vec<String> = answers
+        }
+        // Each question id maps to its answers; skipped questions get none.
+        let answers: serde_json::Map<String, Value> = request
+            .questions
             .iter()
-            .flat_map(|answer| match answer {
-                QuestionAnswer::Text(text) | QuestionAnswer::Choice(text) => vec![text.clone()],
-                QuestionAnswer::Choices(many) => many.clone(),
-                QuestionAnswer::Cancelled => Vec::new(),
+            .enumerate()
+            .map(|(index, id)| {
+                let values = match &reply {
+                    QuestionReply::Answered(answers) => answers
+                        .get(index)
+                        .map(QuestionAnswer::values)
+                        .unwrap_or_default(),
+                    QuestionReply::Skipped => Vec::new(),
+                };
+                (id.clone(), json!({ "answers": values }))
             })
             .collect();
-        let line = wire::reply(
-            &request.raw_id,
-            json!({"answers": {question: {"answers": texts}}}),
-        );
+        let line = wire::reply(&request.raw_id, json!({ "answers": answers }));
         if !self.send_raw(&line) {
             return self.fail(
                 op,
@@ -1393,7 +1396,7 @@ impl CodexBackend {
                     turn: turn.clone(),
                     method: method.into(),
                     raw_id,
-                    question: None,
+                    questions: Vec::new(),
                     token,
                 },
             );
@@ -1405,7 +1408,7 @@ impl CodexBackend {
             );
         } else if method == "item/tool/requestUserInput" {
             match convert::question_request(params, token.clone()) {
-                Some((request, question)) => {
+                Some((request, questions)) => {
                     self.server_requests.insert(
                         id,
                         ServerRequest {
@@ -1413,7 +1416,7 @@ impl CodexBackend {
                             turn: turn.clone(),
                             method: method.into(),
                             raw_id,
-                            question: Some(question),
+                            questions,
                             token,
                         },
                     );
@@ -1428,9 +1431,12 @@ impl CodexBackend {
                     self.send_raw(&wire::reply_error(
                         &raw_id,
                         -32602,
-                        "Lumen supports one question per request",
+                        "the request has no answerable question",
                     ));
-                    self.diagnostic(DiagnosticLevel::Warning, "Codex asked several questions at once, which Lumen does not support yet; the request was declined.");
+                    self.diagnostic(
+                        DiagnosticLevel::Warning,
+                        "Codex sent a question Lumen could not read; the request was declined.",
+                    );
                 }
             }
         } else {

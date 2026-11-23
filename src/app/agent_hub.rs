@@ -14,7 +14,7 @@ use lumen_agent_core::{
     SessionId, TurnId,
     api::{
         AgentBackend, AgentOperation, ApprovalDecisionId, ClientTurnId, ConfigPatch, InputBlock,
-        OperationOutcome, OperationOutput, Request, SessionConfig,
+        OperationOutcome, OperationOutput, QuestionReply, Request, SessionConfig,
     },
     event::{AgentEvent, EventEnvelope, TurnOutcome},
     model::{SessionModel, TurnState},
@@ -105,7 +105,8 @@ pub(crate) struct Live {
 }
 
 enum HeldReply {
-    Approval(RequestToken, ApprovalDecisionId),
+    Approval(RequestToken, ApprovalDecisionId, Option<String>),
+    Question(RequestToken, QuestionReply),
 }
 
 impl Live {
@@ -412,13 +413,25 @@ impl AgentHub {
     }
 
     /// Answer an approval. The reply goes out once the turn has a slot again.
+    /// `note` is what the user said with a refusal (feedback on a plan, say).
     pub(crate) fn reply_approval(
         &mut self,
         session: SessionId,
         token: RequestToken,
         decision: ApprovalDecisionId,
+        note: Option<String>,
     ) {
-        self.hold_reply(session, HeldReply::Approval(token, decision));
+        self.hold_reply(session, HeldReply::Approval(token, decision, note));
+    }
+
+    /// Answer (or skip) an agent's questions, sent like an approval reply.
+    pub(crate) fn reply_question(
+        &mut self,
+        session: SessionId,
+        token: RequestToken,
+        reply: QuestionReply,
+    ) {
+        self.hold_reply(session, HeldReply::Question(token, reply));
     }
 
     fn hold_reply(&mut self, session: SessionId, reply: HeldReply) {
@@ -694,8 +707,13 @@ impl AgentHub {
                 .get_mut(&session)
                 .and_then(|l| l.held_reply.take());
             let operation = match held {
-                Some(HeldReply::Approval(token, decision)) => {
-                    AgentOperation::ReplyApproval { token, decision }
+                Some(HeldReply::Approval(token, decision, note)) => AgentOperation::ReplyApproval {
+                    token,
+                    decision,
+                    note,
+                },
+                Some(HeldReply::Question(token, reply)) => {
+                    AgentOperation::ReplyQuestion { token, reply }
                 }
                 None => return,
             };
@@ -1394,7 +1412,7 @@ mod tests {
             .unwrap()
             .id
             .clone();
-        hub.reply_approval(a, request.token, allow);
+        hub.reply_approval(a, request.token, allow, None);
         settle(&mut hub, |h| idle(h, a));
         assert_eq!(
             hub.live(a).unwrap().model.last_outcome,

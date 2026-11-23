@@ -5,7 +5,8 @@
 //! disposable folder, e.g. `LUMEN_CAPTURE=/tmp/a.png lumen-editor /tmp/fixture`.
 //! `LUMEN_CAPTURE_COMMANDS=settings,theme_light,palette` runs those commands first,
 //! one per frame (menu ids plus `problems`, `agents`, `bottom`, `chat`; `text:abc` types
-//! `abc` into whatever has focus, e.g. the palette's search box). The window is
+//! `abc` into whatever has focus, e.g. the palette's search box; `chat:<n>` opens saved
+//! session `n` and `send:<n>` sends its draft). The window is
 //! captured once, written as a PNG, and the app exits. Never point it
 //! at a real workspace or profile: the capture shows whatever is on screen.
 use crate::app::command::Command;
@@ -113,12 +114,19 @@ fn command_named(name: &str) -> Option<Step> {
     if let Some(text) = name.strip_prefix("text:") {
         return Some(Step::Text(text.to_owned()));
     }
-    // An existing chat by its session number, for screenshots of a saved conversation.
+    // An existing chat by its session number, for screenshots of a saved conversation,
+    // and sending its draft, to show how the agent responds.
     if let Some(session) = name.strip_prefix("chat:") {
         return session
             .parse()
             .ok()
             .map(|id| Step::Command(Command::OpenChat(lumen_agent_core::SessionId(id))));
+    }
+    if let Some(session) = name.strip_prefix("send:") {
+        return session
+            .parse()
+            .ok()
+            .map(|id| Step::Command(Command::ChatSend(lumen_agent_core::SessionId(id))));
     }
     match name {
         "problems" => Some(Command::ToggleProblems),
@@ -166,6 +174,18 @@ mod tests {
         let read = image::open(&path).unwrap().to_rgba8();
         assert_eq!((read.width(), read.height()), (3, 2));
         assert_eq!(read.get_pixel(1, 1).0, [10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn chats_are_opened_and_sent_by_session_number() {
+        let command = |name: &str| match command_named(name) {
+            Some(Step::Command(command)) => Some(command),
+            _ => None,
+        };
+        let session = lumen_agent_core::SessionId(3);
+        assert_eq!(command("chat:3"), Some(Command::OpenChat(session)));
+        assert_eq!(command("send:3"), Some(Command::ChatSend(session)));
+        assert_eq!(command("send:x"), None);
     }
 
     #[test]

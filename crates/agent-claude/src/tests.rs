@@ -8,7 +8,8 @@ use lumen_agent_core::{
     ProfileId, ProviderId, RuntimeGeneration, SessionId, TurnId,
     api::{
         AgentBackend, AgentOperation, ApprovalDecisionId, AuthState, ClientTurnId, ConfigPatch,
-        ConfigRevision, InputBlock, OperationOutcome, OperationOutput, Request,
+        ConfigRevision, InputBlock, OperationOutcome, OperationOutput, QuestionAnswer,
+        QuestionReply, Request,
     },
     event::{AgentEvent, TurnOutcome},
     launcher::{Child, ChildEvent, ChildLauncher, ChildSpec, LaunchError, Wake},
@@ -353,6 +354,7 @@ fn an_approval_round_trips_and_a_stale_token_is_rejected() {
     let (outcome, _) = rig.run(AgentOperation::ReplyApproval {
         token: stale,
         decision: ApprovalDecisionId("allow".into()),
+        note: None,
     });
     assert!(matches!(
         outcome,
@@ -361,6 +363,7 @@ fn an_approval_round_trips_and_a_stale_token_is_rejected() {
     let (outcome, events) = rig.run(AgentOperation::ReplyApproval {
         token: request.token.clone(),
         decision: ApprovalDecisionId("deny".into()),
+        note: None,
     });
     assert_eq!(outcome, OperationOutcome::Succeeded(OperationOutput::Ack));
     assert!(events.iter().any(
@@ -377,6 +380,7 @@ fn an_approval_round_trips_and_a_stale_token_is_rejected() {
     let (again, _) = rig.run(AgentOperation::ReplyApproval {
         token: request.token,
         decision: ApprovalDecisionId("allow".into()),
+        note: None,
     });
     assert!(matches!(
         again,
@@ -404,6 +408,7 @@ fn allow_returns_the_original_input() {
     let (outcome, _) = rig.run(AgentOperation::ReplyApproval {
         token,
         decision: ApprovalDecisionId("allow".into()),
+        note: None,
     });
     assert_eq!(outcome, OperationOutcome::Succeeded(OperationOutput::Ack));
     let reply = rig
@@ -418,8 +423,166 @@ fn allow_returns_the_original_input() {
     );
 }
 
+fn ask(request_id: &str) -> Value {
+    json!({"type": "control_request", "request_id": request_id, "request": {
+        "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "tool_use_id": "toolu_q",
+        "input": {"questions": [
+            {"question": "How should I format the output?", "header": "Format", "multiSelect": false,
+             "options": [{"label": "Summary", "description": "Brief"}, {"label": "Detailed", "description": "Full"}]},
+            {"question": "Which sections?", "header": "Sections", "multiSelect": true,
+             "options": [{"label": "Intro", "description": ""}, {"label": "Outro", "description": ""}]}]}}})
+}
+
+fn asked(events: &[EventEnvelope]) -> lumen_agent_core::QuestionRequest {
+    events
+        .iter()
+        .find_map(|e| match &e.event {
+            AgentEvent::QuestionRequested(request) => Some(request.clone()),
+            _ => None,
+        })
+        .expect("a question was asked")
+}
+
+fn control_response(rig: &Rig, request_id: &str) -> Value {
+    rig.written()
+        .into_iter()
+        .find(|m| m["type"] == "control_response" && m["response"]["request_id"] == request_id)
+        .expect("a reply was written")
+}
+
 #[test]
-fn questions_are_declined_at_the_source_and_unknown_controls_are_refused() {
+fn questions_reach_the_user_and_answers_go_back_keyed_by_question_text() {
+    let mut rig = Rig::new();
+    rig.create(1);
+    rig.start(1, "x");
+    rig.say(ask("q"));
+    let request = asked(&rig.poll());
+    let summary: Vec<(&str, &str, bool, usize)> = request
+        .questions
+        .iter()
+        .map(|q| {
+            (
+                q.header.as_str(),
+                q.prompt.as_str(),
+                q.multiple,
+                q.options.len(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("Format", "How should I format the output?", false, 2),
+            ("Sections", "Which sections?", true, 2)
+        ]
+    );
+    assert_eq!(request.questions[0].options[0].description, "Brief");
+    // A question is not an approval: approving it is refused and it stays.
+    let (refused, _) = rig.run(AgentOperation::ReplyApproval {
+        token: request.token.clone(),
+        decision: ApprovalDecisionId("allow".into()),
+        note: None,
+    });
+    assert!(matches!(
+        refused,
+        OperationOutcome::Failed(AgentError::Stale { .. })
+    ));
+    let (outcome, events) = rig.run(AgentOperation::ReplyQuestion {
+        token: request.token.clone(),
+        reply: QuestionReply::Answered(vec![
+            QuestionAnswer {
+                chosen: vec!["Summary".into()],
+                typed: None,
+            },
+            QuestionAnswer {
+                chosen: vec!["Intro".into()],
+                typed: Some("Appendix".into()),
+            },
+        ]),
+    });
+    assert_eq!(outcome, OperationOutcome::Succeeded(OperationOutput::Ack));
+    assert!(events.iter().any(|e| matches!(
+        &e.event,
+        AgentEvent::QuestionResolved { token } if *token == request.token
+    )));
+    let reply = control_response(&rig, "q");
+    let response = &reply["response"]["response"];
+    assert_eq!(response["behavior"], "allow");
+    assert_eq!(
+        response["updatedInput"]["answers"],
+        json!({"How should I format the output?": "Summary", "Which sections?": ["Intro", "Appendix"]})
+    );
+    assert_eq!(
+        response["updatedInput"]["questions"][1]["header"], "Sections",
+        "the questions are passed back as asked"
+    );
+    // Typed words alone answer a single-choice question.
+    rig.say(ask("q2"));
+    let request = asked(&rig.poll());
+    rig.run(AgentOperation::ReplyQuestion {
+        token: request.token,
+        reply: QuestionReply::Answered(vec![
+            QuestionAnswer {
+                chosen: Vec::new(),
+                typed: Some("As a table".into()),
+            },
+            QuestionAnswer::default(),
+        ]),
+    });
+    assert_eq!(
+        control_response(&rig, "q2")["response"]["response"]["updatedInput"]["answers"],
+        json!({"How should I format the output?": "As a table", "Which sections?": []})
+    );
+}
+
+#[test]
+fn skipped_questions_are_denied_with_guidance_and_a_turn_end_resolves_open_ones() {
+    let mut rig = Rig::new();
+    rig.create(1);
+    rig.start(1, "x");
+    rig.say(ask("q"));
+    let request = asked(&rig.poll());
+    let (outcome, _) = rig.run(AgentOperation::ReplyQuestion {
+        token: request.token.clone(),
+        reply: QuestionReply::Skipped,
+    });
+    assert_eq!(outcome, OperationOutcome::Succeeded(OperationOutput::Ack));
+    let response = &control_response(&rig, "q")["response"]["response"];
+    assert_eq!(response["behavior"], "deny");
+    assert!(
+        response["message"]
+            .as_str()
+            .unwrap()
+            .contains("best judgement"),
+        "{response}"
+    );
+    // Answering again is stale.
+    let (again, _) = rig.run(AgentOperation::ReplyQuestion {
+        token: request.token,
+        reply: QuestionReply::Skipped,
+    });
+    assert!(matches!(
+        again,
+        OperationOutcome::Failed(AgentError::Stale { .. })
+    ));
+    // A question still open when the turn ends is resolved as a question.
+    rig.say(ask("q2"));
+    let open = asked(&rig.poll());
+    rig.say(json!({"type": "result", "subtype": "success", "is_error": false}));
+    let events = rig.poll();
+    assert!(events.iter().any(|e| matches!(
+        &e.event,
+        AgentEvent::QuestionResolved { token } if *token == open.token
+    )));
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e.event, AgentEvent::ApprovalResolved { .. }))
+    );
+}
+
+#[test]
+fn unreadable_questions_and_unknown_controls_are_refused() {
     let mut rig = Rig::new();
     rig.create(1);
     rig.start(1, "x");
@@ -435,17 +598,13 @@ fn questions_are_declined_at_the_source_and_unknown_controls_are_refused() {
         e.event,
         AgentEvent::ApprovalRequested(_) | AgentEvent::QuestionRequested(_)
     )));
-    let written = rig.written();
-    let q = written
-        .iter()
-        .find(|m| m["response"]["request_id"] == "q")
-        .unwrap();
-    assert_eq!(q["response"]["response"]["behavior"], "deny");
-    let z = written
-        .iter()
-        .find(|m| m["response"]["request_id"] == "z")
-        .unwrap();
-    assert_eq!(z["response"]["subtype"], "error");
+    for id in ["q", "z"] {
+        assert_eq!(
+            control_response(&rig, id)["response"]["subtype"],
+            "error",
+            "{id}"
+        );
+    }
 }
 
 #[test]
@@ -876,5 +1035,207 @@ fn the_init_message_reports_the_effective_model_and_mode_without_changing_the_ch
     assert_eq!(
         config.get("permission_mode").unwrap().effective.as_deref(),
         Some("default")
+    );
+}
+
+const PLAN: &str = "# Plan: Gradle scanner\n\n## Context\nList the versions.";
+
+fn propose_plan(rig: &Rig, request_id: &str) {
+    rig.say(
+        json!({"type": "assistant", "message": {"id": "m-plan", "content": [
+        {"type": "tool_use", "id": "toolu_plan", "name": "ExitPlanMode",
+         "input": {"plan": PLAN, "planFilePath": "/home/u/.claude/plans/scan.md"}}]}}),
+    );
+    rig.say(
+        json!({"type": "control_request", "request_id": request_id, "request": {
+        "subtype": "can_use_tool", "tool_name": "ExitPlanMode", "tool_use_id": "toolu_plan",
+        "input": {"plan": PLAN, "planFilePath": "/home/u/.claude/plans/scan.md"}}}),
+    );
+}
+
+fn plan_request(events: &[EventEnvelope]) -> lumen_agent_core::ApprovalRequest {
+    events
+        .iter()
+        .find_map(|e| match &e.event {
+            AgentEvent::ApprovalRequested(request) if request.plan.is_some() => {
+                Some(request.clone())
+            }
+            _ => None,
+        })
+        .expect("a plan to review")
+}
+
+fn plan_mode(rig: &mut Rig) {
+    rig.run(AgentOperation::SetConfig {
+        session: SessionId(1),
+        expected_revision: ConfigRevision(1),
+        patch: ConfigPatch {
+            values: vec![("permission_mode".into(), "plan".into())],
+            ..Default::default()
+        },
+    });
+}
+
+#[test]
+fn a_plan_is_reviewed_and_approving_it_follows_the_new_mode_without_a_restart() {
+    let mut rig = Rig::new();
+    rig.create(1);
+    plan_mode(&mut rig);
+    rig.start(1, "plan a scanner");
+    propose_plan(&rig, "p1");
+    let request = plan_request(&rig.poll());
+    let plan = request.plan.clone().unwrap();
+    assert_eq!(plan.text, PLAN);
+    assert_eq!(
+        plan.file.as_deref(),
+        Some(std::path::Path::new("/home/u/.claude/plans/scan.md"))
+    );
+    let choices: Vec<(&str, bool)> = request
+        .choices
+        .iter()
+        .map(|c| (c.id.0.as_str(), c.allows))
+        .collect();
+    assert_eq!(
+        choices,
+        [
+            ("plan_accept_edits", true),
+            ("plan_approve", true),
+            ("plan_keep", false)
+        ]
+    );
+    // The transcript names the plan and keeps it as the tool's preview.
+    let model = rig.model(1);
+    let call = model
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            ItemKind::Tool(call) => Some(call.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(call.title, "Proposed a plan: Gradle scanner");
+    assert_eq!(call.kind, lumen_agent_core::model::ToolKind::Plan);
+    assert_eq!(call.preview, PLAN);
+    let (outcome, _) = rig.run(AgentOperation::ReplyApproval {
+        token: request.token,
+        decision: ApprovalDecisionId("plan_accept_edits".into()),
+        note: None,
+    });
+    assert_eq!(outcome, OperationOutcome::Succeeded(OperationOutput::Ack));
+    let response = &control_response(&rig, "p1")["response"]["response"];
+    assert_eq!(response["behavior"], "allow");
+    assert_eq!(
+        response["updatedPermissions"],
+        json!([{"type": "setMode", "mode": "acceptEdits", "destination": "session"}])
+    );
+    assert_eq!(response["updatedInput"]["plan"], PLAN);
+    // Claude Code reports the mode it switched to; Lumen follows it.
+    rig.say(json!({"type": "system", "subtype": "status", "status": null, "permissionMode": "acceptEdits"}));
+    rig.say(
+        json!({"type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "toolu_plan",
+         "content": format!("User has approved your plan.\n\n## Approved Plan:\n{PLAN}")}]}}),
+    );
+    let events = rig.poll();
+    let config = events
+        .iter()
+        .find_map(|e| match &e.event {
+            AgentEvent::ConfigChanged(config) => Some(config.clone()),
+            _ => None,
+        })
+        .expect("the new mode is reported");
+    let mode = config.get("permission_mode").unwrap();
+    assert_eq!(
+        (mode.current.as_str(), mode.effective.as_deref()),
+        ("acceptEdits", Some("acceptEdits"))
+    );
+    assert_eq!(
+        rig.model(1)
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                ItemKind::Tool(call) => Some(call.preview.clone()),
+                _ => None,
+            })
+            .unwrap(),
+        PLAN,
+        "the result does not repeat the plan"
+    );
+    // The process already runs in that mode: the next turn keeps it.
+    rig.say(json!({"type": "result", "subtype": "success", "is_error": false}));
+    rig.poll();
+    rig.start(1, "go");
+    assert_eq!(rig.launches().len(), 1, "no restart");
+    // A later restart launches in the followed mode, with `default` as `manual`.
+    rig.say(
+        json!({"type": "system", "subtype": "status", "status": null, "permissionMode": "default"}),
+    );
+    rig.poll();
+    let (config, _) = rig.run(AgentOperation::ReadConfig {
+        session: SessionId(1),
+    });
+    let OperationOutcome::Succeeded(OperationOutput::Config(config)) = config else {
+        panic!()
+    };
+    assert_eq!(config.get("permission_mode").unwrap().current, "manual");
+}
+
+#[test]
+fn keeping_on_planning_sends_the_feedback_and_plan_choices_only_answer_plans() {
+    let mut rig = Rig::new();
+    rig.create(1);
+    plan_mode(&mut rig);
+    rig.start(1, "plan a scanner");
+    propose_plan(&rig, "p1");
+    let request = plan_request(&rig.poll());
+    let (outcome, _) = rig.run(AgentOperation::ReplyApproval {
+        token: request.token.clone(),
+        decision: ApprovalDecisionId("plan_keep".into()),
+        note: Some("  Use cobra for the flags.  ".into()),
+    });
+    assert_eq!(outcome, OperationOutcome::Succeeded(OperationOutput::Ack));
+    let response = &control_response(&rig, "p1")["response"]["response"];
+    assert_eq!(response["behavior"], "deny");
+    let message = response["message"].as_str().unwrap();
+    assert!(
+        message.contains("keep planning") && message.ends_with("Use cobra for the flags."),
+        "{message}"
+    );
+    // Without feedback the agent is still told to keep planning.
+    propose_plan(&rig, "p2");
+    let request = plan_request(&rig.poll());
+    rig.run(AgentOperation::ReplyApproval {
+        token: request.token,
+        decision: ApprovalDecisionId("plan_keep".into()),
+        note: None,
+    });
+    assert!(
+        control_response(&rig, "p2")["response"]["response"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("keep planning")
+    );
+    // A plan choice does not answer an ordinary tool approval; a refusal's
+    // note reaches the agent.
+    rig.say(bash_request("b1"));
+    let token = rig.approval_token();
+    let (wrong, _) = rig.run(AgentOperation::ReplyApproval {
+        token: token.clone(),
+        decision: ApprovalDecisionId("plan_accept_edits".into()),
+        note: None,
+    });
+    assert!(matches!(
+        wrong,
+        OperationOutcome::Failed(AgentError::InvalidConfig { .. })
+    ));
+    let (denied, _) = rig.run(AgentOperation::ReplyApproval {
+        token,
+        decision: ApprovalDecisionId("deny".into()),
+        note: Some("Not on this machine".into()),
+    });
+    assert_eq!(denied, OperationOutcome::Succeeded(OperationOutput::Ack));
+    assert_eq!(
+        control_response(&rig, "b1")["response"]["response"]["message"],
+        "Not on this machine"
     );
 }

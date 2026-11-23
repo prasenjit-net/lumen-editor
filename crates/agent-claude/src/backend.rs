@@ -20,12 +20,12 @@ use lumen_agent_core::{
     RuntimeGeneration, SessionId, SubmitError, Support, TurnId,
     api::{
         AgentBackend, AgentOperation, ApprovalDecisionId, AuthState, ConfigPatch, ConfigRevision,
-        InputBlock, OperationOutcome, OperationOutput, QuestionAnswer, Request, SessionConfig,
+        InputBlock, OperationOutcome, OperationOutput, QuestionReply, Request, SessionConfig,
     },
     event::{AgentEvent, TurnOutcome},
     launcher::{Child, ChildEvent, ChildLauncher, ChildSpec, Wake},
     lines::{Line, LineBuffer},
-    model::{MessagePhase, ToolStatus, ToolUpdate},
+    model::{MessagePhase, ToolKind, ToolStatus, ToolUpdate},
 };
 use serde_json::Value;
 
@@ -41,7 +41,11 @@ const ONE_SHOT_TIMEOUT: Duration = Duration::from_secs(20);
 /// Grace for a retired runtime before it is killed.
 const RETIRE_GRACE: Duration = Duration::from_secs(3);
 const DENY_MESSAGE: &str = "The user denied this action in Lumen.";
-const NO_QUESTIONS: &str = "Lumen cannot show questions to the user yet. Continue without asking, stating any assumption you make.";
+/// What Claude is told when the user does not approve its plan yet.
+const KEEP_PLANNING: &str =
+    "The user has not approved this plan yet and wants you to keep planning.";
+/// What Claude is told when the user skips its questions.
+const SKIPPED_QUESTIONS: &str = "The user skipped these questions. Continue with your best judgement and state any assumption you make.";
 
 #[derive(Clone)]
 pub struct ClaudeConfig {
@@ -119,6 +123,21 @@ struct PendingRequest {
     input: Value,
     tool_use_id: Option<String>,
     token: RequestToken,
+    /// An `AskUserQuestion`: answered with `ReplyQuestion`, not approved.
+    question: bool,
+    /// An `ExitPlanMode`: approving it can also set the permission mode.
+    plan: bool,
+}
+
+impl PendingRequest {
+    /// The event telling the UI the request no longer waits for the user.
+    fn resolved(self) -> AgentEvent {
+        if self.question {
+            AgentEvent::QuestionResolved { token: self.token }
+        } else {
+            AgentEvent::ApprovalResolved { token: self.token }
+        }
+    }
 }
 
 struct Active {
@@ -136,6 +155,9 @@ struct StreamState {
     /// message must not repeat it).
     streamed: HashSet<String>,
     tools: HashSet<String>,
+    /// Tool calls that propose a plan: their preview is the plan, so the
+    /// result (the plan again, with notes for the agent) is not added to it.
+    plans: HashSet<String>,
 }
 
 enum Block {
@@ -439,8 +461,12 @@ impl ClaudeBackend {
                 ..
             } => self.start_turn(op, session, input, expected_revision),
             O::InterruptTurn { session, turn } => self.interrupt(op, session, turn),
-            O::ReplyApproval { token, decision } => self.reply_approval(op, token, decision),
-            O::ReplyQuestion { token, answers } => self.reply_question(op, token, answers),
+            O::ReplyApproval {
+                token,
+                decision,
+                note,
+            } => self.reply_approval(op, token, decision, note),
+            O::ReplyQuestion { token, reply } => self.reply_question(op, token, reply),
             O::DetachSession { session } => self.detach(op, session),
         }
     }
@@ -816,13 +842,15 @@ impl ClaudeBackend {
         }
     }
 
-    fn take_request(&mut self, token: &RequestToken) -> Option<PendingRequest> {
+    /// Remove the pending request `token` names, if it is still waiting and is
+    /// a question (`question`) or an approval as the reply expects.
+    fn take_request(&mut self, token: &RequestToken, question: bool) -> Option<PendingRequest> {
         let runtime = self.sessions.get_mut(&token.session)?.runtime.as_mut()?;
         let matches = runtime.generation == token.generation.0
             && runtime
                 .requests
                 .get(&token.native)
-                .is_some_and(|r| r.token == *token);
+                .is_some_and(|r| r.token == *token && r.question == question);
         if matches {
             runtime.requests.remove(&token.native)
         } else {
@@ -835,8 +863,9 @@ impl ClaudeBackend {
         op: OperationId,
         token: RequestToken,
         decision: ApprovalDecisionId,
+        note: Option<String>,
     ) {
-        let Some(request) = self.take_request(&token) else {
+        let Some(request) = self.take_request(&token, false) else {
             return self.fail(
                 op,
                 AgentError::Stale {
@@ -844,11 +873,35 @@ impl ClaudeBackend {
                 },
             );
         };
-        let (line, denied) = match decision.0.as_str() {
-            convert::ALLOW => (wire::allow(&request.request_id, &request.input), false),
-            convert::DENY => (wire::deny(&request.request_id, DENY_MESSAGE), true),
-            other => {
-                let detail = format!("unknown decision {other}");
+        let note = note
+            .map(|note| note.trim().to_string())
+            .filter(|note| !note.is_empty());
+        let id = &request.request_id;
+        // Plan decisions only answer a plan.
+        let mode = request
+            .plan
+            .then(|| convert::plan_mode(&decision.0))
+            .flatten();
+        let reply = match (decision.0.as_str(), mode) {
+            (_, Some(mode)) => Some((wire::allow_setting_mode(id, &request.input, mode), false)),
+            (convert::ALLOW, None) => Some((wire::allow(id, &request.input), false)),
+            (convert::DENY, None) => Some((
+                wire::deny(id, note.as_deref().unwrap_or(DENY_MESSAGE)),
+                true,
+            )),
+            (convert::PLAN_KEEP, None) if request.plan => {
+                let message = match &note {
+                    Some(note) => format!("{KEEP_PLANNING} Their feedback:\n\n{note}"),
+                    None => KEEP_PLANNING.to_string(),
+                };
+                Some((wire::deny(id, &message), true))
+            }
+            _ => None,
+        };
+        let (line, denied) = match reply {
+            Some(reply) => reply,
+            None => {
+                let detail = format!("unknown decision {}", decision.0);
                 if let Some(runtime) = self
                     .sessions
                     .get_mut(&token.session)
@@ -895,19 +948,36 @@ impl ClaudeBackend {
         );
     }
 
-    fn reply_question(
-        &mut self,
-        op: OperationId,
-        _token: RequestToken,
-        _answers: Vec<QuestionAnswer>,
-    ) {
-        // Questions are declined at the source, so there is never one to answer.
-        self.fail(
-            op,
-            AgentError::Stale {
-                what: "that question".into(),
-            },
-        );
+    fn reply_question(&mut self, op: OperationId, token: RequestToken, reply: QuestionReply) {
+        let Some(request) = self.take_request(&token, true) else {
+            return self.fail(
+                op,
+                AgentError::Stale {
+                    what: "that question".into(),
+                },
+            );
+        };
+        let line = match &reply {
+            QuestionReply::Answered(answers) => wire::allow(
+                &request.request_id,
+                &convert::answered(&request.input, answers),
+            ),
+            QuestionReply::Skipped => wire::deny(&request.request_id, SKIPPED_QUESTIONS),
+        };
+        let session = token.session;
+        let delivered = self
+            .runtime(session)
+            .is_some_and(|runtime| runtime.child.write(line.as_bytes()).is_ok());
+        if !delivered {
+            return self.fail(
+                op,
+                AgentError::Ambiguous {
+                    detail: "the answer could not be delivered".into(),
+                },
+            );
+        }
+        self.finish(op, OperationOutcome::Succeeded(OperationOutput::Ack));
+        self.emit(None, session, Some(token.turn.clone()), request.resolved());
     }
 
     fn detach(&mut self, op: OperationId, session: SessionId) {
@@ -1023,14 +1093,7 @@ impl ClaudeBackend {
             format!("claude {how}: {tail}")
         };
         for request in requests {
-            self.emit(
-                None,
-                session,
-                turn.clone(),
-                AgentEvent::ApprovalResolved {
-                    token: request.token,
-                },
-            );
+            self.emit(None, session, turn.clone(), request.resolved());
         }
         for op in controls {
             self.fail(
@@ -1097,6 +1160,9 @@ impl ClaudeBackend {
             Message::System { subtype, value } if subtype == "init" => {
                 self.reconcile_init(session, &value)
             }
+            Message::System { subtype, value } if subtype == "status" => {
+                self.follow_mode(session, &value)
+            }
             Message::StreamEvent { .. }
             | Message::System { .. }
             | Message::RateLimit(_)
@@ -1124,6 +1190,44 @@ impl ClaudeBackend {
             let config = record.config.clone();
             self.emit(None, session, None, AgentEvent::ConfigChanged(config));
         }
+    }
+
+    /// The process changed its own permission mode, as it does when a plan is
+    /// approved: follow it, so the picker shows the mode and later launches
+    /// use it, and keep the process that is already in it.
+    fn follow_mode(&mut self, session: SessionId, status: &Value) {
+        let Some(mode) = status.get("permissionMode").and_then(Value::as_str) else {
+            return;
+        };
+        let mode = convert::lumen_mode(mode).to_string();
+        let Some(record) = self.sessions.get_mut(&session) else {
+            return;
+        };
+        let Some(option) = record
+            .config
+            .options
+            .iter_mut()
+            .find(|option| option.id == "permission_mode")
+        else {
+            return;
+        };
+        let offered = option.choices.iter().any(|choice| choice.value == mode);
+        if option.effective.as_deref() == Some(mode.as_str())
+            && (!offered || option.current == mode)
+        {
+            return;
+        }
+        if offered {
+            option.current = mode.clone();
+        }
+        option.effective = Some(mode);
+        record.config.revision = ConfigRevision(record.config.revision.0 + 1);
+        let key = Self::launch_key(record);
+        if let Some(runtime) = record.runtime.as_mut() {
+            runtime.launched_key = key;
+        }
+        let config = record.config.clone();
+        self.emit(None, session, None, AgentEvent::ConfigChanged(config));
     }
 
     fn stream_event(&mut self, session: SessionId, event: &Value) {
@@ -1278,9 +1382,13 @@ impl ClaudeBackend {
                     let tool_id = block["id"].as_str().unwrap_or_default().to_string();
                     let name = block["name"].as_str().unwrap_or("tool");
                     let call = convert::tool_call(name, &block["input"], parent);
-                    let known = self
-                        .runtime(session)
-                        .is_some_and(|r| !r.stream.tools.insert(tool_id.clone()));
+                    let plan = call.kind == ToolKind::Plan;
+                    let known = self.runtime(session).is_some_and(|r| {
+                        if plan {
+                            r.stream.plans.insert(tool_id.clone());
+                        }
+                        !r.stream.tools.insert(tool_id.clone())
+                    });
                     let item = ItemId(tool_id);
                     if known {
                         let update = ToolUpdate {
@@ -1288,6 +1396,8 @@ impl ClaudeBackend {
                             status: Some(ToolStatus::Running),
                             locations: Some(call.locations.clone()),
                             patch: call.patch.clone(),
+                            // A streamed call started without its input.
+                            append_preview: plan.then(|| call.preview.clone()),
                             ..ToolUpdate::default()
                         };
                         self.emit(
@@ -1357,8 +1467,11 @@ impl ClaudeBackend {
                 ToolStatus::Completed
             };
             let preview = convert::content_text(&block["content"]);
+            let plan = self
+                .runtime(session)
+                .is_some_and(|r| r.stream.plans.contains(&id));
             let item = ItemId(id);
-            if !preview.is_empty() && !denied {
+            if !preview.is_empty() && !denied && !plan {
                 let append_preview = Some(preview.chars().take(4000).collect());
                 let update = ToolUpdate {
                     append_preview,
@@ -1394,14 +1507,7 @@ impl ClaudeBackend {
         let requests: Vec<PendingRequest> = runtime.requests.drain().map(|(_, r)| r).collect();
         let turn = active.turn;
         for request in requests {
-            self.emit(
-                None,
-                session,
-                Some(turn.clone()),
-                AgentEvent::ApprovalResolved {
-                    token: request.token,
-                },
-            );
+            self.emit(None, session, Some(turn.clone()), request.resolved());
         }
         self.emit(
             None,
@@ -1428,12 +1534,17 @@ impl ClaudeBackend {
         let Some(turn) = self.active_turn(session) else {
             return reply(self, wire::deny(&request_id, DENY_MESSAGE));
         };
-        if request["tool_name"].as_str() == Some("AskUserQuestion") {
-            return reply(self, wire::deny(&request_id, NO_QUESTIONS));
-        }
         let generation = self.runtime(session).map(|r| r.generation).unwrap_or(0);
         let token = self.token(session, &turn, generation, &request_id);
-        let Some(approval) = convert::approval_request(request, token.clone()) else {
+        let input = request.get("input").cloned().unwrap_or(Value::Null);
+        // A question is answered by the user rather than approved.
+        let question = request["tool_name"].as_str() == Some("AskUserQuestion");
+        let event = if question {
+            convert::question_request(&input, token.clone()).map(AgentEvent::QuestionRequested)
+        } else {
+            convert::approval_request(request, token.clone()).map(AgentEvent::ApprovalRequested)
+        };
+        let Some(event) = event else {
             return reply(
                 self,
                 wire::control_error(&request_id, "malformed permission request"),
@@ -1441,19 +1552,16 @@ impl ClaudeBackend {
         };
         let pending = PendingRequest {
             request_id: request_id.clone(),
-            input: request.get("input").cloned().unwrap_or(Value::Null),
+            input,
             tool_use_id: request["tool_use_id"].as_str().map(str::to_string),
             token,
+            question,
+            plan: request["tool_name"].as_str() == Some("ExitPlanMode"),
         };
         if let Some(runtime) = self.runtime(session) {
             runtime.requests.insert(request_id, pending);
         }
-        self.emit(
-            None,
-            session,
-            Some(turn),
-            AgentEvent::ApprovalRequested(approval),
-        );
+        self.emit(None, session, Some(turn), event);
     }
 
     // ------------------------------------------------- one-shots, retiring
@@ -1648,14 +1756,7 @@ impl AgentBackend for ClaudeBackend {
                         .child
                         .write(wire::deny(&request.request_id, DENY_MESSAGE).as_bytes());
                 }
-                self.emit(
-                    None,
-                    session,
-                    turn.clone(),
-                    AgentEvent::ApprovalResolved {
-                        token: request.token,
-                    },
-                );
+                self.emit(None, session, turn.clone(), request.resolved());
             }
             if let Some(turn) = turn {
                 if let Some(runtime) = self.runtime(session) {

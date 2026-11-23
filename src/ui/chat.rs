@@ -29,6 +29,9 @@ use lumen_agent_core::{
 };
 use std::path::PathBuf;
 
+mod docked;
+mod plan_review;
+mod questions;
 mod steps;
 mod timeline;
 
@@ -83,6 +86,8 @@ impl Workbench<'_> {
         let accent = provider_color(&colors, provider);
 
         let width = ui.available_width();
+        // Docked requests (the agent's questions) take at most this much height.
+        let docked_height = (ui.available_height() * 0.45).min(420.0);
         // Keep a gutter for the message timeline once there is more than one message.
         let prompt_count = hub.live(id).map_or(0, |live| {
             live.model
@@ -118,13 +123,80 @@ impl Workbench<'_> {
                         ui.set_width(column);
                         let hub = self.view.native_agents.as_ref().expect("checked above");
                         if let Some(live) = hub.live(id) {
+                            // Plans have their own card below; the strip finds
+                            // the tool approvals in the transcript.
+                            let tool_approvals: Vec<ApprovalRequest> = live
+                                .model
+                                .pending_approvals
+                                .iter()
+                                .filter(|request| request.plan.is_none())
+                                .cloned()
+                                .collect();
                             review_approval = ui
                                 .push_id(("approval_navigation", id.0), |ui| {
-                                    approval_navigation(ui, &live.model.pending_approvals)
+                                    approval_navigation(ui, &tool_approvals)
                                 })
                                 .inner;
                             if let Some(error) = &live.error {
                                 notice_card(ui, error, colors.error);
+                            }
+                            let waiting: Vec<RequestToken> = live
+                                .model
+                                .pending_questions
+                                .iter()
+                                .map(|request| request.token.clone())
+                                .chain(
+                                    live.model
+                                        .pending_approvals
+                                        .iter()
+                                        .map(|request| request.token.clone()),
+                                )
+                                .collect();
+                            self.view.agent_panel.forget_answered(id, &waiting);
+                            // The oldest questions first; the next show once answered.
+                            if let Some(request) = live.model.pending_questions.first() {
+                                let form = self.view.agent_panel.question_form(request);
+                                if let Some(reply) = ui
+                                    .push_id(("chat_questions", id.0), |ui| {
+                                        questions::question_card(
+                                            ui,
+                                            request,
+                                            form,
+                                            docked_height,
+                                            &colors,
+                                        )
+                                    })
+                                    .inner
+                                {
+                                    commands.push(Command::ChatAnswer(
+                                        id,
+                                        request.token.clone(),
+                                        reply,
+                                    ));
+                                }
+                                ui.add_space(6.0);
+                            }
+                            // A proposed plan is reviewed here, not in the transcript.
+                            if let Some((request, plan)) = live
+                                .model
+                                .pending_approvals
+                                .iter()
+                                .find_map(|request| Some((request, request.plan.as_ref()?)))
+                            {
+                                let note = self.view.agent_panel.plan_note(&request.token);
+                                ui.push_id(("chat_plan", id.0), |ui| {
+                                    plan_review::plan_card(
+                                        ui,
+                                        id,
+                                        request,
+                                        plan,
+                                        note,
+                                        docked_height,
+                                        &colors,
+                                        &mut commands,
+                                    );
+                                });
+                                ui.add_space(6.0);
                             }
                             queue_list(ui, id, &live.prompts, &mut queue_edit, &mut commands);
                         }
@@ -214,7 +286,12 @@ impl Workbench<'_> {
                             turn_view(ui, items, turn, finished, &mut pass);
                         }
                         let mut after_content = !turns.is_empty();
-                        for request in &live.model.pending_approvals {
+                        let tool_approvals = live
+                            .model
+                            .pending_approvals
+                            .iter()
+                            .filter(|request| request.plan.is_none());
+                        for request in tool_approvals {
                             if after_content {
                                 ui.add_space(PART_GAP);
                             }
@@ -638,6 +715,7 @@ fn tool_glyph(kind: ToolKind) -> &'static str {
         ToolKind::Read => icon::FILE,
         ToolKind::Search => icon::MAGNIFYING_GLASS,
         ToolKind::Fetch => icon::REPO_PULL,
+        ToolKind::Plan => icon::CHECKLIST,
         ToolKind::Other => icon::GEAR,
     }
 }
@@ -674,6 +752,18 @@ fn tool_detail(ui: &mut egui::Ui, item_id: &str, call: &ToolCall, pass: &mut Tra
                 plain(ui, patch);
             }
         },
+        // A proposed plan is Markdown, shown as the document it is.
+        None if call.kind == ToolKind::Plan => markdown_render::show(
+            ui,
+            &call.preview,
+            Metrics::CHAT_NOTES,
+            Host::Chat {
+                session: pass.session,
+                item: item_id,
+            },
+            false,
+            pass.commands,
+        ),
         None => plain(ui, &call.preview),
     }
     if call.kind == ToolKind::FileEdit && !call.locations.is_empty() {
@@ -949,6 +1039,7 @@ fn approval_card(
                             id,
                             request.token.clone(),
                             choice.id.clone(),
+                            None,
                         ));
                     }
                 }
@@ -1486,6 +1577,7 @@ mod tests {
             command: None,
             paths: vec![],
             choices: vec![],
+            plan: None,
         }
     }
 

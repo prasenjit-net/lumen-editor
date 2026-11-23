@@ -10,8 +10,8 @@ use lumen_agent_core::{
         InputBlock, SessionConfig, SessionSummary,
     },
     event::{
-        AgentEvent, ApprovalChoice, ApprovalRequest, FileChange, FileChangeKind, QuestionKind,
-        QuestionRequest, RiskLevel, TurnOutcome, Usage,
+        AgentEvent, ApprovalChoice, ApprovalRequest, FileChange, FileChangeKind, Question,
+        QuestionOption, QuestionRequest, RiskLevel, TurnOutcome, TypedAnswer, Usage,
     },
     model::{
         ItemKind, MessagePhase, PlanEntry, PlanStatus, ToolCall, ToolKind, ToolStatus,
@@ -806,6 +806,7 @@ pub fn approval_request(
             command: text(params, "command").map(str::to_string),
             paths: text(params, "cwd").map(PathBuf::from).into_iter().collect(),
             choices: approval_choices(true),
+            plan: None,
         }),
         "item/fileChange/requestApproval" => Some(ApprovalRequest {
             token,
@@ -816,6 +817,7 @@ pub fn approval_request(
                 .into_iter()
                 .collect(),
             choices: approval_choices(true),
+            plan: None,
         }),
         _ => None,
     }
@@ -826,37 +828,58 @@ pub fn valid_decision(id: &str) -> bool {
     matches!(id, "accept" | "acceptForSession" | "decline" | "cancel")
 }
 
-/// A single-question `item/tool/requestUserInput` as a question. Requests with
-/// several questions are not supported yet and return `None`.
-pub fn question_request(params: &Value, token: RequestToken) -> Option<(QuestionRequest, String)> {
-    let questions = params.get("questions").and_then(Value::as_array)?;
-    let [question] = questions.as_slice() else {
+/// An `item/tool/requestUserInput` as questions, with the ids the answers are
+/// keyed by. `None` when it asks nothing or a question has no id.
+pub fn question_request(
+    params: &Value,
+    token: RequestToken,
+) -> Option<(QuestionRequest, Vec<String>)> {
+    let list = params.get("questions").and_then(Value::as_array)?;
+    let flag = |question: &Value, camel: &str, snake: &str| {
+        question
+            .get(camel)
+            .or_else(|| question.get(snake))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    };
+    let mut questions = Vec::with_capacity(list.len());
+    for question in list {
+        let options: Vec<QuestionOption> = question
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|option| {
+                Some(QuestionOption {
+                    label: text(option, "label")?.to_string(),
+                    description: text(option, "description").unwrap_or_default().to_string(),
+                })
+            })
+            .collect();
+        // Without options the only way to answer is to type.
+        let typed = if flag(question, "isSecret", "is_secret") {
+            TypedAnswer::Secret
+        } else if options.is_empty() || flag(question, "isOther", "is_other") {
+            TypedAnswer::Text
+        } else {
+            TypedAnswer::None
+        };
+        questions.push(Question {
+            id: text(question, "id")?.to_string(),
+            header: text(question, "header").unwrap_or_default().to_string(),
+            prompt: text(question, "question")
+                .unwrap_or("The agent has a question")
+                .to_string(),
+            options,
+            multiple: false,
+            typed,
+        });
+    }
+    if questions.is_empty() {
         return None;
-    };
-    let id = text(question, "id")?.to_string();
-    let prompt = text(question, "question")
-        .unwrap_or("The agent has a question")
-        .to_string();
-    let options: Vec<String> = question
-        .get("options")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|o| text(o, "label").map(str::to_string))
-        .collect();
-    let kind = if options.is_empty() {
-        QuestionKind::Text
-    } else {
-        QuestionKind::SingleChoice(options)
-    };
-    Some((
-        QuestionRequest {
-            token,
-            prompt,
-            kind,
-        },
-        id,
-    ))
+    }
+    let ids = questions.iter().map(|q| q.id.clone()).collect();
+    Some((QuestionRequest { token, questions }, ids))
 }
 
 #[cfg(test)]
@@ -1188,21 +1211,48 @@ mod tests {
     }
 
     #[test]
-    fn single_question_requests_map_with_options_and_multi_question_ones_are_declined() {
-        let one = json!({"questions":[{"id":"q1","header":"h","question":"Which?","options":[{"label":"a","description":""},{"label":"b","description":""}]}]});
-        let (request, id) = question_request(&one, token()).unwrap();
-        assert_eq!(id, "q1");
+    fn questions_map_with_their_options_and_how_they_can_be_typed() {
+        let request = json!({"questions":[
+            {"id":"q1","header":"Pick","question":"Which?","isOther":true,
+             "options":[{"label":"a","description":"first"},{"label":"b","description":""}]},
+            {"id":"q2","header":"","question":"Name?"},
+            {"id":"q3","header":"Key","question":"Token?","isSecret":true},
+            {"id":"q4","header":"","question":"Sure?","options":[{"label":"yes"}]}]});
+        let (request, ids) = question_request(&request, token()).unwrap();
+        assert_eq!(ids, ["q1", "q2", "q3", "q4"]);
+        let first = &request.questions[0];
         assert_eq!(
-            request.kind,
-            QuestionKind::SingleChoice(vec!["a".into(), "b".into()])
+            (first.header.as_str(), first.prompt.as_str()),
+            ("Pick", "Which?")
         );
-        let free = json!({"questions":[{"id":"q2","header":"h","question":"Name?"}]});
         assert_eq!(
-            question_request(&free, token()).unwrap().0.kind,
-            QuestionKind::Text
+            first.options,
+            [
+                QuestionOption {
+                    label: "a".into(),
+                    description: "first".into()
+                },
+                QuestionOption {
+                    label: "b".into(),
+                    description: String::new()
+                },
+            ]
         );
-        let many = json!({"questions":[{"id":"1","question":"a","header":""},{"id":"2","question":"b","header":""}]});
-        assert!(question_request(&many, token()).is_none());
+        let typed: Vec<TypedAnswer> = request.questions.iter().map(|q| q.typed).collect();
+        assert_eq!(
+            typed,
+            [
+                TypedAnswer::Text,
+                TypedAnswer::Text,
+                TypedAnswer::Secret,
+                TypedAnswer::None
+            ],
+            "other, free text, secret, options only"
+        );
+        assert!(question_request(&json!({"questions": []}), token()).is_none());
+        assert!(
+            question_request(&json!({"questions": [{"question": "no id"}]}), token()).is_none()
+        );
     }
 
     fn catalog() -> Vec<ModelInfo> {

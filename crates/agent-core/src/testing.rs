@@ -14,12 +14,12 @@ use crate::{
     SessionId, SubmitError, TurnId,
     api::{
         AgentBackend, AgentOperation, ApprovalDecisionId, AuthState, ConfigChoice, ConfigOption,
-        ConfigRevision, InputBlock, OperationOutcome, OperationOutput, QuestionAnswer, Request,
+        ConfigRevision, InputBlock, OperationOutcome, OperationOutput, QuestionReply, Request,
         SessionConfig, SessionSummary,
     },
     event::{
-        AgentEvent, ApprovalChoice, ApprovalRequest, QuestionKind, QuestionRequest, RiskLevel,
-        TurnOutcome,
+        AgentEvent, ApprovalChoice, ApprovalRequest, PlanReview, Question, QuestionOption,
+        QuestionRequest, RiskLevel, TurnOutcome, TypedAnswer,
     },
     launcher::{Child, ChildEvent, ChildLauncher, ChildSpec, ExitInfo, LaunchError, Wake},
     model::{MessagePhase, ToolCall, ToolKind, ToolStatus},
@@ -46,6 +46,8 @@ enum TurnKind {
     /// Waits for an interrupt.
     Slow,
     Approval(RequestToken),
+    /// Waits for a proposed plan to be approved or sent back.
+    Plan(RequestToken),
     Question(RequestToken),
 }
 
@@ -400,8 +402,12 @@ impl FakeBackend {
                 self.finish(op, OperationOutcome::Succeeded(OperationOutput::Ack));
                 self.end_turn(session, TurnOutcome::Interrupted);
             }
-            O::ReplyApproval { token, decision } => self.reply_approval(op, token, decision),
-            O::ReplyQuestion { token, answers } => self.reply_question(op, token, answers),
+            O::ReplyApproval {
+                token,
+                decision,
+                note,
+            } => self.reply_approval(op, token, decision, note),
+            O::ReplyQuestion { token, reply } => self.reply_question(op, token, reply),
             O::DetachSession { session } => match self.sessions.get(&session) {
                 None => self.fail(
                     op,
@@ -537,11 +543,56 @@ impl FakeBackend {
                             risk: RiskLevel::Low,
                         },
                     ],
+                    plan: None,
                 }),
             );
             self.sessions.get_mut(&session).expect("exists").active = Some(ActiveTurn {
                 turn,
                 kind: TurnKind::Approval(token),
+            });
+        } else if text.starts_with("plan:") {
+            let token = self.token(session, &turn);
+            let mut call = ToolCall::new(ToolKind::Plan, "Proposed a plan: Scanner");
+            call.preview = SCRIPTED_PLAN.into();
+            self.emit(
+                None,
+                Some(session),
+                Some(turn.clone()),
+                AgentEvent::ToolStarted {
+                    item: item(1),
+                    call,
+                },
+            );
+            let choice = |id: &str, label: &str, allows: bool| ApprovalChoice {
+                id: ApprovalDecisionId(id.into()),
+                label: label.into(),
+                scope: "the plan".into(),
+                allows,
+                risk: RiskLevel::Low,
+            };
+            self.emit(
+                None,
+                Some(session),
+                Some(turn.clone()),
+                AgentEvent::ApprovalRequested(ApprovalRequest {
+                    token: token.clone(),
+                    summary: "Plan ready for review".into(),
+                    command: None,
+                    paths: vec![],
+                    choices: vec![
+                        choice("plan_accept_edits", "Approve and accept edits", true),
+                        choice("plan_approve", "Approve", true),
+                        choice("plan_keep", "Keep planning", false),
+                    ],
+                    plan: Some(PlanReview {
+                        text: SCRIPTED_PLAN.into(),
+                        file: Some("/plans/scanner.md".into()),
+                    }),
+                }),
+            );
+            self.sessions.get_mut(&session).expect("exists").active = Some(ActiveTurn {
+                turn,
+                kind: TurnKind::Plan(token),
             });
         } else if text.starts_with("ask:") {
             let token = self.token(session, &turn);
@@ -551,8 +602,7 @@ impl FakeBackend {
                 Some(turn.clone()),
                 AgentEvent::QuestionRequested(QuestionRequest {
                     token: token.clone(),
-                    prompt: "Which one?".into(),
-                    kind: QuestionKind::SingleChoice(vec!["a".into(), "b".into()]),
+                    questions: scripted_questions(),
                 }),
             );
             self.sessions.get_mut(&session).expect("exists").active = Some(ActiveTurn {
@@ -635,7 +685,7 @@ impl FakeBackend {
         let record = self.sessions.get(&token.session)?;
         let active = record.active.as_ref()?;
         let matches = match &active.kind {
-            TurnKind::Approval(t) | TurnKind::Question(t) => t == token,
+            TurnKind::Approval(t) | TurnKind::Plan(t) | TurnKind::Question(t) => t == token,
             TurnKind::Slow => false,
         };
         (matches && token.generation == self.generation && active.turn == token.turn)
@@ -647,6 +697,7 @@ impl FakeBackend {
         op: OperationId,
         token: RequestToken,
         decision: ApprovalDecisionId,
+        note: Option<String>,
     ) {
         let Some(session) = self.find_request(&token) else {
             return self.fail(
@@ -656,10 +707,9 @@ impl FakeBackend {
                 },
             );
         };
-        let is_approval = matches!(
-            self.sessions[&session].active.as_ref().map(|a| &a.kind),
-            Some(TurnKind::Approval(_))
-        );
+        let kind = self.sessions[&session].active.as_ref().map(|a| &a.kind);
+        let plan = matches!(kind, Some(TurnKind::Plan(_)));
+        let is_approval = plan || matches!(kind, Some(TurnKind::Approval(_)));
         if !is_approval {
             return self.fail(
                 op,
@@ -676,7 +726,31 @@ impl FakeBackend {
             Some(turn.clone()),
             AgentEvent::ApprovalResolved { token },
         );
-        let allowed = decision.0 == "accept";
+        if plan {
+            // What the agent was told, for a UI test to check.
+            let item = crate::ItemId(format!("{}-decision", turn.0));
+            let told = match note {
+                Some(note) => format!("plan: {} with {note}", decision.0),
+                None => format!("plan: {}", decision.0),
+            };
+            for event in [
+                AgentEvent::MessageStarted {
+                    item: item.clone(),
+                    phase: MessagePhase::Final,
+                },
+                AgentEvent::TextDelta {
+                    item: item.clone(),
+                    delta: told,
+                },
+                AgentEvent::MessageFinished { item },
+            ] {
+                self.emit(None, Some(session), Some(turn.clone()), event);
+            }
+        }
+        let allowed = matches!(
+            decision.0.as_str(),
+            "accept" | "plan_accept_edits" | "plan_approve"
+        );
         self.emit(
             None,
             Some(session),
@@ -693,12 +767,7 @@ impl FakeBackend {
         self.end_turn(session, TurnOutcome::Completed);
     }
 
-    fn reply_question(
-        &mut self,
-        op: OperationId,
-        token: RequestToken,
-        answers: Vec<QuestionAnswer>,
-    ) {
+    fn reply_question(&mut self, op: OperationId, token: RequestToken, reply: QuestionReply) {
         let Some(session) = self.find_request(&token) else {
             return self.fail(
                 op,
@@ -718,24 +787,81 @@ impl FakeBackend {
                 },
             );
         }
-        if answers.is_empty() {
-            return self.fail(
-                op,
-                AgentError::Provider {
-                    message: "no answer given".into(),
-                },
-            );
-        }
+        // What the agent was told, written into the transcript so a UI test
+        // can check exactly what was sent.
+        let told = match &reply {
+            QuestionReply::Answered(answers) if answers.len() != scripted_questions().len() => {
+                return self.fail(
+                    op,
+                    AgentError::Provider {
+                        message: "answer every question".into(),
+                    },
+                );
+            }
+            QuestionReply::Answered(answers) => format!(
+                "answers: {}",
+                answers
+                    .iter()
+                    .map(|answer| answer.values().join(", "))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            ),
+            QuestionReply::Skipped => "answers: skipped".to_string(),
+        };
         self.finish(op, OperationOutcome::Succeeded(OperationOutput::Ack));
         let turn = token.turn.clone();
+        let item = crate::ItemId(format!("{}-answers", turn.0));
         self.emit(
             None,
             Some(session),
-            Some(turn),
+            Some(turn.clone()),
             AgentEvent::QuestionResolved { token },
         );
+        for event in [
+            AgentEvent::MessageStarted {
+                item: item.clone(),
+                phase: MessagePhase::Final,
+            },
+            AgentEvent::TextDelta {
+                item: item.clone(),
+                delta: told,
+            },
+            AgentEvent::MessageFinished { item },
+        ] {
+            self.emit(None, Some(session), Some(turn.clone()), event);
+        }
         self.end_turn(session, TurnOutcome::Completed);
     }
+}
+
+/// The plan a `plan:` message proposes.
+const SCRIPTED_PLAN: &str = "# Plan: Scanner\n\n## Context\nRead the build files.";
+
+/// What an `ask:` message asks: one single choice that also takes typed
+/// words, and one multiple choice.
+fn scripted_questions() -> Vec<Question> {
+    let option = |label: &str, description: &str| QuestionOption {
+        label: label.into(),
+        description: description.into(),
+    };
+    vec![
+        Question {
+            id: "q1".into(),
+            header: "Pick".into(),
+            prompt: "Which one?".into(),
+            options: vec![option("a", "The first"), option("b", "The second")],
+            multiple: false,
+            typed: TypedAnswer::Text,
+        },
+        Question {
+            id: "q2".into(),
+            header: "Extras".into(),
+            prompt: "Which extras?".into(),
+            options: vec![option("x", ""), option("y", "")],
+            multiple: true,
+            typed: TypedAnswer::None,
+        },
+    ]
 }
 
 impl AgentBackend for FakeBackend {
@@ -795,7 +921,7 @@ impl AgentBackend for FakeBackend {
                 .active
                 .as_ref()
                 .and_then(|a| match &a.kind {
-                    TurnKind::Approval(t) => Some((t.clone(), true)),
+                    TurnKind::Approval(t) | TurnKind::Plan(t) => Some((t.clone(), true)),
                     TurnKind::Question(t) => Some((t.clone(), false)),
                     TurnKind::Slow => None,
                 });
@@ -1091,6 +1217,7 @@ pub mod contract {
                 AgentOperation::ReplyApproval {
                     token: stale,
                     decision: ApprovalDecisionId("accept".into()),
+                    note: None,
                 },
             ))
             .unwrap();
@@ -1140,6 +1267,7 @@ mod tests {
     use super::*;
     use crate::{
         ItemId,
+        api::QuestionAnswer,
         model::{Applied, SessionModel, TurnState},
     };
 
@@ -1289,6 +1417,7 @@ mod tests {
                 AgentOperation::ReplyApproval {
                     token: token.clone(),
                     decision: ApprovalDecisionId("accept".into()),
+                    note: None,
                 },
             ))
             .unwrap();
@@ -1309,6 +1438,7 @@ mod tests {
                 AgentOperation::ReplyApproval {
                     token,
                     decision: ApprovalDecisionId("accept".into()),
+                    note: None,
                 },
             ))
             .unwrap();
@@ -1354,7 +1484,7 @@ mod tests {
                 5,
                 AgentOperation::ReplyQuestion {
                     token: wrong,
-                    answers: vec![QuestionAnswer::Choice("a".into())],
+                    reply: QuestionReply::Skipped,
                 },
             ))
             .unwrap();
@@ -1369,7 +1499,13 @@ mod tests {
                 6,
                 AgentOperation::ReplyQuestion {
                     token,
-                    answers: vec![QuestionAnswer::Choice("a".into())],
+                    reply: QuestionReply::Answered(vec![
+                        QuestionAnswer {
+                            chosen: vec!["a".into()],
+                            typed: None,
+                        },
+                        QuestionAnswer::default(),
+                    ]),
                 },
             ))
             .unwrap();

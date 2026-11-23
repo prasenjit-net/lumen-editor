@@ -34,6 +34,7 @@ fn kind_name(kind: ToolKind) -> &'static str {
         ToolKind::Read => "read",
         ToolKind::Search => "search",
         ToolKind::Fetch => "fetch",
+        ToolKind::Plan => "plan",
         ToolKind::Other => "other",
     }
 }
@@ -45,6 +46,7 @@ fn kind_of(name: &str) -> ToolKind {
         "read" => ToolKind::Read,
         "search" => ToolKind::Search,
         "fetch" => ToolKind::Fetch,
+        "plan" => ToolKind::Plan,
         _ => ToolKind::Other,
     }
 }
@@ -285,6 +287,22 @@ mod tests {
         assert!(
             matches!(&items[4].kind, ItemKind::Plan(e) if e[0].status == PlanStatus::InProgress)
         );
+    }
+
+    #[test]
+    fn every_tool_kind_round_trips_and_unknown_ones_read_as_other() {
+        for kind in [
+            ToolKind::Command,
+            ToolKind::FileEdit,
+            ToolKind::Read,
+            ToolKind::Search,
+            ToolKind::Fetch,
+            ToolKind::Plan,
+            ToolKind::Other,
+        ] {
+            assert_eq!(kind_of(kind_name(kind)), kind);
+        }
+        assert_eq!(kind_of("from a newer version"), ToolKind::Other);
     }
 
     #[test]

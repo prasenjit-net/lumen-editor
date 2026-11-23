@@ -3,8 +3,8 @@
 //! only: sessions live in the hub, so nothing here owns or ends one. Drafts and
 //! attachments are kept per session so they outlive tab, history and panel switches.
 use super::chat_attachments::{Attachment, AttachmentError, MAX_ATTACHMENTS};
-use crate::model::agent_scheduler::Ticket;
-use lumen_agent_core::{ProviderId, SessionId};
+use crate::model::{agent_scheduler::Ticket, question_form::QuestionForm};
+use lumen_agent_core::{ProviderId, QuestionRequest, RequestToken, SessionId};
 use std::collections::HashMap;
 
 /// A starting prompt offered in an empty chat.
@@ -184,6 +184,10 @@ pub(crate) struct AgentPanel {
     /// Title filter of the History list, shared by the provider tabs.
     history_query: String,
     queue_edit: Option<QueueEdit>,
+    /// Answers being chosen for the agents' questions, by request.
+    question_forms: HashMap<RequestToken, QuestionForm>,
+    /// Feedback being written on proposed plans, by request.
+    plan_notes: HashMap<RequestToken, String>,
 }
 
 impl Default for AgentPanel {
@@ -202,11 +206,33 @@ impl Default for AgentPanel {
             seen_items: HashMap::new(),
             history_query: String::new(),
             queue_edit: None,
+            question_forms: HashMap::new(),
+            plan_notes: HashMap::new(),
         }
     }
 }
 
 impl AgentPanel {
+    /// The answers being chosen for `request`, started on first use.
+    pub(crate) fn question_form(&mut self, request: &QuestionRequest) -> &mut QuestionForm {
+        self.question_forms
+            .entry(request.token.clone())
+            .or_insert_with(|| QuestionForm::new(&request.questions))
+    }
+
+    /// The feedback being written on the plan of `token`.
+    pub(crate) fn plan_note(&mut self, token: &RequestToken) -> &mut String {
+        self.plan_notes.entry(token.clone()).or_default()
+    }
+
+    /// Forget the answers and feedback of `session`'s requests that no longer
+    /// wait for the user. Other sessions' are kept.
+    pub(crate) fn forget_answered(&mut self, session: SessionId, waiting: &[RequestToken]) {
+        let keep = |token: &RequestToken| token.session != session || waiting.contains(token);
+        self.question_forms.retain(|token, _| keep(token));
+        self.plan_notes.retain(|token, _| keep(token));
+    }
+
     /// Record whether the provider's program was found (`None`) or not (`Some(name)`).
     pub(crate) fn set_missing(&mut self, provider: ProviderId, program: Option<String>) {
         match program {

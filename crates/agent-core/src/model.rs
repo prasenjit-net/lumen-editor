@@ -30,6 +30,8 @@ pub enum ToolKind {
     Read,
     Search,
     Fetch,
+    /// A plan proposed for review; its preview is the plan as Markdown.
+    Plan,
     Other,
 }
 
@@ -559,6 +561,7 @@ mod tests {
                 allows: true,
                 risk: RiskLevel::Medium,
             }],
+            plan: None,
         })
     }
 
